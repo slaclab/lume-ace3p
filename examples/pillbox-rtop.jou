@@ -1,0 +1,49 @@
+reset
+
+#{cav_length = 90}
+#{cav_radius = 100}
+#{cav_ellipticity = 0.5}
+#{bp_length  = 300}
+#{bp_radius  = 35 }
+#{iris_rounding = 12}
+
+create Cylinder height {cav_length} radius {cav_radius} 
+create Cylinder height {bp_length} radius {bp_radius}
+unite volume all 
+compress ids
+
+volume 1 scale X {1.0/cav_ellipticity} Y {1.0/cav_ellipticity} Z 1.0
+
+modify curve 1 2 blend radius {0.5*cav_length}
+
+volume 1 scale X {cav_ellipticity} Y {cav_ellipticity} Z 1.0
+
+modify curve 7 8 11 12  blend radius {iris_rounding}
+
+webcut volume 1 with plane xplane offset 0 noimprint nomerge 
+
+delete volume 2 
+compress ids
+webcut volume 1 with plane yplane offset 0 noimprint nomerge 
+
+delete volume 1 
+compress ids
+
+volume all scheme Tetmesh geometry approximation angle 5
+
+set trimesher geometry sizing on
+
+mesh volume all
+compress ids
+
+Sideset 1 surface 4  
+Sideset 2 surface 9  
+Sideset 6 surface all except 4 9
+
+block 1 volume all 
+block 1 element type tetra10
+transform mesh output scale 0.001
+
+export Genesis  "pillbox-rtop4.gen" block all overwrite 
+
+quit
