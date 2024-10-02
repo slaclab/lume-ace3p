@@ -6,10 +6,9 @@ from lume.base import CommandWrapper
 
 class Cubit(CommandWrapper):
 
-    MPI_CALLER = 'mpirun'
-    ACE3P_PATH = '/sdf/group/rfar/ace3p/bin/'
-    CUBIT_PATH = '/sdf/group/rfar/software/Cubit-16.12/'
-    COMMAND = 'cubit'
+    MPI_CALLER = os.environ['MPI_CALLER']
+    ACE3P_PATH = os.environ['ACE3P_PATH']
+    CUBIT_PATH = os.environ['CUBIT_PATH']
     WORKDIR = os.getcwd()
     
     def __init__(self, *args, **kwargs):
@@ -18,7 +17,7 @@ class Cubit(CommandWrapper):
             self.workdir = self.WORKDIR
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
-        assert self.input_file is not None, 'Cubit object requires input journal file'
+        assert self.input_file is not None, 'Error: Cubit object requires input journal file'
         self.original_input_file = self.input_file
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
             shutil.copy(self.input_file, self.workdir)
@@ -48,7 +47,7 @@ class Cubit(CommandWrapper):
                     value = line[indx+1::].strip()
                 break
         if flag == -1:
-            print('Error: \'' + key + '=\' not found in Cubit file, ' \
+            print('Warning: \'' + key + '=\' not found in Cubit journal file, ' \
                   + 'value \'None\' returned.')
             return None
         else:
@@ -68,7 +67,7 @@ class Cubit(CommandWrapper):
                     self.lines[self.ncflag[i]] = new_line
                     break
             if flag == -1:
-                print('Error: \'' + key + '\' not defined in Cubit file, no action taken.')
+                print('Warning: \'' + key + '\' not found in Cubit journal file, no action taken.')
     
     def set_export(self, name, format_='genesis', opts='overwrite'):
         for i in range(len(self.ncflag)):
@@ -81,7 +80,7 @@ class Cubit(CommandWrapper):
                     new_line = new_line + [opt for opt in opts]
                 self.lines[self.ncflag[i]] = ' '.join(new_line + ['\n'])
                 return
-        print('Error: no export command found in Cubit journal, no action taken.')
+        print('Warning: no export command found in Cubit journal, no action taken.')
                 
     def write_input(self, *args):
         if args:
@@ -97,7 +96,7 @@ class Cubit(CommandWrapper):
                 
     def run(self):
         self.write_input()
-        subprocess.run(self.CUBIT_PATH + self.COMMAND + ' -nographics -nojournal -noecho ' + self.input_file,
+        subprocess.run(self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
                         shell=True, cwd=self.workdir)
                         
     def meshconvert(self, file):

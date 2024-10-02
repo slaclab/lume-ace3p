@@ -6,8 +6,8 @@ from lume.base import CommandWrapper
 
 class Omega3P(CommandWrapper):
     
-    MPI_CALLER = 'mpirun'
-    ACE3P_PATH = '/sdf/group/rfar/ace3p/bin/'
+    MPI_CALLER = os.environ['MPI_CALLER']
+    ACE3P_PATH = os.environ['ACE3P_PATH']
     COMMAND = 'omega3p'
     WORKDIR = os.getcwd()
     

@@ -6,9 +6,8 @@ from lume.base import CommandWrapper
 
 class Acdtool(CommandWrapper):
     
-    MPI_CALLER = 'mpirun'
-    ACE3P_PATH = '/sdf/group/rfar/ace3p/bin/'
-    COMMAND = 'acdtool'
+    MPI_CALLER = os.environ['MPI_CALLER']
+    ACE3P_PATH = os.environ['ACE3P_PATH']
     WORKDIR = os.getcwd()
     
     def __init__(self, *args, **kwargs):
@@ -29,11 +28,11 @@ class Acdtool(CommandWrapper):
             acdcommand = 'postprocess rf'
             self.output_file = 'rfpost.out' #Default filename for output of postprocess rf
         else:
-            print('Unknown acdtool command.')
+            print('Error: Unknown acdtool command.')
             return
         self.write_input()
         result = subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' 
-                                + self.ACE3P_PATH + self.COMMAND + ' '
+                                + self.ACE3P_PATH + 'acdtool '
                                 + acdcommand + ' ' + self.input_file,
                                 shell=True, cwd=self.workdir)
         self.load_output()
@@ -148,14 +147,14 @@ class Acdtool(CommandWrapper):
                     if mkey not in modelist:
                         modelist.append(mkey)
                     Emax = eval(datalines[i+2].split()[2])  #Emax units are V*m
-                    Emax_loc = eval(datalines[i+2].split('at')[2])  #3-tuple of (x,y,z) coordinates
+                    Emax_loc = eval(datalines[i+2].split('at')[1])  #3-tuple of (x,y,z) coordinates
                     Hmax = eval(datalines[i+3].split()[2])  #Hmax units are A/m
-                    Hmax_loc = eval(datalines[i+3].split('at')[2])  #3-tuple of (x,y,z) coordinates
+                    Hmax_loc = eval(datalines[i+3].split('at')[1])  #3-tuple of (x,y,z) coordinates
                     self.output_data[key][skey][mkey] = {}
-                    self.output_data[key][skey][mkey]['Emax'] = eval(Emax)
-                    self.output_data[key][skey][mkey]['Emax_location'] = eval(Emax_loc)
-                    self.output_data[key][skey][mkey]['Hmax'] = eval(Hmax)
-                    self.output_data[key][skey][mkey]['Hmax_location'] = eval(Hmax_loc)
+                    self.output_data[key][skey][mkey]['Emax'] = Emax
+                    self.output_data[key][skey][mkey]['Emax_location'] = Emax_loc
+                    self.output_data[key][skey][mkey]['Hmax'] = Hmax
+                    self.output_data[key][skey][mkey]['Hmax_location'] = Hmax_loc
             self.output_data[key]['SurfaceIDs'] = surfacelist
             self.output_data[key]['ModeIDs'] = modelist
         else:
