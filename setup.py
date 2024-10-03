@@ -4,7 +4,7 @@ if 'NERSC_HOST' in os.environ:
     PLATFORM = os.environ['NERSC_HOST']
 elif 'HOSTNAME' in os.environ:
     PLATFORM = os.environ['HOSTNAME']
-else
+else:
     PLATFORM = os.uname()[1]
     
 if PLATFORM.startswith('sdf'):
@@ -15,7 +15,7 @@ elif PLATFORM.startswith('perlmutter'):
     os.environ['ACE3P_PATH'] = '/global/cfs/cdirs/ace3p/perlmutter/CPU/'
     os.environ['CUBIT_PATH'] = '/global/cfs/cdirs/ace3p/tools'
     os.environ['MPI_CALLER'] = 'srun'
-else
+else:
     ace3p_dir = shutil.which('omega3p')
     if ace3p_dir is not None:   #Check if ace3p modules are defined in environment
         ace3p_dir = ace3p_dir.strip('omega3p')

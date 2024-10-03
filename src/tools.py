@@ -1,4 +1,4 @@
-import os, shutil
+import os, shutil, pandas
 
 def WriteDataTable(filename, data_dict, input_names, output_names):
     #Helper script to write dict data in tabulated format to file:
@@ -16,7 +16,7 @@ def WriteDataTable(filename, data_dict, input_names, output_names):
     #Example:
     #  input_names = ['my_input1','my_input2']
     #  output_names = ['my_output1','my_output2']
-    #  dict = {(1.23,4.56): {'my_output1': 3.14, 'my_output2': 2.72, 'my_output3': 1.0},
+    #  data_dict = {(1.23,4.56): {'my_output1': 3.14, 'my_output2': 2.72, 'my_output3': 1.0},
     #          (1.23,7.89): {'my_output1': 1.44, 'my_output2': 6.28, 'my_output3': 2.0}}
     #
     #  Would produce a tab-delimited text file with 3 rows of text:
@@ -44,3 +44,18 @@ def WriteDataTable(filename, data_dict, input_names, output_names):
         text += '\n'
     with open(filename,'w') as file:
         file.write(text)
+
+def WriteXoptData(filename, Xopt_obj):
+    #Helper script to write Xopt object data to a text file with proper formatting:
+    #
+    #  filename = filename to write data output
+    #  Xopt_obj = Xopt-class object containing data
+    #
+    #Note: pandas is used to set display options for printing without truncation
+
+    pandas.set_option("display.max_rows", 1000000)
+    pandas.set_option("display.max_colwidth", 1000000)
+    pandas.set_option("expand_frame_repr", False)
+
+    with open(filename,'w') as file:
+        print(X.data, file=file)

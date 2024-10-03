@@ -1,4 +1,3 @@
-
 import os, shutil
 import subprocess
 
@@ -9,12 +8,11 @@ class Cubit(CommandWrapper):
     MPI_CALLER = os.environ['MPI_CALLER']
     ACE3P_PATH = os.environ['ACE3P_PATH']
     CUBIT_PATH = os.environ['CUBIT_PATH']
-    WORKDIR = os.getcwd()
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.workdir is None:
-            self.workdir = self.WORKDIR
+            self.workdir = os.getcwd()
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
         assert self.input_file is not None, 'Error: Cubit object requires input journal file'
