@@ -58,4 +58,4 @@ def WriteXoptData(filename, Xopt_obj):
     pandas.set_option("expand_frame_repr", False)
 
     with open(filename,'w') as file:
-        print(X.data, file=file)
+        print(Xopt_obj.data, file=file)
