@@ -24,7 +24,7 @@ class Acdtool(CommandWrapper):
     def run(self, *args):
         if args:
             acdcommand = args[0]
-        elif self.input_file.endswidth('rfpost'):
+        elif self.input_file.endswith('rfpost'):
             acdcommand = 'postprocess rf'
             self.output_file = 'rfpost.out' #Default filename for output of postprocess rf
         else:
