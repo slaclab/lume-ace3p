@@ -116,7 +116,7 @@ class Cubit(CommandWrapper):
         else:
             self.get_export()
         if self.exportfile is not None:
-            subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + file,
+            subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + self.exportfile,
                             shell=True, cwd=self.workdir)
         
     def configure(self):
