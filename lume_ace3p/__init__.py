@@ -1,8 +1,3 @@
-from .cubit import Cubit
-from .ace3p import Omega3P
-from .acdtool import Acdtool
-from .tools import WriteDataTable, WriteXoptData
-
 import os, glob, shutil
 
 if 'NERSC_HOST' in os.environ:
@@ -41,3 +36,8 @@ else:
         os.environ['CUBIT_PATH'] = cubit_dir[0]
     os.environ['MPI_CALLER'] = shutil.which('mpirun')  #Try checking if local system has mpirun installed
     assert os.environ['MPI_CALLER'] is not None, 'MPI installation not found.'
+
+from .cubit import Cubit
+from .ace3p import Omega3P
+from .acdtool import Acdtool
+from .tools import WriteDataTable, WriteXoptData
