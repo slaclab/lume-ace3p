@@ -1,8 +1,8 @@
 import os
-from src.cubit import Cubit
-from src.ace3p import Omega3P
-from src.acdtool import Acdtool
-from src.tools import WriteDataTable
+from lume_ace3p.cubit import Cubit
+from lume_ace3p.ace3p import Omega3P
+from lume_ace3p.acdtool import Acdtool
+from lume_ace3p.tools import WriteDataTable
 
 #Define parameters to sweep in lists
 cav_rs = [90 + 10*i for i in range(4)]      #Cavity radii in mm (units in cubit journal)

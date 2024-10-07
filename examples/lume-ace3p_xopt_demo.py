@@ -3,10 +3,10 @@ from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
 from xopt.generators.bayesian import ExpectedImprovementGenerator
 from xopt import Xopt
-from src.cubit import Cubit
-from src.ace3p import Omega3P
-from src.acdtool import Acdtool
-from src.tools import WriteXoptData
+from lume_ace3p.cubit import Cubit
+from lume_ace3p.ace3p import Omega3P
+from lume_ace3p.acdtool import Acdtool
+from lume_ace3p.tools import WriteXoptData
 
 #Define variables and function objectives/constraints/observables
 vocs = VOCS(
