@@ -2,7 +2,7 @@
 
 #SBATCH --partition=milano
 #SBATCH --account=rfar:regular
-#SBATCH --job-name=test
+#SBATCH --job-name=lume-ace3p_xopt_demo
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
