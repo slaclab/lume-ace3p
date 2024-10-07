@@ -1,4 +1,4 @@
-import os, shutil, pandas
+import pandas
 
 def WriteDataTable(filename, data_dict, input_names, output_names):
     #Helper script to write dict data in tabulated format to file:

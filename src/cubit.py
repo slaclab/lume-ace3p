@@ -64,9 +64,19 @@ class Cubit(CommandWrapper):
                         new_line = line[0:indx] + '=' + str(value) + '\n'
                     self.lines[self.ncflag[i]] = new_line
                     break
-            if flag == -1:
-                print('Warning: \'' + key + '\' not found in Cubit journal file, no action taken.')
-    
+#            if flag == -1:
+#                print('Warning: \'' + key + '\' not found in Cubit journal file, no action taken.')
+
+    def get_export(self):
+        for i in range(len(self.ncflag)):
+            words = self.lines[self.ncflag[i]].split()
+            if words[0] == 'export':
+                for j in range(len(words)):
+                    if words[j][0] == '"' and words[j][-1] == '"':
+                        self.exportfile = words[j].strip('"')
+                        return
+        print('Warning: no export command found in Cubit journal, no action taken.')
+
     def set_export(self, name, format_='genesis', opts='overwrite'):
         for i in range(len(self.ncflag)):
             words = self.lines[self.ncflag[i]].split()
@@ -77,6 +87,7 @@ class Cubit(CommandWrapper):
                         opts = [opts]
                     new_line = new_line + [opt for opt in opts]
                 self.lines[self.ncflag[i]] = ' '.join(new_line + ['\n'])
+                self.exportfile = name
                 return
         print('Warning: no export command found in Cubit journal, no action taken.')
                 
@@ -92,14 +103,18 @@ class Cubit(CommandWrapper):
         with open(os.path.join(self.workdir, self.input_file), 'w') as file:
             file.writelines(self.lines)
                 
-    def run(self):
+    def run(self, mcflag=True):
         self.write_input()
         subprocess.run(self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
                         shell=True, cwd=self.workdir)
+        if mcflag:
+            self.meshconvert()
                         
     def meshconvert(self, file):
-        subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + file,
-                        shell=True, cwd=self.workdir)
+        self.get_export()
+        if self.exportfile is not None:
+            subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + file,
+                            shell=True, cwd=self.workdir)
         
     def configure(self):
         return 'Not implemented.'

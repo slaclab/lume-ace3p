@@ -22,17 +22,15 @@ class Acdtool(CommandWrapper):
         self.load_input_file()
         
     def run(self, *args):
-        if args[0] == 'postprocess rf':
+        if args[0] == 'postprocess rf' or self.input_file.endswidth('rfpost'):
             acdcommand = 'postprocess rf'
             self.output_file = 'rfpost.out' #Default filename for output of postprocess rf
         else:
             print('Error: Unknown acdtool command.')
             return
         self.write_input()
-        result = subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' 
-                                + self.ACE3P_PATH + 'acdtool '
-                                + acdcommand + ' ' + self.input_file,
-                                shell=True, cwd=self.workdir)
+        subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool '
+                        + acdcommand + ' ' + self.input_file, shell=True, cwd=self.workdir)
         self.load_output()
         
     def load_input_file(self, *args):

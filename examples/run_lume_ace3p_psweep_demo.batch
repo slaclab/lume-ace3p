@@ -11,4 +11,4 @@
 
 export OMPI_MCA_sharedfp=^lockedfile
 
-python lume_ace3p_psweep_demo.py
+python lume-ace3p_psweep_demo.py
