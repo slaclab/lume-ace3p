@@ -12,33 +12,23 @@ create Cylinder height {bp_length} radius {bp_radius}
 unite volume all 
 compress ids
 
-volume 1 scale X {1.0/cav_ellipticity} Y {1.0/cav_ellipticity} Z 1.0
-
-modify curve 1 2 blend radius {0.5*cav_length}
-
-volume 1 scale X {cav_ellipticity} Y {cav_ellipticity} Z 1.0
-
-modify curve 7 8 11 12  blend radius {iris_rounding}
-
-webcut volume 1 with plane xplane offset 0 noimprint nomerge 
-
-delete volume 2 
-compress ids
+webcut volume 1 with plane xplane offset 0 noimprint nomerge
 webcut volume 1 with plane yplane offset 0 noimprint nomerge 
-
-delete volume 1 
+delete volume 1 2
 compress ids
+
+volume 1 scale X {1.0/cav_ellipticity} Y {1.0/cav_ellipticity} Z 1.0
+modify curve 14 16 blend radius {0.5*cav_length}
+volume 1 scale X {cav_ellipticity} Y {cav_ellipticity} Z 1.0
+modify curve 15 17 blend radius {iris_rounding}
 
 volume all scheme Tetmesh geometry approximation angle 5
-
 set trimesher geometry sizing on
-
 mesh volume all
-compress ids
 
-Sideset 1 surface 4  
-Sideset 2 surface 9  
-Sideset 6 surface all except 4 9
+Sideset 1 surface 1  
+Sideset 2 surface 6  
+Sideset 6 surface all except 1 6
 
 block 1 volume all 
 block 1 element type tetra10
