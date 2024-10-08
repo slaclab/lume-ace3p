@@ -7,6 +7,7 @@ To activate the lume-ace3p conda environment on an S3DF iana terminal:
 1. Run the command "/sdf/group/rfar/software/conda/bin/conda init" to set up conda for your terminal (only needs to be done once)
 2. Reopen a terminal on S3DF iana and run the command: "conda activate lume-ace3p"
    - The text "(lume-ace3p)" should be shown on the command line indicating you are in the correct conda environment
+   - The command "conda deactivate" can be used to exit the conda environment if desired
 
 To run the examples on an S3DF iana terminal:
 1. Copy the examples folder to a desired location (e.g. in home or scratch) and set that as your cwd
