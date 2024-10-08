@@ -13,7 +13,7 @@ if PLATFORM.startswith('sdf'):
     os.environ['MPI_CALLER'] = 'mpirun'
 elif PLATFORM.startswith('perlmutter'):
     os.environ['ACE3P_PATH'] = '/global/cfs/cdirs/ace3p/perlmutter/CPU/'
-    os.environ['CUBIT_PATH'] = '/global/cfs/cdirs/ace3p/tools'
+    os.environ['CUBIT_PATH'] = '/global/cfs/cdirs/ace3p/tools/'
     os.environ['MPI_CALLER'] = 'srun'
 else:
     ace3p_dir = shutil.which('omega3p')
