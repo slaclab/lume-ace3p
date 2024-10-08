@@ -7,9 +7,10 @@ To run the examples on an S3DF iana terminal:
 1. Copy the examples folder to a desired location (e.g. in home or scratch) and set that as your cwd
 2. Source the "sdf-ace3p.sh" script (required to run ACE3P on S3DF)
    - The sdf-ace3p.sh file is located in /sdf/group/rfar/ace3p/
-3. Use the lume-ace3p python environment (or any python environment with "lume-base=0.3.3" and "xopt=2.2.2")
-4. Submit a batch job from one of the examples with "sbatch"
-5. View the results in the folder that the batch job was run from
+3. Add /sdf/group/rfar/lume-ace3p to your $PYTHONPATH
+4. Use the lume-ace3p python environment (or any python environment with "lume-base=0.3.3" and "xopt=2.2.2")
+5. Submit a batch job from one of the examples with "sbatch"
+6. View the results in the folder that the batch job was run from
 
 Note: the demo batch job scripts are configured to run using the RFAR group repo on S3DF, and may need to be adjusted.
 
