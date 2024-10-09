@@ -1,7 +1,11 @@
 ![logo](./logos/SLAC-lab-hires.png)
 # LUME-ACE3P
 
-This repository contains the LUME-ACE3P code interfaces for using ACE3P workflows for the use with LUME and Xopt. The dependencies are "lume-base=0.3.3" and "xopt=2.2.2" from conda-forge (later versions may work). The examples and scripts are configured to run on S3DF in an appropriate python environment with the aformentioned dependencies.
+LUME-ACE3P is a set of python code interfaces for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Cristopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt/xopt), written by Ryan Roussel.
+
+# Setting up LUME-ACE3P on S3DF
+
+The dependencies are "lume-base=0.3.3" and "xopt=2.2.2" from conda-forge (later versions may work). The examples and scripts are configured to run on S3DF in an appropriate python environment with the aformentioned dependencies.
 
 To activate the lume-ace3p conda environment on an S3DF iana terminal:
 1. Run the command: ```/sdf/group/rfar/software/conda/bin/conda init``` to set up conda for your terminal (only needs to be done once)
@@ -12,12 +16,12 @@ To activate the lume-ace3p conda environment on an S3DF iana terminal:
 To run the examples on an S3DF iana terminal:
 1. Copy the ```/sdf/group/rfar/lume-ace3p/examples``` folder to a desired location (e.g. in home or scratch)
 2. Run the ace3p setup script with ```source sdf-ace3p.sh``` (required to run ACE3P on S3DF)
-   - The sdf-ace3p.sh file is located in ```/sdf/group/rfar/ace3p/```
+   - The `sdf-ace3p.sh` file is located in ```/sdf/group/rfar/ace3p/```
+   - Make sure ```/sdf/group/rfar/lume-ace3p/``` is added to your ```PYTHONPATH``` variable after sourcing the ace3p setup script.
+   - Use the command ```export PYTHONPATH='/sdf/group/rfar/lume-ace3p/:$PYTHONPATH'``` to manually set this path if needed.
 3. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
 4. Submit a batch job from one of the examples with ```sbatch```
 5. View the results in the folder that the batch job was run from
-
-Note: the demo batch job scripts are configured to run using the RFAR group repo on S3DF, and may need to be adjusted.
 
 # How to use LUME-ACE3P
 
@@ -33,10 +37,11 @@ The basic idea is that a user submits the batch script to HPC nodes which contai
 
 The Cubit journal file, ACE3P input file, and acdtool postprocess files are unchanged from if running ACE3P normally. The details on the LUME-ACE3P python script are discussed in the following section.
 
-# Setting up a LUME-ACE3P python script
+# Setting up a LUME-ACE3P parameter sweep python script
 
-A LUME-ACE3P python script primarily consists of two sections: a workflow "function" section which contains the start-to-end steps for evaluating a chain of steps (e.g. Cubit -> Omega3P -> acdtool), and a parameter sweep/optimization section which contains how the inputs and outputs of the workflow function are managed/written to files. In this section, each part of the example "lume-ace3p_psweep_demo.py" is explained in detail.
+A LUME-ACE3P python script primarily consists of two sections: a workflow "function" section which contains the start-to-end steps for evaluating a chain of steps (e.g. Cubit -> Omega3P -> acdtool), and a parameter sweep section which contains how the inputs and outputs of the workflow function are managed/written to files. In this section, each part of the example "lume-ace3p_psweep_demo.py" is explained in detail.
 
+The script begins with the neccessary LUME-ACE3P imports.
 ```python
 import os
 from lume_ace3p.cubit import Cubit
@@ -47,10 +52,16 @@ from lume_ace3p.tools import WriteDataTable
 #Define parameters to sweep in lists
 input1 = [90 + 10*i for i in range(4)]      #Cavity radii in mm (units in cubit journal)
 input2 = [0.5 + 0.25*i for i in range(4)]   #Cavity ellipticity parameter
+```
+This part makes lists for the user-defined parameters to sweep. Any number of parameter inputs (with arbitrary names) can be defined here and are simply python lists of numeric values. If more nuanced parameterization is needed, see the parameter sweep section with for loops.
 
+```python
 #Define base working directory for all simulations (each will get its own folder)
 my_base_dir = os.path.join(os.getcwd(),'lume-ace3p_demo_workdir')
+```
+This sets a user-defined folder prefix for all the workflow runs in the parameter sweep. In this example, each parameter run will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by parameter values of input1 and input2. The base prefix is defined here.
 
+```python
 #Define the function workflow to evaluate
 def workflow_function(input_dict):
 
@@ -75,7 +86,20 @@ def workflow_function(input_dict):
                    "Frequency": acdtool_obj.output_data['RoverQ']['0']['Frequency']}
     
     return output_dict
+```
+This is the workflow function definition for LUME-ACEP and is the main part of how the steps are joined together. The function is set up with python dictionary inputs and outputs.
 
+The python input dictionary will have the form ```{'var_name1': var_value1, 'var_name2': var_value2, ...}``` which will be passed into the necessary modules (e.g. Cubit) to update values.
+
+The ```sim_dir``` value will be updated for each parameter run. If each parameter run doesn't need to be saved, the ```sim_dir``` variable can be any fixed folder name (which will be created/overwritten).
+
+The ```cubit_obj``` object is created from a user-provided Cubit journal file. The values in the journal file are updated by any changes to the variables defined in the input dictionary followed by running Cubit in ```--nographics``` mode to generate the mesh (it will automatically be converted to a .netcdf format for ACE3P).
+
+The ```omega3p_obj``` object is created from a user-provided Omega3P input file. Since no values are changed here, the .omega3p script is run as-is.
+
+The ```acdtool_obj``` object is created from a user-provided acdtool rfpost input file. Since no values are changed here, the .rfpost script is run as-is.
+
+```python
 #Sweep through all parameter combinations (single or multiple for-loops)
 sim_output = {} #Output dict to store results
 for i in range(len(input1)):
