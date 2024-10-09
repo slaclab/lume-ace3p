@@ -3,8 +3,8 @@
 
 LUME-ACE3P is a set of python code interfaces for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Cristopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt/xopt), written by Ryan Roussel.
 
-# Setting up LUME-ACE3P on S3DF
-
+# Setting up LUME-ACE3P
+<details><summary>S3DF</summary>
 The dependencies are "lume-base=0.3.3" and "xopt=2.2.2" from conda-forge (later versions may work). The examples and scripts are configured to run on S3DF in an appropriate python environment with the aformentioned dependencies.
 
 To activate the lume-ace3p conda environment on an S3DF iana terminal:
@@ -22,9 +22,15 @@ To run the examples on an S3DF iana terminal:
 3. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
 4. Submit a batch job from one of the examples with ```sbatch```
 5. View the results in the folder that the batch job was run from
+</details>
+
+<details><summary>Perlmutter</summary>
+To be implemented!
+</details>
 
 # How to use LUME-ACE3P
 
+<details><summary>Instructions</summary>
 The LUME-ACE3P python scripts enable the use of parameter sweeping and parameter optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a simple parameter sweep a user will need to provide the following:
 
 - a Cubit journal (.jou) file for editing (required for remeshing)
@@ -36,8 +42,11 @@ The LUME-ACE3P python scripts enable the use of parameter sweeping and parameter
 The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains 2 main parts: an ACE3P workflow function definition, and the parameter sweep loop. The parameter sweep loop calls the ACE3P workflow function and uses the appropriate input files with the corresponding codes (e.g. Cubit, Omega3P, etc.) and parses the output for writing to a text file or for use with optimization.
 
 The Cubit journal file, ACE3P input file, and acdtool postprocess files are unchanged from if running ACE3P normally. The details on the LUME-ACE3P python script are discussed in the following section.
+</details>
 
-# Setting up a LUME-ACE3P parameter sweep python script
+# Setting up LUME-ACE3P python scripts
+
+<details><summary>Parameter Sweep Example</summary>
 
 A LUME-ACE3P python script primarily consists of two sections: a workflow "function" section which contains the start-to-end steps for evaluating a chain of steps (e.g. Cubit -> Omega3P -> acdtool), and a parameter sweep section which contains how the inputs and outputs of the workflow function are managed/written to files. In this section, each part of the example "lume-ace3p_psweep_demo.py" is explained in detail.
 
@@ -91,13 +100,29 @@ This is the workflow function definition for LUME-ACEP and is the main part of h
 
 The python input dictionary will have the form ```{'var_name1': var_value1, 'var_name2': var_value2, ...}``` which will be passed into the necessary modules (e.g. Cubit) to update values.
 
-The ```sim_dir``` value will be updated for each parameter run. If each parameter run doesn't need to be saved, the ```sim_dir``` variable can be any fixed folder name (which will be created/overwritten).
+- The ```sim_dir``` value will be updated for each parameter run. If each parameter run doesn't need to be saved, the ```sim_dir``` variable can be any fixed folder name (which will be created/overwritten).
+- The ```cubit_obj``` object is created from a user-provided Cubit journal file. The values in the journal file are updated by any changes to the variables defined in the input dictionary followed by running Cubit in ```--nographics``` mode to generate the mesh (it will automatically be converted to a .netcdf format for ACE3P).
+- The ```omega3p_obj``` object is created from a user-provided Omega3P input file and then run with Omega3P. Since no values are changed here, the .omega3p script is run as-is.
+- The ```acdtool_obj``` object is created from a user-provided acdtool rfpost input file and then run with acdtool. Since no values are changed here, the .rfpost script is run as-is.
 
-The ```cubit_obj``` object is created from a user-provided Cubit journal file. The values in the journal file are updated by any changes to the variables defined in the input dictionary followed by running Cubit in ```--nographics``` mode to generate the mesh (it will automatically be converted to a .netcdf format for ACE3P).
+Lastly, the ```output_dict``` dictionary is created which returns user-specified quantities from the postprocessing outputs of acdtool. The structure of `the acdtool_obj.output_data` is a nested set of dictionaries corresponding to a parsed output of the `rfpost.out` file generated from acdtool. In this example, the first layer is `['RoverQ']` which corresponds to the "RoverQ" section defined in `pillbox-rtop.rfpost`. The second layer `['0']` corresponds to the mode ID number "0" within the "RoverQ" printout in the .rfpost file. The third layer `['Frequency']` corresponds to the data column "Frequency" of the corresponding mode ID.
 
-The ```omega3p_obj``` object is created from a user-provided Omega3P input file. Since no values are changed here, the .omega3p script is run as-is.
+<details><summary>Example rfpost.out text parse</summary>
+Within the rfpost.out text file, the "RoverQ" output has the form:
 
-The ```acdtool_obj``` object is created from a user-provided acdtool rfpost input file. Since no values are changed here, the .rfpost script is run as-is.
+```
+[RoverQ]
+{  // RoverQ=V^2/(omega*U)
+   Integral:  x1  = 0.0000e+00,  y1  = 1.0000e-03,  z1  =-1.5000e-01
+              x2  = 0.0000e+00,  y2  = 1.0000e-03,  z2  = 1.5000e-01
+ ModeID   Frequency       Qext              V_r, V_i              |V|          RoQ(ohm/cavity)
+    0   1.4088933e+09  0.00000e+00  -1.1598e+00, -3.9855e+00    4.15088e+00      1.09912e+02
+    1   2.3462886e+09  0.00000e+00   2.8356e+00, -1.4684e+00    3.19326e+00      3.90596e+01
+}
+```
+
+This output would be parsed by LUME-ACE3P in the example as ```output_dict = {"RoQ": 1.09912e+02, "Frequency": 1.4088933e+09}```
+</details> 
 
 ```python
 #Sweep through all parameter combinations (single or multiple for-loops)
@@ -118,6 +143,19 @@ for i in range(len(input1)):
         #See src/tools.py for more information on the WriteDataTable function
         WriteDataTable('psweep_output.txt', sim_output, ['Radius','Ellipticity'], ['RoQ','Frequency'])
 ```
+The last part of the LUME-ACE3P python script contains the parameter sweeping for-loop. In the given example, all pairs of values of (input1,input2) are swept over for a total of 16 evaluations (since input1 and input2 were lists of 4 values each).
+
+To set-up the inputs for the workflow function, a dictionary ```inputs``` is created with the keywords corresponding to the variable names in the Cubit journal file. **The names of the keywords in this inputs dictionary must exactly match the variable names defined in the Cubit journal!** The "workflow_dir" keyword is used to concatenate the input1 and input2 pair of values to the workflow folder name with the base foldername "my_base_dir" defined before.
+
+The workflow function is then called for all tuples of (input1,input2). Thus the "sim_output" dictionary uses the (input1,input2) tuples as *keys* with the corresponding workflow outputs "output_dict" as *values* of those keys!
+
+The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary into a tab-delimited text file named "psweep_output.txt". In this example, input1 corresponds to the variable name "Radius" and input2 corresponds to the variable name "Ellipticity" (these are aribtrary names and only used in writing the column names in the text file). However, the outputs "RoQ" and "Frequency" corresponds to the **exact** output name used in the "output_dict" of the workflow function.
+
+</details>
+
+<details><summary>Optimization Example</summary>
+To be implemented!
+</details>
 
 # SLAC National Accelerator Laboratory
 The SLAC National Accelerator Laboratory is operated by Stanford University for the US Departement of Energy.  
