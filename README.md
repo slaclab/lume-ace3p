@@ -107,7 +107,7 @@ The python input dictionary will have the form ```{'var_name1': var_value1, 'var
 
 Lastly, the ```output_dict``` dictionary is created which returns user-specified quantities from the postprocessing outputs of acdtool. The structure of `the acdtool_obj.output_data` is a nested set of dictionaries corresponding to a parsed output of the `rfpost.out` file generated from acdtool. In this example, the first layer is `['RoverQ']` which corresponds to the "RoverQ" section defined in `pillbox-rtop.rfpost`. The second layer `['0']` corresponds to the mode ID number "0" within the "RoverQ" printout in the .rfpost file. The third layer `['Frequency']` corresponds to the data column "Frequency" of the corresponding mode ID.
 
-<details><summary>Example rfpost.out text parse</summary>
+<details><summary>Example rfpost.out text</summary>
 Within the rfpost.out text file, the "RoverQ" output has the form:
 
 ```
@@ -147,9 +147,11 @@ The last part of the LUME-ACE3P python script contains the parameter sweeping fo
 
 To set-up the inputs for the workflow function, a dictionary ```inputs``` is created with the keywords corresponding to the variable names in the Cubit journal file. **The names of the keywords in this inputs dictionary must exactly match the variable names defined in the Cubit journal!** The "workflow_dir" keyword is used to concatenate the input1 and input2 pair of values to the workflow folder name with the base foldername "my_base_dir" defined before.
 
-The workflow function is then called for all tuples of (input1,input2). Thus the "sim_output" dictionary uses the (input1,input2) tuples as *keys* with the corresponding workflow outputs "output_dict" as *values* of those keys!
+The workflow function is then called with the generated input dictionary. Thus the "sim_output" dictionary uses the (input1,input2) tuples as *keys* with the corresponding workflow outputs "output_dict" as *values* of those keys!
 
 The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary into a tab-delimited text file named "psweep_output.txt". In this example, input1 corresponds to the variable name "Radius" and input2 corresponds to the variable name "Ellipticity" (these are aribtrary names and only used in writing the column names in the text file). However, the outputs "RoQ" and "Frequency" corresponds to the **exact** output name used in the "output_dict" of the workflow function.
+
+<details><summary>Example WriteDataTable output text</summary></details>
 
 </details>
 
