@@ -22,11 +22,11 @@ class Omega3P(CommandWrapper):
         self.output_file = 'omega3p.out'    #Default output file for omega3p
         self.load_input_file()
         
-    def run(self):
+    def run(self,tasks=1,cores=1,opts=''):
         self.write_input()
-        result = subprocess.run(self.MPI_CALLER + ' ' + self.ACE3P_PATH + 'omega3p'
-                                + ' ' + self.input_file, shell=True, cwd=self.workdir,
-                                capture_output=True, text=True)
+        result = subprocess.run(self.MPI_CALLER + ' -n ' + tasks + ' -c ' + cores + ' ' + opts + ' ' +
+                                + self.ACE3P_PATH + 'omega3p' + ' ' + self.input_file,
+                                shell=True, cwd=self.workdir, capture_output=True, text=True)
         with open(os.path.join(self.workdir, self.output_file), 'w') as file:
             file.writelines(result.stdout)
         

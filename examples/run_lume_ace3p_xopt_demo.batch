@@ -10,6 +10,6 @@
 #SBATCH --time=0-00:10:00
 
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
+export PYTHONPATH='/sdf/group/rfar/lume-ace3p:$PYTHONPATH'
 
 python lume-ace3p_xopt_demo.py

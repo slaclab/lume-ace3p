@@ -31,13 +31,16 @@ def workflow_function(input_dict):
     acdtool_obj.run()   #Defaults to 'postprocess rf' command if .rfpost file given
     
     #Create output dict containing desired quantities
+    #The acdtool_obj.output_data is a nested dictionary generally of the form:
+    #  output_data['RoverQ']['modeID']['ColumnName']
+    #  output_data['maxFieldsOnSurface']['SurfaceID']['ModeID']['ColumnName']
     output_dict = {"RoQ": acdtool_obj.output_data['RoverQ']['0']['RoQ'],
                    "Frequency": acdtool_obj.output_data['RoverQ']['0']['Frequency']}
     
     return output_dict
 
 #Sweep through all parameter combinations (single or multiple for-loops)
-sim_output = {} #Output dict to store results
+sim_output = {} #Output dict to store results#
 for i in range(len(input1)):
     for j in range(len(input2)):
         #Create input dict for sim function
