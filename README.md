@@ -49,7 +49,7 @@ The Cubit journal file, ACE3P input file, and acdtool postprocess files are unch
 
 <details><summary>Cubit Journal Files</summary>
 
-Since a Cubit journal files can be very complex, only the parts which directly interface with LUME-ACE3P will be discussed here. The important aspects to note in a Cubit file when using LUME-ACE3P are:
+Cubit journal files can be very complex, thus only the parts which directly interface with LUME-ACE3P will be discussed here. The important aspects to note in a Cubit file when using LUME-ACE3P are:
 - Variable name references
 - Mesh export commands
 
@@ -72,6 +72,27 @@ For more information on Cubit journal files, see the official [Cubit documentati
 </details>
 
 <details><summary>ACE3P Input Files</summary>
+
+ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
+```
+ModelInfo : {
+  File: ./my_mesh_file.ncdf
+
+  BoundaryCondition : {
+    Magnetic: 1, 2
+    Exterior: 6
+  }
+
+  SurfaceMaterial : {
+    ReferenceNumber: 6
+    Sigma: 5.8e7
+  }
+}
+```
+The boundary condition and surface material numbers correspond to the "sideset" flags defined in a Cubit journal. **The filename of the mesh must match the name used in the corresponding Cubit journal file "export" command (with the .ncdf extension since the .gen extension gets converted automatically)!** Additionally, ACE3P input file parameters can be adjusted directly with LUME-ACE3P with an ACE3P object (see omega3p_obj parameters for more details).
+
+For more information on configuring ACE3P input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
+
 </details>
 
 <details><summary>Acdtool Postprocess Files</summary>
