@@ -5,17 +5,17 @@ from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.tools import WriteDataTable
 
 #Define parameters to sweep in lists
-cav_rs = [90 + 10*i for i in range(4)]      #Cavity radii in mm (units in cubit journal)
-cav_es = [0.5 + 0.25*i for i in range(4)]   #Cavity ellipticity parameter
+input1 = [90 + 10*i for i in range(4)]      #Cavity radii in mm (units in cubit journal)
+input2 = [0.5 + 0.25*i for i in range(4)]   #Cavity ellipticity parameter
 
 #Define base working directory for all simulations (each will get its own folder)
-base_dir = os.path.join(os.getcwd(),'lume-ace3p_demo_workdir')
+my_base_dir = os.path.join(os.getcwd(),'lume-ace3p_demo_workdir')
 
 #Define the function workflow to evaluate
-def sim_function(input_dict):
+def workflow_function(input_dict):
 
     #Load working directory from base name + parameters
-    sim_dir = input_dict['sim_dir']
+    sim_dir = input_dict['workflow_dir']
 
     #Create cubit object, parse input file, update values, and then run cubit
     cubit_obj = Cubit('pillbox-rtop.jou',workdir=sim_dir)
@@ -38,16 +38,16 @@ def sim_function(input_dict):
 
 #Sweep through all parameter combinations (single or multiple for-loops)
 sim_output = {} #Output dict to store results
-for i in range(len(cav_rs)):
-    for j in range(len(cav_es)):
+for i in range(len(input1)):
+    for j in range(len(input2)):
         #Create input dict for sim function
         #Note: desired cubit input names must match those in Cubit journal!
-        inputs = {'cav_radius': cav_rs[i],
-                  'cav_ellipticity': cav_es[j],
-                  'sim_dir': base_dir + '_' + str(cav_rs[i]) + '_' + str(cav_es[j])}
+        inputs = {'cav_radius': input1[i],
+                  'cav_ellipticity': input2[j],
+                  'workflow_dir': my_base_dir + '_' + str(input1[i]) + '_' + str(input2[j])}
         
         #Call sim function for set of inputs
-        sim_output[(cav_rs[i],cav_es[j])] = sim_function(inputs)
+        sim_output[(input1[i],input2[j])] = workflow_function(inputs)
 
         #Write data to text file (this will overwrite the file as the sim_output dict grows)
         #(or put WriteDataTable outside of for loop to only write data at end simulations)
