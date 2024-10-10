@@ -4,6 +4,11 @@
 LUME-ACE3P is a set of python code interfaces for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Cristopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt/xopt), written by Ryan Roussel.
 
 # Setting up LUME-ACE3P
+
+<details><summary>Perlmutter</summary>
+To be implemented!
+</details>
+
 <details><summary>S3DF</summary>
 The dependencies are "lume-base=0.3.3" and "xopt=2.2.2" from conda-forge (later versions may work). The examples and scripts are configured to run on S3DF in an appropriate python environment with the aformentioned dependencies.
 
@@ -24,10 +29,6 @@ To run the examples on an S3DF iana terminal:
 5. View the results in the folder that the batch job was run from
 </details>
 
-<details><summary>Perlmutter</summary>
-To be implemented!
-</details>
-
 # How to use LUME-ACE3P
 
 <details><summary>Instructions</summary>
@@ -44,11 +45,43 @@ The basic idea is that a user submits the batch script to HPC nodes which contai
 The Cubit journal file, ACE3P input file, and acdtool postprocess files are unchanged from if running ACE3P normally. The details on the LUME-ACE3P python script are discussed in the following section.
 </details>
 
+# Setting up Cubit/ACE3P/Acdtool input files
+
+<details><summary>Cubit Journal Files</summary>
+
+Since a Cubit journal files can be very complex, only the parts which directly interface with LUME-ACE3P will be discussed here. The important aspects to note in a Cubit file when using LUME-ACE3P are:
+- Variable name references
+- Mesh export commands
+
+Variable names and values should generally be near the beginning of a Cubit journal file. LUME-ACE3P will read and adjust these values based on given parameter inputs. For example, a Cubit journal might contain APREPRO lines like:
+```
+#{my_variable_1 = 90}
+#{my_variable_2 = 123}
+#{my_variable_3 = 0.5}
+```
+This would be parsed with LUME-ACE3P with a cubit object (see cubit_obj parameters for more details) which would overwrite the numeric quantities following the "=" signs in those lines. **Special care must be taken to ensure the variable names used in the Cubit journal file exactly match those used in the LUME-ACE3P python script workflow inputs!**
+
+Since ACE3P can use acdtool to convert Genesis (.gen) formatted meshes into NetCDF (.ncdf), the "export" command in the Cubit journal should use the Genesis option. For example, a Cubit journal might contain the export command:
+```
+export Genesis "my_mesh_file.gen" block all overwrite
+```
+This will export the generated mesh into a .gen file and LUME-ACE3P will automatically call acdtool to convert it further into a .ncdf file with the same name ("my_mesh_file.ncdf" in this case).
+
+For more information on Cubit journal files, see the official [Cubit documentation](https://cubit.sandia.gov/documentation/). 
+
+</details>
+
+<details><summary>ACE3P Input Files</summary>
+</details>
+
+<details><summary>Acdtool Postprocess Files</summary>
+</details>
+
 # Setting up LUME-ACE3P python scripts
 
 <details><summary>Parameter Sweep Example</summary>
 
-A LUME-ACE3P python script primarily consists of two sections: a workflow "function" section which contains the start-to-end steps for evaluating a chain of steps (e.g. Cubit -> Omega3P -> acdtool), and a parameter sweep section which contains how the inputs and outputs of the workflow function are managed/written to files. In this section, each part of the example "lume-ace3p_psweep_demo.py" is explained in detail.
+A LUME-ACE3P python script primarily consists of two sections: a workflow "function" section which contains the start-to-end steps for evaluating a chain of tasks (e.g. Cubit -> Omega3P -> acdtool), and a parameter sweep section which contains how the inputs and outputs of the workflow function are managed/written to files. In this section, each part of the example "lume-ace3p_psweep_demo.py" is explained in detail.
 
 The script begins with the neccessary LUME-ACE3P imports.
 ```python
@@ -100,12 +133,12 @@ This is the workflow function definition for LUME-ACEP and is the main part of h
 
 The python input dictionary will have the form ```{'var_name1': var_value1, 'var_name2': var_value2, ...}``` which will be passed into the necessary modules (e.g. Cubit) to update values.
 
-- The ```sim_dir``` value will be updated for each parameter run. If each parameter run doesn't need to be saved, the ```sim_dir``` variable can be any fixed folder name (which will be created/overwritten).
+- The ```sim_dir``` value will be updated for each parameter run. If each parameter run doesn't need to be saved, the ```sim_dir``` variable can be any folder path name (which will be created/overwritten).
 - The ```cubit_obj``` object is created from a user-provided Cubit journal file. The values in the journal file are updated by any changes to the variables defined in the input dictionary followed by running Cubit in ```--nographics``` mode to generate the mesh (it will automatically be converted to a .netcdf format for ACE3P).
 - The ```omega3p_obj``` object is created from a user-provided Omega3P input file and then run with Omega3P. Since no values are changed here, the .omega3p script is run as-is.
 - The ```acdtool_obj``` object is created from a user-provided acdtool rfpost input file and then run with acdtool. Since no values are changed here, the .rfpost script is run as-is.
 
-Lastly, the ```output_dict``` dictionary is created which returns user-specified quantities from the postprocessing outputs of acdtool. The structure of `the acdtool_obj.output_data` is a nested set of dictionaries corresponding to a parsed output of the `rfpost.out` file generated from acdtool. In this example, the first layer is `['RoverQ']` which corresponds to the "RoverQ" section defined in `pillbox-rtop.rfpost`. The second layer `['0']` corresponds to the mode ID number "0" within the "RoverQ" printout in the .rfpost file. The third layer `['Frequency']` corresponds to the data column "Frequency" of the corresponding mode ID.
+Lastly, the ```output_dict``` dictionary is created which returns user-specified quantities from the postprocessing outputs of acdtool. The structure of `the acdtool_obj.output_data` is a nested set of dictionaries corresponding to a parsed output of the `rfpost.out` file generated from acdtool. In this example, the first layer is `['RoverQ']` which corresponds to the "RoverQ" section defined in `pillbox-rtop.rfpost`. The second layer `['0']` corresponds to the mode ID number "0" within the "RoverQ" printout in the .rfpost file. The third layer `['Frequency']` corresponds to the data column "Frequency" of the corresponding mode ID. See the object options section for more details.
 
 <details><summary>Example rfpost.out text</summary>
 Within the rfpost.out text file, the "RoverQ" output has the form:
@@ -149,7 +182,7 @@ To set-up the inputs for the workflow function, a dictionary ```inputs``` is cre
 
 The workflow function is then called with the generated input dictionary. Thus the "sim_output" dictionary uses the (input1,input2) tuples as *keys* with the corresponding workflow outputs "output_dict" as *values* of those keys!
 
-The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary into a tab-delimited text file named "psweep_output.txt". In this example, input1 corresponds to the variable name "Radius" and input2 corresponds to the variable name "Ellipticity" (these are aribtrary names and only used in writing the column names in the text file). However, the outputs "RoQ" and "Frequency" corresponds to the **exact** output name used in the "output_dict" of the workflow function.
+The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary into a tab-delimited text file named "psweep_output.txt". In this example, input1 corresponds to the variable name "Radius" and input2 corresponds to the variable name "Ellipticity" (these are aribtrary names and only used in writing the column names in the text file). However, the outputs "RoQ" and "Frequency" correspond to the **exact** output name used in the "output_dict" of the workflow function.
 
 </details>
 
