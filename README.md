@@ -151,8 +151,6 @@ The workflow function is then called with the generated input dictionary. Thus t
 
 The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary into a tab-delimited text file named "psweep_output.txt". In this example, input1 corresponds to the variable name "Radius" and input2 corresponds to the variable name "Ellipticity" (these are aribtrary names and only used in writing the column names in the text file). However, the outputs "RoQ" and "Frequency" corresponds to the **exact** output name used in the "output_dict" of the workflow function.
 
-<details><summary>Example WriteDataTable output text</summary></details>
-
 </details>
 
 <details><summary>Optimization Example</summary>
