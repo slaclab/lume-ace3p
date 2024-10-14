@@ -5,12 +5,30 @@ LUME-ACE3P is a set of python code interfaces for running ACE3P workflows (inclu
 
 # Setting up LUME-ACE3P
 
+The dependencies for LUME-ACE3P are "lume-base>=0.3.3" and "xopt>=2.2.2" from conda-forge. The examples and scripts are configured to run on NERSC Perlmutter or SLAC S3DF in an appropriate python environment with the aformentioned dependencies. See the following for details on how to access pre-made conda environments for LUME-ACE3P on the supported systems.
+
 <details><summary>Perlmutter</summary>
-To be implemented!
+   
+To activate the lume-ace3p conda environment on a Perlmutter login node:
+1. Run the command: ```/global/cfs/cdirs/ace3p/software/miniconda3/condabin/conda init``` to set up conda for your terminal (only needs to be done once)
+2. Reopen a terminal on Perlmutter and run the command: ```conda activate lume-ace3p```
+   - The text "(lume-ace3p)" should be shown on the command line indicating you are in the correct conda environment
+   - The command ```conda deactivate``` can be used to exit the conda environment if desired
+
+To run the examples on Perlmutter:
+1. Copy the ```/global/cfs/cdirs/ace3p/lume-ace3p/examples``` folder to a desired location (e.g. in home or scratch)
+2. Run the ace3p setup script with ```source perlmutter-ace3p.sh``` (required to run ACE3P on Perlmutter)
+   - The `perlmutter-ace3p.sh` file is located in ```/global/cfs/cdirs/ace3p/```
+3. Set the environment variable `PYTHONPATH` to ```/global/cfs/cdirs/ace3p/lume-ace3p/```
+   - Use the command ```export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/'``` which can be put in your `.bashrc` file.
+4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
+5. Submit a batch job from one of the Perlmutter examples with ```sbatch```
+6. View the results in the folder that the batch job was run from
+</details>
+
 </details>
 
 <details><summary>S3DF</summary>
-The dependencies are "lume-base=0.3.3" and "xopt=2.2.2" from conda-forge (later versions may work). The examples and scripts are configured to run on S3DF in an appropriate python environment with the aformentioned dependencies.
 
 To activate the lume-ace3p conda environment on an S3DF iana terminal:
 1. Run the command: ```/sdf/group/rfar/software/conda/bin/conda init``` to set up conda for your terminal (only needs to be done once)
@@ -22,11 +40,11 @@ To run the examples on an S3DF iana terminal:
 1. Copy the ```/sdf/group/rfar/lume-ace3p/examples``` folder to a desired location (e.g. in home or scratch)
 2. Run the ace3p setup script with ```source sdf-ace3p.sh``` (required to run ACE3P on S3DF)
    - The `sdf-ace3p.sh` file is located in ```/sdf/group/rfar/ace3p/```
-   - Make sure ```/sdf/group/rfar/lume-ace3p/``` is added to your ```PYTHONPATH``` variable after sourcing the ace3p setup script.
-   - Use the command ```export PYTHONPATH='/sdf/group/rfar/lume-ace3p/:$PYTHONPATH'``` to manually set this path if needed.
-3. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
-4. Submit a batch job from one of the examples with ```sbatch```
-5. View the results in the folder that the batch job was run from
+3. Set the environment variable `PYTHONPATH` to ```/global/cfs/cdirs/ace3p/lume-ace3p/```
+   - Use the command ```export PYTHONPATH='/sdf/grou/rfar/lume-ace3p/'``` which can be put in your `.bashrc` file.
+4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
+5. Submit a batch job from one of the S3DF examples with ```sbatch```
+6. View the results in the folder that the batch job was run from
 </details>
 
 # How to use LUME-ACE3P
