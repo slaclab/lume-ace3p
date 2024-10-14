@@ -85,7 +85,7 @@ Since ACE3P can use acdtool to convert Genesis (.gen) formatted meshes into NetC
 ```
 export Genesis "my_mesh_file.gen" block all overwrite
 ```
-This will export the generated mesh into a .gen file and LUME-ACE3P will automatically call acdtool to convert it further into a .ncdf file with the same name ("my_mesh_file.ncdf" in this case). LUME-ACE3P can also adjust the export filename from within python as well (see cubit_obj parameters for more details).
+This will export the generated mesh into a .gen file and LUME-ACE3P will automatically call acdtool to convert it further into a .ncdf file with the same name ("my_mesh_file.ncdf" in this case). LUME-ACE3P can also adjust the export filename from within python as well (see [cubit python objects](#LUME-ACE3P-Python-object-structures-advanced-users) for more details).
 
 For more information on Cubit journal files, see the official [Cubit documentation](https://cubit.sandia.gov/documentation/). 
 
@@ -233,6 +233,20 @@ The ```WriteDataTable``` routine will unpack the "sim_output" nested-dictionary 
 </details>
 
 <details><summary>Optimization Example</summary>
+To be implemented!
+</details>
+
+# LUME-ACE3P Python object structures (advanced users)
+
+<details><summary>Cubit python objects</summary>
+To be implemented!
+</details>
+
+<details><summary>Omega3P python objects</summary>
+To be implemented!
+</details>
+
+<details><summary>Acdtool python objects</summary>
 To be implemented!
 </details>
 
