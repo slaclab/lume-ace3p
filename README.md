@@ -85,7 +85,7 @@ Since ACE3P can use acdtool to convert Genesis (.gen) formatted meshes into NetC
 ```
 export Genesis "my_mesh_file.gen" block all overwrite
 ```
-This will export the generated mesh into a .gen file and LUME-ACE3P will automatically call acdtool to convert it further into a .ncdf file with the same name ("my_mesh_file.ncdf" in this case).
+This will export the generated mesh into a .gen file and LUME-ACE3P will automatically call acdtool to convert it further into a .ncdf file with the same name ("my_mesh_file.ncdf" in this case). LUME-ACE3P can also adjust the export filename from within python as well (see cubit_obj parameters for more details).
 
 For more information on Cubit journal files, see the official [Cubit documentation](https://cubit.sandia.gov/documentation/). 
 
@@ -116,6 +116,11 @@ For more information on configuring ACE3P input files, see the [ACE3P tutorials]
 </details>
 
 <details><summary>Acdtool Postprocess Files</summary>
+
+An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary object (see acdtool_obj parameters for more details).
+
+For more information on configuring Acdtool input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
+
 </details>
 
 # Setting up LUME-ACE3P python scripts
