@@ -52,13 +52,14 @@ To run the examples on an S3DF iana terminal:
 # How to use LUME-ACE3P
 
 <details><summary>Instructions</summary>
-The LUME-ACE3P python scripts enable the use of parameter sweeping and parameter optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a simple parameter sweep a user will need to provide the following:
+   
+The LUME-ACE3P python scripts enable the use of parameter sweeping or optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a parameter sweep or optimization run, a user will need to provide the following:
 
-- a Cubit journal (.jou) file for editing (required for remeshing)
-- an ACE3P input file (e.g. .omega3p) with desired input settings
-- an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
-- a LUME-ACE3P python script (.py) containing the ACE3P workflow and parameter sweeping/optimization settings
-- a batch script (.batch) for submitting a job to the appropriate HPC resources
+> - a Cubit journal (.jou) file for editing (required for remeshing)
+> - an ACE3P input file (e.g. .omega3p) with desired input settings
+> - an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
+> - a LUME-ACE3P python script (.py) containing the ACE3P workflow and parameter sweeping/optimization settings
+> - a batch script (.batch) for submitting a job to the appropriate HPC resources
 
 The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains 2 main parts: an ACE3P workflow function definition, and the parameter sweep/optimization loop. The parameter sweep/optimization loop calls the ACE3P workflow function and uses the appropriate input files with the corresponding codes (e.g. Cubit, Omega3P, etc.) and parses the output for writing to a text file or for use with optimization.
 
@@ -109,7 +110,7 @@ ModelInfo : {
   }
 }
 ```
-The boundary condition and surface material numbers correspond to the "sideset" flags defined in a Cubit journal. **The filename of the mesh must match the name used in the corresponding Cubit journal file "export" command (with the .ncdf extension since the .gen extension gets converted automatically)!** Additionally, ACE3P input file parameters can be adjusted directly with LUME-ACE3P with an ACE3P object (see omega3p_obj parameters for more details).
+The boundary condition and surface material numbers correspond to the "sideset" flags defined in a Cubit journal. **The filename of the mesh must match the name used in the corresponding Cubit journal file "export" command (with the .ncdf extension since the .gen extension gets converted automatically)!** Additionally, ACE3P input file parameters can be adjusted directly with LUME-ACE3P with an ACE3P object (see [omega3p python objects](#LUME-ACE3P-Python-object-structures-advanced-users) for more details).
 
 For more information on configuring ACE3P input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
 
@@ -117,7 +118,7 @@ For more information on configuring ACE3P input files, see the [ACE3P tutorials]
 
 <details><summary>Acdtool Postprocess Files</summary>
 
-An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary object (see acdtool_obj parameters for more details).
+An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary object (see [acdtool python objects](#LUME-ACE3P-Python-object-structures-advanced-users) for more details).
 
 For more information on configuring Acdtool input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
 
