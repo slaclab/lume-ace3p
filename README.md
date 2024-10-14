@@ -3,9 +3,9 @@
 
 LUME-ACE3P is a set of python code interfaces for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Cristopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt/xopt), written by Ryan Roussel.
 
-# Setting up LUME-ACE3P
+# LUME-ACE3P Dependencies and Installation
 
-The dependencies for LUME-ACE3P are "lume-base>=0.3.3" and "xopt>=2.2.2" from conda-forge. The examples and scripts are configured to run on NERSC Perlmutter or SLAC S3DF in an appropriate python environment with the aformentioned dependencies. See the following for details on how to access pre-made conda environments for LUME-ACE3P on the supported systems.
+LUME-ACE3P is not configured as a stand-alone Python module. Instead, it is a set of Python scripts dependent on "lume-base>=0.3.3" and "xopt>=2.2.2" from conda-forge. The examples and scripts are configured to run on NERSC Perlmutter or SLAC S3DF in an appropriate python environment with the aformentioned dependencies. See the following for details on how to access pre-made conda environments for LUME-ACE3P on the supported systems.
 
 <details><summary>Perlmutter</summary>
    
@@ -19,10 +19,12 @@ To run the examples on Perlmutter:
 1. Copy the ```/global/cfs/cdirs/ace3p/lume-ace3p/examples``` folder to a desired location (e.g. in home or scratch)
 2. Run the ace3p setup script with ```source perlmutter-ace3p.sh``` (required to run ACE3P on Perlmutter)
    - The `perlmutter-ace3p.sh` file is located in ```/global/cfs/cdirs/ace3p/```
+   - This step is optional if your `.bashrc` file already has the necessary module imports for ACE3P
 3. Set the environment variable `PYTHONPATH` to ```/global/cfs/cdirs/ace3p/lume-ace3p/```
    - Use the command ```export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/'``` which can be put in your `.bashrc` file.
+   - Omitting this step may cause conda package conflicts with NERSC's built-in conda module
 4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
-5. Submit a batch job from one of the Perlmutter examples with ```sbatch```
+5. Submit a batch job of one of the *Perlmutter* examples with ```sbatch```
 6. View the results in the folder that the batch job was run from
 </details>
 
@@ -40,10 +42,10 @@ To run the examples on an S3DF iana terminal:
 1. Copy the ```/sdf/group/rfar/lume-ace3p/examples``` folder to a desired location (e.g. in home or scratch)
 2. Run the ace3p setup script with ```source sdf-ace3p.sh``` (required to run ACE3P on S3DF)
    - The `sdf-ace3p.sh` file is located in ```/sdf/group/rfar/ace3p/```
-3. Set the environment variable `PYTHONPATH` to ```/global/cfs/cdirs/ace3p/lume-ace3p/```
+3. Set the environment variable `PYTHONPATH` to ```/sdf/group/rfar/lume-ace3p/```
    - Use the command ```export PYTHONPATH='/sdf/grou/rfar/lume-ace3p/'``` which can be put in your `.bashrc` file.
 4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
-5. Submit a batch job from one of the S3DF examples with ```sbatch```
+5. Submit a batch job of one of the *S3DF* examples with ```sbatch```
 6. View the results in the folder that the batch job was run from
 </details>
 
@@ -56,11 +58,11 @@ The LUME-ACE3P python scripts enable the use of parameter sweeping and parameter
 - an ACE3P input file (e.g. .omega3p) with desired input settings
 - an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
 - a LUME-ACE3P python script (.py) containing the ACE3P workflow and parameter sweeping/optimization settings
-- a batch script (.batch) for submitting a job to HPC resources
+- a batch script (.batch) for submitting a job to the appropriate HPC resources
 
-The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains 2 main parts: an ACE3P workflow function definition, and the parameter sweep loop. The parameter sweep loop calls the ACE3P workflow function and uses the appropriate input files with the corresponding codes (e.g. Cubit, Omega3P, etc.) and parses the output for writing to a text file or for use with optimization.
+The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains 2 main parts: an ACE3P workflow function definition, and the parameter sweep/optimization loop. The parameter sweep/optimization loop calls the ACE3P workflow function and uses the appropriate input files with the corresponding codes (e.g. Cubit, Omega3P, etc.) and parses the output for writing to a text file or for use with optimization.
 
-The Cubit journal file, ACE3P input file, and acdtool postprocess files are unchanged from if running ACE3P normally. The details on the LUME-ACE3P python script are discussed in the following section.
+The Cubit journal file, ACE3P input file, and acdtool postprocess files are generally unaltered from normal ACE3P usage. The details on the LUME-ACE3P python script are discussed in the [Python scripts](#Setting-up-LUMEACE3P-python-files) section.
 </details>
 
 # Setting up Cubit/ACE3P/Acdtool input files
@@ -116,7 +118,7 @@ For more information on configuring ACE3P input files, see the [ACE3P tutorials]
 <details><summary>Acdtool Postprocess Files</summary>
 </details>
 
-# Setting up LUME-ACE3P python scripts
+# Setting up LUME-ACE3P python files
 
 <details><summary>Parameter Sweep Example</summary>
 
