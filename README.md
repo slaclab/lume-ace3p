@@ -61,6 +61,8 @@ The LUME-ACE3P python scripts enable the use of parameter sweeping or optimizati
 > - a LUME-ACE3P python script (.py) containing the ACE3P workflow and parameter sweeping/optimization settings
 > - a batch script (.batch) for submitting a job to the appropriate HPC resources
 
+<img src="LUME-ACE3P File Hierarchy.png" width=800>
+
 The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains 2 main parts: an ACE3P workflow function definition, and the parameter sweep/optimization loop. The parameter sweep/optimization loop calls the ACE3P workflow function and uses the appropriate input files with the corresponding codes (e.g. Cubit, Omega3P, etc.) and parses the output for writing to a text file or for use with optimization.
 
 The Cubit journal file, ACE3P input file, and acdtool postprocess files are generally unaltered from normal ACE3P usage. The details on the LUME-ACE3P python script are discussed in detail in the [python scripts](#Setting-up-LUME-ACE3P-python-scripts) section.
