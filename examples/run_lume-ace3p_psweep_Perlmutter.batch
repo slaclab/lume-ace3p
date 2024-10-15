@@ -1,0 +1,13 @@
+#!/bin/bash
+
+#SBATCH --account=m349
+#SBATCH --job-name=lume-ace3p_xopt_demo
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --mem=480gb
+#SBATCH --time=0-00:10:00
+
+export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
+
+python lume-ace3p_psweep_demo.py
