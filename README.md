@@ -242,7 +242,28 @@ To be implemented!
 # LUME-ACE3P Python object structures (advanced users)
 
 <details><summary>Cubit python objects</summary>
-To be implemented!
+Within an ACE3P workflow in python, a Cubit object can be created with LUME-ACE3P by using a journal file. The syntax is
+
+```python
+from lume_ace3p.cubit import Cubit
+
+cubit_obj = Cubit('my_journal.jou', workdir="/path_to_folder/folder')
+```
+The `workdir` argument is optional as the object will use the current working directory for running codes if not specified.
+This Cubit object will automatically parse the provided journal file line-by-line and can be interfaced with the following commands:
+
+* `cubit_obj.get_value('my_var')`
+  
+     Returns the numeric value of the journal variable 'my_var' (for print debugging or use in other steps).
+     If the variable 'my_var' is not defined in the journal file, a value of `None` is returned.
+
+* `cubit_obj.set_value(input_dict)`
+  `cubit_obj.set_value({'my_var': my_val})`
+
+   Sets the values of all key-value pairs in the input dict which share names with journal file variables. The `input_dict` dictionary should contain key-value pairs in the format of `{'my_var': my_val}`.
+   If a key in the `input_dict` is not present in the journal file, it will not be written. This is intentional as to allow passing a single dictionary to multiple codes and the Cubit object only uses what is relevant and ignores the rest.
+
+
 </details>
 
 <details><summary>Omega3P python objects</summary>
