@@ -1,4 +1,5 @@
 import os
+import numpy as np
 
 from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import Omega3P
@@ -79,9 +80,38 @@ class Omega3PWorkflow(__dict__):
                                 for entry in output_dict[output_name][section][surface][mode].keys():
                                     self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][surface][mode][entry]
 
-        
+    def run_sweep(self, input_dict):
+        input_varname = []
+        input_vardim = []
+        input_vardata = []
+        id = 0
 
-        
+        for var, value in input_dict.items():
+            input_varname[id] = var             #List of input parameter names
+            input_vardim[id] = len(value)       #List of vector lengths for each parameter
+            input_vardata[id] = np.array(value) #List of numpy array vectors of parameters
+            id += 1
+
+        #Build a full tensor product of all combinations of parameters
+        #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
+        #   Then input_tensor is a 6000 x 3 array of all combinations from the 3 parameters
+        input_tensor = input_vardata[0]         #First parameter vector
+        if len(input_varname) > 1:
+            t1 = np.tile(input_tensor,input_vardim[1])
+            t2 = np.repeat(input_vardata[0],input_vardim[0])
+            input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            if len(input_varname) > 2:
+                for i in range(2,len(input_varname)):
+                    t1 = np.tile(input_tensor,(input_vardim[i],1))
+                    t2 = np.repeat(input_vardata[i],len(t1))
+                    input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+
+        for i in len(range(np.size(input_tensor,0))):
+            sweep_dict = {}
+            for j in range(len(input_varname)):
+                sweep_dict[input_varname[j]] = input_tensor[i][j]
+
+            self.run(sweep_dict)
 
             
 
