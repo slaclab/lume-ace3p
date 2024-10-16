@@ -19,30 +19,33 @@ class Omega3PWorkflow(__dict__):
         self.acdtool_input = workflow_dict.get('acdtool_input')
         self.workdirmode = workflow_dict.get('workdirmode','manual')
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
-        self.autorun =  workflow_dict.get('autorun',False)
+        self.autorun =  workflow_dict.get('autorun',True)
         self.output_data = {}
         if self.autorun:
             self.run(input_dict)
             self.evaluate(output_dict)
             return self.output_data
 
-    def getworkdir(self, input_dict):
+    def getworkdir(self, input_dict=None):
         if self.workdirmode == 'manual':
             self.workdir = self.baseworkdir
         elif self.workdirmode == 'auto':
             name_str = ''
-            for key in input_dict.keys():
-                if isinstance(input_dict[key], list):
-                    value = input_dict[key][0]
-                else:
-                    value = input_dict[key]
-                name_str = name_str + '_' + str(value)
+            if input_dict is not None:
+                for key in input_dict.keys():
+                    if isinstance(input_dict[key], list):
+                        value = input_dict[key][0]
+                    else:
+                        value = input_dict[key]
+                    name_str = name_str + '_' + str(value)
             if self.workdir is None:
                 self.workdir = 'workflow_output' + name_str
             else:
                 self.workdir = self.baseworkdir + name_str
 
     def run(self, input_dict=None):
+        self.getworkdir(input_dict)
+
         if self.cubit_input is not None:
             self.cubit_obj = Cubit(self.cubit_input,
                               workdir=self.workdir)
