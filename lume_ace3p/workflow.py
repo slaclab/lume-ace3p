@@ -104,7 +104,7 @@ class Omega3PWorkflow(__dict__):
             if len(input_varname) > 2:
                 for i in range(2,len(input_varname)):
                     t1 = np.tile(input_tensor,(input_vardim[i],1))
-                    t2 = np.repeat(input_vardata[i],len(t1))
+                    t2 = np.repeat(input_vardata[i],np.size(input_tensor,0))
                     input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
 
         for i in len(range(np.size(input_tensor,0))):
