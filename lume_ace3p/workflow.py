@@ -81,16 +81,17 @@ class Omega3PWorkflow(__dict__):
                                     self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][surface][mode][entry]
 
     def run_sweep(self, input_dict):
-        input_varname = []
-        input_vardim = []
-        input_vardata = []
-        id = 0
-
+        input_varname = []  #List of input parameter names
+        input_vardim = []   #List of vector lengths for each parameter
+        input_vardata = []  #List of numpy array vectors of parameters
+        
+        #Unpack dict of inputs into lists
+        var_id = 0
         for var, value in input_dict.items():
-            input_varname[id] = var             #List of input parameter names
-            input_vardim[id] = len(value)       #List of vector lengths for each parameter
-            input_vardata[id] = np.array(value) #List of numpy array vectors of parameters
-            id += 1
+            input_varname[var_id] = var
+            input_vardim[var_id] = len(value)
+            input_vardata[var_id] = np.array(value)
+            var_id += 1
 
         #Build a full tensor product of all combinations of parameters
         #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
@@ -112,6 +113,3 @@ class Omega3PWorkflow(__dict__):
                 sweep_dict[input_varname[j]] = input_tensor[i][j]
 
             self.run(sweep_dict)
-
-            
-
