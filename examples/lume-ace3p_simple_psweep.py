@@ -21,5 +21,4 @@ output_dict = {'Output_1': {'RoverQ': {'0': {'RoQ'}}},
                'Output_3': {'maxFieldsOnSurface': {'6' : {'Emax'}}}}
 
 Omega3PWorkflow(workflow_dict, input_dict, output_dict)
-print(Omega3PWorkflow.input_dict)
 Omega3PWorkflow.run_sweep()
