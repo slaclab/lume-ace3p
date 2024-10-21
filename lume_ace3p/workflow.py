@@ -118,7 +118,7 @@ class Omega3PWorkflow:
                     t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
                     self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
 
-        for i in len(range(np.size(self.input_tensor,0))):
+        for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
             sweep_input_tuple = tuple(self.input_tensor[i])
             for j in range(len(self.input_varname)):
