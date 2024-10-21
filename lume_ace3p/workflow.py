@@ -36,7 +36,7 @@ class Omega3PWorkflow:
         elif self.workdir_mode == 'auto':
             name_str = ''
             for key in self.input_dict.keys():
-                if isinstance(self.input_dict[key], np.array):
+                if isinstance(self.input_dict[key], np.ndarray):
                     value = self.input_dict[key][0]
                 else:
                     value = self.input_dict[key]
