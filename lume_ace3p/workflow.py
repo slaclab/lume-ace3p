@@ -6,7 +6,7 @@ from lume_ace3p.ace3p import Omega3P
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.tools import WriteDataTable
 
-class Omega3PWorkflow(__dict__):
+class Omega3PWorkflow:
     
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
         self.cubit_input = workflow_dict.get('cubit_input')
