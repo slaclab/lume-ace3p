@@ -75,17 +75,16 @@ class Omega3PWorkflow:
         #Read acdtool postprocess RF output and return values referenced in output_dict
         if output_dict is not None:
             if self.acdtool_obj is not None:
-                for output_name in output_dict.keys():
-                    for section in output_dict[output_name].keys():
-                        if section == 'RoverQ':
-                            for mode in output_dict[output_name][section].keys():
-                                for entry in output_dict[output_name][section][mode].keys():
-                                    self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][mode][entry]
-                        if section == 'maxFieldsOnSurface':
-                            for surface in output_dict[output_name][section].keys():
-                                for mode in output_dict[output_name][section][surface].keys():
-                                    for entry in output_dict[output_name][section][surface][mode].keys():
-                                        self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][surface][mode][entry]
+                for output_name, output_params in output_dict.items():
+                    section = output_params[0]
+                    if section == 'RoverQ':
+                        mode = output_params[1]
+                        entry = output_params[2]
+                        self.output_data[output_name] = self.acdtool_obj.output_data[section][mode][entry]
+                    if section == 'maxFieldsOnSurface':
+                        surface = output_params[1]
+                        entry = output_params[2]
+                        self.output_data[output_name] = self.acdtool_obj.output_data[section][surface][entry]
         return self.output_data
 
     def run_sweep(self, input_dict=None, output_dict=None):

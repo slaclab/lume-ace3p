@@ -134,27 +134,21 @@ class Acdtool(CommandWrapper):
             self.output_data[key]['ModeIDs'] = modelist
         elif key == 'maxFieldsOnSurface':
             surfacelist = []
-            modelist = []
             for i in range(len(datalines)):
                 if datalines[i].strip().startswith('surfaceID'):
                     skey = datalines[i].split(':')[1].strip()   #Surface ID number
                     if skey not in surfacelist:
                         surfacelist.append(skey)
                         self.output_data[key][skey] = {}
-                    mkey = datalines[i+1].split(':')[1].strip() #Mode ID number
-                    if mkey not in modelist:
-                        modelist.append(mkey)
                     Emax = eval(datalines[i+2].split()[2])  #Emax units are V*m
                     Emax_loc = eval(datalines[i+2].split('at')[1])  #3-tuple of (x,y,z) coordinates
                     Hmax = eval(datalines[i+3].split()[2])  #Hmax units are A/m
                     Hmax_loc = eval(datalines[i+3].split('at')[1])  #3-tuple of (x,y,z) coordinates
-                    self.output_data[key][skey][mkey] = {}
-                    self.output_data[key][skey][mkey]['Emax'] = Emax
-                    self.output_data[key][skey][mkey]['Emax_location'] = Emax_loc
-                    self.output_data[key][skey][mkey]['Hmax'] = Hmax
-                    self.output_data[key][skey][mkey]['Hmax_location'] = Hmax_loc
+                    self.output_data[key][skey]['Emax'] = Emax
+                    self.output_data[key][skey]['Emax_location'] = Emax_loc
+                    self.output_data[key][skey]['Hmax'] = Hmax
+                    self.output_data[key][skey]['Hmax_location'] = Hmax_loc
             self.output_data[key]['SurfaceIDs'] = surfacelist
-            self.output_data[key]['ModeIDs'] = modelist
         else:
             print('Data key \"' + key + '\" parsing not implemented.')
 
