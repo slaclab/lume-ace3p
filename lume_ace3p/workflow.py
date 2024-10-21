@@ -99,12 +99,10 @@ class Omega3PWorkflow:
         self.input_vardata = []  #List of numpy array vectors of parameters
         
         #Unpack dict of inputs into lists
-        var_id = 0
         for var, value in self.input_dict.items():
-            self.input_varname[var_id] = var
-            self.input_vardim[var_id] = len(value)
-            self.input_vardata[var_id] = np.array(value)
-            var_id += 1
+            self.input_varname.append(var)
+            self.input_vardim.append(len(value))
+            self.input_vardata.append(np.array(value))
 
         #Build a full tensor product of all combinations of parameters
         #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
