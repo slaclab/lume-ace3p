@@ -30,25 +30,24 @@ class Omega3PWorkflow:
             self.run(self.input_dict)
             return self.evaluate(self.output_dict)
 
-    def getworkdir(self, input_dict=None):
+    def getworkdir(self):
         if self.workdir_mode == 'manual':
             self.workdir = self.baseworkdir
         elif self.workdir_mode == 'auto':
             name_str = ''
-            if input_dict is not None:
-                for key in input_dict.keys():
-                    if isinstance(input_dict[key], list):
-                        value = input_dict[key][0]
-                    else:
-                        value = input_dict[key]
-                    name_str = name_str + '_' + str(value)
+            for key in self.input_dict.keys():
+                if isinstance(self.input_dict[key], np.array):
+                    value = self.input_dict[key][0]
+                else:
+                    value = self.input_dict[key]
+                name_str = name_str + '_' + str(value)
             if self.baseworkdir is None:
                 self.workdir = 'lume-ace3p_workflow_output' + name_str
             else:
                 self.workdir = self.baseworkdir + name_str
 
     def run(self, input_dict=None):
-        self.getworkdir(input_dict)
+        self.getworkdir()
 
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None:
