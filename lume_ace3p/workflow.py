@@ -8,9 +8,10 @@ from lume_ace3p.tools import WriteDataTable
 
 class Omega3PWorkflow:
     
-    def __init__(self, workflow_dict, input_dict=None, output_dict=None):
-        self.input_dict = input_dict
-        self.output_dict = output_dict
+    def __init__(self, workflow_dict, *args, **kwargs):
+        if len(args)>1:
+            self.input_dict = args[0]
+            self.output_dict = args[1]
         self.cubit_input = workflow_dict.get('cubit_input')
         self.omega3p_input = workflow_dict.get('omega3p_input')
         self.omega3p_tasks = workflow_dict.get('omega3p_tasks',1)
@@ -25,8 +26,10 @@ class Omega3PWorkflow:
         self.output_data = {}
         self.sweep_data = {}
         if self.autorun:
-            self.run(input_dict)
-            return self.evaluate(output_dict)
+            assert self.input_dict is not None, 'Input dictionary required for autorun mode'
+            assert self.output_dict is not None, 'Output dictionary required for autorun mode'
+            self.run(self.input_dict)
+            return self.evaluate(self.output_dict)
 
     def getworkdir(self, input_dict=None):
         if self.workdir_mode == 'manual':
