@@ -8,7 +8,7 @@ class Omega3P(CommandWrapper):
     MPI_CALLER = os.environ['MPI_CALLER']
     ACE3P_PATH = os.environ['ACE3P_PATH']
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tasks=1, cores=1, opts='', **kwargs):
         super().__init__(*args, **kwargs)
         if self.workdir is None:
             self.workdir = os.getcwd()
@@ -22,7 +22,7 @@ class Omega3P(CommandWrapper):
         self.output_file = 'omega3p.out'    #Default output file for omega3p
         self.load_input_file()
         
-    def run(self,tasks=1,cores=1,opts=''):
+    def run(self, tasks=1, cores=1, opts=''):
         self.write_input()
         result = subprocess.run(self.MPI_CALLER + ' -n ' + tasks + ' -c ' + cores + ' ' + opts + ' ' +
                                 + self.ACE3P_PATH + 'omega3p' + ' ' + self.input_file,
