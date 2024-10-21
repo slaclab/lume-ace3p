@@ -89,14 +89,10 @@ class Omega3PWorkflow:
                                         self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][surface][mode][entry]
         return self.output_data
 
-    def run_sweep(self, *args):
-        if len(args)>0:
-            input_dict = args[0]
-        else:
+    def run_sweep(self, input_dict=None, output_dict=None):
+        if input_dict is None:
             input_dict = self.input_dict
-        if len(args)>1:
-            output_dict = args[1]
-        else:
+        if output_dict is None:
             output_dict = self.output_dict
         self.input_varname = []  #List of input parameter names
         self.input_vardim = []   #List of vector lengths for each parameter
