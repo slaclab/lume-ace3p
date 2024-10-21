@@ -22,6 +22,9 @@ class Omega3PWorkflow:
         self.sweep_output_file = workflow_dict.get('sweep_output_file')
         self.sweep_output = workflow_dict.get('sweep_output',False)
         self.autorun = workflow_dict.get('autorun',True)
+        self.input_varname = []
+        self.input_vardim = []
+        self.input_vardata = []
         self.output_data = {}
         self.sweep_data = {}
         if self.autorun:
