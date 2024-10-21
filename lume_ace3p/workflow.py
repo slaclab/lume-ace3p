@@ -90,17 +90,17 @@ class Omega3PWorkflow:
         return self.output_data
 
     def run_sweep(self, input_dict=None, output_dict=None):
-        if input_dict is None:
-            input_dict = self.input_dict
-        if output_dict is None:
-            output_dict = self.output_dict
+        if input_dict is not None:
+            self.input_dict = input_dict
+        if output_dict is not None:
+            self.output_dict = output_dict
         self.input_varname = []  #List of input parameter names
         self.input_vardim = []   #List of vector lengths for each parameter
         self.input_vardata = []  #List of numpy array vectors of parameters
         
         #Unpack dict of inputs into lists
         var_id = 0
-        for var, value in input_dict.items():
+        for var, value in self.input_dict.items():
             self.input_varname[var_id] = var
             self.input_vardim[var_id] = len(value)
             self.input_vardata[var_id] = np.array(value)
@@ -126,7 +126,7 @@ class Omega3PWorkflow:
             for j in range(len(self.input_varname)):
                 sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
             self.run(sweep_input_dict)
-            self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+            self.sweep_data[sweep_input_tuple] = self.evaluate(self.output_dict)
             if self.sweep_output:
                 self.print_sweep_output()
 
