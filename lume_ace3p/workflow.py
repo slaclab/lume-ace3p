@@ -9,8 +9,8 @@ from lume_ace3p.tools import WriteDataTable
 class Omega3PWorkflow:
     
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
-        self.input_dict = input_dict
-        self.output_dict = output_dict
+        self.input_dict = dict(input_dict)
+        self.output_dict = dict(output_dict)
         self.cubit_input = workflow_dict.get('cubit_input')
         self.omega3p_input = workflow_dict.get('omega3p_input')
         self.omega3p_tasks = workflow_dict.get('omega3p_tasks',1)
