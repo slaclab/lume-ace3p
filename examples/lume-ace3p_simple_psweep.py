@@ -2,10 +2,6 @@ import os
 import numpy as np
 from lume_ace3p.workflow import Omega3PWorkflow
 
-#Define parameters to sweep in arrays
-cav_radii = np.linspace(90,120,4)       #Cavity radii in mm (units in cubit journal)
-ellipticities = np.linspace(0.5,1.25,4) #Cavity ellipticity parameter
-
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'omega3p_input': 'pillbox-rtop.omega3p',
                  'omega3p_tasks': 4,
@@ -17,8 +13,8 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'sweep_output': True,
                  'autorun': False}
 
-input_dict = {'cav_radius': cav_radii,
-              'ellipticity': ellipticities}
+input_dict = {'cav_radius': np.linspace(90,120,4),
+              'ellipticity': np.linspace(0.5,1.25,4)}
 
 output_dict = {'Output_1': {'RoverQ': {'0': {'RoQ'}}},
                'Output_2': {'RoverQ': {'0': {'Frequency'}}},
