@@ -92,15 +92,19 @@ class Omega3PWorkflow:
             input_dict = self.input_dict
         if output_dict is None:
             output_dict = self.output_dict
-        self.input_varname = []  #List of input parameter names
-        self.input_vardim = []   #List of vector lengths for each parameter
-        self.input_vardata = []  #List of numpy array vectors of parameters
+        self.input_varname = []     #List of input parameter names
+        self.input_vardim = []      #List of vector lengths for each parameter
+        self.input_vardata = []     #List of numpy array vectors of parameters
+        self.output_varname = []    #List of output parameter names
         
         #Unpack dict of inputs into lists
         for var, value in input_dict.items():
             self.input_varname.append(var)
             self.input_vardim.append(len(value))
             self.input_vardata.append(np.array(value))
+        
+        for var in output_dict.keys():
+            self.output_varname.append(var)
 
         #Build a full tensor product of all combinations of parameters
         #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
@@ -133,4 +137,4 @@ class Omega3PWorkflow:
                 return
         if len(self.input_varname) == 0:
             return 
-        WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_data.keys())
+        WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
