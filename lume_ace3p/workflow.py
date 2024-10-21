@@ -9,6 +9,8 @@ from lume_ace3p.tools import WriteDataTable
 class Omega3PWorkflow:
     
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
+        self.input_dict = input_dict
+        self.output_dict = output_dict
         self.cubit_input = workflow_dict.get('cubit_input')
         self.omega3p_input = workflow_dict.get('omega3p_input')
         self.omega3p_tasks = workflow_dict.get('omega3p_tasks',1)
@@ -85,7 +87,15 @@ class Omega3PWorkflow:
                                         self.output_data[output_name] = self.acdtool_obj.output_data[output_name][section][surface][mode][entry]
         return self.output_data
 
-    def run_sweep(self, input_dict, output_dict):
+    def run_sweep(self, *args):
+        if len(args)>0:
+            input_dict = args[0]
+        else:
+            input_dict = self.input_dict
+        if len(args)>1:
+            output_dict = args[1]
+        else:
+            output_dict = self.output_dict
         self.input_varname = []  #List of input parameter names
         self.input_vardim = []   #List of vector lengths for each parameter
         self.input_vardata = []  #List of numpy array vectors of parameters
