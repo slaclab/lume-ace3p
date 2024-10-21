@@ -24,7 +24,7 @@ class Omega3P(CommandWrapper):
         
     def run(self, tasks=1, cores=1, opts=''):
         self.write_input()
-        result = subprocess.run(self.MPI_CALLER + ' -n ' + str(tasks) + ' -c ' + str(cores) + ' ' + opts + ' ' +
+        result = subprocess.run(self.MPI_CALLER + ' -n ' + str(tasks) + ' -c ' + str(cores) + ' ' + opts + ' '
                                 + self.ACE3P_PATH + 'omega3p' + ' ' + self.input_file,
                                 shell=True, cwd=self.workdir, capture_output=True, text=True)
         with open(os.path.join(self.workdir, self.output_file), 'w') as file:
