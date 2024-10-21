@@ -42,7 +42,7 @@ class Omega3PWorkflow:
                     else:
                         value = input_dict[key]
                     name_str = name_str + '_' + str(value)
-            if self.workdir is None:
+            if self.baseworkdir is None:
                 self.workdir = 'lume-ace3p_workflow_output' + name_str
             else:
                 self.workdir = self.baseworkdir + name_str
