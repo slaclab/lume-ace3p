@@ -15,10 +15,11 @@ class Omega3PWorkflow(__dict__):
         self.omega3p_cores = workflow_dict.get('omega3p_cores',1)
         self.omega3p_opts = workflow_dict.get('omega3p_opts','')
         self.rfpost_input = workflow_dict.get('rfpost_input')
-        self.workdirmode = workflow_dict.get('workdirmode','manual')
+        self.workdir_mode = workflow_dict.get('workdir_mode','manual')
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
-        self.sweep_output = workflow_dict.get('sweep_output')
-        self.autorun =  workflow_dict.get('autorun',True)
+        self.sweep_output_file = workflow_dict.get('sweep_output_file')
+        self.sweep_output = workflow_dict.get('sweep_output',False)
+        self.autorun = workflow_dict.get('autorun',True)
         self.output_data = {}
         self.sweep_data = {}
         if self.autorun:
@@ -26,9 +27,9 @@ class Omega3PWorkflow(__dict__):
             return self.evaluate(output_dict)
 
     def getworkdir(self, input_dict=None):
-        if self.workdirmode == 'manual':
+        if self.workdir_mode == 'manual':
             self.workdir = self.baseworkdir
-        elif self.workdirmode == 'auto':
+        elif self.workdir_mode == 'auto':
             name_str = ''
             if input_dict is not None:
                 for key in input_dict.keys():
@@ -113,15 +114,19 @@ class Omega3PWorkflow(__dict__):
 
         for i in len(range(np.size(self.input_tensor,0))):
             sweep_input_dict = {}
+            sweep_input_tuple = tuple(self.input_tensor[i])
             for j in range(len(self.input_varname)):
                 sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
-
             self.run(sweep_input_dict)
-            self.sweep_data[sweep_input_dict] = self.evaluate(output_dict)
+            self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+            if self.sweep_output:
+                self.print_sweep_output()
 
     def print_sweep_output(self, filename=None):
         if filename is None:
-            filename = self.sweep_output
+            filename = self.sweep_output_file
+            if self.sweep_output_file is None:
+                return
         if len(self.input_varname) == 0:
             return 
-        WriteDataTable(self.sweep_data, self.input_varname, self.output_data.keys())
+        WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_data.keys())

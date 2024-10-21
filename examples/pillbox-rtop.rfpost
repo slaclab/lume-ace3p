@@ -203,7 +203,7 @@ fieldOnSurface
 
 maxFieldsOnSurface
 {
-   ionoff      =      0
+   ionoff      =      1
    surfaceID   =      6
 }
 
