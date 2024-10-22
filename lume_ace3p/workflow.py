@@ -117,7 +117,7 @@ class Omega3PWorkflow:
         self.input_tensor = self.input_vardata[0]         #First parameter vector
         if len(self.input_varname) > 1:
             t1 = np.tile(self.input_tensor,self.input_vardim[1])
-            t2 = np.repeat(self.input_vardata[0],self.input_vardim[0])
+            t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
             self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
             if len(self.input_varname) > 2:
                 for i in range(2,len(self.input_varname)):
@@ -125,7 +125,6 @@ class Omega3PWorkflow:
                     t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
                     self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
         
-        np.savetxt('debug.txt',self.input_tensor)
         for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
             sweep_input_tuple = tuple(self.input_tensor[i])
