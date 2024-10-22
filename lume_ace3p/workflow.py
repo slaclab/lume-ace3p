@@ -22,32 +22,35 @@ class Omega3PWorkflow:
         self.sweep_output_file = workflow_dict.get('sweep_output_file')
         self.sweep_output = workflow_dict.get('sweep_output',False)
         self.autorun = workflow_dict.get('autorun',True)
-        self.output_data = {}
-        self.sweep_data = {}
         if self.autorun:
             assert self.input_dict is not None, 'Input dictionary required for autorun mode'
             assert self.output_dict is not None, 'Output dictionary required for autorun mode'
             self.run(self.input_dict)
             return self.evaluate(self.output_dict)
 
-    def getworkdir(self):
+    def getworkdir(self, input_dict):
         if self.workdir_mode == 'manual':
             self.workdir = self.baseworkdir
         elif self.workdir_mode == 'auto':
             name_str = ''
-            for key in self.input_dict.keys():
-                if isinstance(self.input_dict[key], np.ndarray):
-                    value = self.input_dict[key][0]
+            if input_dict is not None:
+                for key in input_dict.keys():
+                    if isinstance(input_dict[key], np.ndarray):
+                        value = input_dict[key][0]
+                    else:
+                        value = input_dict[key]
+                    name_str = name_str + '_' + str(value)
+                if self.baseworkdir is None:
+                    self.workdir = 'lume-ace3p_workflow_output' + name_str
                 else:
-                    value = self.input_dict[key]
-                name_str = name_str + '_' + str(value)
-            if self.baseworkdir is None:
-                self.workdir = 'lume-ace3p_workflow_output' + name_str
+                    self.workdir = self.baseworkdir + name_str
             else:
-                self.workdir = self.baseworkdir + name_str
+                self.workdir = self.baseworkdir
 
     def run(self, input_dict=None):
-        self.getworkdir()
+        if input_dict is None:
+            input_dict = self.input_dict
+        self.getworkdir(input_dict)
 
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None:
@@ -73,6 +76,7 @@ class Omega3PWorkflow:
 
     def evaluate(self, output_dict):
         #Read acdtool postprocess RF output and return values referenced in output_dict
+        self.output_data = {}
         if output_dict is not None:
             if self.acdtool_obj is not None:
                 for output_name, output_params in output_dict.items():
@@ -96,6 +100,7 @@ class Omega3PWorkflow:
         self.input_vardim = []      #List of vector lengths for each parameter
         self.input_vardata = []     #List of numpy array vectors of parameters
         self.output_varname = []    #List of output parameter names
+        self.sweep_data = {}        #Dict to store parameter sweep data
         
         #Unpack dict of inputs into lists
         for var, value in input_dict.items():
@@ -120,6 +125,7 @@ class Omega3PWorkflow:
                     t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
                     self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
 
+        print(self.input_tensor)
         for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
             sweep_input_tuple = tuple(self.input_tensor[i])
