@@ -34,11 +34,10 @@ class Omega3PWorkflow:
         elif self.workdir_mode == 'auto':
             name_str = ''
             if input_dict is not None:
-                for key in input_dict.keys():
-                    if isinstance(input_dict[key], np.ndarray):
-                        value = input_dict[key][0]
-                    else:
-                        value = input_dict[key]
+                for key, value in input_dict.items():
+                    if len(value)>1:
+                        raise ValueError('Workflow cannot use \'.run()\' with non-scalar input dictonaries, use \'.run_sweep()\' instead.')
+                    value = input_dict[key]
                     name_str = name_str + '_' + str(value)
                 if self.baseworkdir is None:
                     self.workdir = 'lume-ace3p_workflow_output' + name_str
@@ -46,6 +45,9 @@ class Omega3PWorkflow:
                     self.workdir = self.baseworkdir + name_str
             else:
                 self.workdir = self.baseworkdir
+        else:
+            raise ValueError("Key: \'workdir_mode\' must be either \'manual\' or \'auto\'.")
+            
 
     def run(self, input_dict=None):
         if input_dict is None:
