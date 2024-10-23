@@ -206,11 +206,19 @@ Workflow dict keywords:
 </details>
 
 <details><summary>Input dict</summary>
-To be implemented!
+
+LUME-ACE3P Input dict keywords and values are user-defined. The keyword-value structure is:
+   * `input_parameter` : `Int`, `Float`, `List`, or `numpy.ndarray` value
+
+If any input keyword's value is a vector-like object (list or ndarray), then the workflow can only be run as a parameter sweep (not a single evaluation). **Input dict keywords must *exactly* match the variable names in Cubit journal files.**
+During parameter sweeping, all possible combinations of the parameters are evaluated (full tensor product of all input parameter vectors). For example, if three input parameters are provided with vectors of lengths 10, 12, and 15 respectively, then the workflow will be evaluated 1800 times (all 10 x 12 x 15 combinations)!
+
 </details>
 
 <details><summary>Output dict</summary>
-To be implemented!
+
+LUME-ACE3P Output dict keywords are user-defined but the values are lists containing specific stringes corresponding to specific outputs in the acdtool "rfpost.out" file.
+
 </details>
 
 <details><summary>Omega3PWorkflow class</summary>
