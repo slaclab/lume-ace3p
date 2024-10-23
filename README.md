@@ -189,8 +189,8 @@ To be implemented!
 # LUME-ACE3P Python structures (advanced users)
 
 <details><summary>Workflow dict</summary>
-   
-Workflow dict keywords:
+
+The LUME-ACE3P workflow dict control the workflow task chain (by specifying related input files), directory management, and other settings. The workflow dict *keywords* are:
    * `autorun` : `Boolean` [Default `True`] to toggle automatically running workflow upon creation (workflow behaves as a function).
    * `cubit_input` : `String` [Default `None`] with path to Cubit journal file (.jou) used for the workflow.
    * `omega3p_input` : `String` [Default `None`] with path to Omega3P input file (.omega3p) used for the workflow.
@@ -207,31 +207,60 @@ Workflow dict keywords:
 
 <details><summary>Input dict</summary>
 
-LUME-ACE3P Input dict keywords and values are user-defined. The keyword-value structure is:
+The LUME-ACE3P input dict *keywords* and *values* are user-defined. The keyword-value structure is:
    * `input_parameter` : `Int`, `Float`, `List`, or `numpy.ndarray` value
 
-If any input keyword's value is a vector-like object (list or ndarray), then the workflow can only be run as a parameter sweep (not a single evaluation). **Input dict keywords must *exactly* match the variable names in Cubit journal files.**
+If any input keyword's *value* is a vector-like object (list or ndarray), then the workflow can only be run as a parameter sweep (not a single evaluation). **Input dict *keywords* must *exactly* match the variable names in Cubit journal files.**
+
 During parameter sweeping, all possible combinations of the parameters are evaluated (full tensor product of all input parameter vectors). For example, if three input parameters are provided with vectors of lengths 10, 12, and 15 respectively, then the workflow will be evaluated 1800 times (all 10 x 12 x 15 combinations)!
 
 </details>
 
 <details><summary>Output dict</summary>
 
-LUME-ACE3P Output dict keywords are user-defined but the values are lists containing specific strings corresponding to specific outputs in the acdtool "rfpost.out" file. The keyword-value structure is:
+The LUME-ACE3P output dict *keywords* are user-defined but the *values* are lists containing specific strings corresponding to specific outputs in the acdtool "rfpost.out" file. The keyword-value structure is:
    * `output_name` : `List` of `String` entries of the form `['section', string1, string2, ...]` with section-specific strings following the section name at the start of the list (see examples below).
+     * The `output_name` *keywords* are arbitrary strings, only used for printing column headers in parameter sweep output files or for optimization routines.
 
-The current supported sections and string values are:
+The currently supported *values* with section names and string list values are:
    * `['RoverQ', string1, string2]` corresponding to the "[RoverQ]" data block in the "rfpost.out" file.
-     * `string1` is a `String` with the mode number to be processed (usually starting from `"0"`)
-     * `string2` is a `String` with the data column of the corresponding mode
+     * `string1` contains the mode ID number to be processed (usually starting from `"0"`)
+     * `string2` contains the data column name of the corresponding mode
        * `string2` must be one of `'Frequency'`, `'Qext'`, `'V_r'`, `'V_i'`, `'AbsV'`, or `'RoQ'`
-   * `['maxFieldsOnSurface']` corresponding to the "[maxFieldsOnSurface]" data block in the "rfpost.out" file.
+   * `['maxFieldsOnSurface', string1, string2, string3]` corresponding to the "[maxFieldsOnSurface]" data block in the "rfpost.out" file.
+     * `string1` contains the surface ID number to be processed (defined by the sideset in the Cubit journal file)
+     * `string2` contains the data column name of the corrseponding surface
+       * `string2` must be one of `'Emax'`, `'Emax_location'`, `'Hmax'`, or `'Hmax_location'`
+     * `string3` is either `'x'`, `'y'`, or `'z'`, and specifies the component of the `'Emax_location'` or `'Hmax_location'` vector
+
+More sections and entries will be added in future updates.
 
 </details>
 
 <details><summary>Omega3PWorkflow class</summary>
-To be implemented!
+
+The `Omega3PWorkflow` class can be instantiated using only a workflow dict. An `Omega3PWorkflow` object can run as-is but no workflow input files will be adjusted.A selected list of usage examples is provided:
+
+Object constructor usage:
+* `workflow_object = Omega3PWorkflow(workflow_dict, *input_dict, *output_dict)` --- creates a workflow object from the workflow_dict and sets input/output dicts (optional arguments)
+
+Object method usage:
+* `workflow_object.run(*input_dict, *output_dict)` --- runs workflow using input_dict parameter values (overwrites initial input_dict) and returns an output data dict (overwrites initial output_dict)
+   * Note: the `.run()` method will **not** work with input dicts containing lists or vectors! Use `.run_sweep()` for multi-valued inputs)!
+* `workflow_object.run_sweep(*input_dict, *output_dict)` --- runs workflow as a parameter sweep using the optionally provided input/output dicts (defaults to initially provided dicts)
+* `workflow_object.evaluate(*output_dict)` --- evaluates quantities referenced in output_dict (defaults to initially provided output dict) and returns an output data dict
+* `workflow_object.print_sweep_output(*filename)` --- writes out quantities from parameter sweep to provided filename (defaults to `sweep_output_file` value provided in workflow dict)
+
+Object data output:
+* `output_data = workflow_object.evaluate()` --- returns a dict object with the same keywords as the output dict but with the values replaced by the numeric quantities from evaluation
+* `output_data = workflow_object.run()` --- returns a dict object with the same keywords as the output dict but with the values replaced by the numeric quantities from evaluation
+  * Note: the `.run()` method will not return a dict unless the workflow dict was configured with the `'autorun'` keyword set to `True`.
+* `output_sweep_data = workflow_object.run_sweep()` --- returns a dict object with `Tuple` *keywords* formed by the combination of input parameters and output data dict *values* for each evaluation
+  * Note: this is a nested dict object with the outer keywords consisting of tuples of inputs and the inner keywords corresponding to the evaluated output dict for each input combination.
+
 </details>
+
+# Troubleshooting
 
 # SLAC National Accelerator Laboratory
 The SLAC National Accelerator Laboratory is operated by Stanford University for the US Departement of Energy.  
