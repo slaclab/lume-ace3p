@@ -191,17 +191,17 @@ To be implemented!
 <details><summary>Workflow dict</summary>
    
 Workflow dict keywords:
-   * `autorun` : [Default `True`] `Boolean` to toggle automatically running workflow upon creation (workflow behaves as a function).
-   * `cubit_input` : [Default `None`] `String` with path to Cubit journal file (.jou) used for the workflow.
-   * `omega3p_input` : [Default `None`] `String` with path to Omega3P input file (.omega3p) used for the workflow.
-   * `omega3p_cores` : [Default `1`] `Int` to specify the number of cores per task to use with Omega3P.
-   * `omega3p_opts` : [Default `''`] `String` to specify additional mpirun or srun arguments when calling Omega3P.
-   * `omega3p_tasks` : [Default `1`] `Int` to specify the number of MPI tasks to use with Omega3P.
-   * `rfpost_input` : [Default `None`] `String` with path to Acdtool rfpost file (.rfpost) used for the workflow.
-   * `sweep_output` : [Detault `False`] `Boolean` to toggle writing parameter sweep output to text file.
-   * `sweep_output_file` : [Detault `None`] `String` path for writing parameter sweep output.
-   * `workdir` : [Default `os.getcwd()`] `String` with path to working directory name for running LUME-ACE3P.
-   * `workdir_mode` : [Default `manual`] `String` with either `manual` (single workflow folder) or `auto` (automatic folder generation)
+   * `autorun` : `Boolean` [Default `True`] to toggle automatically running workflow upon creation (workflow behaves as a function).
+   * `cubit_input` : `String` [Default `None`] with path to Cubit journal file (.jou) used for the workflow.
+   * `omega3p_input` : `String` [Default `None`] with path to Omega3P input file (.omega3p) used for the workflow.
+   * `omega3p_cores` : `Int` [Default `1`] to specify the number of cores per task to use with Omega3P.
+   * `omega3p_opts` : `String` [Default `''`] to specify additional mpirun or srun arguments when calling Omega3P.
+   * `omega3p_tasks` : `Int` [Default `1`] to specify the number of MPI tasks to use with Omega3P.
+   * `rfpost_input` : `String` [Default `None`] with path to Acdtool rfpost file (.rfpost) used for the workflow.
+   * `sweep_output` : `Boolean` [Detault `False`] to toggle writing parameter sweep output to text file.
+   * `sweep_output_file` : `String` [Detault `None`] path for writing parameter sweep output.
+   * `workdir` : `String` or `Path` [Default `os.getcwd()`] with path to working directory name for running LUME-ACE3P.
+   * `workdir_mode` : `String` [Default `manual`] set to either `manual` (single workflow folder) or `auto` (automatic folder generation)
 
 </details>
 
@@ -217,7 +217,15 @@ During parameter sweeping, all possible combinations of the parameters are evalu
 
 <details><summary>Output dict</summary>
 
-LUME-ACE3P Output dict keywords are user-defined but the values are lists containing specific stringes corresponding to specific outputs in the acdtool "rfpost.out" file.
+LUME-ACE3P Output dict keywords are user-defined but the values are lists containing specific strings corresponding to specific outputs in the acdtool "rfpost.out" file. The keyword-value structure is:
+   * `output_name` : `List` of `String` entries of the form `['section', string1, string2, ...]` with section-specific strings following the section name at the start of the list (see examples below).
+
+The current supported sections and string values are:
+   * `['RoverQ', string1, string2]` corresponding to the "[RoverQ]" data block in the "rfpost.out" file.
+     * `string1` is a `String` with the mode number to be processed (usually starting from `"0"`)
+     * `string2` is a `String` with the data column of the corresponding mode
+       * `string2` must be one of `'Frequency'`, `'Qext'`, `'V_r'`, `'V_i'`, `'AbsV'`, or `'RoQ'`
+   * `['maxFieldsOnSurface']` corresponding to the "[maxFieldsOnSurface]" data block in the "rfpost.out" file.
 
 </details>
 
