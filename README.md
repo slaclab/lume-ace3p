@@ -201,7 +201,7 @@ The LUME-ACE3P workflow dict control the workflow task chain (by specifying rela
    * `sweep_output` : `Boolean` [Detault `False`] to toggle writing parameter sweep output to text file.
    * `sweep_output_file` : `String` [Detault `None`] path for writing parameter sweep output.
    * `workdir` : `String` or `Path` [Default `os.getcwd()`] with path to working directory name for running LUME-ACE3P.
-   * `workdir_mode` : `String` [Default `manual`] set to either `manual` (single workflow folder) or `auto` (automatic folder generation)
+   * `workdir_mode` : `String` [Default `'manual'`] set to either `'manual'` (single workflow folder) or `'auto'` (automatic folder generation)
 
 </details>
 
