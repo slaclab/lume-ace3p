@@ -82,7 +82,7 @@ Variable names and values should generally be near the beginning of a Cubit jour
 #{my_variable_2 = 123}
 #{my_variable_3 = 0.5}
 ```
-This would be parsed with LUME-ACE3P which would overwrite the numeric quantities following the "=" signs in those lines. **Special care must be taken to ensure the variable names used in the Cubit journal file exactly match those used in the LUME-ACE3P python script workflow inputs!**
+This would be parsed with LUME-ACE3P which would overwrite the numeric quantities following the "=" signs in those lines. **Special care must be taken to ensure the variable names used in the Cubit journal file exactly match those used in the LUME-ACE3P python script input dictionary!**
 
 Since ACE3P can use acdtool to convert Genesis (.gen) formatted meshes into NetCDF (.ncdf), the "export" command in the Cubit journal should use the Genesis option. For example, a Cubit journal might contain the export command:
 ```
@@ -120,7 +120,7 @@ For more information on configuring ACE3P input files, see the [ACE3P tutorials]
 
 <details><summary>Acdtool Postprocess Files</summary>
 
-An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary object (see [acdtool python objects](#LUME-ACE3P-Python-object-structures-advanced-users) for more details).
+An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary which can be used to print output parameters or for optimization.
 
 For more information on configuring Acdtool input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
 
@@ -129,6 +129,8 @@ For more information on configuring Acdtool input files, see the [ACE3P tutorial
 # Setting up LUME-ACE3P python scripts
 
 <details><summary>Omega3P Parameter Sweep Example</summary>
+   
+This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run a parameter sweep over the cavity radius and cavity wall ellipticity parameters. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is submitted directly to HPC resources.
 
 A LUME-ACE3P python script for parameter sweeping primarily consists of definining 3 Python *dictionaries* ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)): a workflow dict which contains various settings (e.g. paths to other code input files), an input dict which contains parameter name and values to be scanned through, and an output dict (optional) which sets which outputs to store after each parameter run. In this section, each of these dict objects of the example "lume-ace3p_simple_psweep.py" is explained in detail.
 
@@ -150,14 +152,14 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'sweep_output': True,
                  'autorun': False}
 ```
-This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing and the `autorun` keyword is set so `False` so the workflow can be used for a parameter sweep. See the [workflow dict](#LUME-ACE3P-Python-dict-structures-advanced-users) section for more details on each option.
+This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing and the `autorun` keyword is set so `False` so the workflow can be used for a parameter sweep. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
 
 Next, the input parameters are defined in a separate dict object:
 ```python
 input_dict = {'cav_radius': np.linspace(90,120,4),
               'ellipticity': np.linspace(0.5,1.25,4)}
 ```
-The input dict object contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. Each parameter value can be a numpy vector array (e.g. numpy.linspace() or a list of numeric types. The parameter-sweep in LUME-ACE3P will evaluate the workflow for all possible tensor products of the input variable arrays. In this example, the `cav_radius` variable and the `ellipticity` variable are each vectors of length 4, thus the total number of workflow evaluations is 16 (4 x 4). Also, since the `workdir_mode` setting in the workflow dict was set to `auto`, each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each `cav_radius` and `ellipticity` for a total of 16 different folders. See the [input dict](#LUME-ACE3P-Python-dict-structures-advanced-users) section for more details on using multiple parameters.
+The input dict object contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. Each parameter value can be a numpy vector array (e.g. numpy.linspace() or a list of numeric types. The parameter-sweep in LUME-ACE3P will evaluate the workflow for all possible tensor products of the input variable arrays. In this example, the `cav_radius` variable and the `ellipticity` variable are each vectors of length 4, thus the total number of workflow evaluations is 16 (4 x 4). Also, since the `workdir_mode` setting in the workflow dict was set to `auto`, each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each `cav_radius` and `ellipticity` for a total of 16 different folders. See the [Input dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on using multiple parameters.
 
 Next, the desired outputs are defined in a separate dict object:
 ```python
@@ -165,7 +167,7 @@ output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
                'Mode_frequency': ['RoverQ', '0', 'Frequency'],
                'E_field_max': ['maxFieldsOnSurface', '6', 'Emax']}
 ```
-The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 5 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'Mode_frequency', and 'E_field_max'. Then in subsequent rows, the columns will be filled with the corresponding input value (for 'cav_radius' and 'ellipticity') or output quantity (extracted from the rfpost.out file for each workflow evaluation). See the [output dict](#LUME-ACE3P-Python-dict-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
+The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 5 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'Mode_frequency', and 'E_field_max'. Then in subsequent rows, the columns will be filled with the corresponding input value (for 'cav_radius' and 'ellipticity') or output quantity (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
@@ -174,7 +176,9 @@ Lastly, the workflow object is instantiated with the 3 defined dict objects and 
 workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
 workflow.run_sweep()
 ```
-LUME-ACE3P will internally sweep through the combinations of input parameters provided and write the desired outputs to the 'sweep_output_file' provided. As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
+LUME-ACE3P will internally sweep through the combinations of input parameters provided and write the desired outputs to the `sweep_output_file` provided. See the [Omega3PWorkflow object](#LUME-ACE3P-Python-structures-advanced-users) section for more details on the class usage.
+
+As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
 
 </details>
 
@@ -182,17 +186,34 @@ LUME-ACE3P will internally sweep through the combinations of input parameters pr
 To be implemented!
 </details>
 
-# LUME-ACE3P Python dict structures (advanced users)
+# LUME-ACE3P Python structures (advanced users)
 
-<details><summary>workflow dict</summary>
+<details><summary>Workflow dict</summary>
+   
+Workflow dict keywords:
+   * `autorun` : [Default `True`] `Boolean` to toggle automatically running workflow upon creation (workflow behaves as a function).
+   * `cubit_input` : [Default `None`] `String` with path to Cubit journal file (.jou) used for the workflow.
+   * `omega3p_input` : [Default `None`] `String` with path to Omega3P input file (.omega3p) used for the workflow.
+   * `omega3p_cores` : [Default `1`] `Int` to specify the number of cores per task to use with Omega3P.
+   * `omega3p_opts` : [Default `''`] `String` to specify additional mpirun or srun arguments when calling Omega3P.
+   * `omega3p_tasks` : [Default `1`] `Int` to specify the number of MPI tasks to use with Omega3P.
+   * `rfpost_input` : [Default `None`] `String` with path to Acdtool rfpost file (.rfpost) used for the workflow.
+   * `sweep_output` : [Detault `False`] `Boolean` to toggle writing parameter sweep output to text file.
+   * `sweep_output_file` : [Detault `None`] `String` path for writing parameter sweep output.
+   * `workdir` : [Default `os.getcwd()`] `String` with path to working directory name for running LUME-ACE3P.
+   * `workdir_mode` : [Default `manual`] `String` with either `manual` (single workflow folder) or `auto` (automatic folder generation)
+
+</details>
+
+<details><summary>Input dict</summary>
 To be implemented!
 </details>
 
-<details><summary>input dict</summary>
+<details><summary>Output dict</summary>
 To be implemented!
 </details>
 
-<details><summary>output dict</summary>
+<details><summary>Omega3PWorkflow class</summary>
 To be implemented!
 </details>
 
