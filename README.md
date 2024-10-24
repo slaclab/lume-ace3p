@@ -22,8 +22,9 @@ To run the examples on Perlmutter:
    - This step is optional if your `.bashrc` file already has the necessary module imports for ACE3P
 3. Set the environment variable `PYTHONPATH` to ```/global/cfs/cdirs/ace3p/lume-ace3p/```
    - Use the command ```export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/'``` which can be put in your `.bashrc` file.
+   - This command can also instead be placed directly in the batch job script
    - Omitting this step may cause conda package conflicts with NERSC's built-in conda module
-4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
+4. Activate the lume-ace3p conda environment with the command: ```conda activate lume-ace3p``` if not already active
 5. Submit a batch job of one of the *Perlmutter* examples with ```sbatch```
 6. View the results in the folder that the batch job was run from
 </details>
@@ -44,7 +45,8 @@ To run the examples on an S3DF iana terminal:
    - The `sdf-ace3p.sh` file is located in ```/sdf/group/rfar/ace3p/```
 3. Set the environment variable `PYTHONPATH` to ```/sdf/group/rfar/lume-ace3p/```
    - Use the command ```export PYTHONPATH='/sdf/grou/rfar/lume-ace3p/'``` which can be put in your `.bashrc` file.
-4. Activate the lume-ace3p conda environment with ```conda activate lume-ace3p``` if not already active
+   - This command can also instead be placed directly in the batch job script
+4. Activate the lume-ace3p conda environment with the command: ```conda activate lume-ace3p``` if not already active
 5. Submit a batch job of one of the *S3DF* examples with ```sbatch```
 6. View the results in the folder that the batch job was run from
 </details>
@@ -148,8 +150,8 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
                  'workdir_mode': 'auto',
-                 'sweep_output_file': 'psweep_output.txt',
                  'sweep_output': True,
+                 'sweep_output_file': 'psweep_output.txt',
                  'autorun': False}
 ```
 This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing and the `autorun` keyword is set so `False` so the workflow can be used for a parameter sweep. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
@@ -165,9 +167,12 @@ Next, the desired outputs are defined in a separate dict object:
 ```python
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
                'Mode_frequency': ['RoverQ', '0', 'Frequency'],
-               'E_field_max': ['maxFieldsOnSurface', '6', 'Emax']}
+               'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
+               'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
+               'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
+               'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
 ```
-The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 5 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'Mode_frequency', and 'E_field_max'. Then in subsequent rows, the columns will be filled with the corresponding input value (for 'cav_radius' and 'ellipticity') or output quantity (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
+The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'Mode_frequency', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
@@ -239,7 +244,7 @@ More sections and entries will be added in future updates.
 
 <details><summary>Omega3PWorkflow class</summary>
 
-The `Omega3PWorkflow` class can be instantiated using only a workflow dict. An `Omega3PWorkflow` object can run as-is but no workflow input files will be adjusted.A selected list of usage examples is provided:
+The `Omega3PWorkflow` class can be instantiated using only a workflow dict. An `Omega3PWorkflow` object can run as-is but no workflow input files will be adjusted. A selected list of usage examples is provided:
 
 Object constructor usage:
 * `workflow_object = Omega3PWorkflow(workflow_dict, *input_dict, *output_dict)` --- creates a workflow object from the workflow_dict and sets input/output dicts (optional arguments)
@@ -261,6 +266,37 @@ Object data output:
 </details>
 
 # Troubleshooting
+
+## LUME-ACE3P FAQs
+
+<details><summary>Why does LUME-ACE3P fail to find the mesh file generated from Cubit?</summary>
+
+Check that .gen filename provided with the `export` command in the Cubit journal matches the .ncdf filename in the Omega3P input file. For example if the Cubit journal includes the command `export genesis "my_mesh.gen"`, then the Omega3P input file should contain `File: ./my_mesh.ncdf` within the `ModelInfo` block.
+
+</details>
+
+<details><summary>Why does LUME-ACE3P fail during Omega3P?</summary>
+
+Check that the mesh file is correct and appropriate resources are allocated for the problem size (i.e. no out-of-memory errors). If the mesh is unexpectedly too large, check the Cubit journal for errors, particularly in the meshing routine.
+Also check the Omega3P input file for errors (typos in the key-value containers) or inconsistencies (sideset numbers are matched with Cubit journal export).
+
+</details>
+
+<details><summary>Why does LUME-ACE3P fail for specific parameter values?</summary>
+
+Cubit journal files require care in constructing when using parametric variables. Some variables cannot exceed certain quantities or the geometry may undefined or topologically change. When topological changes occur, the Cubit vertex/curve/surface/volume IDs may change and affect sideset ID definitions. These sideset IDs are used by Omega3P and Acdtool in defining surfaces and if incorrectly assigned, may cause the LUME-ACE3P workflow to crash or produce junk results.
+
+Check that the provided journal file works as intended with extremal values for all given parameters. For example, if using LUME-ACE3P to sweep the parameter `input_1` from 20 to 60, make sure the journal file works properly when the Cubit variable `input_1` is 20 and 60 (assuming the deformation is smooth and continuous between those values).
+
+</details>
+
+<details><summary>Can I restart a parameter sweep if the job failed mid-sweep?</summary>
+
+As for now, checkpointing is not implemented in LUME-ACE3P. However, as a workaround, adjusting the input dictionary parameters can achieve similar results. For example, if sweeping the parameter "input_1" from 20 to 60 in steps of 10 with `input_1 : np.linspace(20,60,7)` (i.e. 7 evaluations total: 20, 30, 40, 50, 60, 70, and 80) and the job fails when "input_1" is 50 (e.g. due to job timeout). Then editing the input dict with `input_1 : np.linspace(50,80,4)` will restart the sweep at 50 and continue to 80 (i.e. 4 evaluations total: 50, 60, 70, and 80). **Note: the parameter sweep output file is *overwritten* each workflow evaluation, so save the incomplete (failed) run output file to a new filename to later combine the results with the restarted run!**
+
+</details>
+
+
 
 # SLAC National Accelerator Laboratory
 The SLAC National Accelerator Laboratory is operated by Stanford University for the US Departement of Energy.  
