@@ -145,9 +145,15 @@ class Acdtool(CommandWrapper):
                     Hmax = eval(datalines[i+3].split()[2])  #Hmax units are A/m
                     Hmax_loc = eval(datalines[i+3].split('at')[1])  #3-tuple of (x,y,z) coordinates
                     self.output_data[key][skey]['Emax'] = Emax
-                    self.output_data[key][skey]['Emax_location'] = Emax_loc
+                    self.output_data[key][skey]['Emax_location'] = {}
+                    self.output_data[key][skey]['Emax_location']['x'] = Emax_loc[0]
+                    self.output_data[key][skey]['Emax_location']['y'] = Emax_loc[1]
+                    self.output_data[key][skey]['Emax_location']['z'] = Emax_loc[2]
                     self.output_data[key][skey]['Hmax'] = Hmax
-                    self.output_data[key][skey]['Hmax_location'] = Hmax_loc
+                    self.output_data[key][skey]['Hmax_location'] = {}
+                    self.output_data[key][skey]['Hmax_location']['x'] = Hmax_loc[0]
+                    self.output_data[key][skey]['Hmax_location']['y'] = Hmax_loc[1]
+                    self.output_data[key][skey]['Hmax_location']['z'] = Hmax_loc[2]
             self.output_data[key]['SurfaceIDs'] = surfacelist
         else:
             print('Data key \"' + key + '\" parsing not implemented.')

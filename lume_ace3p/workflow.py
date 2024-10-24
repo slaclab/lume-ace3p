@@ -19,8 +19,8 @@ class Omega3PWorkflow:
         self.rfpost_input = workflow_dict.get('rfpost_input')
         self.workdir_mode = workflow_dict.get('workdir_mode','manual')
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
-        self.sweep_output_file = workflow_dict.get('sweep_output_file')
         self.sweep_output = workflow_dict.get('sweep_output',False)
+        self.sweep_output_file = workflow_dict.get('sweep_output_file')
         self.autorun = workflow_dict.get('autorun',True)
         if self.autorun:
             assert self.input_dict is not None, 'Input dictionary required for autorun mode'
@@ -28,7 +28,7 @@ class Omega3PWorkflow:
             self.run(self.input_dict)
             return self.evaluate(self.output_dict)
 
-    def getworkdir(self, input_dict):
+    def _getworkdir(self, input_dict):
         if self.workdir_mode == 'manual':
             self.workdir = self.baseworkdir
         elif self.workdir_mode == 'auto':
@@ -52,7 +52,7 @@ class Omega3PWorkflow:
     def run(self, input_dict=None):
         if input_dict is None:
             input_dict = self.input_dict
-        self.getworkdir(input_dict)
+        self._getworkdir(input_dict)
 
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None:
@@ -61,6 +61,8 @@ class Omega3PWorkflow:
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
             self.cubit_obj.run()
+        else:
+            print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
         if self.omega3p_input is not None:
@@ -69,12 +71,16 @@ class Omega3PWorkflow:
                                   cores=self.omega3p_cores,
                                   workdir=self.workdir)
             self.omega3p_obj.run()
+        else:
+            print('Omega3P input file not specified, skipping step.')
 
         #Load acdtool rfpost input and run
         if self.rfpost_input is not None:
             self.acdtool_obj = Acdtool(self.rfpost_input,
                                   workdir=self.workdir)
             self.acdtool_obj.run()
+        else:
+            print('Acdtool postprocess input file not specified, skipping step.')
 
     def evaluate(self, output_dict):
         #Read acdtool postprocess RF output and return values referenced in output_dict
@@ -86,11 +92,19 @@ class Omega3PWorkflow:
                     if section == 'RoverQ':
                         mode = output_params[1]
                         entry = output_params[2]
+                        assert (entry in set(['Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'])) ("Unknown expression '" + entry + "' in 'RoverQ' section.")
                         self.output_data[output_name] = self.acdtool_obj.output_data[section][mode][entry]
                     if section == 'maxFieldsOnSurface':
                         surface = output_params[1]
                         entry = output_params[2]
-                        self.output_data[output_name] = self.acdtool_obj.output_data[section][surface][entry]
+                        assert (entry in set(['Emax', 'Emax_location', 'Hmax', 'Hmax_location'])) ("Unknown expression '" + entry + "' in 'maxFieldsOnSurface' section.")
+                        if entry.endswith('location'):
+                            component = output_params[3]
+                            self.output_data[output_name] = self.acdtool_obj.output_data[section][surface][entry][component]
+                        else:
+                            self.output_data[output_name] = self.acdtool_obj.output_data[section][surface][entry]
+                    else:
+                        raise ValueError("Unknown section name '" + section + "' in output dict.")
         return self.output_data
 
     def run_sweep(self, input_dict=None, output_dict=None):
@@ -136,12 +150,15 @@ class Omega3PWorkflow:
             self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
             if self.sweep_output:
                 self.print_sweep_output()
+        return self.sweep_data
 
     def print_sweep_output(self, filename=None):
         if filename is None:
             filename = self.sweep_output_file
             if self.sweep_output_file is None:
+                print('No sweep output file specified.')
                 return
         if len(self.input_varname) == 0:
+            print('Parameter sweep must be run first.')
             return 
         WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
