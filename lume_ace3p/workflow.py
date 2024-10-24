@@ -92,12 +92,12 @@ class Omega3PWorkflow:
                     if section == 'RoverQ':
                         mode = output_params[1]
                         entry = output_params[2]
-                        assert (entry in set(['Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'])) ("Unknown expression '" + entry + "' in 'RoverQ' section.")
+                        assert (entry in set(['Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'])), ("Unknown expression '" + entry + "' in 'RoverQ' section.")
                         self.output_data[output_name] = self.acdtool_obj.output_data[section][mode][entry]
                     if section == 'maxFieldsOnSurface':
                         surface = output_params[1]
                         entry = output_params[2]
-                        assert (entry in set(['Emax', 'Emax_location', 'Hmax', 'Hmax_location'])) ("Unknown expression '" + entry + "' in 'maxFieldsOnSurface' section.")
+                        assert (entry in set(['Emax', 'Emax_location', 'Hmax', 'Hmax_location'])), ("Unknown expression '" + entry + "' in 'maxFieldsOnSurface' section.")
                         if entry.endswith('location'):
                             component = output_params[3]
                             self.output_data[output_name] = self.acdtool_obj.output_data[section][surface][entry][component]
