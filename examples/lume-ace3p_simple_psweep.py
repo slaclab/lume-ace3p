@@ -26,10 +26,10 @@ input_dict = {'cav_radius': np.linspace(90,120,4),
 #  Values are lists of strings of the form [section_name, mode/surface_id, column_name]
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
                'Mode_frequency': ['RoverQ', '0', 'Frequency'],
-               'E_field_max': ['maxFieldsOnSurface', '6', 'Emax'],
-               'x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
-               'y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
-               'z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
+               'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
+               'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
+               'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
+               'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
 
 #Create workflow object and run sweep over input dictionary provided
 #Output file will contain keys in input_dict and output_dict as columns and each
