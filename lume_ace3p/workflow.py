@@ -35,7 +35,7 @@ class Omega3PWorkflow:
             name_str = ''
             if input_dict is not None:
                 for key, value in input_dict.items():
-                    if len(value)>1:
+                    if isinstance(value, (list, tuple, np.ndarray)):
                         raise ValueError('Workflow cannot use \'.run()\' with non-scalar input dictonaries, use \'.run_sweep()\' instead.')
                     value = input_dict[key]
                     name_str = name_str + '_' + str(value)
