@@ -151,10 +151,9 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
                  'workdir_mode': 'auto',
                  'sweep_output': True,
-                 'sweep_output_file': 'psweep_output.txt',
-                 'autorun': False}
+                 'sweep_output_file': 'psweep_output.txt'}
 ```
-This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing and the `autorun` keyword is set so `False` so the workflow can be used for a parameter sweep. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
+This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing to the `sweep_output_file` provided. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
 
 Next, the input parameters are defined in a separate dict object:
 ```python
@@ -196,7 +195,6 @@ To be implemented!
 <details><summary>Workflow dict</summary>
 
 The LUME-ACE3P workflow dict control the workflow task chain (by specifying related input files), directory management, and other settings. The workflow dict *keywords* are:
-   * `autorun` : `Boolean` [Default `True`] to toggle automatically running workflow upon creation (workflow behaves as a function).
    * `cubit_input` : `String` [Default `None`] with path to Cubit journal file (.jou) used for the workflow.
    * `omega3p_input` : `String` [Default `None`] with path to Omega3P input file (.omega3p) used for the workflow.
    * `omega3p_cores` : `Int` [Default `1`] to specify the number of cores per task to use with Omega3P.
@@ -259,7 +257,6 @@ Object method usage:
 Object data output:
 * `output_data = workflow_object.evaluate()` --- returns a dict object with the same keywords as the output dict but with the values replaced by the numeric quantities from evaluation
 * `output_data = workflow_object.run()` --- returns a dict object with the same keywords as the output dict but with the values replaced by the numeric quantities from evaluation
-  * Note: the `.run()` method will not return a dict unless the workflow dict was configured with the `'autorun'` keyword set to `True`.
 * `output_sweep_data = workflow_object.run_sweep()` --- returns a dict object with `Tuple` *keywords* formed by the combination of input parameters and output data dict *values* for each evaluation
   * Note: this is a nested dict object with the outer keywords consisting of tuples of inputs and the inner keywords corresponding to the evaluated output dict for each input combination.
 

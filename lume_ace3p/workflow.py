@@ -21,12 +21,6 @@ class Omega3PWorkflow:
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
         self.sweep_output = workflow_dict.get('sweep_output',False)
         self.sweep_output_file = workflow_dict.get('sweep_output_file')
-        self.autorun = workflow_dict.get('autorun',True)
-        if self.autorun:
-            assert self.input_dict is not None, 'Input dictionary required for autorun mode'
-            assert self.output_dict is not None, 'Output dictionary required for autorun mode'
-            self.run(self.input_dict)
-            return self.evaluate(self.output_dict)
 
     def _getworkdir(self, input_dict):
         if self.workdir_mode == 'manual':
@@ -49,7 +43,7 @@ class Omega3PWorkflow:
             raise ValueError("Key: \'workdir_mode\' must be either \'manual\' or \'auto\'.")
             
 
-    def run(self, input_dict=None):
+    def run(self, input_dict=None, output_dict=None):
         if input_dict is None:
             input_dict = self.input_dict
         self._getworkdir(input_dict)
@@ -81,6 +75,10 @@ class Omega3PWorkflow:
             self.acdtool_obj.run()
         else:
             print('Acdtool postprocess input file not specified, skipping step.')
+
+        if output_dict is None:
+            output_dict = self.output_dict
+        return self.evaluate(output_dict)
 
     def evaluate(self, output_dict):
         #Read acdtool postprocess RF output and return values referenced in output_dict
