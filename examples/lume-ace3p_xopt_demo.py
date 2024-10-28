@@ -11,10 +11,9 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'omega3p_input': 'pillbox-rtop.omega3p',
                  'omega3p_tasks': 16,
                  'omega3p_cores': 16,
-                 #'omega3p_opts' : '--cpu-bind=cores',
+                 'omega3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
-                 'workdir': 'lume-ace3p_xopt_workdir',
-                 'autorun': True}
+                 'workdir': 'lume-ace3p_xopt_workdir'}
 
 #Define output dictionary with data to extract from acdtool
 #  Keywords can be any user-provided string (will be used for column names in output)
