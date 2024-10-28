@@ -43,6 +43,8 @@ def sim_function(input_dict):
     #Modify output with postprocessing for constraint calculation
     output_data['frequency_error'] = np.abs(output_data['mode_frequency']-target_frequency)/target_frequency
 
+    return output_data
+
 #Create Xopt evaluator, generator, and Xopt objects
 evaluator = Evaluator(function=sim_function)
 generator = ExpectedImprovementGenerator(vocs=vocs)
