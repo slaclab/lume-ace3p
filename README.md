@@ -186,7 +186,7 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
 
 </details>
 
-<details><summary>Optimization Example</summary>
+<details><summary>Omega3P Optimization Example</summary>
    
 This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
 
@@ -230,7 +230,7 @@ vocs = VOCS(
 ```
 The format for VOCS is a stucture with dict and list objects. In this example, the `variables` dict contains the workflow input parameters to optimize and their bounds. Next, the `objectives` dict contains the quantity in the previously defined output dict to maximize (or minimize). The `constraints` dict is optional and specifies some inequality that is desired for the optimization. And lastly, the `observables` list is optional is simply tracked by Xopt but not used in optimization. See the [VOCS data structure](https://xopt.xopt.org/examples/basic/xopt_vocs) formatting from the Xopt user guide for more information. **Note, while "R/Q" and "mode_frequency" are defined in the output dict, the quantity "frequency_error" is not! This is intentional and will be addressed in the simulation function definition next.**
 
-Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_frequency" being within 1% of a specified "target_frequency", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "frequency_error" quantity for Xopt to optimize.
+Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_frequency" being within 1% of a specified "target_frequency", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "frequency_error" quantity for Xopt to read-in.
 ```python
 target_frequency = 1.3e9
 
