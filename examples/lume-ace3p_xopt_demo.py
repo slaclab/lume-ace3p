@@ -37,7 +37,8 @@ target_frequency = 1.3e9
 def sim_function(input_dict):
 
     #Create workflow object and run with provided inputs
-    output_data = Omega3PWorkflow(workflow_dict,input_dict,output_dict)
+    workflow = Omega3PWorkflow(workflow_dict,input_dict,output_dict)
+    output_data = workflow.run()
 
     #Modify output with postprocessing for constraint calculation
     output_data['frequency_error'] = np.abs(output_data['mode_frequency']-target_frequency)/target_frequency
