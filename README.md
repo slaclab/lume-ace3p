@@ -144,8 +144,8 @@ from lume_ace3p.workflow import Omega3PWorkflow
 
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'omega3p_input': 'pillbox-rtop.omega3p',
-                 'omega3p_tasks': 4,
-                 'omega3p_cores': 4,
+                 'omega3p_tasks': 16,
+                 'omega3p_cores': 16,
                  'omega3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
@@ -153,7 +153,7 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'sweep_output': True,
                  'sweep_output_file': 'psweep_output.txt'}
 ```
-This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 4 MPI tasks with 4 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing to the `sweep_output_file` provided. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
+This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 16 MPI tasks with 16 cores/task with the CPU thread-binding option to cores. The `sweep_output` keyword simply enables file output writing to the `sweep_output_file` provided. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
 
 Next, the input parameters are defined in a separate dict object:
 ```python
@@ -165,13 +165,13 @@ The input dict object contains keyword value pairs for the *exact* names of the 
 Next, the desired outputs are defined in a separate dict object:
 ```python
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'Mode_frequency': ['RoverQ', '0', 'Frequency'],
+               'mode_frequency': ['RoverQ', '0', 'Frequency'],
                'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
                'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
                'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
                'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
 ```
-The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'Mode_frequency', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
+The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'mode_frequency', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
@@ -187,7 +187,82 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
 </details>
 
 <details><summary>Optimization Example</summary>
-To be implemented!
+   
+This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
+
+A LUME-ACE3P python script for optimization primarily consists of definining a few Python *dictionaries* ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)) and configuring Xopt options. As in the parameter-sweeping example, a workflow dict and an output dict are needed to configure the workflow parameters; however, no input_dict is used as this will be handled by Xopt and the VOCS structure (explained below). Additionally, the python script will wrap the workflow in a function that Xopt will call (along with any post-processing steps). Lastly, the Xopt optimizer is run in steps corresponding to ACE3P workflow evaluations.
+
+The script begins with the neccessary LUME-ACE3P imports and workflow dict definition:
+```python
+import numpy as np
+from xopt.vocs import VOCS
+from xopt.evaluator import Evaluator
+from xopt.generators.bayesian import ExpectedImprovementGenerator
+from xopt import Xopt
+from lume_ace3p.workflow import Omega3PWorkflow
+from lume_ace3p.tools import WriteXoptData
+
+workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
+                 'omega3p_input': 'pillbox-rtop.omega3p',
+                 'omega3p_tasks': 16,
+                 'omega3p_cores': 16,
+                 'omega3p_opts' : '--cpu-bind=cores',
+                 'rfpost_input': 'pillbox-rtop.rfpost',
+                 'workdir': 'lume-ace3p_xopt_workdir'}
+```
+This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in a single working directory with the `pillbox-rtop.jou`, `pillbox-rtop.omega3p`, and `pillbox-rtop.rfpost` files for Cubit, Omega3P, and Acdtool respectively. In this example, the contents of the workflow folder will be overwritten with each evaluation; however, the `workdir_mode` option can be set to write to separate folders automatically. See the [Workflow dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on each option.
+
+Next, the desired outputs are defined in a separate dict object:
+```python
+output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
+               'mode_frequency': ['RoverQ', '0', 'Frequency']}
+```
+The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ' or 'Frequency') extracted from within the acdtool postprocess output file (named rfpost.out). This dict is used for parsing the ACE3P workflow output for use with Xopt. See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
+
+The next step is to define the Xopt VOCS (Variables, Objectives, Constraints) configuration:
+```python
+vocs = VOCS(
+    variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
+    objectives={"R/Q": "MAXIMIZE"},
+    constraints={"frequency_error" : ["LESS_THAN", 0.01]},
+    observables=["mode_frequency"]
+)
+```
+The format for VOCS is a stucture with dict and list objects. In this example, the `variables` dict contains the workflow input parameters to optimize and their bounds. Next, the `objectives` dict contains the quantity in the previously defined output dict to maximize (or minimize). The `constraints` dict is optional and specifies some inequality that is desired for the optimization. And lastly, the `observables` list is optional is simply tracked by Xopt but not used in optimization. See the [VOCS data structure](https://xopt.xopt.org/examples/basic/xopt_vocs) formatting from the Xopt user guide for more information. **Note, while "R/Q" and "mode_frequency" are defined in the output dict, the quantity "frequency_error" is not! This is intentional and will be addressed in the simulation function definition next.**
+
+Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_frequency" being within 1% of a specified "target_frequency", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "frequency_error" quantity for Xopt to optimize.
+```python
+target_frequency = 1.3e9
+
+def sim_function(input_dict):
+    workflow = Omega3PWorkflow(workflow_dict,input_dict,output_dict)
+    output_data = workflow.run()
+    output_data['frequency_error'] = np.abs(output_data['mode_frequency']-target_frequency)/target_frequency
+    return output_data
+```
+In this example, a target frequency is set and the sim function is defined as function with dict-type inputs and outputs. Within this sim function, an ACE3P workflow is created and run. Afterwards, the "output_data" dict is modified to include a "frequency_error" key with the value calculated by the relative error between the "mode_freqeuncy" and the "target_frequency". Then the "output_data" dict is returned for use by Xopt.
+
+In short, this sim function will provide the ACE3P workflow an input dict containing values of "cav_radius" and "ellipticity", run the workflow, and return an output data dict containing the values of "R/Q", "mode_frequency", and "frequency_error". Xopt will use this function as a "black-box" to optimize the 2 inputs ("cav_radius" and "ellipticity") with the given output objective ("R/Q"), output constraint ("frequency_error"), and tracked observable ("mode_frequency").
+
+The last part is to create the Xopt object with a chosen optimizer and provided VOCS and sim function:
+```python
+evaluator = Evaluator(function=sim_function)
+generator = ExpectedImprovementGenerator(vocs=vocs)
+X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+```
+
+To run the optimizer, the Xopt object is called with `.random_evaluate()` and `.step()` methods. The `.random_evaluate()` method will simply call Xopt to run the ACE3P workflow with randomly selected inputs (to initially train Xopt's internal model). The `.step()` method will use the previously computed workflows to select a new set of inputs in the optimization.
+```python
+for i in range(5):
+    X.random_evaluate()
+    WriteXoptData('sim_output.txt',X)
+
+for i in range(15):
+    X.step()
+    WriteXoptData('sim_output.txt',X)
+```
+In this example, Xopt will call the ACE3P workflow 5 times with randomly selected inputs within the bounding box and then optimize the objective quantity over 15 more ACE3P workflow evaluations (steps). The output file "sim_output.txt" is a user-provided filename and simply prints the Xopt data structure output.
+
 </details>
 
 # LUME-ACE3P Python structures (advanced users)
