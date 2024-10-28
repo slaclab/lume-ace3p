@@ -5,8 +5,8 @@ from lume_ace3p.workflow import Omega3PWorkflow
 #Define workflow dictionary with input files, directory options, etc.
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'omega3p_input': 'pillbox-rtop.omega3p',
-                 'omega3p_tasks': 4,
-                 'omega3p_cores': 4,
+                 'omega3p_tasks': 16,
+                 'omega3p_cores': 16,
                  'omega3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
