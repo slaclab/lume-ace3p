@@ -2,7 +2,7 @@ reset
 
 #{cav_length = 90}
 #{cav_radius = 100}
-#{cav_ellipticity = 0.5}
+#{ellipticity = 0.5}
 #{bp_length  = 300}
 #{bp_radius  = 35 }
 #{iris_rounding = 12}
@@ -17,9 +17,9 @@ webcut volume 1 with plane yplane offset 0 noimprint nomerge
 delete volume 1 2
 compress ids
 
-volume 1 scale X {1.0/cav_ellipticity} Y {1.0/cav_ellipticity} Z 1.0
+volume 1 scale X {1.0/ellipticity} Y {1.0/ellipticity} Z 1.0
 modify curve 14 16 blend radius {0.5*cav_length}
-volume 1 scale X {cav_ellipticity} Y {cav_ellipticity} Z 1.0
+volume 1 scale X {ellipticity} Y {ellipticity} Z 1.0
 modify curve 15 17 blend radius {iris_rounding}
 
 volume all scheme Tetmesh geometry approximation angle 5
