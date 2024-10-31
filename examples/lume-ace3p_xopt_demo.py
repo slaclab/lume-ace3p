@@ -1,4 +1,3 @@
-import numpy as np
 from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
 from xopt.generators.bayesian import ExpectedImprovementGenerator
@@ -19,18 +18,18 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
 #  Keywords can be any user-provided string (will be used for column names in output)
 #  Values are lists of strings of the form [section_name, mode/surface_id, column_name]
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'mode_frequency': ['RoverQ', '0', 'Frequency']}
+               'mode_freq': ['RoverQ', '0', 'Frequency']}
 
 #Define variables and function objectives/constraints/observables
 vocs = VOCS(
     variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
     objectives={"R/Q": "MAXIMIZE"},
-    constraints={"frequency_error" : ["LESS_THAN", 0.01]},
-    observables=["mode_frequency"]
+    constraints={"freq_error" : ["LESS_THAN", 0.01]},
+    observables=["mode_freq"]
 )
 
 #Define a target frequency (to optimize towards)
-target_frequency = 1.3e9
+target_freq = 1.3e9
 
 #Define simulation function for xopt (based on workflow w/ postprocessing)
 def sim_function(input_dict):
@@ -39,8 +38,8 @@ def sim_function(input_dict):
     workflow = Omega3PWorkflow(workflow_dict,input_dict,output_dict)
     output_data = workflow.run()
 
-    #Modify output with postprocessing for constraint calculation
-    output_data['frequency_error'] = np.abs(output_data['mode_frequency']-target_frequency)/target_frequency
+    #Add postprocessing for constraint calculation to output_data dict
+    output_data['freq_error'] = (output_data['mode_freq']-target_freq)**2/target_freq**2
 
     return output_data
 
