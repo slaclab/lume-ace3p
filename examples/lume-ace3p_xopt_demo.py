@@ -24,7 +24,7 @@ output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
 vocs = VOCS(
     variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
     objectives={"R/Q": "MAXIMIZE"},
-    constraints={"freq_error" : ["LESS_THAN", 0.01]},
+    constraints={"freq_error" : ["LESS_THAN", 0.0001]},
     observables=["mode_freq"]
 )
 

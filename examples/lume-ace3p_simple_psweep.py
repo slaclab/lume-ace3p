@@ -25,7 +25,7 @@ input_dict = {'cav_radius': np.linspace(90,120,4),
 #  Keywords can be any user-provided string (will be used for column names in output)
 #  Values are lists of strings of the form [section_name, mode/surface_id, column_name]
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'Mode_frequency': ['RoverQ', '0', 'Frequency'],
+               'Mode_freq': ['RoverQ', '0', 'Frequency'],
                'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
                'loc_x': ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
                'loc_y': ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
