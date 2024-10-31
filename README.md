@@ -165,13 +165,13 @@ The input dict object contains keyword value pairs for the *exact* names of the 
 Next, the desired outputs are defined in a separate dict object:
 ```python
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'mode_frequency': ['RoverQ', '0', 'Frequency'],
+               'mode_freq': ['RoverQ', '0', 'Frequency'],
                'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
                'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
                'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
                'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
 ```
-The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'mode_frequency', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
+The output dict object contains keyword value pairs for desired outputs to write to `sweep_output_file` in a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named rfpost.out). In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'mode_freq', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
@@ -215,7 +215,7 @@ This workflow dict object contains various parameters such as input files (path 
 Next, the desired outputs are defined in a separate dict object:
 ```python
 output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'mode_frequency': ['RoverQ', '0', 'Frequency']}
+               'mode_freq': ['RoverQ', '0', 'Frequency']}
 ```
 The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ' or 'Frequency') extracted from within the acdtool postprocess output file (named rfpost.out). This dict is used for parsing the ACE3P workflow output for use with Xopt. See the [Output dict](#LUME-ACE3P-Python-structures-advanced-users) section for more details on different options to extract from rfpost.out files.
 
@@ -224,25 +224,25 @@ The next step is to define the Xopt VOCS (Variables, Objectives, Constraints) co
 vocs = VOCS(
     variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
     objectives={"R/Q": "MAXIMIZE"},
-    constraints={"frequency_error" : ["LESS_THAN", 0.01]},
-    observables=["mode_frequency"]
+    constraints={"freq_error" : ["LESS_THAN", 0.0001]},
+    observables=["mode_freq"]
 )
 ```
-The format for VOCS is a stucture with dict and list objects. In this example, the `variables` dict contains the workflow input parameters to optimize and their bounds. Next, the `objectives` dict contains the quantity in the previously defined output dict to maximize (or minimize). The `constraints` dict is optional and specifies some inequality that is desired for the optimization. And lastly, the `observables` list is optional is simply tracked by Xopt but not used in optimization. See the [VOCS data structure](https://xopt.xopt.org/examples/basic/xopt_vocs) formatting from the Xopt user guide for more information. **Note, while "R/Q" and "mode_frequency" are defined in the output dict, the quantity "frequency_error" is not! This is intentional and will be addressed in the simulation function definition next.**
+The format for VOCS is a stucture with dict and list objects. In this example, the `variables` dict contains the workflow input parameters to optimize and their bounds. Next, the `objectives` dict contains the quantity in the previously defined output dict to maximize (or minimize). The `constraints` dict is optional and specifies some inequality that is desired for the optimization. And lastly, the `observables` list is optional is simply tracked by Xopt but not used in optimization. See the [VOCS data structure](https://xopt.xopt.org/examples/basic/xopt_vocs) formatting from the Xopt user guide for more information. **Note, while "R/Q" and "mode_freq" are defined in the output dict, the quantity "freq_error" is not! This is intentional and will be addressed in the simulation function definition next.**
 
-Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_frequency" being within 1% of a specified "target_frequency", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "frequency_error" quantity for Xopt to read-in.
+Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_freq" being within 1% of a specified "target_freq", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "freq_error" quantity for Xopt to read-in.
 ```python
-target_frequency = 1.3e9
+target_freq = 1.3e9
 
 def sim_function(input_dict):
     workflow = Omega3PWorkflow(workflow_dict,input_dict,output_dict)
     output_data = workflow.run()
-    output_data['frequency_error'] = np.abs(output_data['mode_frequency']-target_frequency)/target_frequency
+    output_data['freq_error'] = (output_data['mode_freq']-target_freq)**2/target_freq**2
     return output_data
 ```
-In this example, a target frequency is set and the sim function is defined as function with dict-type inputs and outputs. Within this sim function, an ACE3P workflow is created and run. Afterwards, the "output_data" dict is modified to include a "frequency_error" key with the value calculated by the relative error between the "mode_freqeuncy" and the "target_frequency". Then the "output_data" dict is returned for use by Xopt.
+In this example, a target frequency is set and the sim function is defined as function with dict-type inputs and outputs. Within this sim function, an ACE3P workflow is created and run. Afterwards, the "output_data" dict is modified to include a "freq_error" key with the value calculated by the squared relative error between the "mode_freq" and the "target_freq". Then the "output_data" dict is returned for use by Xopt.
 
-In short, this sim function will provide the ACE3P workflow an input dict containing values of "cav_radius" and "ellipticity", run the workflow, and return an output data dict containing the values of "R/Q", "mode_frequency", and "frequency_error". Xopt will use this function as a "black-box" to optimize the 2 inputs ("cav_radius" and "ellipticity") with the given output objective ("R/Q"), output constraint ("frequency_error"), and tracked observable ("mode_frequency").
+In short, this sim function will provide the ACE3P workflow an input dict containing values of "cav_radius" and "ellipticity", run the workflow, and return an output data dict containing the values of "R/Q", "mode_freq", and "freq_error". Xopt will use this function as a "black-box" to optimize the 2 inputs ("cav_radius" and "ellipticity") with the given output objective ("R/Q"), output constraint ("freq_error"), and tracked observable ("mode_freq").
 
 The last part is to create the Xopt object with a chosen optimizer and provided VOCS and sim function:
 ```python
