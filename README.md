@@ -57,11 +57,13 @@ To run the examples on an S3DF iana terminal:
    
 The LUME-ACE3P python scripts enable the use of parameter sweeping or optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a parameter sweep or optimization run, a user will need to provide the following:
 
-> - a Cubit journal (.jou) file for editing (required for remeshing)
-> - an ACE3P input file (e.g. .omega3p) with desired input settings
-> - an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
-> - a LUME-ACE3P python script (.py) containing the workflow settings and input/output parameters
-> - a batch script (.batch) for submitting a job to the appropriate HPC resources
+* a Cubit journal (.jou) file for editing (required for remeshing)
+* an ACE3P input file (e.g. .omega3p) with desired input settings
+* an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
+* a LUME-ACE3P python script (.py) containing the workflow settings and input/output parameters
+* a batch script (.batch) for submitting a job to the appropriate HPC resources
+
+The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P modules and using Cubit for meshing. Visit the [Cubit](https://cubit.sandia.gov/) and [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23) websites for additional information on these codes.
 
 <img src="LUME-ACE3P File Hierarchy.png" width=800>
 
