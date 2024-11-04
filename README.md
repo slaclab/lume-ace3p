@@ -1,13 +1,64 @@
+<a id="readme-top"></a>
+
 ![logo](./logos/SLAC-lab-hires.png)
-# LUME-ACE3P
+
+<details><summary>Contents</summary>
+<ol>
+ <li>
+   <a href="#lume-ace3p-introduction">Introduction</a>
+   <ul>
+     <li><a href="#general-usage">General Usage</a></li>
+   </ul>
+ </li>
+ <li>
+   <a href="#installation-and-setup">Installation and Setup</a>
+   <ul>
+     <li><a href="#perlmutter">Perlmutter</a></li>
+     <li><a href="#s3df">S3DF</a></li>
+   </ul>
+ </li>
+ <li>
+   <a href="#setting-up-workflow-input-files">Setting up workflow input files</a>
+   <ul>
+     <li><a href="#cubit-journal-files">Cubit Journal Files</a></li>
+     <li><a href="#ace3p-input-files">ACE3P Input Files</a></li>
+     <li><a href="#acdtool-postprocess-files">Acdtool Postprocess Files</a></li>
+   </ul>
+ </li>
+ <li><a href="#license">License</a></li>
+ <li><a href="#contact">Contact</a></li>
+ <li><a href="#acknowledgments">Acknowledgments</a></li>
+</ol>
+</details>
+
+# LUME-ACE3P Introduction
 
 LUME-ACE3P is a set of python code interfaces, written by David Bizzozero, for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Christopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt-org/Xopt), written by Ryan Roussel.
 
-# LUME-ACE3P Dependencies and Installation
+## General Usage
+   
+The LUME-ACE3P python scripts enable the use of parameter sweeping or optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a parameter sweep or optimization run, a user will need to provide the following:
+
+* a Cubit journal (.jou) file for editing (required for remeshing)
+* an ACE3P input file (e.g. .omega3p, .s3p, etc.) with desired input settings
+* an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
+* a LUME-ACE3P python script (.py) containing the workflow settings and input/output parameters
+* a batch script (.batch) for submitting a job to the appropriate HPC resources
+
+The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P modules and using Cubit for meshing. Visit the [Cubit](https://cubit.sandia.gov/) and [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23) websites for additional information on these codes.
+
+<p align="center"><img src="LUME-ACE3P File Hierarchy.png" width=60% display=block margin=auto></p>
+
+The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains dictionary objects for the workflow settings, input parameters, and output parameters. A parameter sweep can be run by calling the ACE3P workflow function with the appropriate input/output parameters; this workflow will automatically call other codes (e.g. Cubit, Omega3P, etc.) and parse the output for writing to a text file or for use with optimization.
+
+The Cubit journal file, ACE3P input file, and acdtool postprocess files are generally unaltered from normal ACE3P usage. The details on the LUME-ACE3P python script are discussed in detail in the [python scripts](#Setting-up-LUME-ACE3P-python-scripts) section.
+
+# Installation and Setup
 
 LUME-ACE3P is not configured as a stand-alone Python module. Instead, it is a set of Python scripts dependent on "lume-base>=0.3.3" and "xopt>=2.2.2" from conda-forge. The examples and scripts are configured to run on NERSC Perlmutter or SLAC S3DF in an appropriate python environment with the aformentioned dependencies. See the following for details on how to access pre-made conda environments for LUME-ACE3P on the supported systems.
 
-<details><summary>Perlmutter</summary>
+## Perlmutter
+<details><summary>Setup</summary>
    
 To activate the lume-ace3p conda environment on a Perlmutter login node:
 1. Run the command: `/global/cfs/cdirs/ace3p/software/miniconda3/condabin/conda init` to set up conda for your terminal (only needs to be done once)
@@ -31,7 +82,8 @@ To run the examples on Perlmutter:
 
 </details>
 
-<details><summary>S3DF</summary>
+## S3DF
+<details><summary>Setup</summary>
 
 To activate the lume-ace3p conda environment on an S3DF iana terminal:
 1. Run the command: `/sdf/group/rfar/software/conda/bin/conda init` to set up conda for your terminal (only needs to be done once)
@@ -51,30 +103,10 @@ To run the examples on an S3DF iana terminal:
 6. View the results in the folder that the batch job was run from
 </details>
 
-# How to use LUME-ACE3P
+# Setting up workflow input files
 
-<details><summary>Instructions</summary>
-   
-The LUME-ACE3P python scripts enable the use of parameter sweeping or optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a parameter sweep or optimization run, a user will need to provide the following:
-
-* a Cubit journal (.jou) file for editing (required for remeshing)
-* an ACE3P input file (e.g. .omega3p) with desired input settings
-* an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings
-* a LUME-ACE3P python script (.py) containing the workflow settings and input/output parameters
-* a batch script (.batch) for submitting a job to the appropriate HPC resources
-
-The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P modules and using Cubit for meshing. Visit the [Cubit](https://cubit.sandia.gov/) and [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23) websites for additional information on these codes.
-
-<img src="LUME-ACE3P File Hierarchy.png" width=800>
-
-The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains dictionary objects for the workflow settings, input parameters, and output parameters. A parameter sweep can be run by calling the ACE3P workflow function with the appropriate input/output parameters; this workflow will automatically call other codes (e.g. Cubit, Omega3P, etc.) and parse the output for writing to a text file or for use with optimization.
-
-The Cubit journal file, ACE3P input file, and acdtool postprocess files are generally unaltered from normal ACE3P usage. The details on the LUME-ACE3P python script are discussed in detail in the [python scripts](#Setting-up-LUME-ACE3P-python-scripts) section.
-</details>
-
-# Setting up Cubit/ACE3P/Acdtool input files
-
-<details><summary>Cubit Journal Files</summary>
+## Cubit Journal Files
+<details><summary>File setup</summary>
 
 Cubit journal files can be very complex, thus only the parts which directly interface with LUME-ACE3P will be discussed here. The important aspects to note in a Cubit file when using LUME-ACE3P are:
 - Variable name references
@@ -98,7 +130,8 @@ For more information on Cubit journal files, see the official [Cubit documentati
 
 </details>
 
-<details><summary>ACE3P Input Files</summary>
+## ACE3P Input Files
+<details><summary>File setup</summary>
 
 ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
 ```
@@ -122,7 +155,8 @@ For more information on configuring ACE3P input files, see the [ACE3P tutorials]
 
 </details>
 
-<details><summary>Acdtool Postprocess Files</summary>
+## Acdtool Postprocess Files
+<details><summary>File setup</summary>
 
 An Acdtool postprocess script is used to parse ACE3P code outputs for quantities such as field monitors, impedance calculations, etc. The general input structure is based on sections whose contents are contained within curly braces "{}"; the contents are section-specific and key-value pairs separated by equals signs "=". Acdtool will read-in a ".rfpost" file and provide the results in a "rfpost.out" file. LUME-ACE3P is configured to parse this output file into a python dictionary which can be used to print output parameters or for optimization.
 
