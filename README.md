@@ -6,7 +6,7 @@
 
 LUME-ACE3P is a set of python code interfaces, written by David Bizzozero, for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Christopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt-org/Xopt), written by Ryan Roussel.
 
-<details><summary>Table of Contents</summary>
+<details><summary><h2>Table of Contents</h2></summary>
 <ol>
  <li>
    <a href="#lume-ace3p-introduction">Introduction</a>
@@ -52,8 +52,8 @@ LUME-ACE3P is a set of python code interfaces, written by David Bizzozero, for r
    </ul>
  </li>
  <li><a href="#license">License</a></li>
- <li><a href="#contact">Contact</a></li>
- <li><a href="#acknowledgments">Acknowledgments</a></li>
+ <!-- <li><a href="#contact">Contact</a></li> -->
+ <!-- <li><a href="#acknowledgments">Acknowledgments</a></li> -->
 </ol>
 </details>
 
@@ -312,7 +312,7 @@ vocs = VOCS(
 ```
 The format for VOCS is a stucture with dict and list objects. In this example, the "variables" dict contains the workflow input parameters to optimize and their bounds. Next, the "objectives" dict contains the quantity in the previously defined output dict to maximize (or minimize). The "constraints" dict is optional and specifies some inequality that is desired for the optimization. And lastly, the "observables" list is optional is simply tracked by Xopt but not used in optimization. See the [VOCS data structure](https://xopt.xopt.org/examples/basic/xopt_vocs) formatting from the Xopt user guide for more information.
 
-**Note, while "R/Q" and "mode_freq" are defined in the output dict, the quantity "freq_error" is not! This is intentional and will be addressed in the simulation function definition next.**
+**Note: while "R/Q" and "mode_freq" are defined in the output dict, the quantity "freq_error" is not! This is intentional and will be addressed in the simulation function definition next.**
 
 Since the goal of this example is to optimize the "R/Q" quantity with a constraint of the "mode_freq" being within 1% of a specified "target_freq", the simulation function which runs the ACE3P workflow must include an extra step to calculate the "freq_error" quantity for Xopt to read-in.
 ```python
@@ -351,6 +351,7 @@ In this example, Xopt will call the ACE3P workflow 5 times with randomly selecte
 
 # LUME-ACE3P Python Structures (advanced users)
 
+Internally, LUME-ACE3P uses Python *dict* objects to control ACE3P workflows for various tasks. For a parameter sweep, a workflow dict is used with input and output dicts to control the workflow tasks. For an optimization problem, a workflow dict is used with an output dict and Xopt objects. The class objects for workflow control are initialized with the aformentioned dict objects.
 <details><summary><h3>Workflow dict</h3></summary>
 
 The LUME-ACE3P workflow dict control the workflow task chain (by specifying related input files), directory management, and other settings. The workflow dict *keywords* are:
