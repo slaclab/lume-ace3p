@@ -74,6 +74,7 @@ The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P 
 The basic idea is that a user submits the batch script to HPC nodes which contains the LUME-ACE3P python script. The LUME-ACE3P python script contains dictionary objects for the workflow settings, input parameters, and output parameters. A parameter sweep can be run by calling the ACE3P workflow function with the appropriate input/output parameters; this workflow will automatically call other codes (e.g. Cubit, Omega3P, etc.) and parse the output for writing to a text file or for use with optimization.
 
 The Cubit journal file, ACE3P input file, and acdtool postprocess files are generally unaltered from normal ACE3P usage. The details on the LUME-ACE3P python script are discussed in detail in the [python scripts](#setting-up-lume-ace3p-python-scripts) section.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # Installation and Setup
 
@@ -133,6 +134,7 @@ To run the examples on an S3DF iana terminal:
 5. Submit a batch job of one of the *S3DF* examples with `sbatch`
 6. View the results in the folder that the batch job was run from
 </details>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # Setting up Workflow Input Files
 
@@ -199,6 +201,7 @@ An Acdtool postprocess script is used to parse ACE3P code outputs for quantities
 For more information on configuring Acdtool input files, see the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
 
 </details>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # Setting up LUME-ACE3P Python Scripts
 
@@ -348,6 +351,7 @@ for i in range(15):
 In this example, Xopt will call the ACE3P workflow 5 times with randomly selected inputs within the bounding box and then optimize the objective quantity over 15 more ACE3P workflow evaluations (steps). The output file "sim_output.txt" is a user-provided filename and simply prints the Xopt data structure output.
 
 </details>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # LUME-ACE3P Python Structures (advanced users)
 
@@ -421,6 +425,7 @@ Object data output:
   * Note: this is a nested dict object with the outer keywords consisting of tuples of inputs and the inner keywords corresponding to the evaluated output dict for each input combination.
 
 </details>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # Troubleshooting
 
@@ -454,6 +459,7 @@ As for now, checkpointing is not implemented in LUME-ACE3P. However, as a workar
 **Note: the parameter sweep output file is *overwritten* each workflow evaluation, so save the incomplete (failed) run output file to a new filename to later combine the results with the restarted run!**
 
 </details>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 # SLAC National Accelerator Laboratory
 The SLAC National Accelerator Laboratory is operated by Stanford University for the US Departement of Energy.  
