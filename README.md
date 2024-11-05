@@ -208,6 +208,15 @@ For more information on configuring Acdtool input files, see the [ACE3P tutorial
 LUME-ACE3P has two main use-cases: parameter sweeping and optimization. For both of these tasks, ACE3P workflows are evaluated many times according to parameters set by python dictionaries. The scripts can be quite complex so it can be best to use the following examples as a template for each type of task (parameter sweeping or optimization).
 
 ## Parameter Sweeping
+
+To set up a parameter sweep with LUME-ACE3P, 3 dicts need to be provided: a workflow dict, an input dict, and an output dict.
+
+- Workflow dict: contains the filenames, HPC settings, and other configuration settings used for the parameter sweep
+- Input dict: contains input names and corresponding vector values to sweep through
+- Output dict: contains the output quantities to store in an output array for printing
+
+Once the 3 dict objects are created, the parameter sweep can be run with one of the ACE3P workflow class objects.
+
 <details><summary><h3>Omega3P Parameter Sweep Example</h3></summary>
 
 This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run a parameter sweep over the cavity radius and cavity wall ellipticity parameters. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is submitted directly to HPC resources.
@@ -269,6 +278,16 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
 </details>
 
 ## Optimization
+
+To set up an optimization problem with LUME-ACE3P, an Xopt VOCS object and 2 dicts need to be provided: a workflow dict, and an output dict. Additionally, a sim function needs to be written which uses an ACE3P workflow class object.
+
+- Xopt VOCS object: contains variable names, objectives, and optionally: constraints, observables
+- Workflow dict: contains the filenames, HPC settings, and other configuration settings used for the optimization
+- Output dict: contains the output quantities to store in an output array for optimization
+- Sim function: python wrapper function used by Xopt to optimize
+
+Once the required objects are provided, the optimization can be run by using Xopt object methods (e.g. .step()).
+
 <details><summary><h3>Omega3P Optimization Example</h3></summary>
    
 This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
