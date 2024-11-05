@@ -128,7 +128,7 @@ To run the examples on an S3DF iana terminal:
 2. Run the ace3p setup script with `source sdf-ace3p.sh` (required to run ACE3P on S3DF)
    - The `sdf-ace3p.sh` file is located in `/sdf/group/rfar/ace3p/`
 3. Set the environment variable `PYTHONPATH` to `/sdf/group/rfar/lume-ace3p/`
-   - Use the command `export PYTHONPATH='/sdf/grou/rfar/lume-ace3p/'` which can be put in your ".bashrc" file.
+   - Use the command `export PYTHONPATH='/sdf/group/rfar/lume-ace3p/'` which can be put in your ".bashrc" file.
    - This command can also instead be placed directly in the batch job script
 4. Activate the lume-ace3p conda environment with the command: `conda activate lume-ace3p` if not already active
 5. Submit a batch job of one of the *S3DF* examples with `sbatch`
