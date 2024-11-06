@@ -87,10 +87,9 @@ To activate the lume-ace3p conda environment on a Perlmutter <ins>*login node*</
    ```
    module load conda
    ```
-   
 2. Load the specified conda environment:
    ```
-   conda activate /global/cfs/cdirs/ace3p/software/miniconda3/envs/lume-ace3p
+   conda activate /global/common/software/ace3p/lume-ace3p
    ```
    - The text "(lume-ace3p)" should be shown on the command line indicating you are in the correct conda environment
    - The command: `conda deactivate` can be used to exit the conda environment if desired
