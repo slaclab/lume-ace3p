@@ -83,14 +83,14 @@ LUME-ACE3P is not configured as a stand-alone Python module. Instead, it is a se
 <details><summary><h3>Perlmutter</h3></summary>
    
 To activate the lume-ace3p conda environment on a Perlmutter <ins>*login node*</ins>:
-1. Run the command (only needs to be done once):
+1. Load the NERSC Conda module:
    ```
-   /global/cfs/cdirs/ace3p/software/miniconda3/condabin/conda init
+   module load conda
    ```
    
-2. Reopen a terminal on Perlmutter and run the command:
+2. Load the specified conda environment:
    ```
-   conda activate lume-ace3p
+   conda activate /global/cfs/cdirs/ace3p/software/miniconda3/envs/lume-ace3p
    ```
    - The text "(lume-ace3p)" should be shown on the command line indicating you are in the correct conda environment
    - The command: `conda deactivate` can be used to exit the conda environment if desired
