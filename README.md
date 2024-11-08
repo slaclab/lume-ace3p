@@ -83,11 +83,11 @@ LUME-ACE3P is not configured as a stand-alone Python module. Instead, it is a se
 <details><summary><h3>Perlmutter</h3></summary>
    
 To activate the lume-ace3p conda environment on a Perlmutter <ins>*login node*</ins>:
-1. Load the NERSC Conda module:
+1. Load the NERSC Conda module (or your own conda manager):
    ```
    module load conda
    ```
-2. Load the specified conda environment:
+2. Load the specified LUME-ACE3P conda environment:
    ```
    conda activate /global/common/software/ace3p/lume-ace3p
    ```
@@ -99,8 +99,8 @@ To run the examples on Perlmutter:
 2. Run the ace3p setup script with `source perlmutter-ace3p.sh` (required to run ACE3P on Perlmutter)
    - The `perlmutter-ace3p.sh` file is located in `/global/cfs/cdirs/ace3p/`
    - This step is optional if your `.bashrc` file already has the necessary module imports for ACE3P
-3. Append to the environment variable `PYTHONPATH` the path: `/global/cfs/cdirs/ace3p/lume-ace3p/`
-   - Use the command `export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/':$PYTHONPATH` which can be put in your ".bashrc" file.
+3. Set the environment variable `PYTHONPATH` the path: `/global/cfs/cdirs/ace3p/lume-ace3p/`
+   - Use the command `export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/'` which can be put in your ".bashrc" file.
    - This command can also instead be placed directly in the batch job script
    - Omitting this step may cause conda package conflicts with NERSC's built-in conda module
 4. Activate the lume-ace3p conda environment with the command: `conda activate lume-ace3p` (if not already active)
@@ -111,16 +111,17 @@ To run the examples on Perlmutter:
 <details><summary><h3>S3DF</h3></summary>
 
 To activate the lume-ace3p conda environment on an S3DF <ins>*iana node*</ins>:
-1. Run the command (only needs to be done once):
+1. **Skip this step if you have your own conda**
+   Run this command once (initializes a conda environment for your profile):
    ```
    /sdf/group/rfar/software/conda/bin/conda init
    ```
-2. Reopen a terminal on S3DF iana and run the command:
+3. Reopen a terminal on S3DF iana and run the command:
    ```
    conda activate lume-ace3p
    ```
    - The text "(lume-ace3p)" should be shown on the command line indicating you are in the correct conda environment
-   - The command: `conda deactivate` can be used to exit the conda environment if desired
+   - If using your own conda, the environment is located at: `/sdf/group/rfar/software/conda/envs/lume-ace3p`
 
 To run the examples on an S3DF iana terminal:
 1. Copy the `/sdf/group/rfar/lume-ace3p/examples` folder to a desired location (e.g. in home or scratch)
