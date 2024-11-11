@@ -158,6 +158,34 @@ class S3P(ACE3P):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
 
+    def output_parser(self):
+        self.output_data = {}
+        with open(os.path.join(self.workdir, 'Reflection.out')) as file:
+            lines = file.readlines()
+        for ind in range(len(lines)):
+            if lines[ind].startswith('#Index'):
+                indrow = ind
+            if lines[ind].startswith('#Frequency'):
+                freqrow = ind
+                break
+        self.output_data['IndexMap'] = {}
+        for row in lines[indrow+1:freqrow]:
+            id = row.strip('#').split()[0]
+            self.output_data['IndexMap'][id] = {}
+            self.output_data['IndexMap'][id]['Port'] = row.split('Port')[1].split()[0].strip(',')
+            self.output_data['IndexMap'][id]['Mode'] = row.split('Mode')[1].split()[0].strip(',')
+            self.output_data['IndexMap'][id]['Type'] = row.split('Type:')[1].split()[0].strip('(')
+            self.output_data['IndexMap'][id]['Cutoff'] = eval(row.split('cutoff:')[1].split('Hz')[0].strip())
+        self.output_data['Frequency'] = []
+        self.output_data['Sparameters'] = []
+        for row in lines[freqrow+1::]:
+            rowlist = row.split()
+            self.output_data['Frequency'].append(eval(rowlist[0]))
+            slist = []
+            for entry in rowlist[1::]:
+                slist.append(eval(entry))
+            self.output_data['Sparameters'].append(slist)
+
 class T3P(ACE3P):
 
     module_name = 't3p'
