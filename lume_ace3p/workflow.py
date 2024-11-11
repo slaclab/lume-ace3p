@@ -12,10 +12,10 @@ class Omega3PWorkflow:
         self.input_dict = input_dict
         self.output_dict = output_dict
         self.cubit_input = workflow_dict.get('cubit_input')
-        self.omega3p_input = workflow_dict.get('omega3p_input')
-        self.omega3p_tasks = workflow_dict.get('omega3p_tasks',1)
-        self.omega3p_cores = workflow_dict.get('omega3p_cores',1)
-        self.omega3p_opts = workflow_dict.get('omega3p_opts','')
+        self.ace3p_input = workflow_dict.get('ace3p_input')
+        self.ace3p_tasks = workflow_dict.get('ace3p_tasks',1)
+        self.ace3p_cores = workflow_dict.get('ace3p_cores',1)
+        self.ace3p_opts = workflow_dict.get('ace3p_opts','')
         self.rfpost_input = workflow_dict.get('rfpost_input')
         self.workdir_mode = workflow_dict.get('workdir_mode','manual')
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
@@ -59,10 +59,11 @@ class Omega3PWorkflow:
             print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
-        if self.omega3p_input is not None:
-            self.omega3p_obj = Omega3P(self.omega3p_input,
-                                  tasks=self.omega3p_tasks,
-                                  cores=self.omega3p_cores,
+        if self.ace3p_input is not None:
+            self.omega3p_obj = Omega3P(self.ace3p_input,
+                                  tasks=self.ace3p_tasks,
+                                  cores=self.ace3p_cores,
+                                  opts=self.ace3p_opts,
                                   workdir=self.workdir)
             self.omega3p_obj.run()
         else:

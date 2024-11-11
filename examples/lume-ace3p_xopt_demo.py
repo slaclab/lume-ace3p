@@ -7,10 +7,10 @@ from lume_ace3p.tools import WriteXoptData
 
 #Define workflow dictionary with input files, directory options, etc.
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
-                 'omega3p_input': 'pillbox-rtop.omega3p',
-                 'omega3p_tasks': 16,
-                 'omega3p_cores': 16,
-                 'omega3p_opts' : '--cpu-bind=cores',
+                 'ace3p_input': 'pillbox-rtop.omega3p',
+                 'ace3p_tasks': 16,
+                 'ace3p_cores': 16,
+                 'ace3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': 'lume-ace3p_xopt_workdir'}
 
