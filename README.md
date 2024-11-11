@@ -230,10 +230,10 @@ import numpy as np
 from lume_ace3p.workflow import Omega3PWorkflow
 
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
-                 'omega3p_input': 'pillbox-rtop.omega3p',
-                 'omega3p_tasks': 16,
-                 'omega3p_cores': 16,
-                 'omega3p_opts' : '--cpu-bind=cores',
+                 'ace3p_input': 'pillbox-rtop.omega3p',
+                 'ace3p_tasks': 16,
+                 'ace3p_cores': 16,
+                 'ace3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
                  'workdir_mode': 'auto',
@@ -305,10 +305,10 @@ from lume_ace3p.workflow import Omega3PWorkflow
 from lume_ace3p.tools import WriteXoptData
 
 workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
-                 'omega3p_input': 'pillbox-rtop.omega3p',
-                 'omega3p_tasks': 16,
-                 'omega3p_cores': 16,
-                 'omega3p_opts' : '--cpu-bind=cores',
+                 'ace3p_input': 'pillbox-rtop.omega3p',
+                 'ace3p_tasks': 16,
+                 'ace3p_cores': 16,
+                 'ace3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': 'lume-ace3p_xopt_workdir'}
 ```
@@ -379,10 +379,10 @@ Internally, LUME-ACE3P uses Python *dict* objects to control ACE3P workflows for
 
 The LUME-ACE3P workflow dict control the workflow task chain (by specifying related input files), directory management, and other settings. The workflow dict *keywords* are:
    * `cubit_input` : `String` [Default `None`] with path to Cubit journal file (.jou) used for the workflow.
-   * `omega3p_input` : `String` [Default `None`] with path to Omega3P input file (.omega3p) used for the workflow.
-   * `omega3p_cores` : `Int` [Default `1`] to specify the number of cores per task to use with Omega3P.
-   * `omega3p_opts` : `String` [Default `''`] to specify additional mpirun or srun arguments when calling Omega3P.
-   * `omega3p_tasks` : `Int` [Default `1`] to specify the number of MPI tasks to use with Omega3P.
+   * `ace3p_input` : `String` [Default `None`] with path to ACE3P input file (e.g .omega3p) used for the workflow.
+   * `ace3p_cores` : `Int` [Default `1`] to specify the number of cores per task to use with ACE3P modules.
+   * `ace3p_opts` : `String` [Default `''`] to specify additional mpirun or srun arguments when calling ACE3P modules.
+   * `ace3p_tasks` : `Int` [Default `1`] to specify the number of MPI tasks to use with ACE3P modules.
    * `rfpost_input` : `String` [Default `None`] with path to Acdtool rfpost file (.rfpost) used for the workflow.
    * `sweep_output` : `Boolean` [Detault `False`] to toggle writing parameter sweep output to text file.
    * `sweep_output_file` : `String` [Detault `None`] path for writing parameter sweep output.
