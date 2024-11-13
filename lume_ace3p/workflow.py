@@ -2,11 +2,11 @@ import os
 import numpy as np
 
 from lume_ace3p.cubit import Cubit
-from lume_ace3p.ace3p import Omega3P
+from lume_ace3p.ace3p import Omega3P, S3P
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.tools import WriteDataTable
 
-class Omega3PWorkflow:
+class ACE3PWorkflow:
     
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
         self.input_dict = input_dict
@@ -41,7 +41,21 @@ class Omega3PWorkflow:
                 self.workdir = self.baseworkdir
         else:
             raise ValueError("Key: \'workdir_mode\' must be either \'manual\' or \'auto\'.")
-            
+        
+    def run(self):
+        pass
+
+    def evaluate(self):
+        pass
+    
+    def run_sweep(self):
+        pass
+
+
+class Omega3PWorkflow(ACE3PWorkflow):
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
     def run(self, input_dict=None, output_dict=None):
         if input_dict is None:
@@ -159,5 +173,104 @@ class Omega3PWorkflow:
                 return
         if len(self.input_varname) == 0:
             print('Parameter sweep must be run first.')
-            return 
+            return
         WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
+
+class S3PWorkflow(ACE3PWorkflow):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def run(self, input_dict=None, output_dict=None):
+        if input_dict is None:
+            input_dict = self.input_dict
+        self._getworkdir(input_dict)
+
+        #Load Cubit journal, update values, and run
+        if self.cubit_input is not None:
+            self.cubit_obj = Cubit(self.cubit_input,
+                              workdir=self.workdir)
+            if input_dict is not None:
+                self.cubit_obj.set_value(input_dict)
+            self.cubit_obj.run()
+        else:
+            print('Cubit journal file not specified, skipping step.')
+
+        #Load Omega3P input and run
+        if self.ace3p_input is not None:
+            self.s3p_obj = S3P(self.ace3p_input,
+                                  tasks=self.ace3p_tasks,
+                                  cores=self.ace3p_cores,
+                                  opts=self.ace3p_opts,
+                                  workdir=self.workdir)
+            self.s3p_obj.run()
+        else:
+            print('S3P input file not specified, skipping step.')
+
+        if output_dict is None:
+            output_dict = self.output_dict
+        return self.evaluate(output_dict)
+    
+    def evaluate(self, output_dict):
+        self.output_data = {}
+        if self.s3p_obj is not None:
+            if output_dict is not None:
+                assert (len(self.s3p_obj.output_data)>0), ('No output data found, run S3P first.')
+                num_ids = len(self.s3p_obj.output_data['IndexMap'].keys())
+                self.output_data['Frequency'] = self.s3p_obj.output_data['Frequency']
+                for output_name, output_params in output_dict.items():
+                    section = output_params[0]
+                    if section.startswith('S'):
+                        sparam = section.replace('S','').replace('(','').replace(')','').split(',')
+                        assert (len(sparam)==2), ("Unknown parameter argument '" + section + "' in output dict.")
+                        id1 = eval(sparam[0])
+                        id2 = eval(sparam[1])
+                        self.output_data[output_name] = self.s3p_obj.output_data['Sparameters'][id1*num_ids+id2]
+                    else:
+                        raise ValueError("Unknown section name '" + section + "' in output dict.")
+            else:
+                self.output_data = self.s3p_obj.output_data
+        return self.output_data
+    
+    def run_sweep(self, input_dict=None, output_dict=None):
+        if input_dict is None:
+            input_dict = self.input_dict
+        if output_dict is None:
+            output_dict = self.output_dict
+        self.input_varname = []     #List of input parameter names
+        self.input_vardim = []      #List of vector lengths for each parameter
+        self.input_vardata = []     #List of numpy array vectors of parameters
+        self.output_varname = []    #List of output parameter names
+        self.sweep_data = {}        #Dict to store parameter sweep data
+        
+        #Unpack dict of inputs into lists
+        for var, value in input_dict.items():
+            self.input_varname.append(var)
+            self.input_vardim.append(len(value))
+            self.input_vardata.append(np.array(value))
+        
+        for var in output_dict.keys():
+            self.output_varname.append(var)
+
+        #Build a full tensor product of all combinations of parameters
+        #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
+        #   Then input_tensor is a 6000 x 3 array of all combinations from the 3 parameters
+        self.input_tensor = self.input_vardata[0]         #First parameter vector
+        if len(self.input_varname) > 1:
+            t1 = np.tile(self.input_tensor,self.input_vardim[1])
+            t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
+            self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            if len(self.input_varname) > 2:
+                for i in range(2,len(self.input_varname)):
+                    t1 = np.tile(self.input_tensor,(self.input_vardim[i],1))
+                    t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
+                    self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+        
+        for i in range(np.size(self.input_tensor,0)):
+            sweep_input_dict = {}
+            sweep_input_tuple = tuple(self.input_tensor[i])
+            for j in range(len(self.input_varname)):
+                sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
+            self.run(sweep_input_dict)
+            self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+        return self.sweep_data

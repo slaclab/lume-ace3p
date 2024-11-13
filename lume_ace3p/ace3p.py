@@ -1,5 +1,6 @@
 import os, shutil
 import subprocess
+import numpy as np
 
 from lume.base import CommandWrapper
 
@@ -15,6 +16,7 @@ class ACE3P(CommandWrapper):
         self.cores = cores
         self.opts = opts
         self.output_file = None
+        self.output_data = {}
         if self.workdir is None:
             self.workdir = os.getcwd()
         if not os.path.exists(self.workdir):
@@ -28,11 +30,10 @@ class ACE3P(CommandWrapper):
 
     def run(self, tasks=1, cores=1, opts=''):
         self.write_input()
-        result = subprocess.run(self.MPI_CALLER + ' -n ' + str(tasks) + ' -c ' + str(cores) + ' ' + opts + ' '
+        subprocess.run(self.MPI_CALLER + ' -n ' + str(tasks) + ' -c ' + str(cores) + ' ' + opts + ' '
                                 + self.ACE3P_PATH + self.module_name + ' ' + self.input_file,
-                                shell=True, cwd=self.workdir, capture_output=True, text=True)
-        with open(os.path.join(self.workdir, self.output_file), 'w') as file:
-            file.writelines(result.stdout)
+                                shell=True, cwd=self.workdir)
+        self.output_parser()
 
     def load_input_file(self, *args):
         if args:
@@ -124,6 +125,9 @@ class ACE3P(CommandWrapper):
     def make_default_input(self):
         pass
 
+    def output_parser(self):
+        pass
+
     def load_output(self):
         return 'Not implemented.'
 
@@ -176,15 +180,17 @@ class S3P(ACE3P):
             self.output_data['IndexMap'][id]['Mode'] = row.split('Mode')[1].split()[0].strip(',')
             self.output_data['IndexMap'][id]['Type'] = row.split('Type:')[1].split()[0].strip('(')
             self.output_data['IndexMap'][id]['Cutoff'] = eval(row.split('cutoff:')[1].split('Hz')[0].strip())
-        self.output_data['Frequency'] = []
-        self.output_data['Sparameters'] = []
+        frequency= []
+        sparameters = []
         for row in lines[freqrow+1::]:
             rowlist = row.split()
-            self.output_data['Frequency'].append(eval(rowlist[0]))
-            slist = []
+            frequency.append(eval(rowlist[0]))
+            parameter = []
             for entry in rowlist[1::]:
-                slist.append(eval(entry))
-            self.output_data['Sparameters'].append(slist)
+                parameter.append(eval(entry))
+            sparameters.append(parameter)
+        self.output_data['Frequency'] = np.array(frequency)
+        self.output_data['Sparameters'] = np.array(sparameters).transpose()
 
 class T3P(ACE3P):
 
