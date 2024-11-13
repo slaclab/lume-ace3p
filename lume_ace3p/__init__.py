@@ -37,8 +37,8 @@ else:
     os.environ['MPI_CALLER'] = shutil.which('mpirun')  #Try checking if local system has mpirun installed
     assert os.environ['MPI_CALLER'] is not None, 'MPI installation not found.'
 
-from .workflow import Omega3PWorkflow
+from .workflow import Omega3PWorkflow, S3PWorkflow
 from .cubit import Cubit
-from .ace3p import Omega3P
+from .ace3p import Omega3P, S3P
 from .acdtool import Acdtool
-from .tools import WriteDataTable, WriteXoptData
+from .tools import WriteDataTable, WriteS3PDataTable, WriteXoptData

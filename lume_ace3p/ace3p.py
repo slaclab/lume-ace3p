@@ -185,12 +185,16 @@ class S3P(ACE3P):
         for row in lines[freqrow+1::]:
             rowlist = row.split()
             frequency.append(eval(rowlist[0]))
-            parameter = []
+            sparameter = []
             for entry in rowlist[1::]:
-                parameter.append(eval(entry))
-            sparameters.append(parameter)
+                sparameter.append(eval(entry))
+            sparameters.append(sparameter)
         self.output_data['Frequency'] = np.array(frequency)
-        self.output_data['Sparameters'] = np.array(sparameters).transpose()
+        num_ids = len(self.output_data['IndexMap'].keys())
+        for id1 in range(num_ids):
+            for id2 in range(num_ids):
+                sname = 'S(' + str(id1) + ',' + str(id2) + ')'
+                self.output_data[sname] = sparameters[id1*num_ids+id2]
 
 class T3P(ACE3P):
 

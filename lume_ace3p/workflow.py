@@ -4,7 +4,7 @@ import numpy as np
 from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import Omega3P, S3P
 from lume_ace3p.acdtool import Acdtool
-from lume_ace3p.tools import WriteDataTable
+from lume_ace3p.tools import WriteDataTable, WriteS3PDataTable
 
 class ACE3PWorkflow:
     
@@ -214,20 +214,17 @@ class S3PWorkflow(ACE3PWorkflow):
     def evaluate(self, output_dict):
         self.output_data = {}
         if self.s3p_obj is not None:
+            assert (len(self.s3p_obj.output_data)>0), ('No output data found, run S3P first.')
             if output_dict is not None:
-                assert (len(self.s3p_obj.output_data)>0), ('No output data found, run S3P first.')
-                num_ids = len(self.s3p_obj.output_data['IndexMap'].keys())
+                self.output_data['IndexMap'] = self.s3p_obj.output_data['IndexMap']
                 self.output_data['Frequency'] = self.s3p_obj.output_data['Frequency']
-                for output_name, output_params in output_dict.items():
-                    section = output_params[0]
-                    if section.startswith('S'):
-                        sparam = section.replace('S','').replace('(','').replace(')','').split(',')
-                        assert (len(sparam)==2), ("Unknown parameter argument '" + section + "' in output dict.")
-                        id1 = eval(sparam[0])
-                        id2 = eval(sparam[1])
-                        self.output_data[output_name] = self.s3p_obj.output_data['Sparameters'][id1*num_ids+id2]
+                for output_name, sparameter in output_dict.items():
+                    if isinstance(sparameter, list):
+                        sparameter = sparameter[0]
+                    if sparameter in self.s3p_obj.output_data.keys():
+                        self.output_data[output_name] = self.s3p_obj.output_data[sparameter]
                     else:
-                        raise ValueError("Unknown section name '" + section + "' in output dict.")
+                        raise ValueError("Unknown section name '" + sparameter + "' in output dict.")
             else:
                 self.output_data = self.s3p_obj.output_data
         return self.output_data
@@ -267,4 +264,17 @@ class S3PWorkflow(ACE3PWorkflow):
                 sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
             self.run(sweep_input_dict)
             self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+            if self.sweep_output:
+                self.print_sweep_output()
         return self.sweep_data
+
+    def print_sweep_output(self, filename=None):
+        if filename is None:
+            filename = self.sweep_output_file
+            if self.sweep_output_file is None:
+                print('No sweep output file specified.')
+                return
+        if len(self.input_varname) == 0:
+            print('Parameter sweep must be run first.')
+            return
+        WriteS3PDataTable(filename, self.sweep_data, self.input_varname)

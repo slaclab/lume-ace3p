@@ -45,6 +45,31 @@ def WriteDataTable(filename, data_dict, input_names, output_names):
     with open(filename,'w') as file:
         file.write(text)
 
+def WriteS3PDataTable(filename, data_dict, input_names):
+
+    text = ''
+    for name in input_names:
+        text += name + '\t'
+    text += 'Frequency\t'
+    key1 = data_dict.keys()[0]
+    num_ids = len(data_dict[key1]['IndexMap'].keys())
+    for id1 in range(num_ids):
+        for id2 in range(num_ids):
+            text += 'S(' + str(id1) + ',' + str(id2) + ')\t'
+    text += '\n'
+    for key, value in data_dict.keys():
+        for i in range(len(input_names)):
+            for idf in range(len(value['Frequency'])):
+                text += str(key[i]) + '\t'
+                text += str(value['Frequency'][idf]) + '\t'
+                for id1 in range(num_ids):
+                    for id2 in range(num_ids):
+                        sname = 'S(' + str(id1) + ',' + str(id2) + ')'
+                        text += str(value[sname][idf]) + '\t'
+                text += '\n'
+    with open(filename,'w') as file:
+        file.write(text)
+
 def WriteXoptData(filename, Xopt_obj):
     #Helper script to write Xopt object data to a text file with proper formatting:
     #
