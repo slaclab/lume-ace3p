@@ -235,12 +235,9 @@ class S3PWorkflow(ACE3PWorkflow):
     def run_sweep(self, input_dict=None, output_dict=None):
         if input_dict is None:
             input_dict = self.input_dict
-        if output_dict is None:
-            output_dict = self.output_dict
         self.input_varname = []     #List of input parameter names
         self.input_vardim = []      #List of vector lengths for each parameter
         self.input_vardata = []     #List of numpy array vectors of parameters
-        self.output_varname = []    #List of output parameter names
         self.sweep_data = {}        #Dict to store parameter sweep data
         
         #Unpack dict of inputs into lists
@@ -248,9 +245,6 @@ class S3PWorkflow(ACE3PWorkflow):
             self.input_varname.append(var)
             self.input_vardim.append(len(value))
             self.input_vardata.append(np.array(value))
-        
-        for var in output_dict.keys():
-            self.output_varname.append(var)
 
         #Build a full tensor product of all combinations of parameters
         #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
