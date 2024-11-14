@@ -232,6 +232,8 @@ class S3PWorkflow(ACE3PWorkflow):
     def run_sweep(self, input_dict=None, output_dict=None):
         if input_dict is None:
             input_dict = self.input_dict
+        if output_dict is None:
+            output_dict = self.output_dict
         self.input_varname = []     #List of input parameter names
         self.input_vardim = []      #List of vector lengths for each parameter
         self.input_vardata = []     #List of numpy array vectors of parameters
