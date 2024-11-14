@@ -22,13 +22,11 @@ input_dict = {'cav_radius': np.linspace(90,120,4),
 
 #Define output dictionary with data to extract from acdtool
 #  Keywords can be any user-provided string (will be used for column names in output)
-#  Values are lists of strings of the form [section_name, mode/surface_id, column_name]
-output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'Mode_freq': ['RoverQ', '0', 'Frequency'],
-               'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
-               'loc_x': ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
-               'loc_y': ['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
-               'loc_z': ['maxFieldsOnSurface', '6', 'Emax_location', 'z']}
+#  Values are S-parameter names indexed via IndexMap from Reflection.out
+output_dict = {'S11': 'S(0,0)',
+               'S12': 'S(0,2)',
+               'S21': 'S(2,0)',
+               'S22': 'S(2,2)'}
 
 #Create workflow object and run sweep over input dictionary provided
 #Output file will contain keys in input_dict and output_dict as columns and each
