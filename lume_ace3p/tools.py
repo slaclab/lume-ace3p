@@ -85,16 +85,16 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
         text += skey + '\t'
     text += '\n'
     for key, value in sweep_data.items():
-        for i in range(len(input_names)): #Loop over input parameters
-            for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+        for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+            for i in range(len(input_names)): #Loop over input parameters
                 #Write value of each input in tuple for evaluation
                 text += str(key[i]) + '\t'
-                #Write frequency for the S3P evaluation
-                text += str(value['Frequency'][idf]) + '\t'
-                for skey in skeys:
-                    #Write particular S-parameters in corresponding columns
-                    text += str(value[skey][idf]) + '\t'
-                text += '\n'
+            #Write frequency for the S3P evaluation
+            text += str(value['Frequency'][idf]) + '\t'
+            for skey in skeys:
+                #Write particular S-parameters in corresponding columns
+                text += str(value[skey][idf]) + '\t'
+            text += '\n'
     with open(filename,'w') as file:
         file.write(text)
 
