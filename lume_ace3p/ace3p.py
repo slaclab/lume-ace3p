@@ -189,6 +189,7 @@ class S3P(ACE3P):
             for entry in rowlist[1::]:
                 sparameter.append(eval(entry))
             sparameters.append(sparameter)
+        sparameters = np.array(sparameters).transpose()
         self.output_data['Frequency'] = np.array(frequency)
         num_ids = len(self.output_data['IndexMap'].keys())
         for id1 in range(num_ids):

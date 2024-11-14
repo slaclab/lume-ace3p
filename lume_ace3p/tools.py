@@ -49,23 +49,24 @@ def WriteS3PDataTable(filename, data_dict, input_names):
 
     text = ''
     for name in input_names:
-        text += name + '\t'
+        text += name + '\t' #Column for each input and output name
     text += 'Frequency\t'
-    key1 = data_dict.keys()[0]
-    num_ids = len(data_dict[key1]['IndexMap'].keys())
-    for id1 in range(num_ids):
-        for id2 in range(num_ids):
-            text += 'S(' + str(id1) + ',' + str(id2) + ')\t'
+    key1 = data_dict.keys()[0] #Extract data from one S3P run
+    #Get all S-parameter names (skeys) that were saved in data_dict
+    skeys = [key for key in data_dict[key1].keys() if key not in ['IndexMap', 'Frequency']]
+    for skey in skeys:
+        text += skey + '\t'
     text += '\n'
     for key, value in data_dict.keys():
-        for i in range(len(input_names)):
-            for idf in range(len(value['Frequency'])):
+        for i in range(len(input_names)): #Loop over input parameters
+            for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+                #Write value of each input in tuple for evaluation
                 text += str(key[i]) + '\t'
+                #Write frequency for the S3P evaluation
                 text += str(value['Frequency'][idf]) + '\t'
-                for id1 in range(num_ids):
-                    for id2 in range(num_ids):
-                        sname = 'S(' + str(id1) + ',' + str(id2) + ')'
-                        text += str(value[sname][idf]) + '\t'
+                for skey in skeys:
+                    #Write particular S-parameters in corresponding columns
+                    text += str(value[skey][idf]) + '\t'
                 text += '\n'
     with open(filename,'w') as file:
         file.write(text)
