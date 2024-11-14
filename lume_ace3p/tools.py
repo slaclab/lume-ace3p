@@ -84,7 +84,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
     for skey in skeys:
         text += skey + '\t'
     text += '\n'
-    for key, value in sweep_data.keys():
+    for key, value in sweep_data.items():
         for i in range(len(input_names)): #Loop over input parameters
             for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
                 #Write value of each input in tuple for evaluation
