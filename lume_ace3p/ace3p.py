@@ -40,7 +40,8 @@ class ACE3P(CommandWrapper):
             self.input_file = args[0]
         with open(self.input_file) as file:
             text = file.read()
-        self.input_data = self.input_parser(text)
+        #self.input_data = self.input_parser(text) #DUMMIED OUT FOR COMPATIBILITY
+        self.input_data = text
     
     def input_parser(self, text):
         data = {}
@@ -108,7 +109,8 @@ class ACE3P(CommandWrapper):
             if os.path.samefile(os.path.join(self.workdir, self.input_file), os.path.join(os.getcwd(), self.original_input_file)):
                 file = file + '_copy'   #Used to not overwrite original input if in same directory
         self.input_file = file
-        text = self.unpack_dict(self.input_data,'',0)
+        #text = self.unpack_dict(self.input_data,'',0) #DUMMIED OUT FOR COMPATIBILITY
+        text = self.input_data
         with open(os.path.join(self.workdir, file), 'w') as file:
             file.write(text)
 
@@ -164,7 +166,7 @@ class S3P(ACE3P):
 
     def output_parser(self):
         self.output_data = {}
-        with open(os.path.join(self.workdir, 'Reflection.out')) as file:
+        with open(os.path.join(self.workdir, 's3p_results/Reflection.out')) as file:
             lines = file.readlines()
         for ind in range(len(lines)):
             if lines[ind].startswith('#Index'):
