@@ -17,16 +17,16 @@ workflow_dict = {'cubit_input': 'bend-90degree.jou',
 #Define input dictionary with keywords and values:
 #  Keywords must match exact Cubit file variable names
 #  Values can be scalar numbers or vectors (for parameter sweeping)
-input_dict = {'cav_radius': np.linspace(90,120,4),
-              'ellipticity': np.linspace(0.5,1.25,4)}
+input_dict = {'cornercut': np.linspace(12,18,4),
+              'rcorner2': np.linspace(3,6,4)}
 
 #Define output dictionary with data to extract from acdtool
 #  Keywords can be any user-provided string (will be used for column names in output)
 #  Values are S-parameter names indexed via IndexMap from Reflection.out
-output_dict = {'S11': 'S(0,0)',
-               'S12': 'S(0,2)',
-               'S21': 'S(2,0)',
-               'S22': 'S(2,2)'}
+output_dict = {'M0S11': 'S(0,0)',
+               'M0S12': 'S(0,2)',
+               'M0S21': 'S(2,0)',
+               'M0S22': 'S(2,2)'}
 
 #Create workflow object and run sweep over input dictionary provided
 #Output file will contain keys in input_dict and output_dict as columns and each
