@@ -78,7 +78,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
     for name in input_names:
         text += name + '\t' #Column for each input and output name
     text += 'Frequency\t'
-    key1 = sweep_data.keys()[0] #Extract data from one S3P run
+    key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
     #Get all S-parameter names (skeys) that were saved in sweep_data
     skeys = [key for key in sweep_data[key1].keys() if key not in ['IndexMap', 'Frequency']]
     for skey in skeys:
