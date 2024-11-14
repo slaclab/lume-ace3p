@@ -41,4 +41,4 @@ from .workflow import Omega3PWorkflow, S3PWorkflow
 from .cubit import Cubit
 from .ace3p import Omega3P, S3P
 from .acdtool import Acdtool
-from .tools import WriteDataTable, WriteS3PDataTable, WriteXoptData
+from .tools import WriteOmega3PDataTable, WriteS3PDataTable, WriteXoptData

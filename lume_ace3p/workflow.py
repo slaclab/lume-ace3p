@@ -4,7 +4,7 @@ import numpy as np
 from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import Omega3P, S3P
 from lume_ace3p.acdtool import Acdtool
-from lume_ace3p.tools import WriteDataTable, WriteS3PDataTable
+from lume_ace3p.tools import WriteOmega3PDataTable, WriteS3PDataTable
 
 class ACE3PWorkflow:
     
@@ -174,7 +174,7 @@ class Omega3PWorkflow(ACE3PWorkflow):
         if len(self.input_varname) == 0:
             print('Parameter sweep must be run first.')
             return
-        WriteDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
+        WriteOmega3PDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
 
 class S3PWorkflow(ACE3PWorkflow):
 
