@@ -11,4 +11,4 @@
 
 export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
 
-python lume-ace3p_simple_psweep.py
+python lume-ace3p_omega3p_psweep.py

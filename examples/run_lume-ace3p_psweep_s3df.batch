@@ -12,4 +12,4 @@
 export OMPI_MCA_sharedfp=^lockedfile
 export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
 
-python lume-ace3p_simple_psweep.py
+python lume-ace3p_omega3p_psweep.py

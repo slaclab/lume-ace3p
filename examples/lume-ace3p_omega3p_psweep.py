@@ -9,10 +9,10 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'ace3p_cores': 16,
                  'ace3p_opts' : '--cpu-bind=cores',
                  'rfpost_input': 'pillbox-rtop.rfpost',
-                 'workdir': os.path.join(os.getcwd(),'lume-ace3p_demo_workdir'),
+                 'workdir': os.path.join(os.getcwd(),'lume-ace3p_omega3p_workdir'),
                  'workdir_mode': 'auto',
                  'sweep_output': True,
-                 'sweep_output_file': 'psweep_output.txt',
+                 'sweep_output_file': 'omega3p_sweep_output.txt',
                  'autorun': False}
 
 #Define input dictionary with keywords and values:
