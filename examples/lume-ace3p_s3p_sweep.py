@@ -17,7 +17,7 @@ workflow_dict = {'cubit_input': 'bend-90degree.jou',
 #Define input dictionary with keywords and values:
 #  Keywords must match exact Cubit file variable names
 #  Values can be scalar numbers or vectors (for parameter sweeping)
-input_dict = {'cornercut': np.linspace(15,17,20)}
+input_dict = {'cornercut': np.linspace(15,17,21)}
 
 #Create workflow object and run sweep over input dictionary provided
 #Output file will contain keys in input_dict and output_dict as columns and each
