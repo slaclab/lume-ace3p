@@ -261,7 +261,7 @@ class S3PWorkflow(ACE3PWorkflow):
         
         for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
-            if np.size(self.input_tensor[i],0) > 1:
+            if len(self.input_varname) > 1:
                 sweep_input_tuple = tuple(self.input_tensor[i])
             else:
                 sweep_input_tuple = tuple([self.input_tensor[i]])
