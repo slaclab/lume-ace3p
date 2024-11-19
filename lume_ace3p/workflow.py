@@ -263,10 +263,11 @@ class S3PWorkflow(ACE3PWorkflow):
             sweep_input_dict = {}
             if len(self.input_varname) > 1:
                 sweep_input_tuple = tuple(self.input_tensor[i])
+                for j in range(len(self.input_varname)):
+                    sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
             else:
                 sweep_input_tuple = tuple([self.input_tensor[i]])
-            for j in range(len(self.input_varname)):
-                sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
+                sweep_input_dict[self.input_varname[0]] = self.input_tensor[i]
             self.run(sweep_input_dict)
             self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
             if self.sweep_output:
