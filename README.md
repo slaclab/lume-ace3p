@@ -103,7 +103,7 @@ To run the examples on Perlmutter:
    - Use the command `export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p/'`
    - This command can also be placed directly in the batch job script
    - Omitting this step may cause python package conflicts with some NERSC modules
-4. Activate the lume-ace3p conda environment with the command: `conda activate lume-ace3p` (if not already active)
+4. Activate the lume-ace3p conda environment (if not already active)
 5. Submit a batch job of one of the *Perlmutter* examples with `sbatch`
 6. View the results in the folder that the batch job was run from
 </details>
@@ -130,7 +130,7 @@ To run the examples on an S3DF iana terminal:
 3. Set the environment variable `PYTHONPATH` to `/sdf/group/rfar/lume-ace3p/`
    - Use the command `export PYTHONPATH='/sdf/group/rfar/lume-ace3p/'`
    - This command can also be placed directly in the batch job script
-4. Activate the lume-ace3p conda environment with the command: `conda activate lume-ace3p` if not already active
+4. Activate the lume-ace3p conda environment (if not already active)
 5. Submit a batch job of one of the *S3DF* examples with `sbatch`
 6. View the results in the folder that the batch job was run from
 </details>
@@ -272,6 +272,51 @@ workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
 workflow.run_sweep()
 ```
 LUME-ACE3P will internally sweep through the combinations of input parameters provided and write the desired outputs to the "sweep_output_file" provided. See the [Omega3PWorkflow class](#omega3pworkflow-class) section for more details on the class usage.
+
+As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
+
+</details>
+
+<details><summary><h3>S3P Parameter Sweep Example</h3></summary>
+
+This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run a parameter sweep over the outer corner cut radius and inner corner rounding radius parameters. The idea is to automate the entire geometry meshing process, S3P frequency scan calculation into a simple python script that is submitted directly to HPC resources. The S-parameter results will be stored in a text file with all combinations of parameters and frequencies.
+
+The script begins with the neccessary LUME-ACE3P imports and workflow dict definition:
+```python
+import os
+import numpy as np
+from lume_ace3p.workflow import S3PWorkflow
+
+workflow_dict = {'cubit_input': 'bend-90degree.jou',
+                 'ace3p_input': 'bend-90degree.s3p',
+                 'ace3p_tasks': 16,
+                 'ace3p_cores': 16,
+                 'ace3p_opts' : '--cpu-bind=cores',
+                 'workdir': os.path.join(os.getcwd(),'lume-ace3p_s3p_workdir'),
+                 'workdir_mode': 'auto',
+                 'sweep_output': True,
+                 'sweep_output_file': 's3p_sweep_output.txt'}
+```
+
+This workflow dict object contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the "bend-90degree.jou" and "bend-90degree.s3p" files for Cubit and S3P respectively. Additionally, S3P is configured to use 16 MPI tasks with 16 cores/task with the CPU thread-binding option to cores. The "sweep_output" keyword simply enables file output writing to a "sweep_output_file" name provided. See the [Workflow dict](#workflow-dict) section for more details on each option.
+
+Next, the input parameters are defined in a separate dict object:
+```python
+input_dict = {'cornercut': np.linspace(12,16,11),
+              'rcorner2': np.linspace(4,16,4)}
+```
+The input dict object contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. Each parameter value can be a numpy vector array (e.g. numpy.linspace() or a list of numeric types. The parameter-sweep in LUME-ACE3P will evaluate the workflow for all possible tensor products of the input variable arrays. **Note: frequencies to scan with s3p are not "inputs" to be set here but instead are set in the .s3p input file directly.**
+
+In this example, the "cornercut" variable and the "rcorner2" variable are vectors of length 11 and 4, thus the total number of workflow evaluations is 44 (11 x 4). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_s3p_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each "cornercut" and "rcorner2" for a total of 44 distinct folders. See the [Input dict](#input-dict) section for more details on using multiple parameters.
+
+Lastly, the workflow object is instantiated with the 3 defined dict objects and the parameter sweep can begin.
+```python
+workflow = S3PWorkflow(workflow_dict, input_dict)
+workflow.run_sweep()
+```
+
+Unlike with Omega3P, the parameter sweeping in S3P does not use any outputs except for the "/s3p_results/Reflection.out" file located within each workflow directory. The contents of those files are collected for each S3P run and combined into the single "sweep_output_file" with 
+added columns for all possible combinations of inputs defined in the "input_dict". In the example provided, S3P will scan through 13 frequencies in a given range for each of the 44 workflow evaluations resulting in a 572 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 16 S-parameters for the 2-port 2-mode system [S(0,0), S(0,1), ...,	S(3,3)]. See the [S3PWorkflow class](#s3pworkflow-class) section for more details on the class usage.
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
 

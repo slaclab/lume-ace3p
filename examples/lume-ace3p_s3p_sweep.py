@@ -11,13 +11,13 @@ workflow_dict = {'cubit_input': 'bend-90degree.jou',
                  'workdir': os.path.join(os.getcwd(),'lume-ace3p_s3p_workdir'),
                  'workdir_mode': 'auto',
                  'sweep_output': True,
-                 'sweep_output_file': 's3p_sweep_output.txt',
-                 'autorun': False}
+                 'sweep_output_file': 's3p_sweep_output.txt'}
 
 #Define input dictionary with keywords and values:
 #  Keywords must match exact Cubit file variable names
 #  Values can be scalar numbers or vectors (for parameter sweeping)
-input_dict = {'cornercut': np.linspace(13,16,16)}
+input_dict = {'cornercut': np.linspace(12,16,11),
+              'rcorner2': np.linspace(4,16,4)}
 
 #Create workflow object and run sweep over input dictionary provided
 #Output file will contain keys in input_dict and output_dict as columns and each
