@@ -316,7 +316,9 @@ workflow.run_sweep()
 ```
 
 Unlike with Omega3P, the parameter sweeping in S3P does not use any outputs except for the "/s3p_results/Reflection.out" file located within each workflow directory. The contents of those files are collected for each S3P run and combined into the single "sweep_output_file" with 
-added columns for all possible combinations of inputs defined in the "input_dict". In the example provided, S3P will scan through 13 frequencies in a given range for each of the 44 workflow evaluations resulting in a 572 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 16 S-parameters for the 2-port 2-mode system [S(0,0), S(0,1), ...,	S(3,3)]. See the [S3PWorkflow class](#s3pworkflow-class) section for more details on the class usage.
+added columns for all possible combinations of inputs defined in the "input_dict".
+
+In the example provided, S3P will scan through 13 frequencies in a given range for each of the 44 workflow evaluations resulting in a 572 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 16 S-parameters for the 2-port 2-mode system [S(0,0), S(0,1), ...,	S(3,3)]. See the [S3PWorkflow class](#s3pworkflow-class) section for more details on the class usage.
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
 
@@ -324,7 +326,9 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
 
 <details><summary><h3>View S3P Parameter Sweep Output</h3></summary>
 
-A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script and load the appropriate S3P "sweep_output_file" from the file prompt. This text-based file must be from a complete S3P parameter sweep (every parameter combination must have the same frequencies scanned). Outputs from incomplete S3P parameter sweeps cannot be used with this plotting tool at this time.
+A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script with `python` and load the appropriate S3P "sweep_output_file" from the file prompt. Try the "s3p_demo_sweep_output.txt" file in the "lume-ace3p/examples" folder for an interactive demo.
+
+This text-based file must be from a complete S3P parameter sweep (every parameter combination must have the same frequencies scanned). Outputs from incomplete S3P parameter sweeps cannot be used with this plotting tool at this time.
 
 Next, the script will prompt the user to select up to two parameters to add sliders for. The parameters entered in this step are the column numbers in the "sweep_output_file" ranging from 1 to the number of different parameters listed in the "input_dict". In the above 90-degree bend example, there are only 2 parameters swept over ("cornercut" and "rcorner2") so the default entry of "1, 2" in the plotting prompt is standard. If running an S3P sweep over more than 2 parameters, only two can have individual sliders, however all parameter combinations will be shown and can be examined with the sweep parameter tuple slider.
 
