@@ -326,7 +326,7 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
 
 <details><summary><h3>View S3P Parameter Sweep Output</h3></summary>
 
-A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script with `python` and load the appropriate S3P "sweep_output_file" from the file prompt. Try the "s3p_demo_sweep_output.txt" file in the "lume-ace3p/examples" folder for an interactive demo.
+A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script with `python` and load the appropriate S3P "sweep_output_file" from the file prompt. Try the "s3p_demo_sweep_output.txt" file in the "lume-ace3p/plotting" folder for an interactive demo.
 
 This text-based file must be from a complete S3P parameter sweep (every parameter combination must have the same frequencies scanned). Outputs from incomplete S3P parameter sweeps cannot be used with this plotting tool at this time.
 
