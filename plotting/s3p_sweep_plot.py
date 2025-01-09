@@ -109,12 +109,16 @@ if num_slider == 2:
     swparam2_slider.valtext.set_fontsize(fntsz)
 
 ax = fig.add_subplot(111)
-fig.subplots_adjust(bottom=0.25)
+fig.subplots_adjust(bottom=0.3)
 
 #Plotting function for s-parameter "sp" and sweep parameter index "swp"
 def plot_sparam(sp,swp):
     
+    xlims = ax.get_xlim()
+    ylims = ax.get_ylim()
     ax.clear()
+    ax.set_xlim(xlims)
+    ax.set_ylim(ylims)
     line_list = []
     for indp in range(len(swps)):
         if indp == swp-1:  #Color selected curve in bold
@@ -129,10 +133,10 @@ def plot_sparam(sp,swp):
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
     plt.xticks(fontsize=fntsz)
     plt.yticks(fontsize=fntsz)
-    
-    return line_list
 
 plot_sparam(1,1)
+plt.xlim(min(fs), max(fs))
+plt.ylim(bottom=0)
 
 #Functions for what to when the sliders are changed
 def sparam_changed(val):
