@@ -11,15 +11,15 @@ with open(input_file) as file:
         print(exc)
 
 #Define workflow dictionary with input files, directory options, etc.
-workflow_dict = lume_ace3p_data['workflow_parameters']
+workflow_dict = lume_ace3p_data.get('workflow_parameters')
 assert 'module' in workflow_dict.keys(), "Lume-ACE3P keyword 'module' not defined"
 assert 'mode' in workflow_dict.keys(), "Lume-ACE3P keyword 'mode' not defined"
 
 #Define input dictionary with keywords and values:
-input_dict = lume_ace3p_data['input_parameters']
+input_dict = lume_ace3p_data.get('input_parameters')
 
 #Define output dictionary with data to extract from acdtool
-output_dict = lume_ace3p_data['output_parameters']
+output_dict = lume_ace3p_data.get('output_parameters')
 
 if workflow_dict['mode'].lower() == 'parameter_sweep':
     if workflow_dict['module'].lower() == 's3p':
