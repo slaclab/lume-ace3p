@@ -2,7 +2,7 @@ import sys
 import yaml
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
-input_file = sys.argv[0]
+input_file = sys.argv[1]
 
 with open(input_file) as file:
     try:
