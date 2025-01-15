@@ -1,0 +1,16 @@
+workflow_parameters :
+  'mode' : 'parameter_sweep'
+  'module' : 's3p'
+  'cubit_input': 'bend-90degree.jou'
+  'ace3p_input': 'bend-90degree.s3p'
+  'ace3p_tasks': 32
+  'ace3p_cores': 4
+  'ace3p_opts' : '--cpu-bind=cores'
+  'workdir': 'lume-ace3p_s3p_workdir'
+  'workdir_mode': 'auto'
+  'sweep_output': True
+  'sweep_output_file': 's3p_sweep_output.txt'
+
+input_parameters : 
+  'cornercut': [12.0, 12.4, 12.8, 13.2, 13.6, 14.0, 14.4, 14.8, 15.2, 15.6, 16.0]
+  'rcorner2': [4.0, 8.0, 12.0, 16.0]
