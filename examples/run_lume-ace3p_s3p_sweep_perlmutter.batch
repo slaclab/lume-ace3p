@@ -2,13 +2,13 @@
 
 #SBATCH --constraint=cpu
 #SBATCH --account=m349
-#SBATCH --qos=debug
+#SBATCH --qos=regular
 #SBATCH --job-name=lume-ace3p_psweep_demo
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
-#SBATCH --time=0-00:30:00
+#SBATCH --time=0-02:30:00
 
 export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
 
-python lume-ace3p_s3p_sweep.py
+python /global/cfs/cdirs/ace3p/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_sweep.yaml

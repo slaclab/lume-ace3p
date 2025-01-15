@@ -1,5 +1,6 @@
 import sys
 import yaml
+import numpy as np
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
@@ -17,9 +18,12 @@ assert 'mode' in workflow_dict.keys(), "Lume-ACE3P keyword 'mode' not defined"
 
 #Define input dictionary with keywords and values:
 input_dict = lume_ace3p_data.get('input_parameters')
+for key, value in input_dict.items():   #Convert to np.array if inputs listed as dict
+    if isinstance(value, dict):
+        input_dict[key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
 
-#Define output dictionary with data to extract from acdtool
-output_dict = lume_ace3p_data.get('output_parameters')
+#Define output dictionary with data to extract from acdtool (optional)
+output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
 
 if workflow_dict['mode'].lower() == 'parameter_sweep':
     if workflow_dict['module'].lower() == 's3p':
