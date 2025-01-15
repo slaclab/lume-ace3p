@@ -9,7 +9,10 @@ from matplotlib.widgets import Slider
 root = tk.Tk()
 root.withdraw()
 
-file_path = filedialog.askopenfilename()     #Prompt for file to load
+if len(sys.argv) == 2:
+    file_path = sys.argv[1]
+else:
+    file_path = filedialog.askopenfilename()     #Prompt for file to load
 
 if len(file_path) == 0:
     sys.exit()
