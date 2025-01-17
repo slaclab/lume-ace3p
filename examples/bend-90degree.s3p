@@ -18,17 +18,12 @@ FrequencyScan: {
   Interval: 0.25e+9
 }
 
-PostProcess: {
-  Toggle: on
-  PortNumber: 7 //only save mode files for port with this reference number
-}
-
 Port: {
   ReferenceNumber: 7
-  NumberOfModes: 2
+  NumberOfModes: 1
 }
 
 Port: {
   ReferenceNumber: 8
-  NumberOfModes: 2
+  NumberOfModes: 1
 }

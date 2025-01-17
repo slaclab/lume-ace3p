@@ -7,7 +7,7 @@
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
 #SBATCH --mem=480gb
-#SBATCH --time=0-01:00:00
+#SBATCH --time=0-00:30:00
 
 export OMPI_MCA_sharedfp=^lockedfile
 export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
