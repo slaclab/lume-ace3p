@@ -13,9 +13,9 @@ class ACE3PWorkflow:
         self.output_dict = output_dict
         self.cubit_input = workflow_dict.get('cubit_input')
         self.ace3p_input = workflow_dict.get('ace3p_input')
-        self.ace3p_tasks = workflow_dict.get('ace3p_tasks',1)
-        self.ace3p_cores = workflow_dict.get('ace3p_cores',1)
-        self.ace3p_opts = workflow_dict.get('ace3p_opts','')
+        self.ace3p_tasks = workflow_dict.get('ace3p_tasks')
+        self.ace3p_cores = workflow_dict.get('ace3p_cores')
+        self.ace3p_opts = workflow_dict.get('ace3p_opts')
         self.rfpost_input = workflow_dict.get('rfpost_input')
         self.workdir_mode = workflow_dict.get('workdir_mode','manual')
         self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
@@ -75,9 +75,9 @@ class Omega3PWorkflow(ACE3PWorkflow):
         #Load Omega3P input and run
         if self.ace3p_input is not None:
             self.omega3p_obj = Omega3P(self.ace3p_input,
-                                  tasks=self.ace3p_tasks,
-                                  cores=self.ace3p_cores,
-                                  opts=self.ace3p_opts,
+                                  ace3p_tasks=self.ace3p_tasks,
+                                  ace3p_cores=self.ace3p_cores,
+                                  ace3p_opts=self.ace3p_opts,
                                   workdir=self.workdir)
             self.omega3p_obj.run()
         else:
@@ -196,12 +196,12 @@ class S3PWorkflow(ACE3PWorkflow):
         else:
             print('Cubit journal file not specified, skipping step.')
 
-        #Load Omega3P input and run
+        #Load S3P input and run
         if self.ace3p_input is not None:
             self.s3p_obj = S3P(self.ace3p_input,
-                                  tasks=self.ace3p_tasks,
-                                  cores=self.ace3p_cores,
-                                  opts=self.ace3p_opts,
+                                  ace3p_tasks=self.ace3p_tasks,
+                                  ace3p_cores=self.ace3p_cores,
+                                  ace3p_opts=self.ace3p_opts,
                                   workdir=self.workdir)
             self.s3p_obj.run()
         else:

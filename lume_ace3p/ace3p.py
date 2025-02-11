@@ -10,11 +10,17 @@ class ACE3P(CommandWrapper):
     ACE3P_PATH = os.environ['ACE3P_PATH']
     module_name = ''
 
-    def __init__(self, *args, tasks=1, cores=1, opts='', **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.tasks = tasks
-        self.cores = cores
-        self.opts = opts
+        if self.ace3p_tasks is None:
+            print('Value ace3p_tasks not set (default set to 1).')
+            self.ace3p_tasks = 1
+        if self.ace3p_cores is None:
+            print('Value ace3p_cores not set (default set to 1).')
+            self.ace3p_cores = 1
+        if self.ace3p_opts is None:
+            print('Value ace3p_opts not set (default set to None).')
+            self.ace3p_opts = ""
         self.output_file = None
         self.output_data = {}
         if self.workdir is None:
@@ -28,9 +34,9 @@ class ACE3P(CommandWrapper):
             shutil.copy(self.input_file, self.workdir)
         self.load_input_file()
 
-    def run(self, tasks=1, cores=1, opts=''):
+    def run(self):
         self.write_input()
-        subprocess.run(self.MPI_CALLER + ' -n ' + str(tasks) + ' -c ' + str(cores) + ' ' + opts + ' '
+        subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' '
                                 + self.ACE3P_PATH + self.module_name + ' ' + self.input_file,
                                 shell=True, cwd=self.workdir)
         self.output_parser()
