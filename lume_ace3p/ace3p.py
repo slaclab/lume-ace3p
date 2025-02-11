@@ -10,17 +10,11 @@ class ACE3P(CommandWrapper):
     ACE3P_PATH = os.environ['ACE3P_PATH']
     module_name = ''
 
-    def __init__(self, ace3p_tasks, ace3p_cores, ace3p_opts, *args, **kwargs):
+    def __init__(self, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='', *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if ace3p_tasks is None:
-            print('Value ace3p_tasks not set (default set to 1).')
-            self.ace3p_tasks = ace3p_tasks
-        if ace3p_cores is None:
-            print('Value ace3p_cores not set (default set to 1).')
-            self.ace3p_cores = ace3p_cores
-        if ace3p_opts is None:
-            print('Value ace3p_opts not set (default set to None).')
-            self.ace3p_opts = ace3p_opts
+        self.ace3p_tasks = ace3p_tasks
+        self.ace3p_cores = ace3p_cores
+        self.ace3p_opts = ace3p_opts
         self.output_file = None
         self.output_data = {}
         if self.workdir is None:
