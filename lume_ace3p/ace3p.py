@@ -11,7 +11,7 @@ class ACE3P(CommandWrapper):
     module_name = ''
 
     def __init__(self, ace3p_tasks, ace3p_cores, ace3p_opts, *args, **kwargs):
-        super().__init__(*args, s, **kwargs)
+        super().__init__(*args, **kwargs)
         if ace3p_tasks is None:
             print('Value ace3p_tasks not set (default set to 1).')
             self.ace3p_tasks = ace3p_tasks
