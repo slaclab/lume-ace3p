@@ -10,7 +10,7 @@ class ACE3P(CommandWrapper):
     ACE3P_PATH = os.environ['ACE3P_PATH']
     module_name = ''
 
-    def __init__(self, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='', *args, **kwargs):
+    def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='', **kwargs):
         super().__init__(*args, **kwargs)
         self.ace3p_tasks = ace3p_tasks
         self.ace3p_cores = ace3p_cores
