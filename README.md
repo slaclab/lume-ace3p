@@ -255,7 +255,7 @@ input_parameters :
 ```
 The input_parameters dictionary contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. The values can be either a list of numeric inputs or (as shown here) a nested dictionary with 3 keywords: 'min', 'max', and 'num' corresponding to the minimum, maximum, and total number of values to sweep (the values are linearly spaced).
 
-In this example, the "cav_radius" variable and the "ellipticity" variable are each vectors of length 4, thus the total number of workflow evaluations is 16 (4 x 4). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each "cav_radius" and "ellipticity" for a total of 16 distinct folders. See the [Input parameters](#input-) section for more details on using multiple parameters.
+In this example, the "cav_radius" variable and the "ellipticity" variable are each vectors of length 4, thus the total number of workflow evaluations is 16 (4 x 4). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each "cav_radius" and "ellipticity" for a total of 16 distinct folders. See the [Input parameters](#input-parameters) section for more details on using multiple parameters.
 
 Next, the desired outputs are defined in a separate dictionary:
 ```yaml
@@ -273,7 +273,7 @@ In this example, the first row of the output file will contain 8 text entries: '
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
-LUME-ACE3P will internally sweep through the combinations of input parameters provided and write the desired outputs to the "sweep_output_file" provided. See the [Omega3PWorkflow class](#omega3pworkflow-class) section for more details on the class usage.
+LUME-ACE3P will internally sweep through the combinations of input parameters provided and write the desired outputs to the "sweep_output_file" provided.
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (future vesion may allow multiple concurrent evaluations).
 
@@ -320,7 +320,7 @@ In this example, the "cornercut" variable and the "rcorner2" variable are vector
 Unlike with Omega3P, the parameter sweeping in S3P does not use any outputs except for the "/s3p_results/Reflection.out" file located within each workflow directory. The contents of those files are collected for each S3P run and combined into the single "sweep_output_file" with 
 added columns for all possible combinations of inputs defined in the "input_dict".
 
-In the example provided, S3P will scan through 13 frequencies in a given range for each of the 15 workflow evaluations resulting in a 195 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 4 S-parameters for the 2-port system [S(0,0), S(0,1), S(1,0), S(1,1)]. See the [S3PWorkflow class](#s3pworkflow-class) section for more details on the class usage.
+In the example provided, S3P will scan through 13 frequencies in a given range for each of the 15 workflow evaluations resulting in a 195 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 4 S-parameters for the 2-port system [S(0,0), S(0,1), S(1,0), S(1,1)].
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (a future version may allow multiple concurrent evaluations).
 
