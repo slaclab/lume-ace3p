@@ -10,7 +10,7 @@ else:
 if PLATFORM.startswith('sdf'):
     os.environ['ACE3P_PATH'] = '/sdf/group/rfar/ace3p/bin/'
     os.environ['CUBIT_PATH'] = '/sdf/group/rfar/software/'
-    os.environ['MPI_CALLER'] = 'srun'
+    os.environ['MPI_CALLER'] = 'mpirun'
 elif PLATFORM.startswith('perlmutter'):
     os.environ['ACE3P_PATH'] = '/global/cfs/cdirs/ace3p/perlmutter/CPU/'
     os.environ['CUBIT_PATH'] = '/global/cfs/cdirs/ace3p/perlmutter/CPU/'
