@@ -21,7 +21,7 @@ class ACE3P(CommandWrapper):
             self.workdir = os.getcwd()
         if self.ace3p_opts is None:
             self.ace3p_opts = ''
-        if self.ace3p_opts.startswith('--cpu-bind') and self.MPI_CALLER is not 'srun':
+        if self.ace3p_opts.startswith('--cpu-bind') and self.MPI_CALLER != 'srun':
             self.ace3p_opts = ''
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
