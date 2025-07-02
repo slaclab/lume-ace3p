@@ -103,7 +103,7 @@ class ACE3P(CommandWrapper):
                     state = 'key'
                 i += 1
         return data
-
+    
     def write_input(self, *args):
         if args:
             file = args[0]
@@ -168,6 +168,57 @@ class S3P(ACE3P):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
 
+    def set_value(self, kwargs):
+        
+        #turn input_dict into type matching that in .s3p
+        #read in .s3p dict if it is there
+        #replace relevant values in .s3p dict according to contents of input_dict
+        #write new .s3p dict to .s3p file
+        
+        #turns input dict into type matching that in .s3p
+        #keys of the form 'ModelInfo_SurfaceMaterial_Coating_Epsilon' are split up into nested dictionaries
+        param_updates = {}
+index = 0
+for key in input_dict:
+    num_underscore = key.count('_')
+    if(num_underscore==0):
+        param_updates[key] = kwargs[key]
+    else:
+        underscore_index = key.rfind('_')
+        temp_key = key[:underscore_index]
+        temp_dict = {key[underscore_index+1:]: kwargs[key]}
+        for i in range(num_underscore):
+            new_dictionary = {}
+            underscore_index = temp_key.rfind('_')
+            new_dictionary[temp_key[underscore_index+1:]] = temp_dict
+            temp_dict = new_dictionary
+            temp_key = temp_key[:underscore_index]
+        #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
+        def recursive_update(target_dict, search_dict):
+            for k in target_dict:
+                if k in search_dict:
+                    recursive_update(target_dict.get(k),search_dict.get(k))
+                else:
+                    search_dict.update({k: target_dict.get(k)})
+        
+        recursive_update(temp_dict, param_updates) 
+        
+        #generates a dictionary based on contents of .s3p file
+        s3p_data = input_parser(self.input_data)            
+                    
+        def update_dict(new_inputs, dict_to_be_updated):
+            for key in new_inputs:
+                if isinstance(new_inputs.get(key), dict):
+                    update_dict(new_inputs.get(key), dict_to_be_updated[key])
+                else:
+                    dict_to_be_updated[key] = new_inputs[key]
+        #replace values in s3p_data dictionary where indicated by param_updates dictionary values
+        update_dict(param_updates, s3p_data)
+        
+        #write updated s3p_data dictionary to file
+
+
+        
     def output_parser(self):
         self.output_data = {}
         with open(os.path.join(self.workdir, 's3p_results/Reflection.out')) as file:
