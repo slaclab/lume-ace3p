@@ -52,6 +52,7 @@ class ACE3P(CommandWrapper):
         key, value  = None, None
         i, str_start, str_end = 0, 0, 0
         state = 'key'   #State flag to switch between 'key', 'value', and 'comment' text
+        index = 0
         while i < len(text):
             if text[i] not in ['\n','/','{','}',':']:
                 i += 1
@@ -91,7 +92,11 @@ class ACE3P(CommandWrapper):
                                 break
                     subtext = text[i+1:j]   #Extract nested dict contents
                     value = self.input_parser(subtext)  #Recursively parse nested dict
-                    data[key] = value
+                    if(key in data):
+                        data[key+'.'+str(index)] = value
+                        index += 1
+                    else:
+                        data[key] = value
                     str_start = j+1
                     i = j+1
                     state = 'key'
@@ -102,6 +107,23 @@ class ACE3P(CommandWrapper):
                     str_start = i+1
                     state = 'key'
                 i += 1
+        #correct random indexing of repeated keys         
+        for key in data:
+            new_key = key
+            #if a particular key is associated with an attribute, add .(attribute number)
+            if 'Attribute' in str(data.get(key)):
+                period_index = key.find('.')
+                if period_index != -1:
+                    new_key = key[:period_index] + ',' + str(data[key]['Attribute']) + key[period_index+2:]
+                else:
+                    new_key = key + ',' + str(data[key]['Attribute'])
+            #if a particular key is associated with a reference number, add .(reference number)
+            elif 'ReferenceNumber' in str(data.get(key)):
+                period_index = key.find('.')
+                if period_index != -1:
+                    new_key = key[:period_index+1] + str(data[key]['ReferenceNumber']) + key[period_index+2:]
+                else:
+                    new_key = key + '.' + str(data[key]['ReferenceNumber'])
         return data
     
     def write_input(self, *args):
@@ -178,34 +200,40 @@ class S3P(ACE3P):
         #turns input dict into type matching that in .s3p
         #keys of the form 'ModelInfo_SurfaceMaterial_Coating_Epsilon' are split up into nested dictionaries
         param_updates = {}
-index = 0
-for key in input_dict:
-    num_underscore = key.count('_')
-    if(num_underscore==0):
-        param_updates[key] = kwargs[key]
-    else:
-        underscore_index = key.rfind('_')
-        temp_key = key[:underscore_index]
-        temp_dict = {key[underscore_index+1:]: kwargs[key]}
-        for i in range(num_underscore):
-            new_dictionary = {}
-            underscore_index = temp_key.rfind('_')
-            new_dictionary[temp_key[underscore_index+1:]] = temp_dict
-            temp_dict = new_dictionary
-            temp_key = temp_key[:underscore_index]
-        #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
-        def recursive_update(target_dict, search_dict):
-            for k in target_dict:
-                if k in search_dict:
-                    recursive_update(target_dict.get(k),search_dict.get(k))
-                else:
-                    search_dict.update({k: target_dict.get(k)})
-        
-        recursive_update(temp_dict, param_updates) 
-        
+        index = 0
+        for key in kwargs:
+            num_underscore = key.count('_')
+            if(num_underscore==0):
+                param_updates[key] = kwargs[key]
+            else:
+                underscore_index = key.rfind('_')
+                temp_key = key[:underscore_index]
+                temp_dict = {key[underscore_index+1:]: kwargs[key]}
+                for i in range(num_underscore):
+                    new_dictionary = {}
+                    underscore_index = temp_key.rfind('_')
+                    new_dictionary[temp_key[underscore_index+1:]] = temp_dict
+                    temp_dict = new_dictionary
+                    temp_key = temp_key[:underscore_index]
+                #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
+                def recursive_update(target_dict, search_dict):
+                    for k in target_dict:
+                        if k in search_dict:
+                            recursive_update(target_dict.get(k),search_dict.get(k))
+                        else:
+                            search_dict.update({k: target_dict.get(k)})
+                recursive_update(temp_dict, param_updates) 
+
         #generates a dictionary based on contents of .s3p file
-        s3p_data = input_parser(self.input_data)            
-                    
+        s3p_data = input_parser(self.input_data) 
+        
+        #eliminates param update values that relate to the cubit file
+        #NOTE: this means that you can't add a new param to .s3p file, you can only change params already in .s3p file
+        s3p_params = param_updates
+        for key in param_updates:
+            if key not in s3p_data:
+                del s3p_params[key]
+
         def update_dict(new_inputs, dict_to_be_updated):
             for key in new_inputs:
                 if isinstance(new_inputs.get(key), dict):
@@ -213,11 +241,27 @@ for key in input_dict:
                 else:
                     dict_to_be_updated[key] = new_inputs[key]
         #replace values in s3p_data dictionary where indicated by param_updates dictionary values
-        update_dict(param_updates, s3p_data)
+        update_dict(s3p_params, s3p_data)
         
+        #turn updated s3p_data dictionary into a string that follows .s3p format
+        s3p_string = str(s3p_data)[1:-1]
+        s3p_string = s3p_string.replace("'", "")
+        s3p_string = s3p_string.replace("{", "{\n")
+        s3p_string = s3p_string.replace(", ", "\n")
+        s3p_string = s3p_string.replace("}", "\n}")
+        period_index = s3p_string.find('.')
+        while period_index != -1:
+            s3p_string = s3p_string[:period_index] + ':\n{\nReferenceNumber: ' + s3p_string[period_index+1] + s3p_string[period_index+5:]
+            period_index = s3p_string.find('.')
+        dash_index = s3p_string.find('-')
+        while dash_index != -1:
+            s3p_string = s3p_string[:dash_index] + ':\n{\nAttribute: ' + s3p_string[dash_index+1] + s3p_string[dash_index+5:]
+            dash_index = s3p_string.find('-')
+
         #write updated s3p_data dictionary to file
-
-
+        with open(self.input_file) as file:
+            file.w(s3p_string)
+            file.close()
         
     def output_parser(self):
         self.output_data = {}

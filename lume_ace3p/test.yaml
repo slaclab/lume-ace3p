@@ -24,6 +24,7 @@ cubit_input_parameters :
 ace3p_input_parameters :
     'ModelInfo':
         'SurfaceMaterial' :
+            'Attribute' : 9
             'Coating' :
                 'Epsilon' :
                     'min': 5
@@ -31,6 +32,10 @@ ace3p_input_parameters :
                     'num': 3
                 'TestMaterial' :
                     'options' : [[3,4],[5,6]]
+        'SurfaceMaterial' :
+            'Attribute' : 2
+            'Silliness' : 
+                'options' : [5,4,5]
     'Port':
         'ReferenceNumber' : 7
         'NumberOfModes' :
