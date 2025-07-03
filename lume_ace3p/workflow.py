@@ -160,10 +160,10 @@ class Omega3PWorkflow(ACE3PWorkflow):
             for j in range(len(self.input_varname)):
                 sweep_input_dict[self.input_varname[j]] = self.input_tensor[i][j]
             self.run(sweep_input_dict)
-            self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
-            if self.sweep_output:
-                self.print_sweep_output()
-        return self.sweep_data
+            #self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+            #if self.sweep_output:
+            #    self.print_sweep_output()
+        #return self.sweep_data
 
     def print_sweep_output(self, filename=None):
         if filename is None:
@@ -192,7 +192,7 @@ class S3PWorkflow(ACE3PWorkflow):
                               workdir=self.workdir)
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
-            self.cubit_obj.run()
+            #self.cubit_obj.run()
         else:
             print('Cubit journal file not specified, skipping step.')
 
@@ -203,13 +203,13 @@ class S3PWorkflow(ACE3PWorkflow):
                                   ace3p_cores=self.ace3p_cores,
                                   ace3p_opts=self.ace3p_opts,
                                   workdir=self.workdir)
-            self.s3p_obj.run()
+            #self.s3p_obj.run()
         else:
             print('S3P input file not specified, skipping step.')
-
+'''
         if output_dict is None:
             output_dict = self.output_dict
-        return self.evaluate(output_dict)
+        return self.evaluate(output_dict)'''
     
     def evaluate(self, output_dict):
         self.output_data = {}
