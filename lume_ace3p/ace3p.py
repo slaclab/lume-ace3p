@@ -1,6 +1,7 @@
 import os, shutil
 import subprocess
 import numpy as np
+import copy
 
 from lume.base import CommandWrapper
 
@@ -34,10 +35,10 @@ class ACE3P(CommandWrapper):
 
     def run(self):
         self.write_input()
-        subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' '
-                                + self.ACE3P_PATH + self.module_name + ' ' + self.input_file,
-                                shell=True, cwd=self.workdir)
-        self.output_parser()
+        #subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' '
+         #                       + self.ACE3P_PATH + self.module_name + ' ' + self.input_file,
+          #                      shell=True, cwd=self.workdir)
+        #self.output_parser()
 
     def load_input_file(self, *args):
         if args:
@@ -46,8 +47,41 @@ class ACE3P(CommandWrapper):
             text = file.read()
         #self.input_data = self.input_parser(text) #DUMMIED OUT FOR COMPATIBILITY
         self.input_data = text
+        
+    def input_parser(self,text):
+        raw_data = raw_input_parser(self,text)
+        
+        fixed_data = {}
+        #correct random indexing of repeated keys that may occur in raw_input_parser output   
+        #will not affect results if there are no repeated keys
+        for key in data:
+            new_key = key
+            #if a particular key is associated with an attribute, add |(attribute number)| to key and remove Attribute value
+            if 'Attribute' in str(data.get(key)):
+                period_index = key.find('.')
+                period_index_2 = key.find('.', period_index+1)
+                if period_index != -1:
+                    new_key = key[:period_index] + '|' + str(data[key]['Attribute']) + '&' + key[period_index_2+2:]
+                else:
+                    new_key = key + '|' + str(data[key]['Attribute']) + '&'
+                fixed_data[new_key] = data[key]
+                del fixed_data[new_key]['Attribute']
+            #if a particular key is associated with a reference number, add .(reference number)
+            elif 'ReferenceNumber' in str(data.get(key)):
+                period_index = key.find('.')
+                period_index = key.find('.', period_index+1)
+                if period_index != -1:
+                    new_key = key[:period_index] + '?' + str(data[key]['ReferenceNumber']) + '&' + key[period_index_2+2:]
+                else:
+                    new_key = key + '?' + str(data[key]['ReferenceNumber']) + '&'
+                fixed_data[new_key] = data[key]
+                del fixed_data[new_key]['ReferenceNumber']
+            else:
+                fixed_data[new_key] = data[key]
+
+        return fixed_data
     
-    def input_parser(self, text):
+    def raw_input_parser(self, text):
         data = {}
         key, value  = None, None
         i, str_start, str_end = 0, 0, 0
@@ -107,24 +141,85 @@ class ACE3P(CommandWrapper):
                     str_start = i+1
                     state = 'key'
                 i += 1
-        #correct random indexing of repeated keys         
-        for key in data:
-            new_key = key
-            #if a particular key is associated with an attribute, add .(attribute number)
-            if 'Attribute' in str(data.get(key)):
-                period_index = key.find('.')
-                if period_index != -1:
-                    new_key = key[:period_index] + ',' + str(data[key]['Attribute']) + key[period_index+2:]
-                else:
-                    new_key = key + ',' + str(data[key]['Attribute'])
-            #if a particular key is associated with a reference number, add .(reference number)
-            elif 'ReferenceNumber' in str(data.get(key)):
-                period_index = key.find('.')
-                if period_index != -1:
-                    new_key = key[:period_index+1] + str(data[key]['ReferenceNumber']) + key[period_index+2:]
-                else:
-                    new_key = key + '.' + str(data[key]['ReferenceNumber'])
         return data
+    
+    def set_value(self, kwargs):
+        
+        #turn input_dict into type matching that in .ace3p
+        #read in .ace3p dict if it is there
+        #replace relevant values in .ace3p dict according to contents of input_dict
+        #write new .ace3p dict to .ace3p file
+        
+        #turns input dict into type matching that in .ace3p
+        #keys of the form 'ModelInfo_SurfaceMaterial_Coating_Epsilon' are split up into nested dictionaries
+        param_updates = {}
+        index = 0
+        for key in kwargs:
+            num_underscore = key.count('_')
+            if(num_underscore==0):
+                param_updates[key] = kwargs[key]
+            else:
+                underscore_index = key.rfind('_')
+                temp_key = key[:underscore_index]
+                temp_dict = {key[underscore_index+1:]: kwargs[key]}
+                for i in range(num_underscore):
+                    new_dictionary = {}
+                    underscore_index = temp_key.rfind('_')
+                    new_dictionary[temp_key[underscore_index+1:]] = temp_dict
+                    temp_dict = new_dictionary
+                    temp_key = temp_key[:underscore_index]
+                #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
+                def recursive_update(target_dict, search_dict):
+                    for k in target_dict:
+                        if k in search_dict:
+                            recursive_update(target_dict.get(k),search_dict.get(k))
+                        else:
+                            search_dict.update({k: target_dict.get(k)})
+                recursive_update(temp_dict, param_updates) 
+
+        #generates a dictionary based on contents of .s3p file
+        ace3p_data = input_parser(self.input_data) 
+        
+        #eliminates param update values that relate to the cubit file
+        #NOTE: this means that you can't add a new param to .s3p file, you can only change params already in .s3p file
+        ace3p_params = copy.deepcopy(param_updates)
+        for key in param_updates:
+            if key not in ace3p_data:
+                del ace3p_params[key]
+
+        def update_dict(new_inputs, dict_to_be_updated):
+            for key in new_inputs:
+                if isinstance(new_inputs.get(key), dict):
+                    if key in dict_to_be_updated:
+                        update_dict(new_inputs.get(key), dict_to_be_updated[key])
+                    else:
+                        dict_to_be_updated[key] = new_inputs[key]
+                else:
+                    dict_to_be_updated[key] = new_inputs[key]
+        #replace values in ace3p_data dictionary where indicated by param_updates dictionary values
+        update_dict(ace3p_params, ace3p_data)
+        
+        #turn updated ace3p_data dictionary into a string that follows .ace3p format
+        #NOTE: this order is important! Strings must be replaced before ,
+        ace3p_string = str(ace3p_string)[1:-1]
+        ace3p_string = ace3p_string.replace("{", "{\n")
+        ace3p_string = ace3p_string.replace(", ", "\n")
+        ace3p_string = ace3p_string.replace("'", "")
+        ace3p_string = ace3p_string.replace("}", "\n}")
+        ace3p_string = ace3p_string.replace("&", "")
+        question_index = ace3p_string.find('?')
+        while question_index != -1:
+            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+1] + ace3p_string[question_index+5:]
+            question_index = ace3p_string.find('?')
+        bar_index = ace3p_string.find('|')
+        while bar_index != -1:
+            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+1] + ace3p_string[bar_index+5:]
+            bar_index = ace3p_string.find('|')
+
+        #write updated s3p_data dictionary to file
+        with open(self.input_file, 'w') as file:
+            file.write(ace3p_string)
+            file.close()
     
     def write_input(self, *args):
         if args:
@@ -189,79 +284,6 @@ class S3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
-
-    def set_value(self, kwargs):
-        
-        #turn input_dict into type matching that in .s3p
-        #read in .s3p dict if it is there
-        #replace relevant values in .s3p dict according to contents of input_dict
-        #write new .s3p dict to .s3p file
-        
-        #turns input dict into type matching that in .s3p
-        #keys of the form 'ModelInfo_SurfaceMaterial_Coating_Epsilon' are split up into nested dictionaries
-        param_updates = {}
-        index = 0
-        for key in kwargs:
-            num_underscore = key.count('_')
-            if(num_underscore==0):
-                param_updates[key] = kwargs[key]
-            else:
-                underscore_index = key.rfind('_')
-                temp_key = key[:underscore_index]
-                temp_dict = {key[underscore_index+1:]: kwargs[key]}
-                for i in range(num_underscore):
-                    new_dictionary = {}
-                    underscore_index = temp_key.rfind('_')
-                    new_dictionary[temp_key[underscore_index+1:]] = temp_dict
-                    temp_dict = new_dictionary
-                    temp_key = temp_key[:underscore_index]
-                #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
-                def recursive_update(target_dict, search_dict):
-                    for k in target_dict:
-                        if k in search_dict:
-                            recursive_update(target_dict.get(k),search_dict.get(k))
-                        else:
-                            search_dict.update({k: target_dict.get(k)})
-                recursive_update(temp_dict, param_updates) 
-
-        #generates a dictionary based on contents of .s3p file
-        s3p_data = input_parser(self.input_data) 
-        
-        #eliminates param update values that relate to the cubit file
-        #NOTE: this means that you can't add a new param to .s3p file, you can only change params already in .s3p file
-        s3p_params = param_updates
-        for key in param_updates:
-            if key not in s3p_data:
-                del s3p_params[key]
-
-        def update_dict(new_inputs, dict_to_be_updated):
-            for key in new_inputs:
-                if isinstance(new_inputs.get(key), dict):
-                    update_dict(new_inputs.get(key), dict_to_be_updated[key])
-                else:
-                    dict_to_be_updated[key] = new_inputs[key]
-        #replace values in s3p_data dictionary where indicated by param_updates dictionary values
-        update_dict(s3p_params, s3p_data)
-        
-        #turn updated s3p_data dictionary into a string that follows .s3p format
-        s3p_string = str(s3p_data)[1:-1]
-        s3p_string = s3p_string.replace("'", "")
-        s3p_string = s3p_string.replace("{", "{\n")
-        s3p_string = s3p_string.replace(", ", "\n")
-        s3p_string = s3p_string.replace("}", "\n}")
-        period_index = s3p_string.find('.')
-        while period_index != -1:
-            s3p_string = s3p_string[:period_index] + ':\n{\nReferenceNumber: ' + s3p_string[period_index+1] + s3p_string[period_index+5:]
-            period_index = s3p_string.find('.')
-        dash_index = s3p_string.find('-')
-        while dash_index != -1:
-            s3p_string = s3p_string[:dash_index] + ':\n{\nAttribute: ' + s3p_string[dash_index+1] + s3p_string[dash_index+5:]
-            dash_index = s3p_string.find('-')
-
-        #write updated s3p_data dictionary to file
-        with open(self.input_file) as file:
-            file.w(s3p_string)
-            file.close()
         
     def output_parser(self):
         self.output_data = {}

@@ -2,10 +2,13 @@ import sys
 import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor, Constructor
+from collections import defaultdict
 import numpy as np
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+import copy
+#from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
+s3p_input_file = sys.argv[2]
 
 #overwriting class from ruamel.yaml that will allow a file to be read in with repeat keys
 class UniqueKeyConstructor(SafeConstructor):
@@ -16,7 +19,7 @@ class UniqueKeyConstructor(SafeConstructor):
             key = self.construct_object(key_node, deep=deep)
             temp_key = key
             if key in mapping:
-                temp_key = key+'.'+str(temp_index)
+                temp_key = key+'.'+str(temp_index)+'.'
                 temp_index += 1
             value = self.construct_object(value_node, deep=deep)
             mapping[temp_key] = value
@@ -34,7 +37,7 @@ with open(input_file) as file:
         lume_ace3p_data = yaml.load(file)
     except yaml.YAMLError as exc:
         print(exc)
-
+        
 #Define workflow dictionary with input files, directory options, etc.
 workflow_dict = lume_ace3p_data.get('workflow_parameters')
 assert 'module' in workflow_dict.keys(), "Lume-ACE3P keyword 'module' not defined"
@@ -47,19 +50,21 @@ def input_to_dict(input_dict, output_dict, temp_key=''):
         #if a particular key is associated with an attribute, add -(attribute number)
         if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key]:
             period_index = key.find('.')
+            period_index_2 = key.find('.', period_index+1)
             #if there already is a .number associated with this key, replace the number
             #the .number comes from reading the .yaml file, and will be a random number so we replace to make it meaningful
             if period_index != -1:
-                new_key = key[:period_index] + '-' + str(input_dict[key]['Attribute']) + key[period_index+2:]
+                new_key = key[:period_index] + '|' + str(input_dict[key]['Attribute']) + '&' + key[period_index_2+2:]
             else:
-                new_key = key + '-' + str(input_dict[key]['Attribute'])
+                new_key = key + '|' + str(input_dict[key]['Attribute']) + '&'
         #if a particular key is associated with a reference number, add .(reference number)
         elif 'ReferenceNumber' in str(input_dict.get(key)):
             period_index = key.find('.')
+            period_index_2 = key.find('.', period_index+1)
             if period_index != -1:
-                new_key = key[:period_index+1] + str(input_dict[key]['ReferenceNumber']) + key[period_index+2:]
+                new_key = key[:period_index] + '?' + str(input_dict[key]['ReferenceNumber']) + '&' + key[period_index_2+2:]
             else:
-                new_key = key + '.' + str(input_dict[key]['ReferenceNumber'])
+                new_key = key + '?' + str(input_dict[key]['ReferenceNumber']) + '&'
         value = input_dict.get(key)
         if isinstance(value,dict):
             if 'options' in value:
@@ -73,8 +78,9 @@ def input_to_dict(input_dict, output_dict, temp_key=''):
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict)
+print(input_dict)
   
-            
+'''        
 #Define output dictionary with data to extract from acdtool (optional)
 #output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
 
@@ -86,3 +92,4 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
 
+'''
