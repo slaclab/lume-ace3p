@@ -35,10 +35,8 @@ class ACE3P(CommandWrapper):
 
     def run(self):
         self.write_input()
-        #subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' '
-         #                       + self.ACE3P_PATH + self.module_name + ' ' + self.input_file,
-          #                      shell=True, cwd=self.workdir)
-        #self.output_parser()
+        subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' ' + self.ACE3P_PATH + self.module_name + ' ' + self.input_file, shell=True, cwd=self.workdir)
+        self.output_parser()
 
     def load_input_file(self, *args):
         if args:
@@ -58,22 +56,22 @@ class ACE3P(CommandWrapper):
             new_key = key
             #if a particular key is associated with an attribute, add |(attribute number)| to key and remove Attribute value
             if 'Attribute' in str(data.get(key)):
-                period_index = key.find('.')
-                period_index_2 = key.find('.', period_index+1)
+                period_index = key.find('.LILA.')
+                period_index_2 = key.find('.LILA.', period_index+5)
                 if period_index != -1:
-                    new_key = key[:period_index] + '|' + str(data[key]['Attribute']) + '&' + key[period_index_2+2:]
+                    new_key = key[:period_index] + '|LILA|' + str(data[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
                 else:
-                    new_key = key + '|' + str(data[key]['Attribute']) + '&'
+                    new_key = key + '|LILA|' + str(data[key]['Attribute']) + '|LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['Attribute']
             #if a particular key is associated with a reference number, add .(reference number)
             elif 'ReferenceNumber' in str(data.get(key)):
-                period_index = key.find('.')
-                period_index = key.find('.', period_index+1)
+                period_index = key.find('.LILA.')
+                period_index = key.find('.LILA.', period_index+1)
                 if period_index != -1:
-                    new_key = key[:period_index] + '?' + str(data[key]['ReferenceNumber']) + '&' + key[period_index_2+2:]
+                    new_key = key[:period_index] + '?LILA?' + str(data[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
                 else:
-                    new_key = key + '?' + str(data[key]['ReferenceNumber']) + '&'
+                    new_key = key + '?LILA?' + str(data[key]['ReferenceNumber']) + '?LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['ReferenceNumber']
             else:
@@ -127,7 +125,7 @@ class ACE3P(CommandWrapper):
                     subtext = text[i+1:j]   #Extract nested dict contents
                     value = self.input_parser(subtext)  #Recursively parse nested dict
                     if(key in data):
-                        data[key+'.'+str(index)] = value
+                        data[key+'.LILA.'+str(index)+'.LILA.'] = value
                         index += 1
                     else:
                         data[key] = value
@@ -206,15 +204,18 @@ class ACE3P(CommandWrapper):
         ace3p_string = ace3p_string.replace(", ", "\n")
         ace3p_string = ace3p_string.replace("'", "")
         ace3p_string = ace3p_string.replace("}", "\n}")
-        ace3p_string = ace3p_string.replace("&", "")
-        question_index = ace3p_string.find('?')
+        question_index = ace3p_string.find('?LILA?')
+        amp_index = ace3p_string.find('?LILA&')
         while question_index != -1:
-            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+1] + ace3p_string[question_index+5:]
-            question_index = ace3p_string.find('?')
-        bar_index = ace3p_string.find('|')
+            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+6] + ace3p_string[amp_index+6:]
+            question_index = ace3p_string.find('?LILA?')
+            amp_index = ace3p_string.find('?LILA&')
+        bar_index = ace3p_string.find('|LILA|')
+        amp_index = ace3p_string.find('|LILA&')
         while bar_index != -1:
-            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+1] + ace3p_string[bar_index+5:]
-            bar_index = ace3p_string.find('|')
+            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bar_index+6:]
+            bar_index = ace3p_string.find('|LILA|')
+            amp_index = ace3p_string.find('|LILA&')
 
         #write updated s3p_data dictionary to file
         with open(self.input_file, 'w') as file:

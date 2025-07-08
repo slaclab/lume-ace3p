@@ -19,7 +19,7 @@ class UniqueKeyConstructor(SafeConstructor):
             key = self.construct_object(key_node, deep=deep)
             temp_key = key
             if key in mapping:
-                temp_key = key+'.'+str(temp_index)+'.'
+                temp_key = key+'.LILA.'+str(temp_index)+'.LILA.'
                 temp_index += 1
             value = self.construct_object(value_node, deep=deep)
             mapping[temp_key] = value
@@ -49,22 +49,22 @@ def input_to_dict(input_dict, output_dict, temp_key=''):
         new_key = key
         #if a particular key is associated with an attribute, add -(attribute number)
         if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key]:
-            period_index = key.find('.')
-            period_index_2 = key.find('.', period_index+1)
+            period_index = key.find('.LILA.')
+            period_index_2 = key.find('.LILA.', period_index+5)
             #if there already is a .number associated with this key, replace the number
             #the .number comes from reading the .yaml file, and will be a random number so we replace to make it meaningful
             if period_index != -1:
-                new_key = key[:period_index] + '|' + str(input_dict[key]['Attribute']) + '&' + key[period_index_2+2:]
+                new_key = key[:period_index] + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
             else:
-                new_key = key + '|' + str(input_dict[key]['Attribute']) + '&'
+                new_key = key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&'
         #if a particular key is associated with a reference number, add .(reference number)
         elif 'ReferenceNumber' in str(input_dict.get(key)):
-            period_index = key.find('.')
-            period_index_2 = key.find('.', period_index+1)
+            period_index = key.find('.LILA.')
+            period_index_2 = key.find('.LILA.', period_index+5)
             if period_index != -1:
-                new_key = key[:period_index] + '?' + str(input_dict[key]['ReferenceNumber']) + '&' + key[period_index_2+2:]
+                new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
             else:
-                new_key = key + '?' + str(input_dict[key]['ReferenceNumber']) + '&'
+                new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
         value = input_dict.get(key)
         if isinstance(value,dict):
             if 'options' in value:
@@ -78,8 +78,7 @@ def input_to_dict(input_dict, output_dict, temp_key=''):
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict)
-print(input_dict)
-  
+
 '''        
 #Define output dictionary with data to extract from acdtool (optional)
 #output_dict = lume_ace3p_data.get('output_parameters') #None type if not present

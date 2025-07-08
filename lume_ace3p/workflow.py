@@ -149,12 +149,18 @@ class Omega3PWorkflow(ACE3PWorkflow):
         if len(self.input_varname) > 1:
             t1 = np.tile(self.input_tensor,self.input_vardim[1])
             t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
-            self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            try:
+                self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            except ValueError:
+                print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
             if len(self.input_varname) > 2:
                 for i in range(2,len(self.input_varname)):
                     t1 = np.tile(self.input_tensor,(self.input_vardim[i],1))
                     t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
-                    self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+                    try:
+                        self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+                    except ValueError:
+                        print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
         
         for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
