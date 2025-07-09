@@ -56,7 +56,7 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
             else:
                 new_key = key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&'
         #if a particular key is associated with a reference number, add .(reference number)
-        elif 'ReferenceNumber' in str(input_dict.get(key)):
+        elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict[key]:
             period_index = key.find('.LILA.')
             period_index_2 = key.find('.LILA.', period_index+5)
             if period_index != -1:
