@@ -45,9 +45,6 @@ assert 'mode' in workflow_dict.keys(), "Lume-ACE3P keyword 'mode' not defined"
 
 def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
     for key in input_dict:
-        if ace3p:
-            key = 'ACE3P' + key
-        new_key = key
         #if a particular key is associated with an attribute, add -(attribute number)
         if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key]:
             period_index = key.find('.LILA.')
@@ -66,7 +63,11 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                 new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
             else:
                 new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
+       
         value = input_dict.get(key)
+        if ace3p:
+            key = 'ACE3P' + key
+        new_key = key
         if isinstance(value,dict):
             if 'options' in value:
                 output_dict[temp_key+new_key] = value.get('options')
