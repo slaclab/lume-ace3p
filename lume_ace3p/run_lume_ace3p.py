@@ -8,7 +8,6 @@ import copy
 #from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
-s3p_input_file = sys.argv[2]
 
 #overwriting class from ruamel.yaml that will allow a file to be read in with repeat keys
 class UniqueKeyConstructor(SafeConstructor):
