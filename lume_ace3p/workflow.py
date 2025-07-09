@@ -73,17 +73,15 @@ class Omega3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
-        if self.ace3p_input is not None:
-            self.omega3p_obj = Omega3P(self.ace3p_input,
-                                  ace3p_tasks=self.ace3p_tasks,
-                                  ace3p_cores=self.ace3p_cores,
-                                  ace3p_opts=self.ace3p_opts,
-                                  workdir=self.workdir)
-            if input_dict is not None:
-                self.omega3p_obj.set_value(input_dict)
-            self.omega3p_obj.run()
-        else:
-            print('Omega3P input file not specified, skipping step.')
+        #NOTE: deleted if self.ace3p_input is not None clause
+        self.omega3p_obj = Omega3P(self.ace3p_input,
+                              ace3p_tasks=self.ace3p_tasks,
+                              ace3p_cores=self.ace3p_cores,
+                              ace3p_opts=self.ace3p_opts,
+                              workdir=self.workdir)
+        if input_dict is not None:
+            self.omega3p_obj.set_value(input_dict)
+        self.omega3p_obj.run()
 
         #Load acdtool rfpost input and run
         if self.rfpost_input is not None:
@@ -205,17 +203,15 @@ class S3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load S3P input and run
-        if self.ace3p_input is not None:
-            self.s3p_obj = S3P(self.ace3p_input,
-                                  ace3p_tasks=self.ace3p_tasks,
-                                  ace3p_cores=self.ace3p_cores,
-                                  ace3p_opts=self.ace3p_opts,
-                                  workdir=self.workdir)
-            if input_dict is not None:
-                self.s3p_obj.set_value(input_dict)
-            self.s3p_obj.run()
-        else:
-            print('S3P input file not specified, skipping step.')
+        #NOTE: deleted if self.ace3p_input is not None clause
+        self.s3p_obj = S3P(self.ace3p_input,
+                              ace3p_tasks=self.ace3p_tasks,
+                              ace3p_cores=self.ace3p_cores,
+                              ace3p_opts=self.ace3p_opts,
+                              workdir=self.workdir)
+        if input_dict is not None:
+            self.s3p_obj.set_value(input_dict)
+        self.s3p_obj.run()
 
         if output_dict is None:
             output_dict = self.output_dict

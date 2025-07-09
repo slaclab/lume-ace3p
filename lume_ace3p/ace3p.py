@@ -28,6 +28,7 @@ class ACE3P(CommandWrapper):
             os.mkdir(self.workdir)
         self.original_input_file = self.input_file
         if self.input_file is None:
+            print('WARNING: no .ace3p input file specified, writing one based on contents of .yaml file. Errors may occur if essential parameters like ModelInfo are not specified in .yaml file.')
             self.make_default_input()
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
             shutil.copy(self.input_file, self.workdir)
@@ -179,11 +180,11 @@ class ACE3P(CommandWrapper):
         ace3p_data = input_parser(self.input_data) 
         
         #eliminates param update values that relate to the cubit file
-        #NOTE: this means that you can't add a new param to .s3p file, you can only change params already in .s3p file
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
-            if key not in ace3p_data:
-                del ace3p_params[key]
+            if key.startswith('ACE3P'):
+                ace3p_params[key[5:]] = ace3p_params[key]
+            del ace3p_params[key]
 
         def update_dict(new_inputs, dict_to_be_updated):
             for key in new_inputs:
@@ -277,6 +278,9 @@ class Omega3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 'omega3p.out'
+    def make_default_input(self):
+        with open(os.path.join(self.workdir, 'omega3p_input_file.omega3p'), 'w') as f:
+            pass
 
 class S3P(ACE3P):
 
@@ -320,6 +324,11 @@ class S3P(ACE3P):
             for id2 in range(num_ids):
                 sname = 'S(' + str(id1) + ',' + str(id2) + ')'
                 self.output_data[sname] = sparameters[id1*num_ids+id2]
+                
+    def make_default_input(self):
+        with open(os.path.join(self.workdir, 's3p_input_file.s3p'), 'w') as f:
+            pass
+            
 
 class T3P(ACE3P):
 
