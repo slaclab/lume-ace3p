@@ -48,7 +48,7 @@ class ACE3P(CommandWrapper):
         self.input_data = text
         
     def input_parser(self,text):
-        raw_data = self.raw_input_parser(self,text)
+        raw_data = self.raw_input_parser(text)
         
         fixed_data = {}
         #correct random indexing of repeated keys that may occur in raw_input_parser output   
@@ -124,7 +124,7 @@ class ACE3P(CommandWrapper):
                             if layer == 0:
                                 break
                     subtext = text[i+1:j]   #Extract nested dict contents
-                    value = self.input_parser(subtext)  #Recursively parse nested dict
+                    value = self.raw_input_parser(subtext)  #Recursively parse nested dict
                     if(key in data):
                         data[key+'.LILA.'+str(index)+'.LILA.'] = value
                         index += 1
