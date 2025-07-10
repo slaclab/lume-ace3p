@@ -56,7 +56,7 @@ class ACE3P(CommandWrapper):
         for key in data:
             new_key = key
             #if a particular key is associated with an attribute, add |(attribute number)| to key and remove Attribute value
-            if 'Attribute' in str(data.get(key)):
+            if isinstance(data[key], dict) and 'Attribute' in str(data[key]):
                 period_index = key.find('.LILA.')
                 period_index_2 = key.find('.LILA.', period_index+5)
                 if period_index != -1:
@@ -66,7 +66,7 @@ class ACE3P(CommandWrapper):
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['Attribute']
             #if a particular key is associated with a reference number, add .(reference number)
-            elif 'ReferenceNumber' in str(data.get(key)):
+            elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data[key]):
                 period_index = key.find('.LILA.')
                 period_index = key.find('.LILA.', period_index+1)
                 if period_index != -1:
