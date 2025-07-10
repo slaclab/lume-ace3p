@@ -200,6 +200,7 @@ class ACE3P(CommandWrapper):
         
         #turn updated ace3p_data dictionary into a string that follows .ace3p format
         #NOTE: this order is important! Strings must be replaced before ,
+        ace3p_string = str(ace3p_data)
         ace3p_string = str(ace3p_string)[1:-1]
         ace3p_string = ace3p_string.replace("{", "{\n")
         ace3p_string = ace3p_string.replace(", ", "\n")
