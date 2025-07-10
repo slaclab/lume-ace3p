@@ -5,7 +5,7 @@ from ruamel.yaml.constructor import SafeConstructor, Constructor
 from collections import defaultdict
 import numpy as np
 import copy
-#from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
 
@@ -84,7 +84,7 @@ input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=T
         
 #Define output dictionary with data to extract from acdtool (optional)
 output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
-'''
+
 if workflow_dict['mode'].lower() == 'parameter_sweep':
     if workflow_dict['module'].lower() == 's3p':
         workflow = S3PWorkflow(workflow_dict, input_dict)
@@ -92,4 +92,3 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
     elif workflow_dict['module'].lower() == 'omega3p':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
-'''
