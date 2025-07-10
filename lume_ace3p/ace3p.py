@@ -56,23 +56,23 @@ class ACE3P(CommandWrapper):
         for key in data:
             new_key = key
             #if a particular key is associated with an attribute, add |(attribute number)| to key and remove Attribute value
-            if isinstance(data[key], dict) and 'Attribute' in str(data[key]):
+            if isinstance(data[key], dict) and 'Attribute' in str(data.keys()):
                 period_index = key.find('.LILA.')
                 period_index_2 = key.find('.LILA.', period_index+5)
                 if period_index != -1:
-                    new_key = key[:period_index] + '|LILA|' + str(data[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
+                    new_key = key[:period_index] + '|LILA|' + str(data['Attribute']) + '|LILA&' + key[period_index_2+6:]
                 else:
-                    new_key = key + '|LILA|' + str(data[key]['Attribute']) + '|LILA&'
+                    new_key = key + '|LILA|' + str(data['Attribute']) + '|LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['Attribute']
             #if a particular key is associated with a reference number, add .(reference number)
-            elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data[key]):
+            elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data.keys()):
                 period_index = key.find('.LILA.')
                 period_index = key.find('.LILA.', period_index+1)
                 if period_index != -1:
-                    new_key = key[:period_index] + '?LILA?' + str(data[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
+                    new_key = key[:period_index] + '?LILA?' + str(data['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
                 else:
-                    new_key = key + '?LILA?' + str(data[key]['ReferenceNumber']) + '?LILA&'
+                    new_key = key + '?LILA?' + str(data['ReferenceNumber']) + '?LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['ReferenceNumber']
             else:
