@@ -32,7 +32,9 @@ class ACE3P(CommandWrapper):
             self.make_default_input()
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
             shutil.copy(self.input_file, self.workdir)
-        self.load_input_file()
+        with open(self.input_file) as file:
+            text = file.read()
+            self.input_data = text
 
     def run(self):
         self.write_input()
@@ -200,6 +202,7 @@ class ACE3P(CommandWrapper):
         
         #turn updated ace3p_data dictionary into a string that follows .ace3p format
         #NOTE: this order is important! Strings must be replaced before ,
+        print(ace3p_string)
         ace3p_string = str(ace3p_data)
         ace3p_string = str(ace3p_string)[1:-1]
         ace3p_string = ace3p_string.replace("{", "{\n")
