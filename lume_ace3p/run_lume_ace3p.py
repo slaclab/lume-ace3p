@@ -70,7 +70,7 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
         new_key = key
         if isinstance(value,dict):
             if 'options' in value:
-                output_dict[temp_key+new_key] = [str(val) for val in value.get('options')]
+                output_dict[temp_key+new_key] = value.get('options')
             elif 'min' in value:
                 output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
             else:

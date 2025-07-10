@@ -68,7 +68,9 @@ class ACE3P(CommandWrapper):
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['Attribute']
                 #this needs to be done because it helps with parsing the dictionary back into the format for the .ace3p file 
-                fixed_data[new_key] = str(fixed_data[new_key])
+                if not isinstance(fixed_data[new_key], dict):
+                    fixed_data[new_key] = str(fixed_data[new_key])
+                
             #if a particular key is associated with a reference number, add .(reference number)
             elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data.keys()):
                 period_index = key.find('.LILA.')
@@ -79,9 +81,12 @@ class ACE3P(CommandWrapper):
                     new_key = key + '?LILA?' + str(data['ReferenceNumber']) + '?LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['ReferenceNumber']
-                fixed_data[new_key] = str(fixed_data[new_key])
+                if not isinstance(fixed_data[new_key], dict):
+                    fixed_data[new_key] = str(fixed_data[new_key])
             else:
-                fixed_data[new_key] = str(data[key])
+                fixed_data[new_key] = data[key]
+                if not isinstance(fixed_data[new_key], dict):
+                    fixed_data[new_key] = str(fixed_data[new_key])
 
         return fixed_data
     
