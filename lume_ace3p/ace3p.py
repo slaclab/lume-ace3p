@@ -177,7 +177,7 @@ class ACE3P(CommandWrapper):
                 recursive_update(temp_dict, param_updates) 
 
         #generates a dictionary based on contents of .s3p file
-        ace3p_data = input_parser(self.input_data) 
+        ace3p_data = self.input_parser(self.input_data) 
         
         #eliminates param update values that relate to the cubit file
         ace3p_params = copy.deepcopy(param_updates)
