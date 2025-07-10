@@ -67,6 +67,8 @@ class ACE3P(CommandWrapper):
                     new_key = key + '|LILA|' + str(data['Attribute']) + '|LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['Attribute']
+                #this needs to be done because it helps with parsing the dictionary back into the format for the .ace3p file 
+                fixed_data[new_key] = str(fixed_data[new_key])
             #if a particular key is associated with a reference number, add .(reference number)
             elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data.keys()):
                 period_index = key.find('.LILA.')
@@ -77,8 +79,9 @@ class ACE3P(CommandWrapper):
                     new_key = key + '?LILA?' + str(data['ReferenceNumber']) + '?LILA&'
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['ReferenceNumber']
+                fixed_data[new_key] = str(fixed_data[new_key])
             else:
-                fixed_data[new_key] = data[key]
+                fixed_data[new_key] = str(data[key])
 
         return fixed_data
     
@@ -202,7 +205,6 @@ class ACE3P(CommandWrapper):
         
         #turn updated ace3p_data dictionary into a string that follows .ace3p format
         #NOTE: this order is important! Strings must be replaced before ,
-        print(ace3p_string)
         ace3p_string = str(ace3p_data)
         ace3p_string = str(ace3p_string)[1:-1]
         ace3p_string = ace3p_string.replace("{", "{\n")
