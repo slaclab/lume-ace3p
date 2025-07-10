@@ -48,7 +48,7 @@ class ACE3P(CommandWrapper):
         self.input_data = text
         
     def input_parser(self,text):
-        raw_data = self.raw_input_parser(text)
+        data = self.raw_input_parser(text)
         
         fixed_data = {}
         #correct random indexing of repeated keys that may occur in raw_input_parser output   
