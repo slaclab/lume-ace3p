@@ -69,7 +69,7 @@ class ACE3P(CommandWrapper):
                 del fixed_data[new_key]['Attribute']
                 #this needs to be done because it helps with parsing the dictionary back into the format for the .ace3p file 
                 if not isinstance(fixed_data[new_key], dict):
-                    fixed_data[new_key] = str(fixed_data[new_key])
+                    fixed_data[new_key] = "'" + str(fixed_data[new_key]) + "'"
                 
             #if a particular key is associated with a reference number, add .(reference number)
             elif isinstance(data[key], dict) and 'ReferenceNumber' in str(data.keys()):
@@ -82,11 +82,11 @@ class ACE3P(CommandWrapper):
                 fixed_data[new_key] = data[key]
                 del fixed_data[new_key]['ReferenceNumber']
                 if not isinstance(fixed_data[new_key], dict):
-                    fixed_data[new_key] = str(fixed_data[new_key])
+                    fixed_data[new_key] = "'" + str(fixed_data[new_key]) + "'"
             else:
                 fixed_data[new_key] = data[key]
                 if not isinstance(fixed_data[new_key], dict):
-                    fixed_data[new_key] = str(fixed_data[new_key])
+                    fixed_data[new_key] = "'" + str(fixed_data[new_key]) + "'"
 
         return fixed_data
     
@@ -209,7 +209,6 @@ class ACE3P(CommandWrapper):
         update_dict(ace3p_params, ace3p_data)
         
         #turn updated ace3p_data dictionary into a string that follows .ace3p format
-        #NOTE: this order is important! Strings must be replaced before ,
         ace3p_string = str(ace3p_data)
         ace3p_string = str(ace3p_string)[1:-1]
         ace3p_string = ace3p_string.replace("{", "{\n")
@@ -228,11 +227,10 @@ class ACE3P(CommandWrapper):
             ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bar_index+6:]
             bar_index = ace3p_string.find('|LILA|')
             amp_index = ace3p_string.find('|LILA&')
-
-        #write updated s3p_data dictionary to file
-        with open(self.input_file, 'w') as file:
-            file.write(ace3p_string)
-            file.close()
+            
+        #sets input data to updated values. self.input_data is written into the input file in self.write_input, called at the beginning of self.run
+        print(ace3p_string)
+        self.input_data = ace3p_string
     
     def write_input(self, *args):
         if args:
