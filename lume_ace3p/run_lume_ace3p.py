@@ -5,7 +5,7 @@ from ruamel.yaml.constructor import SafeConstructor, Constructor
 from collections import defaultdict
 import numpy as np
 import copy
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+#from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
 
