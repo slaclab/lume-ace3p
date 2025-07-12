@@ -213,6 +213,7 @@ class ACE3P(CommandWrapper):
         ace3p_string = ace3p_string.replace(", ", "\n")
         ace3p_string = ace3p_string.replace("'", "")
         ace3p_string = ace3p_string.replace("}", "\n}")
+        ace3p_string = ace3p_string.replace("COMMA", ",")
         question_index = ace3p_string.find('?LILA?')
         amp_index = ace3p_string.find('?LILA&')
         while question_index != -1:
