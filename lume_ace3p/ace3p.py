@@ -52,11 +52,13 @@ class ACE3P(CommandWrapper):
     def input_parser(self,text):
         data = self.raw_input_parser(text)
         fixed_data = {}
-
+        
+        #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
+        #needs to be a subfunction because it is recursive but we don't want self.raw_input_parser to be called recursively
         def input_to_dict(input_dict, output_dict):
             for key in input_dict:
                 new_key = key
-                #if a particular key is associated with an attribute, add -(attribute number)
+                #if a particular key is associated with an attribute, add |LILA|(attribute number)|LILA&
                 if isinstance(input_dict[key], dict) and 'Attribute' in input_dict.keys():
                     period_index = key.find('.LILA.')
                     period_index_2 = key.find('.LILA.', period_index+5)
@@ -66,7 +68,7 @@ class ACE3P(CommandWrapper):
                         new_key = key[:period_index] + '|LILA|' + str(input_dict['Attribute']) + '|LILA&' + key[period_index_2+6:]
                     else:
                         new_key = key + '|LILA|' + str(input_dict['Attribute']) + '|LILA&'
-                #if a particular key is associated with a reference number, add .(reference number)
+                #if a particular key is associated with a reference number, add ?LILA?(reference number)?LILA&
                 elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict.keys():
                     period_index = key.find('.LILA.')
                     period_index_2 = key.find('.LILA.', period_index+5)
@@ -74,19 +76,20 @@ class ACE3P(CommandWrapper):
                         new_key = key[:period_index] + '?LILA?' + str(input_dict['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
                     else:
                         new_key = key + '?LILA?' + str(input_dict['ReferenceNumber']) + '?LILA&'
-
-                if isinstance(input_dict[key],dict):
-                    input_to_dict(input_dict[key], output_dict)
+                        
+                output_dict[new_key] = input_dict[key]
+                #if input_dict[key] is a dictionary, recursively check for ReferenceNumber and Attribute within
+                if isinstance(input_dict[key], dict):
+                    input_to_dict(input_dict[key], output_dict[new_key])
+                #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
-                    output_dict[new_key] = input_dict[key]
                     comma_index = str(input_dict[key]).find(',')
                     while comma_index != -1:
                         output_dict[new_key] = str(output_dict[new_key])[:comma_index] + 'COMMA' + str(output_dict[new_key])[comma_index+1:]
                         comma_index = str(output_dict[new_key]).find(',')
-            return output_dict
-
-        new_fixed_data = input_to_dict(data, fixed_data)   
-        return new_fixed_data
+                        
+        input_to_dict(data, fixed_data)   
+        return fixed_data
     
     def raw_input_parser(self, text):
         data = {}
@@ -228,7 +231,6 @@ class ACE3P(CommandWrapper):
             amp_index = ace3p_string.find('|LILA&')
             
         #sets input data to updated values. self.input_data is written into the input file in self.write_input, called at the beginning of self.run
-        print(ace3p_string)
         self.input_data = ace3p_string
     
     def write_input(self, *args):
