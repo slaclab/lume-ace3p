@@ -290,8 +290,9 @@ class Omega3P(ACE3P):
         self.output_file = 'omega3p.out'
     def make_default_input(self):
         file_path = os.path.join(self.workdir, 'omega3p_input_file.omega3p')
+        self.input_file = file_path
         with open(file_path, 'w') as f:
-            self.input_file = f
+            pass
 
 class S3P(ACE3P):
 
@@ -337,9 +338,10 @@ class S3P(ACE3P):
                 self.output_data[sname] = sparameters[id1*num_ids+id2]
                 
     def make_default_input(self):
-        file_path = os.path.join(self.workdir, 'omega3p_input_file.omega3p')
+        file_path = os.path.join(self.workdir, 'omega3p_input_file.s3p')
+        self.input_file = file_path
         with open(file_path, 'w') as f:
-            self.input_file = f
+            pass
             
 
 class T3P(ACE3P):
