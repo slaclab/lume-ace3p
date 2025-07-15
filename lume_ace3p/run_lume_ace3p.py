@@ -5,7 +5,7 @@ from ruamel.yaml.constructor import SafeConstructor, Constructor
 from collections import defaultdict
 import numpy as np
 import copy
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+#from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 
 input_file = sys.argv[1]
 
@@ -47,23 +47,23 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
     for key in input_dict:
         new_key = key
         #if a particular key is associated with an attribute, add -(attribute number)
-        if isinstance(input_dict[key], dict) and 'Attribute' in input_dict.keys():
+        if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key].keys():
             period_index = key.find('.LILA.')
             period_index_2 = key.find('.LILA.', period_index+5)
             #if there already is a .number associated with this key, replace the number
             #the .number comes from reading the .yaml file, and will be a random number so we replace to make it meaningful
             if period_index != -1:
-                new_key = key[:period_index] + '|LILA|' + str(input_dict['Attribute']) + '|LILA&' + key[period_index_2+6:]
+                new_key = key[:period_index] + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
             else:
-                new_key = key + '|LILA|' + str(input_dict['Attribute']) + '|LILA&'
+                new_key = key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&'
         #if a particular key is associated with a reference number, add .(reference number)
-        elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict.keys():
+        elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict[key].keys():
             period_index = key.find('.LILA.')
             period_index_2 = key.find('.LILA.', period_index+5)
             if period_index != -1:
-                new_key = key[:period_index] + '?LILA?' + str(input_dict['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
+                new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
             else:
-                new_key = key + '?LILA?' + str(input_dict['ReferenceNumber']) + '?LILA&'
+                new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
        
         value = input_dict.get(key)
         if ace3p:
@@ -80,8 +80,9 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=True)
+print(input_dict)
 
-    
+'''    
 #Define output dictionary with data to extract from acdtool (optional)
 output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
 
@@ -92,3 +93,4 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
     elif workflow_dict['module'].lower() == 'omega3p':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
+'''
