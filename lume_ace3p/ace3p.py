@@ -211,24 +211,39 @@ class ACE3P(CommandWrapper):
         
         #turn updated ace3p_data dictionary into a string that follows .ace3p format
         ace3p_string = str(ace3p_data)
+        #get rid of beginning and ending { characters
         ace3p_string = str(ace3p_string)[1:-1]
+        #add newline after nested element begins
         ace3p_string = ace3p_string.replace("{", "{\n")
+        #replace commas with newlines
         ace3p_string = ace3p_string.replace(", ", "\n")
+        #remove extraneous string signifiers on keys
         ace3p_string = ace3p_string.replace("'", "")
+        #add a newline after end of each nest element
         ace3p_string = ace3p_string.replace("}", "\n}")
+        #replace COMMA, a signifier for where a comma is supposed to be in the values, with a comma
         ace3p_string = ace3p_string.replace("COMMA", ",")
+
+        #find and replace ReferenceNumber signifiers with ReferenceNumber
         question_index = ace3p_string.find('?LILA?')
         amp_index = ace3p_string.find('?LILA&')
+        #prevents there being an extra bracket after ReferenceNumber
+        bracket_index = ace3p_string.find('{', amp_index)
         while question_index != -1:
-            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+6] + ace3p_string[amp_index+6:]
+            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+6] + ace3p_string[bracket_index+1:]
             question_index = ace3p_string.find('?LILA?')
             amp_index = ace3p_string.find('?LILA&')
+            bracket_index = ace3p_string.find('{', amp_index)
+        #find and replace Attribute signifiers with Attribue
         bar_index = ace3p_string.find('|LILA|')
         amp_index = ace3p_string.find('|LILA&')
+        #prevents there being an extra bracket after Attribute
+        bracket_index = ace3p_string.find('{', amp_index)
         while bar_index != -1:
-            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bar_index+6:]
+            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bracket_index:]
             bar_index = ace3p_string.find('|LILA|')
             amp_index = ace3p_string.find('|LILA&')
+            bracket_index = ace3p_string.find('{', amp_index)
             
         #sets input data to updated values. self.input_data is written into the input file in self.write_input, called at the beginning of self.run
         self.input_data = ace3p_string
