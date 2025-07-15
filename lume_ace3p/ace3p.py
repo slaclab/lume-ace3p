@@ -290,8 +290,7 @@ class Omega3P(ACE3P):
         self.output_file = 'omega3p.out'
     def make_default_input(self):
         self.input_file = 'omega3p_input_file.omega3p'
-        file_path = os.path.join(self.workdir, self.input_file)
-        with open(file_path, 'w') as f:
+        with open(self.input_file, 'w') as f:
             pass
 
 class S3P(ACE3P):
@@ -339,8 +338,7 @@ class S3P(ACE3P):
                 
     def make_default_input(self):
         self.input_file = 's3p_input_file.s3p'
-        file_path = os.path.join(self.workdir, self.input_file)
-        with open(file_path, 'w') as f:
+        with open(self.input_file, 'w') as f:
             pass
             
 
