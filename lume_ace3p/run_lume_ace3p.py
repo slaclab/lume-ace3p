@@ -66,8 +66,7 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
        
         value = input_dict.get(key)
         if ace3p:
-            key = 'ACE3P' + key
-        new_key = key
+            new_key = 'ACE3P' + new_key
         if isinstance(value,dict):
             if 'options' in value:
                 output_dict[temp_key+new_key] = value.get('options')

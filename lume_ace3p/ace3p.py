@@ -26,10 +26,10 @@ class ACE3P(CommandWrapper):
             self.ace3p_opts = ''
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
-        self.original_input_file = self.input_file
         if self.input_file is None:
             print('WARNING: no .ace3p input file specified, writing one based on contents of .yaml file. Errors may occur if essential parameters like ModelInfo are not specified in .yaml file.')
             self.make_default_input()
+        self.original_input_file = self.input_file
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
             shutil.copy(self.input_file, self.workdir)
         with open(self.input_file) as file:
@@ -289,8 +289,8 @@ class Omega3P(ACE3P):
         super().__init__(*args, **kwargs)
         self.output_file = 'omega3p.out'
     def make_default_input(self):
-        file_path = os.path.join(self.workdir, 'omega3p_input_file.omega3p')
-        self.input_file = file_path
+        self.input_file = 'omega3p_input_file.omega3p'
+        file_path = os.path.join(self.workdir, self.input_file)
         with open(file_path, 'w') as f:
             pass
 
@@ -338,8 +338,8 @@ class S3P(ACE3P):
                 self.output_data[sname] = sparameters[id1*num_ids+id2]
                 
     def make_default_input(self):
-        file_path = os.path.join(self.workdir, 'omega3p_input_file.s3p')
-        self.input_file = file_path
+        self.input_file = 's3p_input_file.s3p'
+        file_path = os.path.join(self.workdir, self.input_file)
         with open(file_path, 'w') as f:
             pass
             
