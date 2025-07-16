@@ -31,7 +31,6 @@ class ACE3PWorkflow:
                 for key, value in input_dict.items():
                     if isinstance(value, (list, tuple, np.ndarray)):
                         raise ValueError('Workflow cannot use \'.run()\' with non-scalar input dictonaries, use \'.run_sweep()\' instead.')
-                    name_str = ''
                     value = str(input_dict[key])
                     #this prevents errors that come with file names being a parameter
                     if value.startswith('./'):
