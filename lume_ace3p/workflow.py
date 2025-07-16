@@ -35,6 +35,7 @@ class ACE3PWorkflow:
                     #this prevents errors that come with file names being a parameter
                     if value.startswith('./'):
                         value = value.replace('./', '')
+                    #elements of input_dict that have this flag are not being swept over and should not be included in dict name
                     if not key.startswith('DONTINCLUDE'):
                         name_str = name_str + '_' + value
                 if self.baseworkdir is None:
@@ -77,7 +78,6 @@ class Omega3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
-        #NOTE: deleted if self.ace3p_input is not None clause
         self.omega3p_obj = Omega3P(self.ace3p_input,
                               ace3p_tasks=self.ace3p_tasks,
                               ace3p_cores=self.ace3p_cores,
@@ -207,7 +207,6 @@ class S3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load S3P input and run
-        #NOTE: deleted if self.ace3p_input is not None clause
         self.s3p_obj = S3P(self.ace3p_input,
                               ace3p_tasks=self.ace3p_tasks,
                               ace3p_cores=self.ace3p_cores,

@@ -10,6 +10,7 @@ from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 input_file = sys.argv[1]
 
 #overwriting class from ruamel.yaml that will allow a file to be read in with repeat keys
+#now, if a repeat key is detected, .LILA.#.LILA. is appended to the repeat key, where # is an integer
 class UniqueKeyConstructor(SafeConstructor):
     def construct_mapping(self, node, deep=False):
         mapping = {}
@@ -31,7 +32,6 @@ class UniqueKeyYAML(YAML):
 
 with open(input_file) as file:
     try:
-        #lume_ace3p_data = yaml.safe_load(file)
         yaml = UniqueKeyYAML(typ='safe')
         lume_ace3p_data = yaml.load(file)
     except yaml.YAMLError as exc:
@@ -42,7 +42,9 @@ workflow_dict = lume_ace3p_data.get('workflow_parameters')
 assert 'module' in workflow_dict.keys(), "Lume-ACE3P keyword 'module' not defined"
 assert 'mode' in workflow_dict.keys(), "Lume-ACE3P keyword 'mode' not defined"
 
-
+#this function takes the raw .yaml input read in and converts it to desired form
+#.LILA.#.LILA. are replaced with appropriate ReferenceNumber or Attribute, and those keys are deleted
+#data is stored in single key value pairs, so the dictionary is no longer nested
 def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
     if input_dict is not None:
         for key in input_dict:
@@ -67,8 +69,10 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                     new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
 
             value = input_dict.get(key)
+            #adds an ACE3P flag to ACE3P parameters in the code. This will distinguish it from Cubit parameters to be changed
             if ace3p:
                 new_key = 'ACE3P' + new_key
+            #options and min/max/num indicate a parameter to be swept over, value indicates a parameter to be set but not swept
             if isinstance(value,dict):
                 if 'options' in value:
                     output_dict[temp_key+new_key] = value.get('options')

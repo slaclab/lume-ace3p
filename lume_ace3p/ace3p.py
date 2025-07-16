@@ -26,6 +26,7 @@ class ACE3P(CommandWrapper):
             self.ace3p_opts = ''
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
+        #will generate a blank file in current directory that gets written to later
         if self.input_file is None:
             print('WARNING: no .ace3p input file specified, writing one based on contents of .yaml file. Errors may occur if essential parameters like ModelInfo are not specified in .yaml file.')
             self.make_default_input()
@@ -50,6 +51,7 @@ class ACE3P(CommandWrapper):
         self.input_data = text
         
     def input_parser(self,text):
+        #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
         data = self.raw_input_parser(text)
         fixed_data = {}
         
@@ -154,6 +156,8 @@ class ACE3P(CommandWrapper):
         return data
     
     def set_value(self, kwargs):
+        #function that will take keys in target_dict and assign their value to matching keys in search_dict
+        #will be used to update parameters being swept over
         def recursive_update(target_dict, search_dict):
             for k in target_dict:
                 if k in search_dict:
@@ -163,6 +167,7 @@ class ACE3P(CommandWrapper):
         
         param_updates = {}
         index = 0
+        #takes input_dict and unpacks keys into a nested dictionary
         for key in kwargs:
             num_underscore = key.count('_')
             if(num_underscore==0):
@@ -184,6 +189,7 @@ class ACE3P(CommandWrapper):
         ace3p_data = self.input_parser(self.input_data) 
         
         #eliminates param update values that relate to the cubit file
+        #removes ACE3P and DONTINCLUDE flags
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
             if key.startswith('ACE3P'):
@@ -254,6 +260,7 @@ class ACE3P(CommandWrapper):
         self.input_file = file
         #text = self.unpack_dict(self.input_data,'',0) #DUMMIED OUT FOR COMPATIBILITY
         text = self.input_data
+        #write the contents of input_data (which should by now, after set_value is called, be a string in correct format to .ace3p file
         with open(os.path.join(self.workdir, file), 'w') as file:
             file.write(text)
 
