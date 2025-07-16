@@ -31,11 +31,13 @@ class ACE3PWorkflow:
                 for key, value in input_dict.items():
                     if isinstance(value, (list, tuple, np.ndarray)):
                         raise ValueError('Workflow cannot use \'.run()\' with non-scalar input dictonaries, use \'.run_sweep()\' instead.')
+                    name_str = ''
                     value = str(input_dict[key])
                     #this prevents errors that come with file names being a parameter
                     if value.startswith('./'):
                         value = value.replace('./', '')
-                    name_str = name_str + '_' + value
+                    if !key.endswith('DONTINCLUDE'):
+                        name_str = name_str + '_' + value
                 if self.baseworkdir is None:
                     self.workdir = 'lume-ace3p_workflow_output' + name_str
                 else:

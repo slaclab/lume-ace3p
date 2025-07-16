@@ -154,14 +154,13 @@ class ACE3P(CommandWrapper):
         return data
     
     def set_value(self, kwargs):
+        def recursive_update(target_dict, search_dict):
+            for k in target_dict:
+                if k in search_dict:
+                    recursive_update(target_dict.get(k),search_dict.get(k))
+                else:
+                    search_dict.update({k: target_dict.get(k)})
         
-        #turn input_dict into type matching that in .ace3p
-        #read in .ace3p dict if it is there
-        #replace relevant values in .ace3p dict according to contents of input_dict
-        #write new .ace3p dict to .ace3p file
-        
-        #turns input dict into type matching that in .ace3p
-        #keys of the form 'ModelInfo_SurfaceMaterial_Coating_Epsilon' are split up into nested dictionaries
         param_updates = {}
         index = 0
         for key in kwargs:
@@ -179,12 +178,6 @@ class ACE3P(CommandWrapper):
                     temp_dict = new_dictionary
                     temp_key = temp_key[:underscore_index]
                 #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
-                def recursive_update(target_dict, search_dict):
-                    for k in target_dict:
-                        if k in search_dict:
-                            recursive_update(target_dict.get(k),search_dict.get(k))
-                        else:
-                            search_dict.update({k: target_dict.get(k)})
                 recursive_update(temp_dict, param_updates) 
 
         #generates a dictionary based on contents of .s3p file
@@ -194,7 +187,11 @@ class ACE3P(CommandWrapper):
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
             if key.startswith('ACE3P'):
-                ace3p_params[key[5:]] = ace3p_params[key]
+                #removes signifier that is in place to indicate a variable not being swept over
+                if key.endswith('DONTINCLUDE'):
+                    ace3p_params[key[5:-11]] = ace3p_params[key]
+                else:
+                    ace3p_params[key[5:]] = ace3p_params[key]
             del ace3p_params[key]
 
         def update_dict(new_inputs, dict_to_be_updated):

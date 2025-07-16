@@ -73,6 +73,8 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                 output_dict[temp_key+new_key] = value.get('options')
             elif 'min' in value:
                 output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
+            elif 'value' in value:
+                output_dict[temp_key+new_key+'DONTINCLUDE'] = value.get('value')
             else:
                 input_to_dict(value, output_dict, temp_key+new_key+'_')
                       
