@@ -188,10 +188,9 @@ class ACE3P(CommandWrapper):
         for key in param_updates:
             if key.startswith('ACE3P'):
                 ace3p_params[key[5:]] = ace3p_params[key]
-                del ace3p_params[key]
             elif key.startswith('DONTINCLUDE'):
                 ace3p_params[key[16:]] = ace3p_params[key]
-                del ace3p_params[key]
+            del ace3p_params[key]
 
         def update_dict(new_inputs, dict_to_be_updated):
             for key in new_inputs:
