@@ -23,34 +23,34 @@ cubit_input_parameters :
 ace3p_input_parameters : 
     'ModelInfo' :
       'File' : 
-          'options' : ['./no_s3p_file_test.ncdf']
+          'value' : ['./no_s3p_file_test.ncdf']
 
       'BoundaryCondition' :
         'Exterior' : 
-            'options' : [6]
+            'value' : [6]
         'Waveguide' : 
-            'options' : ['7,8']
+            'value' : ['7,8']
 
     'FiniteElement' :
       'Order' : 
-          'options' : [2]
+          'value' : [2]
       'CurvedSurfaces' : 
-          'options' : ['on']
+          'value' : ['on']
     
     'FrequencyScan':
       'Start' : 
-          'options' : [9.424e+9]
+          'value' : [9.424e+9]
       'End' :   
-          'options' : [12.424e+9]
+          'value' : [12.424e+9]
       'Interval' : 
-          'options' : [0.25e+9]
+          'value' : [0.25e+9]
 
     'Port':
       'ReferenceNumber' : 7
       'NumberOfModes' : 
-          'options' : [1]
+          'value' : [1]
 
     'Port' :
       'ReferenceNumber': 8
       'NumberOfModes' : 
-          'options' : [1]
+          'value' : [1]

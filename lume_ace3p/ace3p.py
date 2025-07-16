@@ -313,7 +313,7 @@ class S3P(ACE3P):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
         
-    def output_parser(self):
+    '''def output_parser(self):
         self.output_data = {}
         with open(os.path.join(self.workdir, 's3p_results/Reflection.out')) as file:
             lines = file.readlines()
@@ -346,7 +346,7 @@ class S3P(ACE3P):
         for id1 in range(num_ids):
             for id2 in range(num_ids):
                 sname = 'S(' + str(id1) + ',' + str(id2) + ')'
-                self.output_data[sname] = sparameters[id1*num_ids+id2]
+                self.output_data[sname] = sparameters[id1*num_ids+id2]'''
                 
     def make_default_input(self):
         self.input_file = 's3p_input_file.s3p'
