@@ -187,17 +187,16 @@ class ACE3P(CommandWrapper):
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
             if key.startswith('ACE3P'):
-                #removes signifier that is in place to indicate a variable not being swept over
-                if key.endswith('DONTINCLUDE'):
-                    ace3p_params[key[5:-11]] = ace3p_params[key]
-                else:
-                    ace3p_params[key[5:]] = ace3p_params[key]
-            del ace3p_params[key]
+                ace3p_params[key[5:]] = ace3p_params[key]
+                del ace3p_params[key]
+            elif key.startswith('DONTINCLUDE'):
+                ace3p_params[key[16:]] = ace3p_params[key]
+                del ace3p_params[key]
 
         def update_dict(new_inputs, dict_to_be_updated):
             for key in new_inputs:
                 if isinstance(new_inputs.get(key), dict):
-                    if key in dict_to_be_updated:
+                    if new_key in dict_to_be_updated:
                         update_dict(new_inputs.get(key), dict_to_be_updated[key])
                     else:
                         dict_to_be_updated[key] = new_inputs[key]

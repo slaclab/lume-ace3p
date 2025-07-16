@@ -74,7 +74,7 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
             elif 'min' in value:
                 output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
             elif 'value' in value:
-                output_dict[temp_key+new_key+'DONTINCLUDE'] = value.get('value')
+                output_dict['DONTINCLUDE'+temp_key+new_key] = value.get('value')
             else:
                 input_to_dict(value, output_dict, temp_key+new_key+'_')
                       
@@ -82,7 +82,6 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=True)
-
 
 #Define output dictionary with data to extract from acdtool (optional)
 output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
