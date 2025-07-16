@@ -36,7 +36,7 @@ class ACE3PWorkflow:
                     #this prevents errors that come with file names being a parameter
                     if value.startswith('./'):
                         value = value.replace('./', '')
-                    if !key.endswith('DONTINCLUDE'):
+                    if not key.endswith('DONTINCLUDE'):
                         name_str = name_str + '_' + value
                 if self.baseworkdir is None:
                     self.workdir = 'lume-ace3p_workflow_output' + name_str
