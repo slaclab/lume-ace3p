@@ -13,7 +13,8 @@ workflow_parameters :
     
 ace3p_input_parameters :
     'FiniteElement' :
-        'options' : [1,2]
+        'Order' :
+            'options' : [1,2]
     'Port' : 
         'ReferenceNumber' : 7
         'NumberOfModes' :
