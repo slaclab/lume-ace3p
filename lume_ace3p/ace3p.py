@@ -196,7 +196,7 @@ class ACE3P(CommandWrapper):
         def update_dict(new_inputs, dict_to_be_updated):
             for key in new_inputs:
                 if isinstance(new_inputs.get(key), dict):
-                    if new_key in dict_to_be_updated:
+                    if key in dict_to_be_updated:
                         update_dict(new_inputs.get(key), dict_to_be_updated[key])
                     else:
                         dict_to_be_updated[key] = new_inputs[key]
