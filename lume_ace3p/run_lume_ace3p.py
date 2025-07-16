@@ -44,40 +44,41 @@ assert 'mode' in workflow_dict.keys(), "Lume-ACE3P keyword 'mode' not defined"
 
 
 def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
-    for key in input_dict:
-        new_key = key
-        #if a particular key is associated with an attribute, add -(attribute number)
-        if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key].keys():
-            period_index = key.find('.LILA.')
-            period_index_2 = key.find('.LILA.', period_index+5)
-            #if there already is a .number associated with this key, replace the number
-            #the .number comes from reading the .yaml file, and will be a random number so we replace to make it meaningful
-            if period_index != -1:
-                new_key = key[:period_index] + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
-            else:
-                new_key = key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&'
-        #if a particular key is associated with a reference number, add .(reference number)
-        elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict[key].keys():
-            period_index = key.find('.LILA.')
-            period_index_2 = key.find('.LILA.', period_index+5)
-            if period_index != -1:
-                new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
-            else:
-                new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
-       
-        value = input_dict.get(key)
-        if ace3p:
-            new_key = 'ACE3P' + new_key
-        if isinstance(value,dict):
-            if 'options' in value:
-                output_dict[temp_key+new_key] = value.get('options')
-            elif 'min' in value:
-                output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
-            elif 'value' in value:
-                output_dict['DONTINCLUDE'+temp_key+new_key] = value.get('value')
-            else:
-                input_to_dict(value, output_dict, temp_key+new_key+'_')
-                      
+    if input_dict is not None:
+        for key in input_dict:
+            new_key = key
+            #if a particular key is associated with an attribute, add -(attribute number)
+            if isinstance(input_dict[key], dict) and 'Attribute' in input_dict[key].keys():
+                period_index = key.find('.LILA.')
+                period_index_2 = key.find('.LILA.', period_index+5)
+                #if there already is a .number associated with this key, replace the number
+                #the .number comes from reading the .yaml file, and will be a random number so we replace to make it meaningful
+                if period_index != -1:
+                    new_key = key[:period_index] + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&' + key[period_index_2+6:]
+                else:
+                    new_key = key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&'
+            #if a particular key is associated with a reference number, add .(reference number)
+            elif isinstance(input_dict[key], dict) and 'ReferenceNumber' in input_dict[key].keys():
+                period_index = key.find('.LILA.')
+                period_index_2 = key.find('.LILA.', period_index+5)
+                if period_index != -1:
+                    new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
+                else:
+                    new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
+
+            value = input_dict.get(key)
+            if ace3p:
+                new_key = 'ACE3P' + new_key
+            if isinstance(value,dict):
+                if 'options' in value:
+                    output_dict[temp_key+new_key] = value.get('options')
+                elif 'min' in value:
+                    output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
+                elif 'value' in value:
+                    output_dict['DONTINCLUDE'+temp_key+new_key] = value.get('value')
+                else:
+                    input_to_dict(value, output_dict, temp_key+new_key+'_')
+                                   
 #Define input dictionary with keywords and values:
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
