@@ -31,8 +31,13 @@ class ACE3PWorkflow:
                 for key, value in input_dict.items():
                     if isinstance(value, (list, tuple, np.ndarray)):
                         raise ValueError('Workflow cannot use \'.run()\' with non-scalar input dictonaries, use \'.run_sweep()\' instead.')
-                    value = input_dict[key]
-                    name_str = name_str + '_' + str(value)
+                    value = str(input_dict[key])
+                    #this prevents errors that come with file names being a parameter
+                    if value.startswith('./'):
+                        value = value.replace('./', '')
+                    #elements of input_dict that have this flag are not being swept over and should not be included in dict name
+                    if not key.startswith('DONTINCLUDE'):
+                        name_str = name_str + '_' + value
                 if self.baseworkdir is None:
                     self.workdir = 'lume-ace3p_workflow_output' + name_str
                 else:
@@ -73,15 +78,14 @@ class Omega3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
-        if self.ace3p_input is not None:
-            self.omega3p_obj = Omega3P(self.ace3p_input,
-                                  ace3p_tasks=self.ace3p_tasks,
-                                  ace3p_cores=self.ace3p_cores,
-                                  ace3p_opts=self.ace3p_opts,
-                                  workdir=self.workdir)
-            self.omega3p_obj.run()
-        else:
-            print('Omega3P input file not specified, skipping step.')
+        self.omega3p_obj = Omega3P(self.ace3p_input,
+                              ace3p_tasks=self.ace3p_tasks,
+                              ace3p_cores=self.ace3p_cores,
+                              ace3p_opts=self.ace3p_opts,
+                              workdir=self.workdir)
+        if input_dict is not None:
+            self.omega3p_obj.set_value(input_dict)
+        self.omega3p_obj.run()
 
         #Load acdtool rfpost input and run
         if self.rfpost_input is not None:
@@ -147,12 +151,18 @@ class Omega3PWorkflow(ACE3PWorkflow):
         if len(self.input_varname) > 1:
             t1 = np.tile(self.input_tensor,self.input_vardim[1])
             t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
-            self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            try:
+                self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
+            except ValueError:
+                print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
             if len(self.input_varname) > 2:
                 for i in range(2,len(self.input_varname)):
                     t1 = np.tile(self.input_tensor,(self.input_vardim[i],1))
                     t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
-                    self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+                    try:
+                        self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
+                    except ValueError:
+                        print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
         
         for i in range(np.size(self.input_tensor,0)):
             sweep_input_dict = {}
@@ -197,15 +207,14 @@ class S3PWorkflow(ACE3PWorkflow):
             print('Cubit journal file not specified, skipping step.')
 
         #Load S3P input and run
-        if self.ace3p_input is not None:
-            self.s3p_obj = S3P(self.ace3p_input,
-                                  ace3p_tasks=self.ace3p_tasks,
-                                  ace3p_cores=self.ace3p_cores,
-                                  ace3p_opts=self.ace3p_opts,
-                                  workdir=self.workdir)
-            self.s3p_obj.run()
-        else:
-            print('S3P input file not specified, skipping step.')
+        self.s3p_obj = S3P(self.ace3p_input,
+                              ace3p_tasks=self.ace3p_tasks,
+                              ace3p_cores=self.ace3p_cores,
+                              ace3p_opts=self.ace3p_opts,
+                              workdir=self.workdir)
+        if input_dict is not None:
+            self.s3p_obj.set_value(input_dict)
+        self.s3p_obj.run()
 
         if output_dict is None:
             output_dict = self.output_dict
