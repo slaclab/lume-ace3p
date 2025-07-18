@@ -11,7 +11,6 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
                  'ace3p_tasks': 16,
                  'ace3p_cores': 16,
                  'ace3p_opts' : '--cpu-bind=cores',
-                 'rfpost_input': 'pillbox-rtop.rfpost',
                  'workdir': 'lume-ace3p_xopt_workdir'}
 
 #Define variables and function objectives/constraints/observables
@@ -24,7 +23,7 @@ vocs = VOCS(
 def sim_function(input_dict):
 
     #Create workflow object and run with provided inputs
-    workflow = S3PWorkflow(workflow_dict,input_dict,output_dict)
+    workflow = S3PWorkflow(workflow_dict,input_dict)
     output_data = workflow.run()
 
     return output_data
