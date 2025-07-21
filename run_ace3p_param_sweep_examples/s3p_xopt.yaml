@@ -10,7 +10,7 @@ workflow_parameters :
 
 vocs_parameters :
     'variables' :
-        'rcorner1': [1,1.1]
-        'rcorner2': [4.9,5]
+        'cornercut': [15,17]
+        'rcorner1': [0.5,1.5]
     'objectives' :
-        'S(0,0)': "MAXIMIZE"
+        'S(0,0)_9.424e9': "MINIMIZE"

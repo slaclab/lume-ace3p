@@ -108,10 +108,17 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         from xopt.generators.bayesian import ExpectedImprovementGenerator
         from xopt import Xopt
         from lume_ace3p.workflow import S3PWorkflow
-        from lume_ace3p.tools import WriteXoptData
+        from lume_ace3p.tools import WriteXoptOneRun
         
         #Define variables and function objectives/constraints/observables
         vocs = VOCS(variables=vocs_dict['variables'], objectives=vocs_dict['objectives'])
+        
+        #param_and_freq is a dictionary that contains, for each vocs objective, the S parameter and frequency associated with it
+        #example: {'S(0,0)_9.494e9': ['S(0,0)', '9.494e9']}
+        param_and_freq = {}
+        for key in vocs_dict:
+            param_and_freq[key] = key.split('_')
+        first_run = True
 
         #Define simulation function for xopt (based on workflow w/ postprocessing)
         def sim_function(input_dict):
@@ -119,8 +126,20 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
             #Create workflow object and run with provided inputs
             workflow = S3PWorkflow(workflow_dict,input_dict)
             output_data = workflow.run()
+            WriteXoptOneRun('sim_output.txt', output_data, first_run)
+            first_run = False
+            output_dict = {}
+            freq_index = 0
+            for key in param_and_freq:
+                try:
+                    freq_index = output_data['Frequency'].index(float(param_and_freq[key][1]))
+                except ValueError:
+                    print("Inputted frequency to be optimized is not in frequency sweep.")
+                    break
+                #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
+                output_dict[key] = output_data[param_and_freq[key][0]][freq_index]
 
-            return output_data
+            return output_dict
 
         #Create Xopt evaluator, generator, and Xopt objects
         evaluator = Evaluator(function=sim_function)
@@ -130,9 +149,9 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(5):
             X.random_evaluate()
-            WriteXoptData('sim_output.txt',X)
+            #WriteXoptData('sim_output.txt',X)
 
         #Run optimization for subsequent steps
         for i in range(15):
             X.step()
-            WriteXoptData('sim_output.txt',X)
+            #WriteXoptData('sim_output.txt',X)
