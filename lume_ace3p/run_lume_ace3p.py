@@ -100,7 +100,3 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
     elif workflow_dict['module'].lower() == 'omega3p':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
-if workflow_dict['mode'].lower() == 'scalar_optimize':
-    if workflow_dict['module'].lower() == 's3p':
-        workflow = S3PWorkflow(workflow_dict, input_dict)
-        workflow.run_scalar_opt(vocs_dict)
