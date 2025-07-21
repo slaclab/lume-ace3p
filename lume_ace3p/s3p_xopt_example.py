@@ -6,8 +6,8 @@ from lume_ace3p.workflow import S3PWorkflow
 from lume_ace3p.tools import WriteXoptData
 
 #Define workflow dictionary with input files, directory options, etc.
-workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
-                 'ace3p_input': 'pillbox-rtop.s3p',
+workflow_dict = {'cubit_input': 'bend-90degree.jou',
+                 'ace3p_input': 'bend-90degree.s3p',
                  'ace3p_tasks': 16,
                  'ace3p_cores': 16,
                  'ace3p_opts' : '--cpu-bind=cores',
@@ -15,7 +15,7 @@ workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
 
 #Define variables and function objectives/constraints/observables
 vocs = VOCS(
-    variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
+    variables={"rcorner1": [1,1.1], "rcorner2": [4.9,5]},
     objectives={"S(0,0)": "MAXIMIZE"}
 )
 
