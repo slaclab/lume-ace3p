@@ -1,0 +1,14 @@
+#!/bin/bash
+
+#SBATCH --constraint=cpu
+#SBATCH --account=m349
+#SBATCH --qos=debug
+#SBATCH --job-name=lume-ace3p_xopt_demo
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --time=0-00:30:00
+
+export PYTHONPATH='/global/homes/l/lfowler/lume_ace3p'
+
+python /global/homes/l/lfowler/lume-ace3p/lume_ace3p/s3p_xopt_example.py

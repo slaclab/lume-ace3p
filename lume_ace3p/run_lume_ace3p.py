@@ -85,6 +85,7 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                                    
 #Define input dictionary with keywords and values:
 input_dict = {}
+input_to_dict(lume_ace3p_data.get('input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=True)
 
