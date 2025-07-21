@@ -118,7 +118,7 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         param_and_freq = {}
         for key in vocs_dict:
             param_and_freq[key] = key.split('_')
-        first_run = True
+        WriteXoptOneRun('sim_output.txt')
 
         #Define simulation function for xopt (based on workflow w/ postprocessing)
         def sim_function(input_dict):
@@ -126,8 +126,7 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
             #Create workflow object and run with provided inputs
             workflow = S3PWorkflow(workflow_dict,input_dict)
             output_data = workflow.run()
-            WriteXoptOneRun('sim_output.txt', output_data, first_run)
-            first_run = False
+            WriteXoptOneRun('sim_output.txt', output_data, False)
             output_dict = {}
             freq_index = 0
             for key in param_and_freq:

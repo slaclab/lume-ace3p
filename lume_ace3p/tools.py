@@ -98,7 +98,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
     with open(filename,'w') as file:
         file.write(text)
         
-def WriteXoptOneRun(filename, xopt_data, first_run=False):
+def WriteXoptOneRun(filename, xopt_data=None, first_run=True):
     #Helper script to write S3P sweep_data dict in tabulated format to file:
     #
     #  filename     = filename to write data output
@@ -136,20 +136,21 @@ def WriteXoptOneRun(filename, xopt_data, first_run=False):
         for skey in skeys:
             text += skey + '\t'
         text += '\n'
-    iteration = 0
-    for key, value in xopt_data.items():
-        for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
-            for i in range(len(input_names)): #Loop over input parameters
-                text += str(iteration) + '\t'
-                #Write value of each input in tuple for evaluation
-                text += str(key[i]) + '\t'
-            #Write frequency for the S3P evaluation
-            text += str(value['Frequency'][idf]) + '\t'
-            for skey in skeys:
-                #Write particular S-parameters in corresponding columns
-                text += str(value[skey][idf]) + '\t'
-            text += '\n'
-        iteration += 1
+    else:
+        iteration = 0
+        for key, value in xopt_data.items():
+            for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+                for i in range(len(input_names)): #Loop over input parameters
+                    text += str(iteration) + '\t'
+                    #Write value of each input in tuple for evaluation
+                    text += str(key[i]) + '\t'
+                #Write frequency for the S3P evaluation
+                text += str(value['Frequency'][idf]) + '\t'
+                for skey in skeys:
+                    #Write particular S-parameters in corresponding columns
+                    text += str(value[skey][idf]) + '\t'
+                text += '\n'
+            iteration += 1
     with open(filename,'a') as file:
         file.write(text)
 
