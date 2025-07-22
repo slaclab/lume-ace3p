@@ -162,7 +162,7 @@ def WriteXoptOneRun(filename, xopt_data=None, first_run=True):
     with open(filename,'a') as file:
         file.write(text)
 
-def WriteXoptData(filename, Xopt_obj):
+def WriteXoptData(filename, param_dict, Xopt_obj):
     #Helper script to write Xopt object data to a text file with proper formatting:
     #
     #  filename = filename to write data output
@@ -173,6 +173,10 @@ def WriteXoptData(filename, Xopt_obj):
     pandas.set_option("display.max_rows", 1000000)
     pandas.set_option("display.max_colwidth", 1000000)
     pandas.set_option("expand_frame_repr", False)
+    
+    Xopt_data = str(Xopt_obj.data)
+    for key in param_dict:
+        Xopt_data = Xopt_data.replace(key, param_dict[key][0])
 
     with open(filename,'w') as file:
-        print(Xopt_obj.data, file=file)
+        print(Xopt_data, file=file)

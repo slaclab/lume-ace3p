@@ -155,9 +155,9 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(5):
             X.random_evaluate()
-            #WriteXoptData('sim_output.txt',X)
+            WriteXoptData('sim_output.txt',X)
 
         #Run optimization for subsequent steps
         for i in range(15):
             X.step()
-            #WriteXoptData('sim_output.txt',X)
+            WriteXoptData('sim_output.txt',X)
