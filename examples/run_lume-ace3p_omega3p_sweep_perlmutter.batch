@@ -11,4 +11,4 @@
 
 export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
 
-python /global/cfs/cdirs/ace3p/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_omega3p_sweep.yaml
+python /global/cfs/cdirs/ace3p/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_omega3p_ace3p_param_sweep.yaml

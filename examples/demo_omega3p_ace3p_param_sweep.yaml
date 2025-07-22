@@ -1,9 +1,9 @@
 workflow_parameters :
   'mode' : 'parameter_sweep'
   'module' : 'omega3p'
-  'cubit_input' : 'pillbox-rtop-test.jou'
-  'ace3p_input' : 'pillbox-rtop-test.omega3p'
-  'rfpost_input' : 'pillbox-rtop-test.rfpost'
+  'cubit_input' : 'pillbox-rtop.jou'
+  'ace3p_input' : 'pillbox-rtop.omega3p'
+  'rfpost_input' : 'pillbox-rtop.rfpost'
   'ace3p_tasks' : 16
   'ace3p_cores' : 16
   'ace3p_opts' : '--cpu-bind=cores'
