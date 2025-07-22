@@ -357,9 +357,6 @@ class S3P(ACE3P):
         self.input_file = 's3p_input_file.s3p'
         with open(self.input_file, 'w') as f:
             pass
-            
-    def run_scalar_opt(self):
-        pass
 
 class T3P(ACE3P):
 

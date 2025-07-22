@@ -67,18 +67,17 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                     new_key = key[:period_index] + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&' + key[period_index_2+6:]
                 else:
                     new_key = key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
-
-            value = input_dict.get(key)
-            #adds an ACE3P flag to ACE3P parameters in the code. This will distinguish it from Cubit parameters to be changed
-            if ace3p:
-                new_key = 'ACE3P' + new_key
-            #options and min/max/num indicate a parameter to be swept over, value indicates a parameter to be set but not swept
-            if isinstance(value,dict):
+            if key != 'Attribute' and key != 'ReferenceNumber':
+                value = input_dict.get(key)
+                #adds an ACE3P flag to ACE3P parameters in the code. This will distinguish it from Cubit parameters to be changed
+                if ace3p:
+                    new_key = 'ACE3P' + new_key
+                #options and min/max/num indicate a parameter to be swept over, value indicates a parameter to be set but not swept
+                if isinstance(value,dict):
                     if 'min' in value:
                         output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
                     else:
                         input_to_dict(value, output_dict, temp_key+new_key+'_')
-
                 else:
                     if isinstance(value,list):
                         if len(value)>1:
@@ -89,12 +88,14 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                         output_dict['DONTINCLUDE'+temp_key+new_key] = str(value)
 
                     input_to_dict(value, output_dict, temp_key+new_key+'_')
+
                                    
 #Define input dictionary with keywords and values:
 input_dict = {}
 input_to_dict(lume_ace3p_data.get('input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
 input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=True)
+
 
 #Define output dictionary with data to extract from acdtool (optional)
 output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
@@ -106,6 +107,7 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
     elif workflow_dict['module'].lower() == 'omega3p':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
+
 if workflow_dict['mode'].lower() == 'scalar_optimize':
     if workflow_dict['module'].lower() == 's3p':
         vocs_dict = lume_ace3p_data.get('vocs_parameters')
