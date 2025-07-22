@@ -31,7 +31,11 @@ def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
     
     text = ''
     for name in (input_names + output_names):
-        text += name + '\t' #Column for each input and output name
+        new_name = name
+        #parses input parameter names modified in run_lume_ace3p.py to be readable
+        if new_name.startswith('ACE3P'):
+            new_name = new_name.rsplit('_',1)[1]
+        text += new_name + '\t' #Column for each input and output name
     text += '\n'
     for key, value in sweep_data.items():
         #Write each evaluation as a tab-delimited row
@@ -87,8 +91,12 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
     for key, value in sweep_data.items():
         for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
             for i in range(len(input_names)): #Loop over input parameters
+                new_input = key[i]
+                #parses input parameter names modified in run_lume_ace3p.py to be readable
+                if new_input.startswith('ACE3P'):
+                    new_input = new_input.rsplit('_',1)[1]
                 #Write value of each input in tuple for evaluation
-                text += str(key[i]) + '\t'
+                text += str(new_input) + '\t'
             #Write frequency for the S3P evaluation
             text += str(value['Frequency'][idf]) + '\t'
             for skey in skeys:
@@ -96,6 +104,62 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
                 text += str(value[skey][idf]) + '\t'
             text += '\n'
     with open(filename,'w') as file:
+        file.write(text)
+        
+def WriteXoptOneRun(filename, xopt_data=None, first_run=True):
+    #Helper script to write S3P sweep_data dict in tabulated format to file:
+    #
+    #  filename     = filename to write data output
+    #  sweep_data    = dict containing data in tuple-dict pairs
+    #  input_names  = list of input names of sweep_data to write
+    #
+    #Note, the sweep_data structure uses a tuple (of input values) as a key and a
+    #dict as the corresponding value (with outputs inside). The input names are
+    #NOT present in the sweep_data and are sorted by index in the tuple ordering.
+    #
+    #Example:
+    #  input_names = ['my_input1','my_input2']
+    #  sweep_data = {(1.23,4.56): {'IndexMap': {...}, 'Frequency': [1.11,1.22,1.33], 'S(0,0)': [...], 'S(0,1)': [...], ...},
+    #          (1.23,7.89): {'IndexMap': {...}, 'Frequency': [1.11,1.22,1.33], 'S(0,0)': [...], 'S(0,1)': [...], ...}}
+    #
+    #  Would produce a tab-delimited text file with 6 rows of text corrseponding to
+    #  each input tuple times the number of frequencies provided (2 x 3):
+    #""
+    #  my_input1  my_input2  Frequency  S(0,0) S(0,1) ...
+    #  1.23       4.56       1.11       ...    ...
+    #  1.23       4.56       1.22       ...    ...
+    #  1.23       4.56       1.33       ...    ...
+    #  1.23       7.89       1.11       ...    ...
+    #  1.23       7.89       1.22       ...    ...
+    #  1.23       7.89       1.33       ...    ...
+    #""
+    #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
+
+    text = ''
+    if first_run:
+        text += 'Iteration'
+        text += 'Frequency\t'
+        #Get all S-parameter names (skeys) that were saved in sweep_data
+        skeys = [key for key in xopt_data.keys() if key not in ['IndexMap', 'Frequency']]
+        for skey in skeys:
+            text += skey + '\t'
+        text += '\n'
+    else:
+        iteration = 0
+        for key, value in xopt_data.items():
+            for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+                for i in range(len(input_names)): #Loop over input parameters
+                    text += str(iteration) + '\t'
+                    #Write value of each input in tuple for evaluation
+                    text += str(key[i]) + '\t'
+                #Write frequency for the S3P evaluation
+                text += str(value['Frequency'][idf]) + '\t'
+                for skey in skeys:
+                    #Write particular S-parameters in corresponding columns
+                    text += str(value[skey][idf]) + '\t'
+                text += '\n'
+            iteration += 1
+    with open(filename,'a') as file:
         file.write(text)
 
 def WriteXoptData(filename, Xopt_obj):
