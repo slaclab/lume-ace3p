@@ -167,7 +167,7 @@ For more information on Cubit journal files, see the official [Cubit documentati
 
 <details><summary><h3>ACE3P Input Files</h3></summary>
 
-Inputting an ACE3P file is optional, as users may choose to include all ACE3P parameters within the LUME-ACE3P file (see Setting Up LUME-ACE3P Input Files section below). ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
+Inputting an ACE3P file is optional, as users may choose to include all ACE3P parameters within the LUME-ACE3P file (see [Setting Up LUME-ACE3P Input Files](#setting-up-lume-ace3p-python-scripts)). ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
 ```
 ModelInfo : {
   File: ./my_mesh_file.ncdf
@@ -256,13 +256,13 @@ cubit_input_parameters :
 The cubit_input_parameters dictionary contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. The values can be either a list of numeric inputs or (as shown here) a nested dictionary with 3 keywords: 'min', 'max', and 'num' corresponding to the minimum, maximum, and total number of values to sweep (the values are linearly spaced).
     
 Next, the ACE3P input parameters are defined in a separate dictionary:
-'''yaml
+```yaml
 ace3p_input_parameters :
 'ModelInfo' :
     'SurfaceMaterial' :
         'ReferenceNumber' : 6
         'Sigma' : [5.8e7, 1.04e7]
-'''
+```
 The ace3p_input_parameters dictionary contains a nested list of ACE3P parameters to be modified, organized according to the hierarchy of .ace3p files. Here, the parameter being swept is the conductivity of the surface with Reference Number 6. The values of the parameter of interest can be given with the keywords 'min', 'max', and 'num' (generating a linearly spaced array of values), a list of values to be inputted (as shown here), or a single value if this parameter is not being swept over.
     
 In this example, the "cav_radius" variable and the "ellipticity" variable are each vectors of length 4, and there are two options for "Sigma", thus the total number of workflow evaluations is 32 (4 x 4 x 2). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y_Z" where "X", "Y", and "Z" will be replaced by numeric values of each "cav_radius", "ellipticity", and "Sigma" for a total of 32 distinct folders. See the [Input parameters](#input-parameters) section for more details on using multiple parameters.
@@ -336,10 +336,10 @@ As of now, LUME-ACE3P does not support checkpointing and each workflow evaluatio
     
 <details><summary><h3>S3P Parameter Sweep with No ACE3P File Example</h3></summary>
 
-This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file.
+This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file. To run this example, modify the S3P sweep .batch file to run "demo_s3p_sweep_no_s3p_file.yaml."
 
 The .yaml script contains all parameter information that would have been included in the .s3p file:
-'''yaml
+```yaml
 ace3p_input_parameters : 
 'ModelInfo' :
   'File' : './bend-90degree.ncdf'
@@ -364,7 +364,7 @@ ace3p_input_parameters :
 'Port' :
   'ReferenceNumber': 8
   'NumberOfModes' : 1
-'''
+```
 
 This code functions exactly the same as the previous example. Note that errors may arise if the user fails to specify a necessary ACE3P input parameter here.
 
