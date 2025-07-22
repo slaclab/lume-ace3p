@@ -9,6 +9,6 @@
 #SBATCH --nodes=1
 #SBATCH --time=0-00:30:00
 
-export PYTHONPATH='/global/homes/l/lfowler/lume_ace3p'
+export PYTHONPATH='/global/homes/l/lfowler/lume-ace3p'
 
-python /global/homes/l/lfowler/lume-ace3p/lume_ace3p/s3p_xopt_example.py
+python /global/homes/l/lfowler/lume-ace3p/lume_ace3p/run_lume_ace3p.py s3p_xopt.yaml

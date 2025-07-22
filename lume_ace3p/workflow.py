@@ -283,6 +283,7 @@ class S3PWorkflow(ACE3PWorkflow):
                 self.print_sweep_output()
         return self.sweep_data
 
+            
     def print_sweep_output(self, filename=None):
         if filename is None:
             filename = self.sweep_output_file
