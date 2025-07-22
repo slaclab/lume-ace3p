@@ -1,7 +1,7 @@
 workflow_parameters :
   'mode' : 'parameter_sweep'
   'module' : 's3p'
-  'cubit_input' : 'no_s3p_file_test.jou'
+  'cubit_input' : 'bend-90degree.jou'
   'ace3p_tasks' : 32
   'ace3p_cores' : 4
   'ace3p_opts' : '--cpu-bind=cores'
@@ -22,7 +22,7 @@ cubit_input_parameters :
     
 ace3p_input_parameters : 
     'ModelInfo' :
-      'File' : './no_s3p_file_test.ncdf'
+      'File' : './bend-90degree.ncdf'
 
       'BoundaryCondition' :
         'Exterior' : [6]
