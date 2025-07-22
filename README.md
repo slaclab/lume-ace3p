@@ -61,13 +61,12 @@ LUME-ACE3P is a set of python code interfaces, written by David Bizzozero, for r
    
 The LUME-ACE3P python scripts enable the use of parameter sweeping or optimization of ACE3P-workflows including Cubit mesh generation and acdtool postprocessing. To perform a parameter sweep or optimization run, a user will need to provide the following:
 
-* a LUME-ACE3P input file (.yaml) containing the workflow settings and input/output parameters
+* a LUME-ACE3P input file (.yaml) containing the workflow settings, input/output parameters, and ACE3P settings (this may also go in the ACE3P input file)
 * a Cubit journal (.jou) file for editing (required for remeshing)
-* an ACE3P input file (e.g. .omega3p, .s3p, etc.) with desired input settings
 * an acdtool postprocess file (e.g. .rfpost) with desired postprocessing settings (used for Omega3P)
 * a batch script (.batch) for submitting a job to the appropriate HPC resources
 
-The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P modules and using Cubit for meshing. Visit the [Cubit](https://cubit.sandia.gov/) and [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23) websites for additional information on these codes.
+The user may optionally supply an ACE3P input file (e.g. .omega3p, .s3p, etc.) with desired input settings, and omit this information from the LUME-ACE3P input file. The LUME-ACE3P guides and examples assume a user is familiar with running ACE3P modules and using Cubit for meshing. Visit the [Cubit](https://cubit.sandia.gov/) and [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23) websites for additional information on these codes.
 
 <p align="center"><img src="LUME-ACE3P File Hierarchy.png" width=60% display=block margin=auto></p>
 
@@ -168,7 +167,7 @@ For more information on Cubit journal files, see the official [Cubit documentati
 
 <details><summary><h3>ACE3P Input Files</h3></summary>
 
-ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
+Inputting an ACE3P file is optional, as users may choose to include all ACE3P parameters within the LUME-ACE3P file (see Setting Up LUME-ACE3P Input Files section below). ACE3P input files share the same structure format for all ACE3P modules (e.g. Omega3P, T3P, S3P, etc.). The general input structure is based on key-value containers with colon ":" separators and nested curly braces "{}". Many options are available in ACE3P however the most common container is the "ModelInfo" section. For example, an Omega3P input file may contain:
 ```
 ModelInfo : {
   File: ./my_mesh_file.ncdf
@@ -209,10 +208,11 @@ LUME-ACE3P has two main use-cases: parameter sweeping and optimization. For both
 
 ## Parameter Sweeping
 
-To set up a parameter sweep with LUME-ACE3P, 2 or 3 dicts need to be provided in the LUME-ACE3P input file: 'workflow_parameters', 'input_parameters', and 'output_parameters'.
+To set up a parameter sweep with LUME-ACE3P, 2 to 4 dicts need to be provided in the LUME-ACE3P input file: 'workflow_parameters', 'cubit_input_parameters', 'ace3p_input_parameters', and 'output_parameters'.
 
 - workflow_parameters: contains the filenames, HPC settings, and other configuration settings used for the parameter sweep
-- input_parameters: contains input names and corresponding vector values to sweep through
+- cubit_input_parameters: contains input names and corresponding vector values to sweep through for parameters pertaining to the geometry
+- ace3p_input_parameters: contains input names and corresponding vector values to sweep through for parameters pertaining to ACE3P settings
 - output_parameters: contains the output quantities to store in an output array for printing (Omega3P only)
 
 Once the necessary dict objects are defined in the .yaml file, the parameter sweep can be run with the *run_lume_ace3p.py* function.
@@ -221,7 +221,7 @@ Once the necessary dict objects are defined in the .yaml file, the parameter swe
 
 This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run a parameter sweep over the cavity radius and cavity wall ellipticity parameters. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is submitted directly to HPC resources.
 
-A LUME-ACE3P input file for parameter sweeping primarily consists of definining 3 Python *dictionaries* in YAML format ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)): 'workflow_parameters', 'input_parameters', and 'output_parameters'. In this section, each of these dict objects of the example "demo_omega3p_sweep.yaml" is explained in detail.
+A LUME-ACE3P input file for parameter sweeping primarily consists of definining 3 or 4 Python *dictionaries* in YAML format ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)): 'workflow_parameters', 'cubit_input_parameters', 'ace3p_input_parameters', and 'output_parameters'. In this section, each of these dict objects of the example "demo_omega3p_ace3p_param_sweep.yaml" is explained in detail.
 
 The script begins with the neccessary LUME-ACE3P workflow parameters:
 ```yaml
@@ -241,9 +241,9 @@ workflow_parameters :
 ```
 This workflow_parameters dictionary contains various parameters such as input files (path is assumed to be in same directory), working directory settings, and HPC specific commands for ACE3P codes. Specifically for this example, the options are configured for running workflows in separate sub-diectories (automatically named using input values) with the "pillbox-rtop.jou", "pillbox-rtop.omega3p", and "pillbox-rtop.rfpost" files for Cubit, Omega3P, and Acdtool respectively. Additionally, Omega3P is configured to use 16 MPI tasks with 16 cores/task with the CPU thread-binding option to cores. The "sweep_output" keyword simply enables file output writing to a "sweep_output_file" name provided. See the [Workflow dict](#workflow-dict) section for more details on each option.
 
-Next, the input parameters are defined in a separate dictionary:
+Next, the Cubit input parameters are defined in a separate dictionary:
 ```yaml
-input_parameters : 
+cubit_input_parameters : 
   'cav_radius' :
     'min' : 90.0
     'max' : 120.0
@@ -253,9 +253,19 @@ input_parameters :
     'max' : 1.25
     'num' : 4
 ```
-The input_parameters dictionary contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. The values can be either a list of numeric inputs or (as shown here) a nested dictionary with 3 keywords: 'min', 'max', and 'num' corresponding to the minimum, maximum, and total number of values to sweep (the values are linearly spaced).
-
-In this example, the "cav_radius" variable and the "ellipticity" variable are each vectors of length 4, thus the total number of workflow evaluations is 16 (4 x 4). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y" where "X" and "Y" will be replaced by numeric values of each "cav_radius" and "ellipticity" for a total of 16 distinct folders. See the [Input parameters](#input-parameters) section for more details on using multiple parameters.
+The cubit_input_parameters dictionary contains keyword value pairs for the *exact* names of the variables (as defined in the Cubit journal file) and the corresponding values to sweep. The values can be either a list of numeric inputs or (as shown here) a nested dictionary with 3 keywords: 'min', 'max', and 'num' corresponding to the minimum, maximum, and total number of values to sweep (the values are linearly spaced).
+    
+Next, the ACE3P input parameters are defined in a separate dictionary:
+'''yaml
+ace3p_input_parameters :
+'ModelInfo' :
+    'SurfaceMaterial' :
+        'ReferenceNumber' : 6
+        'Sigma' : [5.8e7, 1.04e7]
+'''
+The ace3p_input_parameters dictionary contains a nested list of ACE3P parameters to be modified, organized according to the hierarchy of .ace3p files. Here, the parameter being swept is the conductivity of the surface with Reference Number 6. The values of the parameter of interest can be given with the keywords 'min', 'max', and 'num' (generating a linearly spaced array of values), a list of values to be inputted (as shown here), or a single value if this parameter is not being swept over.
+    
+In this example, the "cav_radius" variable and the "ellipticity" variable are each vectors of length 4, and there are two options for "Sigma", thus the total number of workflow evaluations is 32 (4 x 4 x 2). Also, since the "workdir_mode" setting in the workflow dict was set to "auto", each workflow evaluation will create a folder named "lume-ace3p_demo_workdir_X_Y_Z" where "X", "Y", and "Z" will be replaced by numeric values of each "cav_radius", "ellipticity", and "Sigma" for a total of 32 distinct folders. See the [Input parameters](#input-parameters) section for more details on using multiple parameters.
 
 Next, the desired outputs are defined in a separate dictionary:
 ```yaml
@@ -269,7 +279,7 @@ output_parameters :
 ```
 The output_parameters dictionary object contains keyword value pairs for desired outputs to write to the specified "sweep_output_file", a tab-delimited text file. This file will contain one column for each input or output and rows corresponding to workflow evaluations. The format for the keyword values is a list object corresponding to the section id (e.g. 'RoverQ'), mode/surface id string (e.g. '0'), and entry name (e.g. 'RoQ') extracted from within the acdtool postprocess output file (named "rfpost.out").
 
-In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'mode_freq', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 2 input values ('cav_radius' and 'ellipticity') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output parameters](#output-parameters) section for more details on different options to extract from rfpost.out files.
+In this example, the first row of the output file will contain 8 text entries: 'cav_radius', 'ellipticity', 'R/Q', 'mode_freq', 'E_max', 'loc_x', 'loc_y', and 'loc_z'. Then in subsequent rows, the columns will be filled with the corresponding 3 input values ('cav_radius', 'ellipticity', 'Sigma') and the 6 output values (extracted from the rfpost.out file for each workflow evaluation). See the [Output parameters](#output-parameters) section for more details on different options to extract from rfpost.out files.
 
 If no output dict is specified, the parameter sweep can still be run, but rfpost.out file data will not be parsed or tabulated (useful if only the different output folders are desired for each parameter combination).
 
@@ -323,6 +333,40 @@ added columns for all possible combinations of inputs defined in the "input_dict
 In the example provided, S3P will scan through 13 frequencies in a given range for each of the 15 workflow evaluations resulting in a 195 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 4 S-parameters for the 2-port system [S(0,0), S(0,1), S(1,0), S(1,1)].
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (a future version may allow multiple concurrent evaluations).
+    
+<details><summary><h3>S3P Parameter Sweep with No ACE3P File Example</h3></summary>
+
+This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file.
+
+The .yaml script contains all parameter information that would have been included in the .s3p file:
+'''yaml
+ace3p_input_parameters : 
+'ModelInfo' :
+  'File' : './bend-90degree.ncdf'
+
+  'BoundaryCondition' :
+    'Exterior' : 6
+    'Waveguide' : 7,8
+
+'FiniteElement' :
+  'Order' : 2
+  'CurvedSurfaces' : 'on'
+
+'FrequencyScan':
+  'Start' : 9.424e+9
+  'End' : 12.424e+9
+  'Interval' : 0.25e+9
+
+'Port':
+  'ReferenceNumber' : 7
+  'NumberOfModes' : 1
+
+'Port' :
+  'ReferenceNumber': 8
+  'NumberOfModes' : 1
+'''
+
+This code functions exactly the same as the previous example. Note that errors may arise if the user fails to specify a necessary ACE3P input parameter here.
 
 </details>
 
