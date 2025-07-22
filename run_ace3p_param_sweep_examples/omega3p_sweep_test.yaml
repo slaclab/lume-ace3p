@@ -1,0 +1,37 @@
+workflow_parameters :
+  'mode' : 'parameter_sweep'
+  'module' : 'omega3p'
+  'cubit_input' : 'pillbox-rtop-test.jou'
+  'ace3p_input' : 'pillbox-rtop-test.omega3p'
+  'rfpost_input' : 'pillbox-rtop-test.rfpost'
+  'ace3p_tasks' : 16
+  'ace3p_cores' : 16
+  'ace3p_opts' : '--cpu-bind=cores'
+  'workdir' : 'lume-ace3p_omega3p_workdir'
+  'workdir_mode' : 'auto'
+  'sweep_output' : True
+  'sweep_output_file' : 'omega3p_sweep_output.txt'
+
+cubit_input_parameters : 
+  'cav_radius' :
+    'min' : 90.0
+    'max' : 120.0
+    'num' : 4
+  'ellipticity' :
+    'min' : 0.5
+    'max' : 1.25
+    'num' : 4
+    
+ace3p_input_parameters :
+    'ModelInfo' :
+        'SurfaceMaterial' :
+            'ReferenceNumber' : 6
+            'Sigma' : [5.8e7, 1.04e7]
+
+output_parameters :
+  'R/Q' : ['RoverQ', '0', 'RoQ']
+  'Mode_freq' : ['RoverQ', '0', 'Frequency']
+  'E_max' : ['maxFieldsOnSurface', '6', 'Emax']
+  'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x']
+  'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y']
+  'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']

@@ -1,0 +1,46 @@
+workflow_parameters :
+  'mode' : 'parameter_sweep'
+  'module' : 's3p'
+  'cubit_input' : 'no_s3p_file_test.jou'
+  'ace3p_tasks' : 32
+  'ace3p_cores' : 4
+  'ace3p_opts' : '--cpu-bind=cores'
+  'workdir' : 'lume-ace3p_s3p_workdir'
+  'workdir_mode' : 'auto'
+  'sweep_output' : True
+  'sweep_output_file' : 's3p_sweep_output.txt'
+
+cubit_input_parameters : 
+  'cornercut' :
+    'min' : 12.0
+    'max' : 16.0
+    'num' : 5
+  'rcorner2' :
+    'min' : 4.0
+    'max' : 16.0
+    'num' : 3
+    
+ace3p_input_parameters : 
+    'ModelInfo' :
+      'File' : './no_s3p_file_test.ncdf'
+
+      'BoundaryCondition' :
+        'Exterior' : [6]
+        'Waveguide' : 7,8
+
+    'FiniteElement' :
+      'Order' : [2]
+      'CurvedSurfaces' : 'on'
+    
+    'FrequencyScan':
+      'Start' : [9.424e+9]
+      'End' : [12.424e+9]
+      'Interval' : [0.25e+9]
+
+    'Port':
+      'ReferenceNumber' : 7
+      'NumberOfModes' : [1]
+
+    'Port' :
+      'ReferenceNumber': 8
+      'NumberOfModes' : [1]
