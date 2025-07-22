@@ -333,7 +333,9 @@ added columns for all possible combinations of inputs defined in the "input_dict
 In the example provided, S3P will scan through 13 frequencies in a given range for each of the 15 workflow evaluations resulting in a 195 lines of data in the "sweep_output_file". Each line will have the "cornercut", "rcorner2", and "frequency" value followed by the 4 S-parameters for the 2-port system [S(0,0), S(0,1), S(1,0), S(1,1)].
 
 As of now, LUME-ACE3P does not support checkpointing and each workflow evaluation is run serially (a future version may allow multiple concurrent evaluations).
-    
+
+</details>
+
 <details><summary><h3>S3P Parameter Sweep with No ACE3P File Example</h3></summary>
 
 This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file. To run this example, modify the S3P sweep .batch file to run "demo_s3p_sweep_no_s3p_file.yaml."
