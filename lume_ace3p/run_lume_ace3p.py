@@ -74,23 +74,20 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                 new_key = 'ACE3P' + new_key
             #options and min/max/num indicate a parameter to be swept over, value indicates a parameter to be set but not swept
             if isinstance(value,dict):
-                if 'options' in value:
-                    output_dict[temp_key+new_key] = value.get('options')
-                elif 'min' in value:
-                    output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
-                elif 'value' in value:
-                    output_dict['DONTINCLUDE'+temp_key+new_key] = value.get('value')
+                    if 'min' in value:
+                        output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
+                    else:
+                        input_to_dict(value, output_dict, temp_key+new_key+'_')
+
                 else:
-                    input_to_dict(value, output_dict, temp_key+new_key+'_')
-                    
-            if isinstance(value,dict):
-                if 'options' in value:
-                    output_dict[temp_key+new_key] = value.get('options')
-                elif 'min' in value:
-                    output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
-                elif 'value' in value:
-                    output_dict['DONTINCLUDE'+temp_key+new_key] = value.get('value')
-                else:
+                    if isinstance(value,list):
+                        if len(value)>1:
+                            output_dict[temp_key+new_key] = value
+                        else:
+                            output_dict['DONTINCLUDE'+temp_key+new_key] = value
+                    else:
+                        output_dict['DONTINCLUDE'+temp_key+new_key] = str(value)
+
                     input_to_dict(value, output_dict, temp_key+new_key+'_')
                                    
 #Define input dictionary with keywords and values:
