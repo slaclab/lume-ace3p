@@ -25,22 +25,22 @@ ace3p_input_parameters :
       'File' : './bend-90degree.ncdf'
 
       'BoundaryCondition' :
-        'Exterior' : [6]
+        'Exterior' : 6
         'Waveguide' : 7,8
 
     'FiniteElement' :
-      'Order' : [2]
+      'Order' : 2
       'CurvedSurfaces' : 'on'
     
     'FrequencyScan':
-      'Start' : [9.424e+9]
-      'End' : [12.424e+9]
-      'Interval' : [0.25e+9]
+      'Start' : 9.424e+9
+      'End' : 12.424e+9
+      'Interval' : 0.25e+9
 
     'Port':
       'ReferenceNumber' : 7
-      'NumberOfModes' : [1]
+      'NumberOfModes' : 1
 
     'Port' :
       'ReferenceNumber': 8
-      'NumberOfModes' : [1]
+      'NumberOfModes' : 1

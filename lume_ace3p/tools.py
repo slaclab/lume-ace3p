@@ -36,8 +36,12 @@ def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
     for key, value in sweep_data.items():
         #Write each evaluation as a tab-delimited row
         for i in range(len(input_names)):
+            new_input = key[i]
+                #parses input parameter names modified in run_lume_ace3p.py to be readable
+                if new_input.startswith('ACE3P'):
+                    new_input = new_input.rsplit('_',1)[1]
             #Write value of each input in tuple for evaluation
-            text += str(key[i]) + '\t'  
+            text += str(new_input) + '\t'  
         for i in range(len(output_names)):
             #Write value of each output in dict from given inputs
             text += str(value[output_names[i]]) + '\t'
