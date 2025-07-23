@@ -49,7 +49,7 @@ def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
     with open(filename,'w') as file:
         file.write(text)
 
-def WriteS3PDataTable(filename, sweep_data, input_names):
+def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, xopt_iteration=0):
     #Helper script to write S3P sweep_data dict in tabulated format to file:
     #
     #  filename     = filename to write data output
@@ -79,15 +79,22 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
     #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
 
     text = ''
-    for name in input_names:
-        text += name + '\t' #Column for each input and output name
-    text += 'Frequency\t'
-    key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
-    #Get all S-parameter names (skeys) that were saved in sweep_data
-    skeys = [key for key in sweep_data[key1].keys() if key not in ['IndexMap', 'Frequency']]
-    for skey in skeys:
-        text += skey + '\t'
+    #for the first run of xopt and for any non-S3P run, write column titles
+    if (is_xopt and iteration_index==0) or not is_xopt:
+        if is_xopt:
+            text += 'Iteration\t'
+        for name in input_names:
+            text += name + '\t' #Column for each input and output name
+        text += 'Frequency\t'
+        key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
+        #Get all S-parameter names (skeys) that were saved in sweep_data
+        skeys = [key for key in sweep_data[key1].keys() if key not in ['IndexMap', 'Frequency']]
+        for skey in skeys:
+            text += skey + '\t'
     text += '\n'
+    #if this is an xopt run, adds iteration index to first column
+    if is_xopt:
+        text += str(iteration_index)+'\t'
     for key, value in sweep_data.items():
         for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
             for i in range(len(input_names)): #Loop over input parameters
@@ -103,80 +110,29 @@ def WriteS3PDataTable(filename, sweep_data, input_names):
                 #Write particular S-parameters in corresponding columns
                 text += str(value[skey][idf]) + '\t'
             text += '\n'
-    with open(filename,'w') as file:
-        file.write(text)
-        
-def WriteXoptOneRun(filename, xopt_data=None, first_run=True):
-    #Helper script to write S3P sweep_data dict in tabulated format to file:
-    #
-    #  filename     = filename to write data output
-    #  sweep_data    = dict containing data in tuple-dict pairs
-    #  input_names  = list of input names of sweep_data to write
-    #
-    #Note, the sweep_data structure uses a tuple (of input values) as a key and a
-    #dict as the corresponding value (with outputs inside). The input names are
-    #NOT present in the sweep_data and are sorted by index in the tuple ordering.
-    #
-    #Example:
-    #  input_names = ['my_input1','my_input2']
-    #  sweep_data = {(1.23,4.56): {'IndexMap': {...}, 'Frequency': [1.11,1.22,1.33], 'S(0,0)': [...], 'S(0,1)': [...], ...},
-    #          (1.23,7.89): {'IndexMap': {...}, 'Frequency': [1.11,1.22,1.33], 'S(0,0)': [...], 'S(0,1)': [...], ...}}
-    #
-    #  Would produce a tab-delimited text file with 6 rows of text corrseponding to
-    #  each input tuple times the number of frequencies provided (2 x 3):
-    #""
-    #  my_input1  my_input2  Frequency  S(0,0) S(0,1) ...
-    #  1.23       4.56       1.11       ...    ...
-    #  1.23       4.56       1.22       ...    ...
-    #  1.23       4.56       1.33       ...    ...
-    #  1.23       7.89       1.11       ...    ...
-    #  1.23       7.89       1.22       ...    ...
-    #  1.23       7.89       1.33       ...    ...
-    #""
-    #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
-
-    text = ''
-    if first_run:
-        text += 'Iteration'
-        text += 'Frequency\t'
-        #Get all S-parameter names (skeys) that were saved in sweep_data
-        skeys = [key for key in xopt_data.keys() if key not in ['IndexMap', 'Frequency']]
-        for skey in skeys:
-            text += skey + '\t'
-        text += '\n'
+            #if this is an xopt run, adds iteration index to first column
+            if is_xopt:
+                text += str(iteration_index)+'t'
+    if is_xopt:
+        with open(filename,'a') as file:
+            file.write(text)
     else:
-        iteration = 0
-        for key, value in xopt_data.items():
-            for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
-                for i in range(len(input_names)): #Loop over input parameters
-                    text += str(iteration) + '\t'
-                    #Write value of each input in tuple for evaluation
-                    text += str(key[i]) + '\t'
-                #Write frequency for the S3P evaluation
-                text += str(value['Frequency'][idf]) + '\t'
-                for skey in skeys:
-                    #Write particular S-parameters in corresponding columns
-                    text += str(value[skey][idf]) + '\t'
-                text += '\n'
-            iteration += 1
-    with open(filename,'a') as file:
-        file.write(text)
+        with open(filename,'w') as file:
+            file.write(text)
 
-def WriteXoptData(filename, param_dict, Xopt_obj):
-    #Helper script to write Xopt object data to a text file with proper formatting:
-    #
-    #  filename = filename to write data output
-    #  Xopt_obj = Xopt-class object containing data
-    #
-    #Note: pandas is used to set display options for printing without truncation
+def WriteXoptData(filename, param_dict, Xopt_data, iteration_index):
+    #param_dict contains all objectives as keys and their split into objective and frequency
+    #Xopt_data is a dataframe containing results from Xopt run
 
-    pandas.set_option("display.max_rows", 1000000)
-    pandas.set_option("display.max_colwidth", 1000000)
-    pandas.set_option("expand_frame_repr", False)
+    pd.set_option("display.max_rows", 1000000)
+    pd.set_option("display.max_colwidth", 1000000)
+    pd.set_option("expand_frame_repr", False)
     
-    Xopt_data = str(Xopt_obj.data)
     for key in param_dict:
-        Xopt_data = Xopt_data.replace(key, param_dict[key][0])
-
+        #eg, replace S(0,0)_9.424e+09 with S(0,0)
+        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
+    #add a column detailing which iteration this is
+    Xopt_data.insert(loc=0, column='Iteration', value=np.full(len(Xopt_data), iteration_index))
+    
     with open(filename,'w') as file:
-        print(Xopt_data, file=file)
+        print(Xopt_data.to_string(index=False),file=file)

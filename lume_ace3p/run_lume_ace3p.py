@@ -127,18 +127,32 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         param_and_freq = {}
         for key in vocs_dict:
             param_and_freq[key] = key.split('_')
-            
+        
+        iteration_index = 0
         #Define simulation function for xopt (based on workflow w/ postprocessing)
         def sim_function(input_dict):
             #Create workflow object and run with provided inputs
+            #CHECK WHAT INPUT DICT LOOKS LIKE. I EXPECT IT WILL LOOK LIKE {'cornercut': 13, 'rcorner_1': 12}
+            #also check that order is what I think it is
+            print(input_dict)
             workflow = S3PWorkflow(workflow_dict,input_dict)
             output_data = workflow.run()
-            WriteXoptOneRun('sim_output.txt', output_data, False)
+            param_values = ()
+            param_list = []
+            for key in input_dict:
+                param_list.append(key)
+                param_values.append(input_dict[key])
+            #this puts the output data in the sweep format needed to run WriteS3PDataTable
+            modified_output_data = {param_values: output_data}
+            print(modified_output_data)
+            #appends data to a file containing information about all frequencies and S parameters for every parameter combination
+            WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
+            
             output_dict = {}
             freq_index = 0
             for key in param_and_freq:
                 try:
-                    freq_index = output_data['Frequency'].index(float(param_and_freq[key][1]))
+                    freq_index = list(output_data['Frequency']).index(float(param_and_freq[key][1]))
                 except ValueError:
                     print("Inputted frequency to be optimized is not in frequency sweep.")
                     break
@@ -155,9 +169,13 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(5):
             X.random_evaluate()
-            WriteXoptData('sim_output.txt',X)
+            #writes an output file with information only about S parameter and frequency of interest
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
 
         #Run optimization for subsequent steps
         for i in range(15):
             X.step()
-            WriteXoptData('sim_output.txt',X)
+            #writes an output file with information only about S parameter and frequency of interest
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
