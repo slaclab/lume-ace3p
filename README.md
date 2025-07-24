@@ -370,6 +370,42 @@ This code functions exactly the same as the previous example. Note that errors m
 
 </details>
 
+<details><summary><h3>S3P Parameter Sweep with No ACE3P File Example</h3></summary>
+
+This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file. To run this example, modify the S3P sweep .batch file to run "demo_s3p_sweep_no_s3p_file.yaml."
+
+The .yaml script contains all parameter information that would have been included in the .s3p file:
+```yaml
+ace3p_input_parameters : 
+'ModelInfo' :
+  'File' : './bend-90degree.ncdf'
+
+  'BoundaryCondition' :
+    'Exterior' : 6
+    'Waveguide' : 7,8
+
+'FiniteElement' :
+  'Order' : 2
+  'CurvedSurfaces' : 'on'
+
+'FrequencyScan':
+  'Start' : 9.424e+9
+  'End' : 12.424e+9
+  'Interval' : 0.25e+9
+
+'Port':
+  'ReferenceNumber' : 7
+  'NumberOfModes' : 1
+
+'Port' :
+  'ReferenceNumber': 8
+  'NumberOfModes' : 1
+```
+
+This code functions exactly the same as the previous example. Note that errors may arise if the user fails to specify a necessary ACE3P input parameter here.
+
+</details>
+
 <details><summary><h3>View S3P Parameter Sweep Output</h3></summary>
 
 A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script with `python` and load the appropriate S3P "sweep_output_file" from the file prompt. Try the "s3p_demo_sweep_output.txt" file in the "lume-ace3p/plotting" folder for an interactive demo.
