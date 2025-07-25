@@ -72,7 +72,7 @@ ax = fig.add_subplot(111)
 fig.subplots_adjust(bottom=0.3)
 
 #Plotting function for s-parameter "sp" and sweep parameter index "swp"
-def plot_sparam(sp,swp):
+def plot_sparam(sp,iteration):
     
     xlims = ax.get_xlim()
     ylims = ax.get_ylim()
@@ -80,6 +80,9 @@ def plot_sparam(sp,swp):
     ax.set_xlim(xlims)
     ax.set_ylim(ylims)
     line_list = []
+    
+    line_list.append(ax.plot(fs, sp_data[num_f*iteration:num_f*(iteration+1), sp-1], color='k', linewidth=3))
+    '''
     for indp in range(len(swps)):
         if indp == swp-1:  #Color selected curve in bold
             line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
@@ -87,9 +90,10 @@ def plot_sparam(sp,swp):
         else:
             line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
                                      color=pcolors[indp], linewidth=2, alpha=0.3))
+    '''
     plt.xlim(min(fs), max(fs))
     plt.ylim(bottom=0)
-    plt.title(col_names[sp+f_col-1], fontdict=fdict)
+    plt.title(col_names[iteration+f_col-1], fontdict=fdict)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
     plt.xticks(fontsize=fntsz)
     plt.yticks(fontsize=fntsz)
@@ -101,7 +105,7 @@ plt.ylim(bottom=0)
 #Functions for what to when the sliders are changed
 def sparam_changed(val):
     val = int(round(val))   #val is the column index for the S-param. data
-    plot_sparam(val,swparam_slider.val)
+    plot_sparam(val,iter_slider.val)
     sparam_slider.valtext.set_text(col_names[val+f_col-1])
     sparam_slider.valtext.set_fontsize(fntsz)
     
@@ -116,6 +120,9 @@ sparam_slider.on_changed(sparam_changed)
 iter_slider.on_changed(iter_changed)
 
 plt.show()
+
+#I WANT TO BE PLOTTING ONE S PARAMETER FOR ONE ITERATION--THAT SHOULD JUST BE ONE CURVE
+#SHOULD BE 
 
 '''
 #Open prompt to select which sweep parameters to provide sliders for
