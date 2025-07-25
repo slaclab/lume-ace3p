@@ -93,11 +93,11 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
         for skey in skeys:
             text += skey + '\t'
     text += '\n'
-    #if this is an xopt run, adds iteration index to first column
-    if is_xopt:
-        text += str(iteration_index)+'\t'
     for key, value in sweep_data.items():
         for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
+            #if this is an xopt run, adds iteration index to first column
+            if is_xopt:
+                text += str(iteration_index)+'\t'
             for i in range(len(input_names)): #Loop over input parameters
                 new_input = str(key[i])
                 #parses input parameter names modified in run_lume_ace3p.py to be readable
@@ -111,9 +111,6 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
                 #Write particular S-parameters in corresponding columns
                 text += str(value[skey][idf]) + '\t'
             text += '\n'
-            #if this is an xopt run, adds iteration index to first column
-            if is_xopt:
-                text += str(iteration_index)+'\t'
     if is_xopt:
         with open(filename,'a') as file:
             file.write(text)
@@ -132,11 +129,6 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iterat
     for key in param_dict:
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
         Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
-    #add a column detailing which iteration this is
-    if 'Iteration' != Xopt_data.columns:
-        Xopt_data.insert(loc=0, column='Iteration', value=np.full(len(Xopt_data), iteration_index))
-    else:
-        Xopt_data.iat[len(Xopt_data-1), 0] = iteration_index
     
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
