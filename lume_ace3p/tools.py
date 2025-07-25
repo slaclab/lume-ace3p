@@ -1,4 +1,5 @@
 import pandas
+import numpy as np
 
 def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
     #Helper script to write Omega3P sweep_data dict in tabulated format to file:
