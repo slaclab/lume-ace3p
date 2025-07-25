@@ -80,6 +80,9 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
     #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
 
     text = ''
+    key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
+    #Get all S-parameter names (skeys) that were saved in sweep_data
+    skeys = [key for key in sweep_data[key1].keys() if key not in ['IndexMap', 'Frequency']]
     #for the first run of xopt and for any non-S3P run, write column titles
     if (is_xopt and iteration_index==0) or not is_xopt:
         if is_xopt:
@@ -87,9 +90,6 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
         for name in input_names:
             text += name + '\t' #Column for each input and output name
         text += 'Frequency\t'
-        key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
-        #Get all S-parameter names (skeys) that were saved in sweep_data
-        skeys = [key for key in sweep_data[key1].keys() if key not in ['IndexMap', 'Frequency']]
         for skey in skeys:
             text += skey + '\t'
     text += '\n'
