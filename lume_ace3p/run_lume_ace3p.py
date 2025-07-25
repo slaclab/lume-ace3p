@@ -125,16 +125,13 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         #param_and_freq is a dictionary that contains, for each vocs objective, the S parameter and frequency associated with it
         #example: {'S(0,0)_9.494e9': ['S(0,0)', '9.494e9']}
         param_and_freq = {}
-        for key in vocs_dict:
+        for key in vocs_dict['objectives']:
             param_and_freq[key] = key.split('_')
         
         iteration_index = 0
         #Define simulation function for xopt (based on workflow w/ postprocessing)
         def sim_function(input_dict):
             #Create workflow object and run with provided inputs
-            #CHECK WHAT INPUT DICT LOOKS LIKE. I EXPECT IT WILL LOOK LIKE {'cornercut': 13, 'rcorner_1': 12}
-            #also check that order is what I think it is
-            print(input_dict)
             workflow = S3PWorkflow(workflow_dict,input_dict)
             output_data = workflow.run()
             param_values = ()
@@ -144,7 +141,6 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
                 param_values = param_values + (input_dict[key],)
             #this puts the output data in the sweep format needed to run WriteS3PDataTable
             modified_output_data = {param_values: output_data}
-            print(modified_output_data)
             #appends data to a file containing information about all frequencies and S parameters for every parameter combination
             WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
             
