@@ -141,7 +141,7 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
             param_list = []
             for key in input_dict:
                 param_list.append(key)
-                param_values.append(input_dict[key])
+                param_values = param_values + (input_dict[key],)
             #this puts the output data in the sweep format needed to run WriteS3PDataTable
             modified_output_data = {param_values: output_data}
             print(modified_output_data)
