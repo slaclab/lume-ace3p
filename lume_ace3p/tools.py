@@ -98,12 +98,12 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
     for key, value in sweep_data.items():
         for idf in range(len(value['Frequency'])): #Loop over frequencies scanned
             for i in range(len(input_names)): #Loop over input parameters
-                new_input = key[i]
+                new_input = str(key[i])
                 #parses input parameter names modified in run_lume_ace3p.py to be readable
                 if new_input.startswith('ACE3P'):
                     new_input = new_input.rsplit('_',1)[1]
                 #Write value of each input in tuple for evaluation
-                text += str(new_input) + '\t'
+                text += new_input + '\t'
             #Write frequency for the S3P evaluation
             text += str(value['Frequency'][idf]) + '\t'
             for skey in skeys:
