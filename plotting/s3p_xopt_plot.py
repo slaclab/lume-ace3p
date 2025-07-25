@@ -19,7 +19,6 @@ if len(file_path) == 0:
 
 with open(file_path,'r') as file:
     dlines = file.readlines()                #Total number of data rows
-
 col_names = dlines[0].split()
 f_col = col_names.index('Frequency')+1       #Column index for frequencies
 num_sp = len(col_names)-f_col                #Number of S-parameters
@@ -71,6 +70,13 @@ iter_slider.valtext.set_fontsize(fntsz)
 ax = fig.add_subplot(111)
 fig.subplots_adjust(bottom=0.3)
 
+print(len(sp_data[0]))
+print('========')
+'''
+for sp in range(4):
+    for iteration in range(num_iter+1):
+        print(sp_data[num_f*iteration:num_f*(iteration+1), sp-1])
+'''
 #Plotting function for s-parameter "sp" and sweep parameter index "swp"
 def plot_sparam(sp,iteration):
     
@@ -82,18 +88,9 @@ def plot_sparam(sp,iteration):
     line_list = []
     
     line_list.append(ax.plot(fs, sp_data[num_f*iteration:num_f*(iteration+1), sp-1], color='k', linewidth=3))
-    '''
-    for indp in range(len(swps)):
-        if indp == swp-1:  #Color selected curve in bold
-            line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
-                                     color='k', linewidth=3))
-        else:
-            line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
-                                     color=pcolors[indp], linewidth=2, alpha=0.3))
-    '''
+
     plt.xlim(min(fs), max(fs))
     plt.ylim(bottom=0)
-    plt.title(col_names[iteration+f_col-1], fontdict=fdict)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
     plt.xticks(fontsize=fntsz)
     plt.yticks(fontsize=fntsz)
@@ -111,7 +108,7 @@ def sparam_changed(val):
     
 def iter_changed(val):
     val = int(round(val))
-    plot_sparam(val, iter_slider.val)
+    plot_sparam(sparam_slider.val, val)
     iter_slider.valtext(set_text(str(swps[0][0])))
     iter_slider.valtext.set_fontsize(fntsz)
 
