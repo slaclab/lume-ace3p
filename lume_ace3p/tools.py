@@ -124,9 +124,9 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index):
     #param_dict contains all objectives as keys and their split into objective and frequency
     #Xopt_data is a dataframe containing results from Xopt run
 
-    pd.set_option("display.max_rows", 1000000)
-    pd.set_option("display.max_colwidth", 1000000)
-    pd.set_option("expand_frame_repr", False)
+    pandas.set_option("display.max_rows", 1000000)
+    pandas.set_option("display.max_colwidth", 1000000)
+    pandas.set_option("expand_frame_repr", False)
     
     for key in param_dict:
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
