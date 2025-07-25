@@ -113,7 +113,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
             text += '\n'
             #if this is an xopt run, adds iteration index to first column
             if is_xopt:
-                text += str(iteration_index)+'t'
+                text += str(iteration_index)+'\t'
     if is_xopt:
         with open(filename,'a') as file:
             file.write(text)
@@ -121,7 +121,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
         with open(filename,'w') as file:
             file.write(text)
 
-def WriteXoptData(filename, param_dict, Xopt_data, iteration_index):
+def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iteration=False):
     #param_dict contains all objectives as keys and their split into objective and frequency
     #Xopt_data is a dataframe containing results from Xopt run
 
@@ -133,7 +133,10 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index):
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
         Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
     #add a column detailing which iteration this is
-    Xopt_data.insert(loc=0, column='Iteration', value=np.full(len(Xopt_data), iteration_index))
+    if 'Iteration' != Xopt_data.columns:
+        Xopt_data.insert(loc=0, column='Iteration', value=np.full(len(Xopt_data), iteration_index))
+    else:
+        Xopt_data.iat[len(Xopt_data-1), 0] = iteration_index
     
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
