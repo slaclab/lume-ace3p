@@ -117,7 +117,7 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         from xopt.generators.bayesian import ExpectedImprovementGenerator
         from xopt import Xopt
         from lume_ace3p.workflow import S3PWorkflow
-        from lume_ace3p.tools import WriteXoptOneRun
+        from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
         
         #Define variables and function objectives/constraints/observables
         vocs = VOCS(variables=vocs_dict['variables'], objectives=vocs_dict['objectives'])
