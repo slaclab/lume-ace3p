@@ -110,6 +110,8 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
             for skey in skeys:
                 #Write particular S-parameters in corresponding columns
                 text += str(value[skey][idf]) + '\t'
+            if idf != len(value['Frequency'])-1:
+                text += '\n'            
     if is_xopt:
         with open(filename,'a') as file:
             file.write(text)
@@ -127,7 +129,7 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iterat
     
     for key in param_dict:
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
-        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
+        Xopt_data.columns = (Xopt_data.columns).str.replace({key: param_dict[key][0]}, regex=False)
     
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
