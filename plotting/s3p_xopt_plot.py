@@ -62,7 +62,7 @@ sparam_slider.valtext.set_text(col_names[1+f_col-1])
 sparam_slider.valtext.set_fontsize(fntsz)
 
 #Slider object to adjust selected sweep parameter value (keep others const.)
-iter_slider = Slider(iter_slider_ax, "Iteration: ", 1, num_iter, valinit=0, valstep=[i+1 for i in range(num_iter+1)])
+iter_slider = Slider(iter_slider_ax, "Iteration: ", 1, num_iter, valinit=0, valstep=[i for i in range(num_iter+1)])
 iter_slider.label.set_size(fntsz)
 iter_slider.valtext.set_text(str(swps[0][0]))
 iter_slider.valtext.set_fontsize(fntsz)
@@ -70,13 +70,6 @@ iter_slider.valtext.set_fontsize(fntsz)
 ax = fig.add_subplot(111)
 fig.subplots_adjust(bottom=0.3)
 
-print(len(sp_data[0]))
-print('========')
-'''
-for sp in range(4):
-    for iteration in range(num_iter+1):
-        print(sp_data[num_f*iteration:num_f*(iteration+1), sp-1])
-'''
 #Plotting function for s-parameter "sp" and sweep parameter index "swp"
 def plot_sparam(sp,iteration):
     
@@ -86,6 +79,15 @@ def plot_sparam(sp,iteration):
     ax.set_xlim(xlims)
     ax.set_ylim(ylims)
     line_list = []
+    
+    param_vals = ''
+    for i in range(1,len(swps[0])):
+        param_vals += col_names[i]
+        param_vals += ': '
+        param_vals += str(round(swps[iteration][i],5))
+        if i!=len(swps[0])-1:
+            param_vals += ', '
+    ax.text(0.5,1.02,param_vals, ha='center', fontdict=fdict, transform=ax.transAxes)
     
     line_list.append(ax.plot(fs, sp_data[num_f*iteration:num_f*(iteration+1), sp-1], color='k', linewidth=3))
 
@@ -109,7 +111,7 @@ def sparam_changed(val):
 def iter_changed(val):
     val = int(round(val))
     plot_sparam(sparam_slider.val, val)
-    iter_slider.valtext(set_text(str(swps[0][0])))
+    iter_slider.valtext.set_text(str(int(swps[val][0])))
     iter_slider.valtext.set_fontsize(fntsz)
 
 

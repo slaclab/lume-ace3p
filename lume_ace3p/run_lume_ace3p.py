@@ -110,6 +110,11 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
 
 if workflow_dict['mode'].lower() == 'scalar_optimize':
     if workflow_dict['module'].lower() == 's3p':
+        avg_opt = False
+        if 'sim_function' in workflow_dict:
+            if workflow_dict['sim_function'] == 'avg_opt':
+                avg_opt=True
+                
         vocs_dict = lume_ace3p_data.get('vocs_parameters')
         
         from xopt.vocs import VOCS
@@ -153,7 +158,13 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
                     print("Inputted frequency to be optimized is not in frequency sweep.")
                     break
                 #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
-                output_dict[key] = output_data[param_and_freq[key][0]][freq_index]
+                if avg_opt:
+                    try:
+                        output_dict[key] = 3*output_data[param_and_freq[key][0]][freq_index]+output_data[param_and_freq[key][0]][freq_index-1]+output_data[param_and_freq[key][0]][freq_index+1]
+                    except IndexError:
+                        print('This sim function can only be used on a frequency in the middle of the frequency array. Choose a wider frequency array, or choose a frequency value that is not one of the endpoints of the array."')
+                else:
+                    output_dict[key] = output_data[param_and_freq[key][0]][freq_index]
 
             return output_dict
 
