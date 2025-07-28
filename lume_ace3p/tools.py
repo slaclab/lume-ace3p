@@ -129,7 +129,7 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iterat
     
     for key in param_dict:
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
-        Xopt_data.columns = (Xopt_data.columns).str.replace({key: param_dict[key][0]})
+        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
     
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
