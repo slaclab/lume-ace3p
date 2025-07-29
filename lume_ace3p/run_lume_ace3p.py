@@ -111,6 +111,7 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
 if workflow_dict['mode'].lower() == 'scalar_optimize':
     if workflow_dict['module'].lower() == 's3p':
         vocs_dict = lume_ace3p_data.get('vocs_parameters')
+        xopt_dict = lume_ace3p_data.get('xopt_parameters')
         if 'constraints' not in vocs_dict:
             vocs_dict['constraints'] = None
         if 'observables' not in vocs_dict:
@@ -118,11 +119,16 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         
         from xopt.vocs import VOCS
         from xopt.evaluator import Evaluator
-        from xopt.generators.bayesian import ExpectedImprovementGenerator
-        from xopt.generators.sequential.neldermead import NelderMeadGenerator
         from xopt import Xopt
         from lume_ace3p.workflow import S3PWorkflow
         from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
+        if xopt_data['generator'] == 'expected_improvement':
+            from xopt.generators.bayesian import ExpectedImprovementGenerator
+        elif xopt_data['generator'] == 'nelder_mead':
+            from xopt.generators.sequential.neldermead import NelderMeadGenerator
+        else:
+            print('That generator function is not supported.')
+            break
         
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
@@ -172,18 +178,21 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
 
         #Create Xopt evaluator, generator, and Xopt objects
         evaluator = Evaluator(function=sim_function)
-        generator = NelderMeadGenerator(vocs=vocs)
+        if xopt_dict['generator']=='nelder_mead':
+            generator = NelderMeadGenerator(vocs=vocs)
+        elif xopt_dict['generator'] == 'expected_improvement':
+            generator = ExpectedImprovementGenerator(vocs=vocs)
         X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
 
         #Run X.random_evaluate() to generate + evaluate a few initial points
-        for i in range(5):
+        for i in range(xopt_data['num_random']):
             X.random_evaluate()
             #writes an output file with information only about S parameter and frequency of interest
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
         #Run optimization for subsequent steps
-        for i in range(15):
+        for i in range(xopt_data['num_step']):
             X.step()
             #writes an output file with information only about S parameter and frequency of interest
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)

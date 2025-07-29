@@ -16,3 +16,8 @@ vocs_parameters :
         's_parameter' : 'S(0,0)'
         'frequency' : 10.424e+09
         'optimization' : 'MINIMIZE'
+        
+xopt_parameters :
+    'generator' : 'nelder_mead'
+    'num_random' : 0
+    'num_step' : 25
