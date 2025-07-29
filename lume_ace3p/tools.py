@@ -127,10 +127,6 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iterat
     pandas.set_option("display.max_colwidth", 1000000)
     pandas.set_option("expand_frame_repr", False)
     
-    for key in param_dict:
-        #eg, replace S(0,0)_9.424e+09 with S(0,0)
-        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict.split('_')[0])
-    
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
         

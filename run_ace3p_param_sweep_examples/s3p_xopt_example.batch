@@ -11,4 +11,4 @@
 
 export PYTHONPATH='/global/homes/l/lfowler/lume-ace3p'
 
-python /global/homes/l/lfowler/lume-ace3p/lume_ace3p/run_lume_ace3p.py s3p_xopt.yaml
+python /global/homes/l/lfowler/lume-ace3p/lume_ace3p/run_lume_ace3p.py improved_s3p_xopt_example.yaml
