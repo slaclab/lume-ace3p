@@ -129,7 +129,31 @@ def WriteXoptData(filename, param_dict, Xopt_data, iteration_index, final_iterat
     
     for key in param_dict:
         #eg, replace S(0,0)_9.424e+09 with S(0,0)
-        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict[key][0])
+        Xopt_data.columns = (Xopt_data.columns).str.replace(key, param_dict.split('_')[0])
     
     with open(filename,'w') as file:
         print(Xopt_data.to_string(index=False),file=file)
+        
+def WriteBestXopt(filename, num_params, obj):
+    #reads in a sim_output.txt file from Xopt run and finds the best value, prints to end of file
+    with open(filename,'r+') as file:
+        dlines = file.readlines()
+    col_names = dlines[0].split()
+    
+    f_col = col_names.index('Frequency')+1       #Column index for frequencies
+    swp_data = np.zeros((len(dlines)-1,num_params+1)) #Sweep parameter data
+    for i in range(len(dlines)-1):
+        dline = dlines[i+1].split()
+        for j in range(num_params+1):
+            swp_data[i][j] = dline[j]
+    obj_index = 0
+    if obj=='MAXIMIZE':
+        obj_index = np.argmax(swp_data[num_params][:])
+    elif obj=='MINIMIZE':
+        obj_index = np.argmin(swp_data[num_params][:])
+    file.write('\nOptimal value of ' + col_names[num_params] + ' is ' + swp_data[obj_index][num_params] + ', found for input parameter values ')
+    for i in range(num_params):
+        if i != num_params-1:
+            file.write(col_names[i] + '=' + swp_data[obj_index][i] + ', ')
+        else:
+            file.write(col_names[i] + '=' + swp_data[obj_index][i] + '.'

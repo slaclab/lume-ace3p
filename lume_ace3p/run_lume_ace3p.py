@@ -110,12 +110,11 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
 
 if workflow_dict['mode'].lower() == 'scalar_optimize':
     if workflow_dict['module'].lower() == 's3p':
-        avg_opt = False
-        if 'sim_function' in workflow_dict:
-            if workflow_dict['sim_function'] == 'avg_opt':
-                avg_opt=True
-                
         vocs_dict = lume_ace3p_data.get('vocs_parameters')
+        if 'constraints' not in vocs_dict:
+            vocs_dict['constraints'] = None
+        if 'observables' not in vocs_dict:
+            vocs_dict['observables'] = None
         
         from xopt.vocs import VOCS
         from xopt.evaluator import Evaluator
@@ -124,15 +123,21 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         from lume_ace3p.workflow import S3PWorkflow
         from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
         
-        #Define variables and function objectives/constraints/observables
-        vocs = VOCS(variables=vocs_dict['variables'], objectives=vocs_dict['objectives'])
+        S_params = vocs_dict['objectives']['s_parameter']
+        freqs = vocs_dict['objectives']['frequency']
+        opts = vocs_dict['objectives']['optimization']
         
-        #param_and_freq is a dictionary that contains, for each vocs objective, the S parameter and frequency associated with it
-        #example: {'S(0,0)_9.494e9': ['S(0,0)', '9.494e9']}
+        #param_and_freq is a dictionary that contains a single keyword for each quantity to be optimized, paired with its optimization keyword
+        #example: {'S(0,0)_9.494e9': 'MINIMIZE'}
         param_and_freq = {}
-        for key in vocs_dict['objectives']:
-            param_and_freq[key] = key.split('_')
+        for i in range(len(S_params)):
+            param_and_freq[S_params[i]+'_'+str(freqs[i])] = opts[i]
         
+        #Define variables and function objectives/constraints/observables
+        #THIS NEEDS TO BE DEBUGGED: TRY RUNNING WITHOUT ANY CONSTRAINTS OR OBSERVABLES AND CHECK THAT RESULT IS SAME
+        #THEN THECK THAT IT WORKS WITH CONSTRAINTS AND OBSERVABLES
+        vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
+
         iteration_index = 0
         #Define simulation function for xopt (based on workflow w/ postprocessing)
         def sim_function(input_dict):
@@ -151,20 +156,16 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
             
             output_dict = {}
             freq_index = 0
-            for key in param_and_freq:
+            
+            for f in range(len(freqs)):
                 try:
-                    freq_index = list(output_data['Frequency']).index(float(param_and_freq[key][1]))
+                    freq_index = list(output_data['Frequency']).index(freqs[f])
                 except ValueError:
                     print("Inputted frequency to be optimized is not in frequency sweep.")
                     break
                 #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
-                if avg_opt:
-                    try:
-                        output_dict[key] = 3*output_data[param_and_freq[key][0]][freq_index]+output_data[param_and_freq[key][0]][freq_index-1]+output_data[param_and_freq[key][0]][freq_index+1]
-                    except IndexError:
-                        print('This sim function can only be used on a frequency in the middle of the frequency array. Choose a wider frequency array, or choose a frequency value that is not one of the endpoints of the array."')
-                else:
-                    output_dict[key] = output_data[param_and_freq[key][0]][freq_index]
+                output_dict[S_params[i]+'_'+str(freqs[i])] = output_data[S_params[f]][freq_index]
+                f+=1
 
             return output_dict
 

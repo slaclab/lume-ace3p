@@ -11,8 +11,16 @@ root.withdraw()
 
 if len(sys.argv) == 2:
     file_path = sys.argv[1]
+elif len(sys.argv) == 3:
+    file_path = sys.argv[1]
 else:
     file_path = filedialog.askopenfilename()     #Prompt for file to load
+    
+bool_freq_opt = input('Would you like to highlight a particular frequency or frequencies? (y/n) ')
+if bool_freq_opt=='y':
+    freq_opt = input('Please enter the frequency or frequencies you would like to highlight as a comma separated list: ')
+    freq_opt = freq_opt.split(',')
+    freq_opt = [float(i) for i in freq_opt]
 
 if len(file_path) == 0:
     sys.exit()
@@ -91,6 +99,11 @@ def plot_sparam(sp,iteration):
     
     line_list.append(ax.plot(fs, sp_data[num_f*iteration:num_f*(iteration+1), sp-1], color='k', linewidth=3))
 
+    
+
+    if bool_freq_opt:
+        for freq in freq_opt:
+            plt.axvline(x=freq, color='lightgray', linestyle='--')
     plt.xlim(min(fs), max(fs))
     plt.ylim(bottom=0)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
