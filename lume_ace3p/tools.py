@@ -156,4 +156,4 @@ def WriteBestXopt(filename, num_params, obj):
         if i != num_params-1:
             file.write(col_names[i] + '=' + swp_data[obj_index][i] + ', ')
         else:
-            file.write(col_names[i] + '=' + swp_data[obj_index][i] + '.'
+            file.write(col_names[i] + '=' + swp_data[obj_index][i] + '.')

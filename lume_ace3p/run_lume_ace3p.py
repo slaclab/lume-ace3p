@@ -119,6 +119,7 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         from xopt.vocs import VOCS
         from xopt.evaluator import Evaluator
         from xopt.generators.bayesian import ExpectedImprovementGenerator
+        from xopt.generators.sequential.neldermead import NelderMeadGenerator
         from xopt import Xopt
         from lume_ace3p.workflow import S3PWorkflow
         from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
@@ -136,7 +137,8 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         #Define variables and function objectives/constraints/observables
         #THIS NEEDS TO BE DEBUGGED: TRY RUNNING WITHOUT ANY CONSTRAINTS OR OBSERVABLES AND CHECK THAT RESULT IS SAME
         #THEN THECK THAT IT WORKS WITH CONSTRAINTS AND OBSERVABLES
-        vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
+        #vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
+        vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq)
 
         iteration_index = 0
         #Define simulation function for xopt (based on workflow w/ postprocessing)
@@ -164,14 +166,13 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
                     print("Inputted frequency to be optimized is not in frequency sweep.")
                     break
                 #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
-                output_dict[S_params[i]+'_'+str(freqs[i])] = output_data[S_params[f]][freq_index]
-                f+=1
+                output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
 
             return output_dict
 
         #Create Xopt evaluator, generator, and Xopt objects
         evaluator = Evaluator(function=sim_function)
-        generator = ExpectedImprovementGenerator(vocs=vocs)
+        generator = NelderMeadGenerator(vocs=vocs)
         X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
 
         #Run X.random_evaluate() to generate + evaluate a few initial points

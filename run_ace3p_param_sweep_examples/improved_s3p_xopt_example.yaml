@@ -13,6 +13,6 @@ vocs_parameters :
         'cornercut': [14,17]
         'rcorner1': [0.5,2.5]
     'objectives' :
-        'S_parameter' : 'S(0,0)'
-        'frequency' : 9.924e+09
+        's_parameter' : 'S(0,0)'
+        'frequency' : 10.424e+09
         'optimization' : 'MINIMIZE'

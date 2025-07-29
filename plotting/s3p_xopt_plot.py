@@ -11,8 +11,6 @@ root.withdraw()
 
 if len(sys.argv) == 2:
     file_path = sys.argv[1]
-elif len(sys.argv) == 3:
-    file_path = sys.argv[1]
 else:
     file_path = filedialog.askopenfilename()     #Prompt for file to load
     
