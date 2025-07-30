@@ -110,8 +110,12 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
             for skey in skeys:
                 #Write particular S-parameters in corresponding columns
                 text += str(value[skey][idf]) + '\t'
-            if idf != len(value['Frequency'])-1:
-                text += '\n'            
+            if is_xopt:
+                if idf != len(value['Frequency'])-1:
+                    text += '\n'
+            else:
+                text += '\n'
+                
     if is_xopt:
         with open(filename,'a') as file:
             file.write(text)

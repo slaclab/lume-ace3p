@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 
 if len(sys.argv) == 2:
@@ -31,6 +32,6 @@ for l in lines[1:]:
             if k!=freq_index-1:
                 key += ','
         key += ')'
-    data[key] = linesplit[s_index]
+        data[key] = linesplit[s_index]
 
 print(data)
