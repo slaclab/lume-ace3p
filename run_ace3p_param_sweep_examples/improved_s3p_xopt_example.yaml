@@ -18,6 +18,6 @@ vocs_parameters :
         'optimization' : 'MINIMIZE'
         
 xopt_parameters :
-    'generator' : 'nelder_mead'
+    'generator' : 'NelderMeadGenerator'
     'num_random' : 0
     'num_step' : 25

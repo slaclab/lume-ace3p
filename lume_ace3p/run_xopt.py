@@ -7,7 +7,7 @@ from xopt import Xopt
 from lume_ace3p.workflow import S3PWorkflow
 from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
     
-def run_xopt(vocs_dict, xopt_dict):
+def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     if isinstance(vocs_dict['objectives']['s_parameter'],list):
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
@@ -66,12 +66,13 @@ def run_xopt(vocs_dict, xopt_dict):
     generator = None
     if xopt_dict['generator'] == 'NelderMeadGenerator':
         from xopt.generators.scipy.neldermead import NelderMeadGenerator
-        generator = ExpectedImprovementGenerator(vocs=vocs)
+        generator = NelderMeadGenerator(vocs=vocs)
     elif xopt_dict['generator'] == 'ExpectedImprovementGenerator':
         from xopt.generators.bayseian import ExpectedImprovementGenerator
         generator = ExpectedImprovementGenerator(vocs=vocs)
     else:
-        return("That generator is not supported. Exiting the program.")
+        print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
+        return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
 
     #Run X.random_evaluate() to generate + evaluate a few initial points
