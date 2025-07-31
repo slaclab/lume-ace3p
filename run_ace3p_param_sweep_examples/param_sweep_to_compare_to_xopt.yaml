@@ -13,10 +13,12 @@ workflow_parameters :
 
 cubit_input_parameters : 
   'cornercut' :
-    'min' : 14.0
-    'max' : 16.0
-    'num' : 10
-  'rcorner1' :
-    'min' : 1.25
-    'max' : 1.75
-    'num' : 10
+    'min' : 10.0
+    'max' : 20.0
+    'num' : 6
+  'wgwidth' :
+    'min' : 22
+    'max' : 24
+    'num' : 3
+  'rcorner1' : 5
+  'rcorner2' : 5
