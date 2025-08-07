@@ -6,6 +6,7 @@ from collections import defaultdict
 import numpy as np
 import copy
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+from lume_ace3p.run_xopt import run_xopt
 
 input_file = sys.argv[1]
 
@@ -78,7 +79,6 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                         output_dict[temp_key+new_key] = np.linspace(value.get('min'),value.get('max'),value.get('num'))
                     else:
                         input_to_dict(value, output_dict, temp_key+new_key+'_')
-
                 else:
                     if isinstance(value,list):
                         if len(value)>1:
@@ -88,7 +88,6 @@ def input_to_dict(input_dict, output_dict, temp_key='', ace3p=False):
                     else:
                         output_dict['DONTINCLUDE'+temp_key+new_key] = str(value)
 
-                    input_to_dict(value, output_dict, temp_key+new_key+'_')
                                    
 #Define input dictionary with keywords and values:
 input_dict = {}
@@ -106,3 +105,16 @@ if workflow_dict['mode'].lower() == 'parameter_sweep':
     elif workflow_dict['module'].lower() == 'omega3p':
         workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
         workflow.run_sweep()
+
+if workflow_dict['mode'].lower() == 'scalar_optimize':
+    if workflow_dict['module'].lower() == 's3p':
+        vocs_dict = lume_ace3p_data.get('vocs_parameters')
+        xopt_dict = lume_ace3p_data.get('xopt_parameters')
+        if 'constraints' not in vocs_dict:
+            vocs_dict['constraints'] = {}
+        if 'observables' not in vocs_dict:
+            vocs_dict['observables'] = []
+        if 'constants' not in vocs_dict:
+            vocs_dict['constants'] = {}
+        
+        run_xopt(workflow_dict, vocs_dict, xopt_dict)

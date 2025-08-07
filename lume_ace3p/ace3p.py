@@ -82,6 +82,11 @@ class ACE3P(CommandWrapper):
                 output_dict[new_key] = input_dict[key]
                 #if input_dict[key] is a dictionary, recursively check for ReferenceNumber and Attribute within
                 if isinstance(input_dict[key], dict):
+                    #this prevents ReferenceNumber and Attribute from remaining in the dictionary as values
+                    if 'ReferenceNumber' in input_dict[key].keys():
+                        output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='ReferenceNumber'}
+                    elif 'Attribute' in input_dict[key].keys():
+                        output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
                     input_to_dict(input_dict[key], output_dict[new_key])
                 #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
@@ -192,10 +197,10 @@ class ACE3P(CommandWrapper):
         #removes ACE3P and DONTINCLUDE flags
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
+            if key.startswith('DONTINCLUDE'):
+                ace3p_params[key[11:]] = ace3p_params[key]
             if key.startswith('ACE3P'):
                 ace3p_params[key[5:]] = ace3p_params[key]
-            elif key.startswith('DONTINCLUDE'):
-                ace3p_params[key[16:]] = ace3p_params[key]
             del ace3p_params[key]
 
         def update_dict(new_inputs, dict_to_be_updated):
@@ -258,7 +263,6 @@ class ACE3P(CommandWrapper):
             if os.path.samefile(os.path.join(self.workdir, self.input_file), os.path.join(os.getcwd(), self.original_input_file)):
                 file = file + '_copy'   #Used to not overwrite original input if in same directory
         self.input_file = file
-        #text = self.unpack_dict(self.input_data,'',0) #DUMMIED OUT FOR COMPATIBILITY
         text = self.input_data
         #write the contents of input_data (which should by now, after set_value is called, be a string in correct format to .ace3p file
         with open(os.path.join(self.workdir, file), 'w') as file:
