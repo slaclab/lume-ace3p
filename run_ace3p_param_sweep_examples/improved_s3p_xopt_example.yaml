@@ -1,6 +1,5 @@
 workflow_parameters :
     'mode' : 'scalar_optimize'
-    'sim_function' : 'avg_opt'
     'module' : 's3p'
     'cubit_input': 'bend-90degree.jou'
     'ace3p_input': 'bend-90degree.s3p'
@@ -11,7 +10,14 @@ workflow_parameters :
 
 vocs_parameters :
     'variables' :
-        'cornercut': [15,17]
-        'rcorner1': [0.5,1.5]
+        'cornercut': [14,17]
+        'rcorner1': [0.5,2.5]
     'objectives' :
-        'S(0,0)_9.924e+09': "MINIMIZE"
+        's_parameter' : 'S(0,0)'
+        'frequency' : 10.424e+09
+        'optimization' : 'MINIMIZE'
+        
+xopt_parameters :
+    'generator' : 'NelderMeadGenerator'
+    'num_random' : 0
+    'num_step' : 25
