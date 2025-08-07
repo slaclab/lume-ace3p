@@ -115,6 +115,7 @@ def plot_sparam(sp,iteration):
     plt.xlim(min(fs), max(fs))
     plt.ylim(bottom=0)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
+    plt.ylabel('S(1,1)', fontdict=fdict)
     plt.xticks(fontsize=fntsz)
     plt.yticks(fontsize=fntsz)
 

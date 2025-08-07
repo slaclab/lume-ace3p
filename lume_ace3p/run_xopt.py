@@ -25,8 +25,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         param_and_freq[S_params[i]+'_'+str(freqs[i])] = opts[i]
 
     #Define variables and function objectives/constraints/observables
-    #THIS NEEDS TO BE DEBUGGED: TRY RUNNING WITHOUT ANY CONSTRAINTS OR OBSERVABLES AND CHECK THAT RESULT IS SAME
-    #THEN THECK THAT IT WORKS WITH CONSTRAINTS AND OBSERVABLES
     vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
 
     iteration_index = 0
@@ -61,14 +59,12 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
     #Create Xopt evaluator, generator, and Xopt objects
     evaluator = Evaluator(function=sim_function)
-    #default to ExpectedImprovement:
-    
     generator = None
     if xopt_dict['generator'] == 'NelderMeadGenerator':
         from xopt.generators.scipy.neldermead import NelderMeadGenerator
         generator = NelderMeadGenerator(vocs=vocs)
     elif xopt_dict['generator'] == 'ExpectedImprovementGenerator':
-        from xopt.generators.bayseian import ExpectedImprovementGenerator
+        from xopt.generators.bayesian import ExpectedImprovementGenerator
         generator = ExpectedImprovementGenerator(vocs=vocs)
     else:
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
