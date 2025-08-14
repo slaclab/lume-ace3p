@@ -384,10 +384,11 @@ Next, the script will prompt the user to select up to two parameters to add slid
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Optimization (WIP)
-(based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23))
 LUME-ACE3P is configured with Xopt to allow for single batch job optimization. LUME-ACE3P currently supports running optimization problems for the S3P module directly from a LUME-ACE3P configuration file. To run a LUME-ACE3P optimization problem with Omega3P, a Python file is required.
     
 <details><summary><h3>Optimization with S3P</h3></summary>
+    
+[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)
 To set up an S3P optimization problem with LUME-ACE3P, no additional files beyond those needed to run a typical LUME-ACE3P problem are needed. The following must be included in the LUME-ACE3P configuration file:
 - workflow_parameters: as with parameter sweep, this dictionary contains file names, HPC settings, and other configuration settings
 - vocs_parameters: contains variables (required), objectives (required), constants (optional), and constraints (optional) for the optimization problem
@@ -398,6 +399,7 @@ Running LUME-ACE3P with Xopt returns two files. The file called "sim_output.txt"
 LUME-ACE3P is configured for multi-objective optimization, and currently supports Nelder Mead and Expected Improvement algorithms, with more in development.
     
 <details><summary><h3>S3P Optimization Example</h3></summary>
+    
 This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
     
 The script begins with the necessary LUME-ACE3P workflow parameters:
