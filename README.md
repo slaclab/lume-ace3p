@@ -381,8 +381,10 @@ Next, the script will prompt the user to select up to two parameters to add slid
 </details>
 </details>
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Optimization (WIP)
-    
+
 LUME-ACE3P is configured with Xopt to allow for single batch job optimization. LUME-ACE3P currently supports running optimization problems for the S3P module directly from a LUME-ACE3P configuration file. To run a LUME-ACE3P optimization problem with Omega3P, a Python file is required.
     
 <details><summary><h3>Optimization with S3P</h3></summary>
