@@ -394,8 +394,9 @@ To set up an S3P optimization problem with LUME-ACE3P, no additional files beyon
 Running LUME-ACE3P with Xopt returns two files. The file called "sim_output.txt" contains all parameter tuples reached and the corresponding value of the parameter(s) to be optimized. The file called "sim_output_all_values.txt" contains all parameter tuples reached and the corresponding values of all output parameters.
     
 LUME-ACE3P is configured for multi-objective optimization, and currently supports Nelder Mead and Expected Improvement algorithms, with more in development.
+    
 <details><summary><h3>S3P Optimization Example</h3></summary>
-This example (based on 90 degree bend from the [ACE3P tutorials](#https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
+This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
     
 The script begins with the necessary LUME-ACE3P workflow parameters:
 ```yaml
@@ -451,7 +452,7 @@ To set up an Omega3P optimization problem with LUME-ACE3P, an Xopt VOCS object a
 Once the required objects are provided, the optimization can be run by using Xopt object methods (e.g. .step()). 
 
 <details><summary><h3> Omega3P Optimization Example</h3></summary>
-This example (based on the rounded-top pillbox from the [ACE3P tutorials](#https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
+This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
 
 A LUME-ACE3P python script for optimization primarily consists of definining a few Python *dictionaries* ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)) and configuring Xopt options. As in the parameter-sweeping example, a workflow dict and an output dict are needed to configure the workflow parameters; however, no input_dict is used as this will be handled by Xopt and the VOCS structure (explained below). Additionally, the python script will wrap the workflow in a function that Xopt will call (along with any post-processing steps). Lastly, the Xopt optimizer is run in steps corresponding to ACE3P workflow evaluations.
 
@@ -534,16 +535,16 @@ In this example, Xopt will call the ACE3P workflow 5 times with randomly selecte
     
 <details><summary><h3>View S3P Optimization Output</h3></summary>
 Three Python plotting tools are included with LUME-ACE3P for easy visualization of optimization output:  
-- xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
-    - requires a parameter sweep to have been run
-    - will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
-    - can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
-- s3p_xopt_plot.py: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
-    - user will be prompted for both optimization run output files
-    - plot dynamically changes as a function of S-parameter and iteration slider values
-        - frequencies that were optimized over are highlighted
-- xopt_plot_still.py: a version of the previous plotting tool without slider
-    - user customizable to how many and which iterations will be shown
++ xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
+    + requires a parameter sweep to have been run
+    + will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
+    + can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
++ s3p_xopt_plot.py: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
+    + user will be prompted for both optimization run output files
+    + plot dynamically changes as a function of S-parameter and iteration slider values
+    + frequencies that were optimized over are highlighted
++ xopt_plot_still.py: a version of the previous plotting tool without slider
+    + user customizable to how many and which iterations will be shown
     
 </details>
 </details>
