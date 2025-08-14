@@ -379,6 +379,7 @@ This text-based file must be from a complete S3P parameter sweep (every paramete
 Next, the script will prompt the user to select up to two parameters to add sliders for. The parameters entered in this step are the column numbers in the "sweep_output_file" ranging from 1 to the number of different parameters listed in the "input_dict". In the above 90-degree bend example, there are only 2 parameters swept over ("cornercut" and "rcorner2") so the default entry of "1, 2" in the plotting prompt is standard. If running an S3P sweep over more than 2 parameters, only two can have individual sliders, however all parameter combinations will be shown and can be examined with the sweep parameter tuple slider.
 
 </details>
+</details>
 
 ## Optimization (WIP)
     
@@ -533,15 +534,15 @@ In this example, Xopt will call the ACE3P workflow 5 times with randomly selecte
     
 <details><summary><h3>View S3P Optimization Output</h3></summary>
 Three Python plotting tools are included with LUME-ACE3P for easy visualization of optimization output:  
-- xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
+- *xopt_param_sweep_plot.py*: for visualizing the optimization algorithm's choice of points
         - requires a parameter sweep to have been run
         - will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
         - can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
-- s3p_xopt_plot.py: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
+- *s3p_xopt_plot.py*: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
         - user will be prompted for both optimization run output files
         - plot dynamically changes as a function of S-parameter and iteration slider values
         - frequencies that were optimized over are highlighted
-- xopt_plot_still.py: a version of the previous plotting tool without sliders
+- *xopt_plot_still.py*: a version of the previous plotting tool without sliders
         - user customizable to how many and which iterations will be shown
     
 </details>
