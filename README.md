@@ -534,7 +534,8 @@ In this example, Xopt will call the ACE3P workflow 5 times with randomly selecte
 </details>
     
 <details><summary><h3>View S3P Optimization Output</h3></summary>
-Three Python plotting tools are included with LUME-ACE3P for easy visualization of optimization output:  
+Three Python plotting tools are included with LUME-ACE3P for easy visualization of optimization output: 
+    
 + xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
     + requires a parameter sweep to have been run
     + will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
