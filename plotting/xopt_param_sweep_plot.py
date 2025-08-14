@@ -107,7 +107,7 @@ y_vals = sorted(set(k[1] for k in data.keys()))
 heatmap = np.array([[data.get((x, y), np.nan) for y in y_vals] for x in x_vals])
 mode = input('2D/3D? ')
 
-fntsz = 12
+fntsz = 14
 fdict = {'family': 'serif', 'weight': 'normal', 'size': fntsz}
 high_res_cmap = colormaps.get_cmap('jet').resampled(2000)
 
@@ -118,11 +118,15 @@ if mode == '2D':
         plt.plot()
         img = plt.imshow(heatmap, origin='lower', cmap=high_res_cmap, vmin=0, vmax=0.08, extent=[min(y_vals), max(y_vals), min(x_vals), max(x_vals)])
         cbar = plt.colorbar(img)
-        cbar.set_label(str(s_param)+'_'+str(freq), fontdict=fdict)
-        plt.ylabel(input_params[ip_1], fontdict=fdict)
-        plt.xlabel(input_params[ip_2], fontdict=fdict)
+        cbar.set_label('S(1,1) at 12 GHz', fontdict=fdict)
+        #cbar.set_label(str(s_param)+'_'+str(freq), fontdict=fdict)
+        #plt.ylabel(input_params[ip_1], fontdict=fdict)
+        #plt.xlabel(input_params[ip_2], fontdict=fdict)
         plt.xlim(min(y_vals), max(y_vals))
         plt.ylim(min(x_vals), max(x_vals))
+        
+        plt.xlabel('waveguide width [mm]', fontdict=fdict)
+        plt.ylabel('chamfer length [mm]', fontdict=fdict)
         plt.title('Parameter Space Exploration', fontdict=fdict)
 
         num_arrows = len(swp_data[:,0])
@@ -134,7 +138,7 @@ if mode == '2D':
 
     elif mode_1 == 'animate':
         fig, ax = plt.subplots()
-        img = ax.imshow(heatmap, origin='lower', cmap=high_res_cmap, extent=[min(y_vals), max(y_vals), min(x_vals), max(x_vals)])
+        img = ax.imshow(heatmap, origin='lower', cmap=high_res_cmap, vmin=0, vmax=0.08, extent=[min(y_vals), max(y_vals), min(x_vals), max(x_vals)])
         cbar = plt.colorbar(img)
         cbar.set_label(str(s_param)+'_'+str(freq), fontdict=fdict)
         ax.set_ylabel(input_params[ip_1], fontdict=fdict)
@@ -165,5 +169,5 @@ elif mode == '3D':
     ax.plot_surface(X,Y,Z, cmap=high_res_cmap)
     ax.set_ylabel(input_params[ip_2], fontdict=fdict)
     ax.set_xlabel(input_params[ip_1], fontdict=fdict)
-    ax.set_zlabel(str(s_param)+'_'+str(freq), fontdict=fdict)
+    ax.set_zlabel(str(s_param)+' at '+str(freq), fontdict=fdict)
     plt.show()

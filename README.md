@@ -370,42 +370,6 @@ This code functions exactly the same as the previous example. Note that errors m
 
 </details>
 
-<details><summary><h3>S3P Parameter Sweep with No ACE3P File Example</h3></summary>
-
-This example is identical to the previous example with the exception that no S3P file is submitted here. Instead, all S3P parameters are specified in the ace3p_input_parameters dictionary in the LUME-ACE3P file. To run this example, modify the S3P sweep .batch file to run "demo_s3p_sweep_no_s3p_file.yaml."
-
-The .yaml script contains all parameter information that would have been included in the .s3p file:
-```yaml
-ace3p_input_parameters : 
-'ModelInfo' :
-  'File' : './bend-90degree.ncdf'
-
-  'BoundaryCondition' :
-    'Exterior' : 6
-    'Waveguide' : 7,8
-
-'FiniteElement' :
-  'Order' : 2
-  'CurvedSurfaces' : 'on'
-
-'FrequencyScan':
-  'Start' : 9.424e+9
-  'End' : 12.424e+9
-  'Interval' : 0.25e+9
-
-'Port':
-  'ReferenceNumber' : 7
-  'NumberOfModes' : 1
-
-'Port' :
-  'ReferenceNumber': 8
-  'NumberOfModes' : 1
-```
-
-This code functions exactly the same as the previous example. Note that errors may arise if the user fails to specify a necessary ACE3P input parameter here.
-
-</details>
-
 <details><summary><h3>View S3P Parameter Sweep Output</h3></summary>
 
 A simple plotting tool is included with LUME-ACEP which reads the "sweep_output_file" from the S3P workflow and plots the results in an interactive plot. To use this tool, simply run the provided `s3p_sweep_plot.py` script with `python` and load the appropriate S3P "sweep_output_file" from the file prompt. Try the "s3p_demo_sweep_output.txt" file in the "lume-ace3p/plotting" folder for an interactive demo.
@@ -417,18 +381,75 @@ Next, the script will prompt the user to select up to two parameters to add slid
 </details>
 
 ## Optimization (WIP)
+    
+LUME-ACE3P is configured with Xopt to allow for single batch job optimization. LUME-ACE3P currently supports running optimization problems for the S3P module directly from a LUME-ACE3P configuration file. To run a LUME-ACE3P optimization problem with Omega3P, a Python file is required.
+    
+<details><summary><h3>Optimization with S3P</h3></summary>
+To set up an S3P optimization problem with LUME-ACE3P, no additional files beyond those needed to run a typical LUME-ACE3P problem are needed. The following must be included in the LUME-ACE3P configuration file:
+- workflow_parameters: as with parameter sweep, this dictionary contains file names, HPC settings, and other configuration settings
+- vocs_parameters: contains variables (required), objectives (required), constants (optional), and constraints (optional) for the optimization problem
+- xopt_parameters: contains choice of optimization algorithm (NelderMeadGenerator and ExpectedImprovementGenerator currently supported) and number of algorithm steps
 
-To set up an optimization problem with LUME-ACE3P, an Xopt VOCS object and 2 dicts need to be provided: a workflow dict, and an output dict. Additionally, a sim function needs to be written which uses an ACE3P workflow class object.
+Running LUME-ACE3P with Xopt returns two files. The file called "sim_output.txt" contains all parameter tuples reached and the corresponding value of the parameter(s) to be optimized. The file called "sim_output_all_values.txt" contains all parameter tuples reached and the corresponding values of all output parameters.
+    
+LUME-ACE3P is configured for multi-objective optimization, and currently supports Nelder Mead and Expected Improvement algorithms, with more in development.
+<details><summary><h3>S3P Optimization Example</h3></summary>
+This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
+    
+The script begins with the necessary LUME-ACE3P workflow parameters:
+```yaml
+workflow_parameters :
+    'mode' : 'scalar_optimize'
+    'module' : 's3p'
+    'cubit_input': 'bend-90degree.jou'
+    'ace3p_input': 'bend-90degree.s3p'
+    'ace3p_tasks': 16
+    'ace3p_cores': 16
+    'ace3p_opts' : '--cpu-bind=cores'
+    'workdir': 'lume-ace3p_xopt_workdir'
+```
+Note that this is identical to the workflow parameters for the 90 degree bend parameter sweep example shown [above](), with the exception that the mode is set to 'scalar_optimize'.
+    
+Next, we establish the VOCS parameters:
+```yaml
+vocs_parameters :
+    'variables' :
+        'cornercut': [14,17]
+        'rcorner1': [0.5,2.5]
+    'objectives' :
+        's_parameter' : 'S(0,0)'
+        'frequency' : 12.0e+09
+        'optimization' : 'MINIMIZE'
+```
+The variable names 'cornercut' and 'rcorner1' must match the variable names found in the Cubit file. The user specifies a range to explore after each input variable name. Objectives for optimization with S3P must take the form of a particular S-parameter optimized at a particular frequency. To configure a multi-objective optimization problem, the user keeps the above format but adds a new S-parameter, frequency, and optimization value in list form. For example,
+```yaml
+    'objectives' :
+        's_parameter' : 'S(0,0)', 'S(0,1)'
+        'frequency' : 12.0, 10.424e+09
+        'optimization' : 'MINIMIZE', 'MINIMIZE'
+``` 
+The last component of the LUME-ACE3P configuration file is the Xopt parameters dictionary:
+```yaml
+xopt_parameters :
+    'generator' : 'NelderMeadGenerator'
+    'num_random' : 0
+    'num_step' : 25
+```
+'Generator' refers to the optimization algorithm in use. Currently, Nelder Mead and Expected Improvement algorithms are offered, to be specified as 'NeldermeadGenerator' and 'ExpectedImprovementGenerator', respectively. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations.
+</details>
+</details>
+
+<details><summary><h3>Optimization with Omega3P</h3></summary>
+To set up an Omega3P optimization problem with LUME-ACE3P, an Xopt VOCS object and 2 dicts need to be provided: a workflow dict, and an output dict. Additionally, a sim function needs to be written which uses an ACE3P workflow class object.
 
 - Xopt VOCS object: contains variable names, objectives, and optionally: constraints, observables
 - Workflow dict: contains the filenames, HPC settings, and other configuration settings used for the optimization
 - Output dict: contains the output quantities to store in an output array for optimization
 - Sim function: python wrapper function used by Xopt to optimize
 
-Once the required objects are provided, the optimization can be run by using Xopt object methods (e.g. .step()).
+Once the required objects are provided, the optimization can be run by using Xopt object methods (e.g. .step()). 
 
-<details><summary><h3>Omega3P Optimization Example</h3></summary>
-   
+<details><summary><h3> Omega3P Optimization Example</h3></summary>
 This example (based on the rounded-top pillbox from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization loop over the cavity radius and cavity wall ellipticity parameters to maximize the R/Q quantity with a target frequency constraint. The idea is to automate the entire geometry meshing process, Omega3P calculation, and mode postprocessing steps into a simple python script that is interfaced by Xopt routines for optimization.
 
 A LUME-ACE3P python script for optimization primarily consists of definining a few Python *dictionaries* ([dict objects](https://docs.python.org/3/tutorial/datastructures.html#dictionaries)) and configuring Xopt options. As in the parameter-sweeping example, a workflow dict and an output dict are needed to configure the workflow parameters; however, no input_dict is used as this will be handled by Xopt and the VOCS structure (explained below). Additionally, the python script will wrap the workflow in a function that Xopt will call (along with any post-processing steps). Lastly, the Xopt optimizer is run in steps corresponding to ACE3P workflow evaluations.
@@ -507,7 +528,23 @@ for i in range(15):
     WriteXoptData('sim_output.txt',X)
 ```
 In this example, Xopt will call the ACE3P workflow 5 times with randomly selected inputs within the bounding box and then optimize the objective quantity over 15 more ACE3P workflow evaluations (steps). The output file "sim_output.txt" is a user-provided filename and simply prints the Xopt data structure output.
-
+</details>
+</details>
+    
+<details><summary><h3>View S3P Optimization Output</h3></summary>
+Three Python plotting tools are included with LUME-ACE3P for easy visualization of optimization output:  
+- xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
+        - requires a parameter sweep to have been run
+        - will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
+        - can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
+- s3p_xopt_plot.py: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
+        - user will be prompted for both optimization run output files
+        - plot dynamically changes as a function of S-parameter and iteration slider values
+        - frequencies that were optimized over are highlighted
+- xopt_plot_still.py: a version of the previous plotting tool without sliders
+        - user customizable to how many and which iterations will be shown
+    
+</details>
 </details>
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

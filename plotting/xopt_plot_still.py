@@ -70,7 +70,7 @@ if len(s_opts) > 1:
     s_opt_index = s_opts.index(s_param)
 
 #Set font parameters and colors for line plots
-fntsz = 20
+fntsz = 24
 fdict = {'family': 'serif', 'weight': 'normal', 'size': fntsz}
 
 choice = input("Please choose how you would like to plot iterations.\n1. All iterations \n2. The last X iterations \n3. All iterations, spaced by X \n4. Custom choice of iterations.\n")
@@ -100,7 +100,7 @@ for i in indices:
         label += str(short_data[i][j])
         if j != num_inputs-1:
             label += ', '
-    ax.plot(fs, sp_data[num_f*i:num_f*(i+1), s_opt_index], linewidth=3, color=colors[k], label=label)
+    ax.plot(fs, sp_data[num_f*i:num_f*(i+1), s_opt_index], linewidth=3, color=colors[k], label=label, )
     k+=1
 for freq in f_opts:
     ax.axvline(x=freq, color='lightgray', linestyle='--')

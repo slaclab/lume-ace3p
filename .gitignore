@@ -127,3 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# SCRATCH folder
+.run_ace3p_param_sweep_examples/

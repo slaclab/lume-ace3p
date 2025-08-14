@@ -60,7 +60,7 @@ sp = 1                   #Default S-parameter to plot (usually S(0,0))
 
 
 #Set font parameters and colors for line plots
-fntsz = 20
+fntsz = 24
 fdict = {'family': 'serif', 'weight': 'normal', 'size': fntsz}
 pcolors = colormaps['jet'](np.linspace(0,1,num_p))
 
@@ -115,7 +115,7 @@ def plot_sparam(sp,iteration):
     plt.xlim(min(fs), max(fs))
     plt.ylim(bottom=0)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
-    plt.ylabel('S(1,1)', fontdict=fdict)
+    plt.ylabel(col_names[sp+f_col-1], fontdict=fdict)
     plt.xticks(fontsize=fntsz)
     plt.yticks(fontsize=fntsz)
 
