@@ -537,12 +537,12 @@ Three Python plotting tools are included with LUME-ACE3P for easy visualization 
 - xopt_param_sweep_plot.py: for visualizing the optimization algorithm's choice of points
     - requires a parameter sweep to have been run
     - will prompt the user first for a file containing all of the parameter sweep data, then for a file containing the optimization data
-        - can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
+    - can produce (1) a three dimensional plot, showing the parameter to be optimized as a function of input parameters, (2) a 2D color map of the parameter to be optimized as a function of input parameters with the optimizer's choice of points overlaid, (3) an animated version of the previous plot, showing the progress of the algorithm over time
 - s3p_xopt_plot.py: for visualizing S-parameters as a function of frequency, with sliders for iteration number and S-parameter
     - user will be prompted for both optimization run output files
     - plot dynamically changes as a function of S-parameter and iteration slider values
         - frequencies that were optimized over are highlighted
-- xopt_plot_still.py*: a version of the previous plotting tool without slider
+- xopt_plot_still.py: a version of the previous plotting tool without slider
     - user customizable to how many and which iterations will be shown
     
 </details>
