@@ -4,7 +4,7 @@
 
 # LUME-ACE3P Introduction
 
-LUME-ACE3P is a set of python code interfaces, written by David Bizzozero, for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Christopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt-org/Xopt), written by Ryan Roussel.
+LUME-ACE3P is a set of python code interfaces, written by David Bizzozero and Lila Fowler, for running ACE3P workflows (including Cubit and postprocessing routines) with the intent of running parameter sweeps or optimization problems. The base structure of LUME-ACE3P is built on [lume](https://github.com/slaclab/lume), written by Christopher Mayes, and the optimization routines use [Xopt](https://github.com/xopt-org/Xopt), written by Ryan Roussel.
 
 <details><summary><h2>Table of Contents</h2></summary>
 <ol>
