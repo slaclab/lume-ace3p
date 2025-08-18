@@ -1,0 +1,15 @@
+#!/bin/bash
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+#SBATCH --job-name=lume-ace3p_psweep_demo
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --mem=480gb
+#SBATCH --time=0-01:00:00
+
+export OMPI_MCA_sharedfp=^lockedfile
+export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
+
+python /sdf/group/rfar/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_optimization.yaml

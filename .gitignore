@@ -18,7 +18,6 @@ lib/
 lib64/
 parts/
 sdist/
-run_ace3p_param_sweep_examples/
 var/
 wheels/
 pip-wheel-metadata/
@@ -128,3 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# SCRATCH folder
+.run_ace3p_param_sweep_examples/
