@@ -1,0 +1,107 @@
+############################# Two design parameters:  1. iris; 2. wg                        ################################
+
+
+############################# Generate 7 cells: 2 coupler cells + 5 inner cells  ################################
+reset
+create cylinder height {(34797.660000-34767.670000)} radius 40.5
+move Volume 1 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+
+import acis "0_coupler.sat"
+brick x {iris} y 180 z 29.99
+move Volume 3 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+unite all
+compress ids
+
+brick x {wg} y 72.1 z 29.99
+move volume 2 x {-wg/2} y { (-43.95-116.05)/2} z {(34797.660000+34767.670000)/2} 
+unite all
+compress ids
+export acis "coupler-iris{iris}-wg{wg}.sat" overwrite
+
+reset
+import acis "coupler-iris{iris}-wg{wg}.sat" 
+Volume 1  copy reflect z 
+move Volume 2 x 0 y 0 z {(34977.610000+34972.610000)}  include_merged 
+
+import acis "5upcells.sat" 
+move Volume 2  x 0 y 0 z {34972.610000-35147.560000} include_merged 
+
+unite all
+compress ids
+
+export acis "7cells-iris{iris}-wg{wg}.sat" overwrite
+
+
+
+############################# Example 1: generate 7 cells: 2 coupler cells + 5 inner cells  ################################
+#############################                      iris: 36; wg: 42                         ################################
+reset
+
+
+create cylinder height {(34797.660000-34767.670000)} radius 40.5
+move Volume 1 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+
+import acis "0_coupler.sat"
+brick x 36 y 180 z 29.99
+
+move Volume 3 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+
+unite all
+compress ids
+
+brick x 42 y 72.1 z 29.99
+move volume 2 x {-42/2} y { (-43.95-116.05)/2} z {(34797.660000+34767.670000)/2} 
+unite all
+compress ids
+
+export acis "coupler-iris36-wg42.sat" overwrite
+
+reset
+import acis "coupler-iris36-wg42.sat" 
+Volume 1  copy reflect z 
+move Volume 2 x 0 y 0 z {(34977.610000+34972.610000)}  include_merged 
+
+import acis "5upcells.sat" 
+move Volume 2  x 0 y 0 z {34972.610000-35147.560000} include_merged 
+unite all
+compress ids
+
+export acis "7cells-iris36-wg42.sat" overwrite
+
+
+############################# Example 2: generate 7 cells: 2 coupler cells + 5 inner cells  ################################
+#############################                     iris: 38; wg: 40                          ################################
+
+reset
+
+create cylinder height {(34797.660000-34767.670000)} radius 40.5
+move Volume 1 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+
+
+import acis "0_coupler.sat"
+brick x 38 y 180 z 29.99
+
+move Volume 3 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
+
+unite all
+compress ids
+
+brick x 40 y 72.1 z 29.99
+move volume 2 x {-40/2} y { (-43.95-116.05)/2} z {(34797.660000+34767.670000)/2} 
+unite all
+compress ids
+
+export acis "coupler-iris38-wg40.sat" overwrite
+
+reset
+import acis "coupler-iris38-wg40.sat" 
+Volume 1  copy reflect z 
+move Volume 2 x 0 y 0 z {(34977.610000+34972.610000)}  include_merged 
+
+import acis "5upcells.sat" 
+move Volume 2  x 0 y 0 z {34972.610000-35147.560000} include_merged 
+unite all
+compress ids
+
+export acis "7cells-iris38-wg40.sat" overwrite
+
