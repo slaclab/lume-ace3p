@@ -69,7 +69,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             
             if checking_tols:
                 #sets tolerance achieved boolean to true if one parameter satisfies condition
-                if output_dict[S_params[f]][freq_index] <= tols[f]:
+                if output_data[S_params[f]][freq_index] <= tols[f]:
                     tol_achieved = True
                 else:
                     tol_achieved = False
@@ -106,7 +106,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             #writes an output file with information only about S parameter and frequency of interest
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-    elif 'tolerance' in xopt_dict.keys():
+    elif checking_tols:
         while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
