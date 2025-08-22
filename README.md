@@ -426,7 +426,9 @@ vocs_parameters :
         'frequency' : 12.0e+09
         'optimization' : 'MINIMIZE'
 ```
-The variable names 'cornercut' and 'rcorner1' must match the variable names found in the Cubit file. The user specifies a range to explore after each input variable name. Objectives for optimization with S3P must take the form of a particular S-parameter optimized at a particular frequency. To configure a multi-objective optimization problem, the user keeps the above format but adds a new S-parameter, frequency, and optimization value in list form. For example,
+The variable names 'cornercut' and 'rcorner1' must match the variable names found in the Cubit file. The user specifies a range to explore after each input variable name. Objectives for optimization with S3P must take the form of a particular S-parameter optimized at a particular frequency. Optionally, a user may choose to set a tolerance for each parameter to be optimized by adding the additional parameter 'tolerance' under 'objectives'. If a user chooses to do so, the optimizer will be run until each objective's tolerance is reached, or until maximum iterations (to be specified in the xopt_parameters dictionary below) are reached.
+    
+To configure a multi-objective optimization problem, the user keeps the above format but adds a new S-parameter, frequency, and optimization value in list form. For example,
 ```yaml
     'objectives' :
         's_parameter' : 'S(0,0)', 'S(0,1)'
@@ -440,7 +442,7 @@ xopt_parameters :
     'num_random' : 0
     'num_step' : 25
 ```
-'Generator' refers to the optimization algorithm in use. Currently, Nelder Mead and Expected Improvement algorithms are offered, to be specified as 'NeldermeadGenerator' and 'ExpectedImprovementGenerator', respectively. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations.
+'Generator' refers to the optimization algorithm in use. Currently, Nelder Mead and Expected Improvement algorithms are offered, to be specified as 'NeldermeadGenerator' and 'ExpectedImprovementGenerator', respectively. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations. If a user specified tolerances for the objectives, they would omit 'num_random' and 'num_step' and instead define 'max_iterations' with the maximum number of iterations for the algorithm to take.
 </details>
 </details>
 
