@@ -69,12 +69,11 @@ class Cubit(CommandWrapper):
 
     def get_export(self):
         for i in range(len(self.ncflag)):
-            words = self.lines[self.ncflag[i]].split()
+            words = self.lines[self.ncflag[len(self.ncflag)-1-i]].split()
             if words[0] == 'export':
                 for j in range(len(words)):
-                    #look for the last occurence of an export statement
-                    if words[len(words)-j-1][0] == '"' and words[len(words)-j-1][-1] == '"':
-                        self.exportfile = words[len(words)-j-1].strip('"')
+                    if words[j][0] == '"' and words[j][-1] == '"':
+                        self.exportfile = words[j].strip('"')
                         return
         print('Warning: no export command found in Cubit journal, no action taken.')
 
