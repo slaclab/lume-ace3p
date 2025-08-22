@@ -78,7 +78,7 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
     #  1.23       7.89       1.33       ...    ...
     #""
     #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
-    if iteration_index=None:
+    if iteration_index==None:
         iteration_index = 0
         
     text = ''
