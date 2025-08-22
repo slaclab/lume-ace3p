@@ -12,11 +12,21 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
         opts = vocs_dict['objectives']['optimization']
+        if 'tolerance' in vocs_dict['objectives'].keys():
+            tols = vocs_dict['objectives']['tolerance']
+            checking_tols = True
+        else:
+            checking_tols = False
     #if there is a single objective, make sure to save parameters as lists for compatibility
     else:
         S_params = [vocs_dict['objectives']['s_parameter']]
         freqs = [vocs_dict['objectives']['frequency']]
         opts = [vocs_dict['objectives']['optimization']]
+        if 'tolerance' in vocs_dict['objectives'].keys():
+            tols = [vocs_dict['objectives']['tolerance']]
+            checking_tols = True
+        else:
+            checking_tols = False
 
     #param_and_freq is a dictionary that contains a single keyword for each quantity to be optimized, paired with its optimization keyword
     #example: {'S(0,0)_9.494e9': 'MINIMIZE'}
@@ -28,6 +38,8 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
 
     iteration_index = 0
+    if checking_tols:
+        tol_achieved = False
     #Define simulation function for xopt (based on workflow w/ postprocessing)
     def sim_function(input_dict):
         #Create workflow object and run with provided inputs
@@ -54,6 +66,15 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
+            
+            if checking_tols:
+                #sets tolerance achieved boolean to true if one parameter satisfies condition
+                if output_dict[S_params[f]][freq_index] <= tols[f]:
+                    tol_achieved = True
+                else:
+                    tol_achieved = False
+                    #this prevents tolerance from counting as True unless all parameters satisfy their tolerances
+                    break
 
         return output_dict
 
@@ -70,17 +91,24 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+    
+    if 'num_step' in xopt_dict.keys():
+        #Run X.random_evaluate() to generate + evaluate a few initial points
+        for i in range(xopt_dict['num_random']):
+            X.random_evaluate()
+            #writes an output file with information only about S parameter and frequency of interest
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
 
-    #Run X.random_evaluate() to generate + evaluate a few initial points
-    for i in range(xopt_dict['num_random']):
-        X.random_evaluate()
-        #writes an output file with information only about S parameter and frequency of interest
-        WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-        iteration_index += 1
-
-    #Run optimization for subsequent steps
-    for i in range(xopt_dict['num_step']):
-        X.step()
-        #writes an output file with information only about S parameter and frequency of interest
-        WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-        iteration_index += 1
+        #Run optimization for subsequent steps
+        for i in range(xopt_dict['num_step']):
+            X.step()
+            #writes an output file with information only about S parameter and frequency of interest
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
+    elif 'tolerance' in xopt_dict.keys():
+        while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
+            X.step()
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
+            
