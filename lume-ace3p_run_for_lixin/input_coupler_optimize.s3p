@@ -4,10 +4,9 @@ File: 7cells-iris38-wg40.ncdf
 Tolerant: 1
 
 BoundaryCondition : {
-Waveguide: 1 2   //wg ports
-//Exterior: 6
-Impedance: 6 //cavity wall
-Magnetic: 3 4  //beampi port  
+Waveguide: 1, 2
+Impedance: 6
+Magnetic: 3, 4 
 }
   SurfaceMaterial: {
     ReferenceNumber: 6
@@ -25,7 +24,7 @@ FrequencyScan: {
   End:   2.86e+9
   Interval: 0.001e+9
 }
-/*
+
 PostProcess: {
   Toggle: on
   PortNumber: 1 //only save mode files for port with this reference number
@@ -40,4 +39,4 @@ Port: {
   ReferenceNumber: 2
   NumberOfModes: 1
 }
-*/
+

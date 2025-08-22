@@ -1,15 +1,10 @@
-############################# Two design parameters:  1. iris; 2. wg                        ################################
-
-
-############################# Generate 7 cells: 2 coupler cells + 5 inner cells  ################################
 reset
-#{iris = 36}
-#{wg = 42}
-
+#{iris=38.0}
+#{wg=40.0}
 create cylinder height {(34797.660000-34767.670000)} radius 40.5
 move Volume 1 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
 
-import acis "0_coupler.sat"
+import acis "../0_coupler.sat"
 brick x {iris} y 180 z 29.99
 move Volume 3 x 0 y 0 z {(34797.660000+34767.670000)/2} include_merged
 unite all
@@ -19,21 +14,25 @@ brick x {wg} y 72.1 z 29.99
 move volume 2 x {-wg/2} y { (-43.95-116.05)/2} z {(34797.660000+34767.670000)/2} 
 unite all
 compress ids
+export acis "coupler-iris-wg.sat" overwrite
 
+reset
+import acis "coupler-iris-wg.sat"
+Volume 1  copy reflect z
+move Volume 2 x 0 y 0 z {(34977.610000+34972.610000)}  include_merged
 
-Volume 1  copy reflect z 
-move Volume 2 x 0 y 0 z {(34977.610000+34972.610000)}  include_merged 
-
-import acis "5upcells.sat" 
-move Volume 2  x 0 y 0 z {34972.610000-35147.560000} include_merged 
+import acis "../5upcells.sat"
+move Volume 2  x 0 y 0 z {34972.610000-35147.560000} include_merged
 
 unite all
 compress ids
 
+export acis "7cells-iris-wg.sat" overwrite
 
+reset
+import acis "7cells-iris-wg.sat"
 vol all schem Tetmesh
-block 1 vol 1
-block all element type tetra10
+
 ##setting BC_ID
 ##ports
 compress ids
@@ -54,6 +53,6 @@ sideset 6 surface in wall6
 vol 1 size auto factor 3
 mesh vol 1
 transform mesh output scale {0.001}
-export genesis "7cells-iris38-wg40.gen" overwrite
+export genesis "7cells-iris-wg.gen" overwrite
 quality vol all distortion high 0.0 draw mesh
 quality vol all aspect ratio
