@@ -130,4 +130,3 @@ dmypy.json
 
 # SCRATCH folder
 .run_ace3p_param_sweep_examples/
-./lume-ace3p_run_for_lixin/

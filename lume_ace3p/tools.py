@@ -51,6 +51,7 @@ def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
         file.write(text)
 
 def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteration_index=None):
+
     #Helper script to write S3P sweep_data dict in tabulated format to file:
     #
     #  filename     = filename to write data output

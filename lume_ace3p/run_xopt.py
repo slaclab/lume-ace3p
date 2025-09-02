@@ -12,21 +12,25 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
         opts = vocs_dict['objectives']['optimization']
+
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = vocs_dict['objectives']['tolerance']
             checking_tols = True
         else:
             checking_tols = False
+
     #if there is a single objective, make sure to save parameters as lists for compatibility
     else:
         S_params = [vocs_dict['objectives']['s_parameter']]
         freqs = [vocs_dict['objectives']['frequency']]
         opts = [vocs_dict['objectives']['optimization']]
+
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = [vocs_dict['objectives']['tolerance']]
             checking_tols = True
         else:
             checking_tols = False
+
 
     #param_and_freq is a dictionary that contains a single keyword for each quantity to be optimized, paired with its optimization keyword
     #example: {'S(0,0)_9.494e9': 'MINIMIZE'}
@@ -40,6 +44,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     iteration_index = 0
     if checking_tols:
         tol_achieved = False
+
     #Define simulation function for xopt (based on workflow w/ postprocessing)
     def sim_function(input_dict):
         #Create workflow object and run with provided inputs
@@ -66,7 +71,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
-            
             if checking_tols:
                 #sets tolerance achieved boolean to true if one parameter satisfies condition
                 if output_data[S_params[f]][freq_index] <= tols[f]:
@@ -111,4 +115,4 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-            
+
