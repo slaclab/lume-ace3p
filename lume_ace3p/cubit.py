@@ -69,7 +69,7 @@ class Cubit(CommandWrapper):
 
     def get_export(self):
         for i in range(len(self.ncflag)):
-            words = self.lines[self.ncflag[i]].split()
+            words = self.lines[self.ncflag[len(self.ncflag)-1-i]].split()
             if words[0] == 'export':
                 for j in range(len(words)):
                     if words[j][0] == '"' and words[j][-1] == '"':

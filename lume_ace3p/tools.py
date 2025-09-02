@@ -50,7 +50,8 @@ def WriteOmega3PDataTable(filename, sweep_data, input_names, output_names):
     with open(filename,'w') as file:
         file.write(text)
 
-def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteration_index=0):
+def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteration_index=None):
+
     #Helper script to write S3P sweep_data dict in tabulated format to file:
     #
     #  filename     = filename to write data output
@@ -78,7 +79,9 @@ def WriteS3PDataTable(filename, sweep_data, input_names, is_xopt=False, iteratio
     #  1.23       7.89       1.33       ...    ...
     #""
     #Note: the default S-parameter column names are of the from "S(m,n)" but any key names can be used
-
+    if iteration_index==None:
+        iteration_index = 0
+        
     text = ''
     key1 = list(sweep_data.keys())[0] #Extract data from one S3P run
     #Get all S-parameter names (skeys) that were saved in sweep_data
