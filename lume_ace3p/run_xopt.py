@@ -48,6 +48,9 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     #Define simulation function for xopt (based on workflow w/ postprocessing)
     def sim_function(input_dict):
         #Create workflow object and run with provided inputs
+        if 'fidelity_variable' in xopt_dict.keys():
+            fidelity_variable = xopt_dict.get('fidelity_variable','s')
+            input_dict[fidelity_variable] = input_dict.pop('s')
         workflow = S3PWorkflow(workflow_dict,input_dict)
         output_data = workflow.run()
         param_values = ()
@@ -91,6 +94,13 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     elif xopt_dict['generator'] == 'ExpectedImprovementGenerator':
         from xopt.generators.bayesian import ExpectedImprovementGenerator
         generator = ExpectedImprovementGenerator(vocs=vocs)
+    elif xopt_dict['generator'] == 'MultiFidelityGenerator':
+        from xopt.generators.bayesian import MultiFidelityGenerator
+        generator = MultiFidelityGenerator(vocs=vocs)
+        cost_function = xopt_dict.get('cost_function', 'exponential')
+        if cost_function.lower() == 'exponential':
+            p1 = xopt_dict.get('cost_function_p1', 2.0)
+            generator.cost_function = lambda s: np.exp(s * np.log(p1))
     else:
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
@@ -115,4 +125,9 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-
+    elif 'cost_budget' in xopt_dict.keys():
+        cost_budget = xopt_dict.get('cost_budget')
+        while generator.calculate_total_cost() < cost_budget:
+            X.step()
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            iteration_index += 1
