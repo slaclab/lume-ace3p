@@ -133,7 +133,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 iteration_index += 1
 
     elif 'cost_budget' in xopt_dict.keys():
-        seed_start = VOCS.random_inputs(1)
+        seed_start = vocs.random_inputs(1)
         print(seed_start)
         seed_start["s"] = 0.0
         print(seed_start)
