@@ -23,3 +23,4 @@ xopt_parameters :
     'cost_function' : 'exponential'
     'cost_function_p1' : 40.0
     'cost_budget' : 500.0
+    'num_random' : 3
