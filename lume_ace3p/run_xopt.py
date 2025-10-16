@@ -97,10 +97,14 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     elif xopt_dict['generator'] == 'MultiFidelityGenerator':
         from xopt.generators.bayesian import MultiFidelityGenerator
         generator = MultiFidelityGenerator(vocs=vocs)
+        generator.gp_constructor.use_low_noise_prior = True
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
             p1 = xopt_dict.get('cost_function_p1', 2.0)
             generator.cost_function = lambda s: np.exp(s * np.log(p1))
+        else:
+            print("Cost function type: '" + cost_function + "' not supported.")
+            return 0
     else:
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
@@ -120,17 +124,20 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             #writes an output file with information only about S parameter and frequency of interest
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
+
     elif checking_tols:
         while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
+
     elif 'cost_budget' in xopt_dict.keys():
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
+            
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
         return 0
