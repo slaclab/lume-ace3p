@@ -127,7 +127,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             iteration_index += 1
     elif 'cost_budget' in xopt_dict.keys():
         cost_budget = xopt_dict.get('cost_budget')
-        while generator.calculate_total_cost() < cost_budget:
+        while X.generator.calculate_total_cost() < cost_budget:
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
