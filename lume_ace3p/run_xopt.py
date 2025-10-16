@@ -110,7 +110,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
     
-    if 'num_step' in xopt_dict.keys():
+    if 'num_random' in xopt_dict.keys():
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(xopt_dict['num_random']):
             X.random_evaluate()
@@ -118,6 +118,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
+    if 'num_step' in xopt_dict.keys():
         #Run optimization for subsequent steps
         for i in range(xopt_dict['num_step']):
             X.step()
@@ -125,15 +126,18 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
-    elif checking_tols:
-        X.step()
-        while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
-            X.step()
-            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-            iteration_index += 1
+        if checking_tols:
+            while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
+                X.step()
+                WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+                iteration_index += 1
 
     elif 'cost_budget' in xopt_dict.keys():
-        X.step()
+        seed_start = VOCS.random_inputs(1)
+        print(seed_start)
+        seed_start["s"] = 0.0
+        print(seed_start)
+        X.evaluate(seed_start)
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
