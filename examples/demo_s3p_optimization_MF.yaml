@@ -4,7 +4,7 @@ workflow_parameters :
     'cubit_input': 'bend-90degree_MF.jou'
     'ace3p_input': 'bend-90degree.s3p'
     'ace3p_tasks': 16
-    'ace3p_cores': 16
+    'ace3p_cores': 4
     'ace3p_opts' : '--cpu-bind=cores'
     'workdir': 'lume-ace3p_xopt_workdir'
 
