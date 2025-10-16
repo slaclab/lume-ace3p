@@ -136,7 +136,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         seed_start = vocs.random_inputs(xopt_dict.get('num_random',1))
         for i in range(xopt_dict['num_random']):
             seed_start[i]['s'] = 0.0
-        X.evaluate(seed_start)
+            X.evaluate(pd.DataFrame(seed_start[i]))
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
