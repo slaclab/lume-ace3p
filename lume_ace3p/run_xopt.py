@@ -110,7 +110,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
     
-    if 'num_random' in xopt_dict.keys():
+    if 'num_random' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys():
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(xopt_dict['num_random']):
             X.random_evaluate()
@@ -133,10 +133,9 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 iteration_index += 1
 
     elif 'cost_budget' in xopt_dict.keys():
-        seed_start = vocs.random_inputs(1)
-        print(seed_start)
-        seed_start["s"] = 0.0
-        print(seed_start)
+        seed_start = vocs.random_inputs(xopt_dict.get('num_random',1))
+        for i in range(xopt_dict['num_random']):
+            seed_start[i]['s'] = 0.0
         X.evaluate(seed_start)
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
