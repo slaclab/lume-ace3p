@@ -1,7 +1,7 @@
 workflow_parameters :
     'mode' : 'scalar_optimize'
     'module' : 's3p'
-    'cubit_input': 'bend-90degree.jou'
+    'cubit_input': 'bend-90degree_MF.jou'
     'ace3p_input': 'bend-90degree.s3p'
     'ace3p_tasks': 16
     'ace3p_cores': 16
