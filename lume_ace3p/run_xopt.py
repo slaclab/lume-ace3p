@@ -126,18 +126,20 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             iteration_index += 1
 
     elif checking_tols:
+        X.step()
         while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
     elif 'cost_budget' in xopt_dict.keys():
+        X.step()
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-            
+
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
         return 0
