@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import torch
 
 from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
@@ -101,7 +102,10 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
             p1 = xopt_dict.get('cost_function_p1', 2.0)
-            generator.cost_function = lambda s: np.exp(s * np.log(p1))
+            def cost_func(x):
+                val = torch.exp(torch.tensor(np.log(p1)) * x)
+                return val
+            generator.cost_function = cost_func
         else:
             print("Cost function type: '" + cost_function + "' not supported.")
             return 0
