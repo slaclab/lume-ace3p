@@ -118,7 +118,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
-    if 'num_step' in xopt_dict.keys():
+    if 'num_step' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys():
         #Run optimization for subsequent steps
         for i in range(xopt_dict['num_step']):
             X.step()
@@ -132,11 +132,15 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
                 iteration_index += 1
 
-    elif 'cost_budget' in xopt_dict.keys():
-        for i in range(xopt_dict.get('num_random')):
-            random_inputs = vocs.random_inputs(1)
-            random_inputs[0]['s'] = 0.0
-            X.evaluate_data(pd.DataFrame(random_inputs))
+    elif 'cost_budget' in xopt_dict.keys(): #Loop for multi-fidelity optimization
+        random_inputs = vocs.random_inputs(xopt_dict.get('num_random',2))
+        for iter in range(len(random_inputs)):
+            random_inputs[iter]['s'] = 0.0
+            if iter == 1:  #Do one non-zero fidelity random run
+                random_inputs[iter]['s'] = 0.25
+        X.evaluate_data(pd.DataFrame(random_inputs))
+        WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+        iteration_index += xopt_dict.get('num_random',2)
         cost_budget = xopt_dict.get('cost_budget')
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
