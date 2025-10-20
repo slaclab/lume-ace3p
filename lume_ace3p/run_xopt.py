@@ -50,8 +50,8 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     def sim_function(input_dict):
         #Create workflow object and run with provided inputs
         if 'fidelity_variable' in xopt_dict.keys():
-            fidelity_variable = xopt_dict.get('fidelity_variable','s')
-            input_dict[fidelity_variable] = input_dict.pop('s')
+            fidelity_variable = xopt_dict.get('fidelity_variable','s')  #Add the fidelity_variable name (default is "s")
+            input_dict[fidelity_variable] = input_dict.pop('s') #Rename fidelity_variable name in input_dict if default "s"
         workflow = S3PWorkflow(workflow_dict,input_dict)
         output_data = workflow.run()
         param_values = ()
