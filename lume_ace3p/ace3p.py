@@ -49,15 +49,14 @@ class ACE3P(CommandWrapper):
             text = file.read()
         self.input_data = text
         
-    def input_parser(self,text):
+    def input_parser(self, text):
         #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
-        data = self.raw_input_parser(text)
+        data = raw_input_parser(self, text)
         fixed_data = {}
         
         #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
         #needs to be a subfunction because it is recursive but we don't want self.raw_input_parser to be called recursively
-        def input_to_dict(input_dict):
-            output_dict = {}
+        def input_to_dict(input_dict, output_dict):
 
             for key in input_dict:
                 new_key = key
@@ -65,10 +64,20 @@ class ACE3P(CommandWrapper):
                 if isinstance(input_dict[key], dict):
                     #this prevents ReferenceNumber and Attribute from remaining in the dictionary as values
                     if 'ReferenceNumber' in input_dict[key].keys():
+                        flag_index = str(key).find('.LILA.')
+                        if flag_index != -1:
+                            new_key = key[:flag_index]
+                        new_key = new_key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
                         output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='ReferenceNumber'}
                     elif 'Attribute' in input_dict[key].keys():
+                        flag_index = str(key).find('.LILA.')
+                        if flag_index != -1:
+                            new_key = key[:flag_index]
+                        new_key = new_key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&|'
                         output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
-                    output_dict[new_key] = input_to_dict(input_dict[key])
+                    else:
+                        output_dict[new_key] = input_dict[key]
+                        input_to_dict(input_dict[key], output_dict[new_key])
                 #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
                     output_dict[new_key] = input_dict[key]
@@ -77,8 +86,8 @@ class ACE3P(CommandWrapper):
                         output_dict[new_key] = str(output_dict[new_key])[:comma_index] + 'COMMA' + str(output_dict[new_key])[comma_index+1:]
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
-                        
-        fixed_data = input_to_dict(data)   
+            
+        fixed_data = input_to_dict_2(data, {})   
         return fixed_data
     
     def raw_input_parser(self, text):
@@ -181,7 +190,10 @@ class ACE3P(CommandWrapper):
         ace3p_params = copy.deepcopy(param_updates)
         for key in param_updates:
             if key.startswith('DONTINCLUDE'):
-                ace3p_params[key[11:]] = ace3p_params[key]
+                if key.startswith('DONTINCLUDEACE3P'):
+                    ace3p_params[key[16:]] = ace3p_params[key]
+                else:
+                    ace3p_params[key[11:]] = ace3p_params[key]
             if key.startswith('ACE3P'):
                 ace3p_params[key[5:]] = ace3p_params[key]
             del ace3p_params[key]
