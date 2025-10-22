@@ -117,5 +117,4 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
             vocs_dict['observables'] = []
         if 'constants' not in vocs_dict:
             vocs_dict['constants'] = {}
-        
         run_xopt(workflow_dict, vocs_dict, xopt_dict)
