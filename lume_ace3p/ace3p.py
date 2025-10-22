@@ -51,7 +51,7 @@ class ACE3P(CommandWrapper):
         
     def input_parser(self, text):
         #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
-        data = raw_input_parser(self, text)
+        data = self.raw_input_parser(self, text)
         fixed_data = {}
         
         #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
@@ -87,7 +87,7 @@ class ACE3P(CommandWrapper):
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
             
-        fixed_data = input_to_dict_2(data, {})   
+        fixed_data = input_to_dict(data, {})   
         return fixed_data
     
     def raw_input_parser(self, text):
