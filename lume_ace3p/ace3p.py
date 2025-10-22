@@ -87,7 +87,7 @@ class ACE3P(CommandWrapper):
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
             
-        fixed_data = input_to_dict_(data, {})   
+        fixed_data = input_to_dict(data, {})   
         return fixed_data
     
     def raw_input_parser(self, text):
