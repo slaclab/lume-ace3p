@@ -99,22 +99,12 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         from xopt.generators.bayesian import MultiFidelityGenerator
         generator = MultiFidelityGenerator(vocs=vocs)
         generator.gp_constructor.use_low_noise_prior = True
-        cost_function = xopt_dict.get('cost_function', 'exponential')
-        if cost_function.lower() == 'exponential':
-            p1 = xopt_dict.get('cost_function_p1', 2.0)
-            def cost_func(x):
-                val = torch.exp(torch.tensor(np.log(p1)) * x)
-                return val
-            generator.cost_function = cost_func
-        else:
-            print("Cost function type: '" + cost_function + "' not supported.")
-            return 0
     else:
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
     
-    if 'num_random' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys():
+    if 'num_random' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys() and 'alotted_time' not in xopt_dict.keys():
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(xopt_dict['num_random']):
             X.random_evaluate()
@@ -122,7 +112,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
-    if 'num_step' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys():
+    if 'num_step' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys() and 'alotted_time' not in xopt_dict.keys():
         #Run optimization for subsequent steps
         for i in range(xopt_dict['num_step']):
             X.step()
@@ -136,16 +126,34 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
                 iteration_index += 1
 
-    elif 'cost_budget' in xopt_dict.keys(): #Loop for multi-fidelity optimization
-        random_inputs = vocs.random_inputs(xopt_dict.get('num_random',2))
+    elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys(): #Loop for multi-fidelity optimization
+        num_random = xopt_dict.get('num_random',2)
+        random_inputs = vocs.random_inputs(num_random)
         for iter in range(len(random_inputs)):
             random_inputs[iter]['s'] = 0.0
             if iter == 1:  #Do one non-zero fidelity random run
-                random_inputs[iter]['s'] = 0.25
+                random_inputs[iter]['s'] = 1.0
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+        print(X.data['xopt_runtime'])
+        p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
+        
+        cost_function = xopt_dict.get('cost_function', 'exponential')
+        if cost_function.lower() == 'exponential':
+            def cost_func(x):
+                val = torch.exp(torch.tensor(np.log(p1)) * x)
+                return val
+            X.generator.cost_function = cost_func
+        else:
+            print("Cost function type: '" + cost_function + "' not supported.")
+            return 0
+        
         iteration_index += xopt_dict.get('num_random',2)
-        cost_budget = xopt_dict.get('cost_budget')
+        if 'cost_budget' in xopt_dict.keys():
+            cost_budget = xopt_dict.get('cost_budget')
+        elif 'alotted_time' in xopt_dict.keys():
+            hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
+            cost_budget = (float(hours)*3600 + float(minutes)*60 + float(seconds)) / X.data['xopt_runtime'][0]
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)

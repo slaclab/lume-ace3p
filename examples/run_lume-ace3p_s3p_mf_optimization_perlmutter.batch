@@ -10,6 +10,6 @@
 #SBATCH --time=0-00:30:00
 
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/global/homes/d/dbizzoze/perlmutter/lume-ace3p'
+export PYTHONPATH='/global/homes/l/lfowler/.conda/envs/lilalumeace3p/bin/python'
 
 python /global/homes/d/dbizzoze/perlmutter/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_mf_optimization.yaml

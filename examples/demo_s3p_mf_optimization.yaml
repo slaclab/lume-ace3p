@@ -14,7 +14,7 @@ vocs_parameters :
         'rcorner1': [0.5,2.5]
     'objectives' :
         's_parameter' : 'S(0,0)'
-        'frequency' : 12.0e+09
+        'frequency' : 10.424e+09
         'optimization' : 'MINIMIZE'
         
 xopt_parameters :
