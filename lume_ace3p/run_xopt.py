@@ -135,7 +135,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 random_inputs[iter]['s'] = 1.0
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-        print(X.data['xopt_runtime'])
+        
         p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
         
         cost_function = xopt_dict.get('cost_function', 'exponential')
@@ -153,7 +153,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             cost_budget = xopt_dict.get('cost_budget')
         elif 'alotted_time' in xopt_dict.keys():
             hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
-            cost_budget = (float(hours)*3600 + float(minutes)*60 + float(seconds)) / X.data['xopt_runtime'][0]
+            cost_budget = (float(hours)*3600 + float(minutes)*60 + float(seconds))*0.8 / X.data['xopt_runtime'][0]
         while X.generator.calculate_total_cost() < cost_budget:
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)

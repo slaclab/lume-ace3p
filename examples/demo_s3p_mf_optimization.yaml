@@ -21,6 +21,5 @@ xopt_parameters :
     'generator' : 'MultiFidelityGenerator'
     'fidelity_variable' : 'mesh_fidelity'
     'cost_function' : 'exponential'
-    'cost_function_p1' : 10.0
-    'cost_budget' : 50.0
+    'alotted_time' : '00:30:00'
     'num_random' : 2
