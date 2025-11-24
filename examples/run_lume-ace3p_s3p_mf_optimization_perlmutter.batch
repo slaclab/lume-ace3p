@@ -10,6 +10,6 @@
 #SBATCH --time=0-00:30:00
 
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/pscratch/sd/d/dbizzoze/lume-ace3p'
+export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
 
-python /pscratch/sd/d/dbizzoze/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_mf_optimization.yaml
+python /global/cfs/cdirs/ace3p/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_mf_optimization.yaml
