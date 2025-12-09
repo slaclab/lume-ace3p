@@ -77,7 +77,7 @@ class ACE3P(CommandWrapper):
                         output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
                     else:
                         output_dict[new_key] = input_dict[key]
-                        input_to_dict(input_dict[key], output_dict[new_key])
+                        input_to_dict(input_dict[key], {})
                 #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
                     output_dict[new_key] = input_dict[key]
@@ -87,7 +87,7 @@ class ACE3P(CommandWrapper):
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
             
-        fixed_data = input_to_dict(data, {})   
+        fixed_data = input_to_dict(data)  
         return fixed_data
     
     def raw_input_parser(self, text):
