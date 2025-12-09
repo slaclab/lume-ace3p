@@ -1,0 +1,26 @@
+workflow_parameters :
+    'mode' : 'scalar_optimize'
+    'module' : 's3p'
+    'cubit_input': 'bend-90degree_mf.jou'
+    'ace3p_input': 'bend-90degree_mf.s3p'
+    'ace3p_tasks': 16
+    'ace3p_cores': 16
+    'ace3p_opts' : '--cpu-bind=cores'
+    'workdir': 'lume-ace3p_mf_workdir'
+
+vocs_parameters :
+    'variables' :
+        'cornercut': [12.5,13.5]
+        'wgwidth': [21,22]
+    'objectives' :
+        's_parameter' : 'S(1,1)'
+        'frequency' : 12.0e+09
+        'optimization' : 'MINIMIZE'
+        
+xopt_parameters :
+    'generator' : 'MultiFidelityGenerator'
+    'fidelity_variable' : 'mesh_fidelity'
+    'cost_function' : 'exponential'
+    'cost_function_p1' : 10.0
+    'cost_budget' : 500.0
+    'num_random' : 3
