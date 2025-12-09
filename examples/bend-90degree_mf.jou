@@ -1,10 +1,10 @@
 reset
 
-#{wgwidth = 22.86}
+#{wgwidth = 22.0}
 #{wgheight = 10.16}
 #{wglength = 60.0}
-#{cornercut = 16}
-#{rcorner1 = 1}
+#{cornercut = 13}
+#{rcorner1 = 5}
 #{rcorner2 = 5}
 #{mesh_fidelity = 0.0}
 
@@ -20,7 +20,7 @@ modify curve 12 blend radius {rcorner1}
 modify curve 20 22 blend radius {rcorner2}
 
 volume all scheme Tetmesh
-volume all size {4.0/(3.0*mesh_fidelity + 1.0)}
+volume all size {4.0/(1.0*mesh_fidelity + 1.0)}
 volume all sizing function constant
 mesh volume all
 
