@@ -1,13 +1,16 @@
 import numpy as np
 import pandas as pd
 import torch
+import random
 
 from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
 from xopt import Xopt
 from lume_ace3p.workflow import S3PWorkflow
 from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
-    
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     if isinstance(vocs_dict['objectives']['s_parameter'],list):
         S_params = vocs_dict['objectives']['s_parameter']
@@ -129,10 +132,16 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys(): #Loop for multi-fidelity optimization
         num_random = xopt_dict.get('num_random',2)
         random_inputs = vocs.random_inputs(num_random)
+        init_fidelity = np.linspace(0,1,num_random)
         for iter in range(len(random_inputs)):
-            random_inputs[iter]['s'] = 0.0
-            if iter == 1:  #Do one non-zero fidelity random run
-                random_inputs[iter]['s'] = 1.0
+            random_inputs[iter]['s'] = init_fidelity[iter]
+            iteration_index += 1
+            #if iter == 0:
+            #    random_inputs[iter]['s'] = 0.0
+            #elif iter == 1:  #Do one non-zero fidelity random run
+            #    random_inputs[iter]['s'] = 1.0
+            #else:
+               #random_inputs[iter]['s'] = random.random()
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
         
@@ -144,6 +153,19 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 val = torch.exp(torch.tensor(np.log(p1)) * x)
                 return val
             X.generator.cost_function = cost_func
+        
+        elif cost_function.lower() == 'gaussian_process':
+            kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=2.0, length_scale_bounds=(1e-2, 1e2))
+            gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-4, normalize_y=True)
+            def cost_func(x):
+                #this is important for converting back and forth from numpy arrays to tensors
+                x_np = x.detach().cpu().numpy().reshape(-1, 1)
+                x_train = np.array(X.data['s']).reshape(-1,1)
+                y_train = np.array(X.data['xopt_runtime']).reshape(-1,1)
+                gp.fit(x_train, y_train)
+                return torch.as_tensor(gp.predict(x_np), dtype=torch.float32).view(-1,1,1)
+            X.generator.cost_function = cost_func
+
         else:
             print("Cost function type: '" + cost_function + "' not supported.")
             return 0
@@ -153,10 +175,16 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             cost_budget = xopt_dict.get('cost_budget')
         elif 'alotted_time' in xopt_dict.keys():
             hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
-            cost_budget = (float(hours)*3600 + float(minutes)*60 + float(seconds))*0.8 / X.data['xopt_runtime'][0]
+            cost_budget = float(hours)*3600 + float(minutes)*60 + float(seconds)
+        
         while X.generator.calculate_total_cost() < cost_budget:
+            print(type(X))
+            print('============')
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+            #if cost_function.lower() == 'gaussian_process':
+            #    x_train = np.array(X.data['s']).reshape(-1,1)
+            #    y_train = np.array(X.data['xopt_runtime']).reshape(-1,1)
             iteration_index += 1
 
     else:
