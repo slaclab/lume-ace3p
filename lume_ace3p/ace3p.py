@@ -216,8 +216,8 @@ class ACE3P(CommandWrapper):
         ace3p_string = str(ace3p_string)[1:-1]
         #add newline after nested element begins
         ace3p_string = ace3p_string.replace("{", "{\n")
-        #replace commas with newlines
-        ace3p_string = ace3p_string.replace(", ", "\n")
+        #replace commas with spaces
+        ace3p_string = ace3p_string.replace(", ", " ")
         #remove extraneous string signifiers on keys
         ace3p_string = ace3p_string.replace("'", "")
         #add a newline after end of each nest element
