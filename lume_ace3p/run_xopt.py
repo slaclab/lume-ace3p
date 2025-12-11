@@ -136,10 +136,12 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
         
-        p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
+        p1 = X.data['xopt_runtime'][1] / X.data['xopt_runtime'][0]
         
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
+            if 'cost_function_p1' in xopt_dict.keys():
+                p1 = xopt_dict.get('cost_function_p1')    #Manual override for cost function p1
             def cost_func(x):
                 val = torch.exp(torch.tensor(np.log(p1)) * x)
                 return val
