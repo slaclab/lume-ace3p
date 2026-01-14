@@ -55,7 +55,7 @@ class ACE3P(CommandWrapper):
         fixed_data = {}
         
         #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
-        #needs to be a subfunction because it is recursive but we don't want self.raw_input_parser to be called recursively
+        #needs to be a subfunction because it is recursive but we don't want self.input_parser to be called recursively
         def input_to_dict(input_dict, output_dict):
 
             for key in input_dict:
@@ -76,8 +76,7 @@ class ACE3P(CommandWrapper):
                         new_key = new_key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&|'
                         output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
                     else:
-                        output_dict[new_key] = input_dict[key]
-                        input_to_dict(input_dict[key], {})
+                        output_dict[new_key] = input_to_dict(input_dict[key], {})
                 #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
                     output_dict[new_key] = input_dict[key]
@@ -87,7 +86,8 @@ class ACE3P(CommandWrapper):
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
                         
-        fixed_data = input_to_dict(data, {})   
+        fixed_data = input_to_dict(data, {})
+        
         return fixed_data
     
     def raw_input_parser(self, text):
@@ -241,7 +241,7 @@ class ACE3P(CommandWrapper):
         #prevents there being an extra bracket after Attribute
         bracket_index = ace3p_string.find('{', amp_index)
         while bar_index != -1:
-            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bracket_index:]
+            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bracket_index+1:]
             bar_index = ace3p_string.find('|LILA|')
             amp_index = ace3p_string.find('|LILA&')
             bracket_index = ace3p_string.find('{', amp_index)

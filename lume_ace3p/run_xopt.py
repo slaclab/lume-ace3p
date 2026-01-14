@@ -12,11 +12,14 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
+    multi_objective = False
     if isinstance(vocs_dict['objectives']['s_parameter'],list):
+        multi_objective = True
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
         opts = vocs_dict['objectives']['optimization']
 
+        tol_achieved = False
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = vocs_dict['objectives']['tolerance']
             checking_tols = True
@@ -29,12 +32,15 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         freqs = [vocs_dict['objectives']['frequency']]
         opts = [vocs_dict['objectives']['optimization']]
 
+        tol_achieved = False
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = [vocs_dict['objectives']['tolerance']]
             checking_tols = True
         else:
             checking_tols = False
-
+    save_model = False
+    if 'save_model' in xopt_dict:
+        save_model = True
 
     #param_and_freq is a dictionary that contains a single keyword for each quantity to be optimized, paired with its optimization keyword
     #example: {'S(0,0)_9.494e9': 'MINIMIZE'}
@@ -69,7 +75,8 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
         output_dict = {}
         freq_index = 0
-
+        print("checking_tols: ", checking_tols)
+        
         for f in range(len(freqs)):
             try:
                 freq_index = list(output_data['Frequency']).index(freqs[f])
@@ -78,13 +85,23 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
-            if checking_tols:
+            if checking_tols and multi_objective:
+                print("CHECKING TOLS FOR MULTIOBJECTIVE")
                 #sets tolerance achieved boolean to true if one parameter satisfies condition
                 if output_data[S_params[f]][freq_index] <= tols[f]:
                     tol_achieved = True
                 else:
                     tol_achieved = False
                     #this prevents tolerance from counting as True unless all parameters satisfy their tolerances
+                    break
+            elif checking_tols and not multi_objective:
+                print("CHECKING TOLS FOR SINGLE OBJECTIVE")
+                print(output_data[S_params[f]][freq_index])
+                print(tols)
+                if output_data[S_params[f]][freq_index] <= tols:
+                    tol_achieved = True
+                else: 
+                    tol_achieved = False
                     break
 
         return output_dict
@@ -130,30 +147,33 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 iteration_index += 1
 
     elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys(): #Loop for multi-fidelity optimization
+         
+        if 'cost_budget' in xopt_dict.keys():
+            cost_budget = xopt_dict.get('cost_budget')
+        elif 'alotted_time' in xopt_dict.keys():
+            hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
+            cost_budget = float(hours)*3600 + float(minutes)*60 + float(seconds)
+
         num_random = xopt_dict.get('num_random',2)
         random_inputs = vocs.random_inputs(num_random)
         init_fidelity = np.linspace(0,1,num_random)
         for iter in range(len(random_inputs)):
             random_inputs[iter]['s'] = init_fidelity[iter]
-            iteration_index += 1
-            #if iter == 0:
-            #    random_inputs[iter]['s'] = 0.0
-            #elif iter == 1:  #Do one non-zero fidelity random run
-            #    random_inputs[iter]['s'] = 1.0
-            #else:
-               #random_inputs[iter]['s'] = random.random()
+
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
         
         p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
-        
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
             def cost_func(x):
-                val = torch.exp(torch.tensor(np.log(p1)) * x)
+               # val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * x)
+                #time_left = cost_budget - X.calculate_total_cost()
+                #return val / time_left
+                val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * 5 * x)
                 return val
             X.generator.cost_function = cost_func
-        
+
         elif cost_function.lower() == 'gaussian_process':
             kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=2.0, length_scale_bounds=(1e-2, 1e2))
             gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-4, normalize_y=True)
@@ -169,24 +189,19 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         else:
             print("Cost function type: '" + cost_function + "' not supported.")
             return 0
+       
+        iteration_index += num_random
         
-        iteration_index += xopt_dict.get('num_random',2)
-        if 'cost_budget' in xopt_dict.keys():
-            cost_budget = xopt_dict.get('cost_budget')
-        elif 'alotted_time' in xopt_dict.keys():
-            hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
-            cost_budget = float(hours)*3600 + float(minutes)*60 + float(seconds)
-        
-        while X.generator.calculate_total_cost() < cost_budget:
-            print(type(X))
-            print('============')
+       # while X.data['xopt_runtime'].sum() < cost_budget and (not tol_achieved):
+        for i in range(4):
+            
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-            #if cost_function.lower() == 'gaussian_process':
-            #    x_train = np.array(X.data['s']).reshape(-1,1)
-            #    y_train = np.array(X.data['xopt_runtime']).reshape(-1,1)
+            
             iteration_index += 1
-
+        
+        if save_model:
+            torch.save(generator.model.state_dict(), "saved_model.pth")
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
         return 0
