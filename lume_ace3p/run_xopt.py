@@ -75,7 +75,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
         output_dict = {}
         freq_index = 0
-        print("checking_tols: ", checking_tols)
         
         for f in range(len(freqs)):
             try:
@@ -86,7 +85,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
             if checking_tols and multi_objective:
-                print("CHECKING TOLS FOR MULTIOBJECTIVE")
                 #sets tolerance achieved boolean to true if one parameter satisfies condition
                 if output_data[S_params[f]][freq_index] <= tols[f]:
                     tol_achieved = True
@@ -95,9 +93,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                     #this prevents tolerance from counting as True unless all parameters satisfy their tolerances
                     break
             elif checking_tols and not multi_objective:
-                print("CHECKING TOLS FOR SINGLE OBJECTIVE")
-                print(output_data[S_params[f]][freq_index])
-                print(tols)
                 if output_data[S_params[f]][freq_index] <= tols:
                     tol_achieved = True
                 else: 
@@ -123,16 +118,18 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
-    
-    if 'num_random' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys() and 'alotted_time' not in xopt_dict.keys():
+
+    #if num_random keyword is specified, run random model evaluation that many times
+    if 'num_random' in xopt_dict.keys():
         #Run X.random_evaluate() to generate + evaluate a few initial points
         for i in range(xopt_dict['num_random']):
             X.random_evaluate()
             #writes an output file with information only about S parameter and frequency of interest
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-
-    if 'num_step' in xopt_dict.keys() and 'cost_budget' not in xopt_dict.keys() and 'alotted_time' not in xopt_dict.keys():
+            
+    #if num_step keyword is specified, run optimization that many times
+    if 'num_step' in xopt_dict.keys():
         #Run optimization for subsequent steps
         for i in range(xopt_dict['num_step']):
             X.step()
@@ -145,35 +142,41 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 X.step()
                 WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
                 iteration_index += 1
-
-    elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys(): #Loop for multi-fidelity optimization
+                
+    #alternatively, if some kind of cost limit is established, run until a criteria or time limit is reached
+    elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys():
          
         if 'cost_budget' in xopt_dict.keys():
             cost_budget = xopt_dict.get('cost_budget')
+            
         elif 'alotted_time' in xopt_dict.keys():
             hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
             cost_budget = float(hours)*3600 + float(minutes)*60 + float(seconds)
-
+        
+        #do random steps (default 2) to train the GP
         num_random = xopt_dict.get('num_random',2)
         random_inputs = vocs.random_inputs(num_random)
+        #choose initial fidelities evenly spaced from 0 to 1--helps train the GP model
         init_fidelity = np.linspace(0,1,num_random)
         for iter in range(len(random_inputs)):
             random_inputs[iter]['s'] = init_fidelity[iter]
-
+        #evaluate random points and save to data file
         X.evaluate_data(pd.DataFrame(random_inputs))
         WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-        
-        p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
+
+        #default cost function is exponential
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
+            #ratio of cost of highest fidelity to lowest fidelity
+            p1 = X.data['xopt_runtime'][num_random-1] / X.data['xopt_runtime'][0]
             def cost_func(x):
-               # val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * x)
-                #time_left = cost_budget - X.calculate_total_cost()
-                #return val / time_left
-                val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * 5 * x)
-                return val
+                #weighted cost function based on remaining time
+                val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * x)
+                time_left = cost_budget - X.calculate_total_cost()
+                return val / time_left
             X.generator.cost_function = cost_func
 
+        #alternative cost function based on a trained GP; useful for problems where dependence on cost is unknown
         elif cost_function.lower() == 'gaussian_process':
             kernel = C(1.0, (1e-3, 1e3)) * RBF(length_scale=2.0, length_scale_bounds=(1e-2, 1e2))
             gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=3, alpha=1e-4, normalize_y=True)
@@ -191,17 +194,16 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             return 0
        
         iteration_index += num_random
-        
-       # while X.data['xopt_runtime'].sum() < cost_budget and (not tol_achieved):
-        for i in range(4):
-            
+
+        #run optimization until cost budget or tolerance is achieved
+        while X.data['xopt_runtime'].sum() < cost_budget and (not tol_achieved):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-            
             iteration_index += 1
         
         if save_model:
-            torch.save(generator.model.state_dict(), "saved_model.pth")
+            X.dump("saved_xopt_model.yaml")
+
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
         return 0
