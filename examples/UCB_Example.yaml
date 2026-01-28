@@ -1,0 +1,28 @@
+workflow_parameters :
+  'mode' : 'scalar_optimize'
+  'module' : 's3p'
+  'cubit_input' : 'load.jou'
+  'ace3p_input' : 'load.s3p'
+  'ace3p_tasks' : 32
+  'ace3p_cores' : 2
+  'ace3p_opts' : '--cpu-bind=cores'
+  'workdir' : 'Optworkdir_'
+  'workdir_mode' : 'manual'
+
+vocs_parameters :
+    'variables' :
+        'R1': [31,34]
+        'L1': [12,15]
+        'r10': [14,16]
+    'objectives' :
+        's_parameter' : 'S(0,0)','S(0,0)','S(0,0)'
+        'frequency' : 11.324+09, 11.424e+09, 11.524e+09
+        'optimization' : 'MINIMIZE','MINIMIZE','MINIMIZE'
+        
+xopt_parameters:
+  'generator': 'UpperConfidenceBoundGenerator'
+  'generator_options':
+    'beta': 10.0
+  'num_random': 2
+  'num_step': 5
+  'save_model': True
