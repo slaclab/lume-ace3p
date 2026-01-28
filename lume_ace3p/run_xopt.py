@@ -99,6 +99,17 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         from xopt.generators.bayesian import MultiFidelityGenerator
         generator = MultiFidelityGenerator(vocs=vocs)
         generator.gp_constructor.use_low_noise_prior = True
+    elif xopt_dict['generator'] == 'UpperConfidenceBoundGenerator':
+        from xopt.generators.bayesian import UpperConfidenceBoundGenerator
+        options = xopt_dict.get('generator_options', {}) 
+        generator = UpperConfidenceBoundGenerator(vocs=vocs, **options)    
+    elif xopt_dict['generator'] == 'ExpectedHypervolumeImprovementGenerator':
+         from xopt.generators.bayesian.mobo import MOBOGenerator as ExpectedHypervolumeImprovementGenerator
+         options = xopt_dict.get('generator_options', {})
+         if 'reference_point' not in options:
+             print("Error: 'reference_point' is required for Multi-Objective optimization.")
+             return 0
+         generator = ExpectedHypervolumeImprovementGenerator(vocs=vocs, **options)
     else:
         print("That generator is not supported. Ensure that the generator name specified in the yaml file matches exactly with the Xopt generator name of choice. Exiting the program.")
         return 0
@@ -160,7 +171,23 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             X.step()
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-
+    
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
         return 0
+    if xopt_dict.get('save_model', False):
+        try:
+            if hasattr(X.generator, 'model') and X.generator.model is not None:
+                torch.save(X.generator.model.state_dict(), "Binary_gp_model.pt")
+                with open("gp_parameters.txt", "w") as f:
+                    f.write("Gaussian Process Hyperparameters:\n")
+                    f.write("=================================\n")
+                    for name, param in X.generator.model.named_parameters():
+                        val = param.detach().cpu().numpy()
+                        f.write(f"{name}: {val}\n")
+            else:
+                print(" - Generator has no model to save.")
+        except Exception as e:
+            print(f" - Error saving model: {e}")
+            
+    return 0
