@@ -76,8 +76,7 @@ class ACE3P(CommandWrapper):
                         new_key = new_key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&|'
                         output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
                     else:
-                        output_dict[new_key] = input_dict[key]
-                        input_to_dict(input_dict[key], {})
+                        output_dict[new_key] = input_to_dict(input_dict[key], {})
                 #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
                 else:
                     output_dict[new_key] = input_dict[key]
