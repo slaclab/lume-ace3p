@@ -33,11 +33,41 @@ for i in range(len(dlines)-1):
     f_data[i] = dline[f_col-1]
     for j in range(num_sp):
         sp_data[i][j] = dline[f_col+j]
-num_f = int(sum([(swp_data == swp_data[0])[i].all() for i in range(len(swp_data))]))   #Number of frequencies
-num_p = int((swp_data.shape[0])/num_f)         #Number of sweep parameter tuples
-assert num_f * num_p == swp_data.shape[0], "Error: sweep output file data size inconsistent."
-fs = f_data[0:num_f]      #Vector of all frequencies
-swps = swp_data[::num_f]  #Array of all sweep parameter tuples
+
+freqs = np.unique(f_data) #Vector of all frequencies
+swp_dims = np.array(range(f_col-1))
+for j in range(f_col-1):
+    swp_dims[j] = len(np.unique(swp_data.transpose()[j]))
+data_array_size = np.concatenate((swp_dims,[len(freqs)]))
+swps = np.unique(swp_data,axis=0)  #Array of all sweep parameter tuples
+
+if np.prod(data_array_size) != np.shape(swp_data)[0]:
+    print("Sweep data file is missing data rows, reshaping data array.")
+
+    #Calculate expected Cartesian product of all parameters and frequencies
+    param_vecs = [freqs]
+    for col in range(f_col-1):
+        param_vecs.append(np.unique(swp_data.transpose()[col]))
+    full_swp_data = np.meshgrid(*param_vecs,indexing='ij')
+    full_swp_data = np.array(full_swp_data).T.reshape(-1, len(full_swp_data))
+    full_swp_data = np.roll(full_swp_data,shift=-1,axis=1)
+
+    #Build storage array for S-parameter data (pre-filled with NaN)
+    full_sp_data = np.full(shape=(np.shape(full_swp_data)[0],num_sp),fill_value=np.nan)
+    partial_swp_data = np.hstack((swp_data,f_data))
+    for data_ind in range(np.shape(full_swp_data)[0]):
+        data_tuple = full_swp_data[data_ind]
+        row_ind = np.where((partial_swp_data == data_tuple).all(axis=1))[0]
+        if len(row_ind) == 1:
+            full_sp_data[data_ind] = sp_data[row_ind[0]]
+
+    #Replace missing rows in original array
+    sp_data = full_sp_data
+    swp_data = full_swp_data.T[0:-1].transpose()
+    swps = np.unique(swp_data,axis=0)
+
+num_p = len(swps)
+num_f = len(freqs)
 sp = 1                    #Default S-parameter to plot (usually S(0,0))
 
 #Open prompt to select which sweep parameters to provide sliders for
@@ -125,12 +155,12 @@ def plot_sparam(sp,swp):
     line_list = []
     for indp in range(len(swps)):
         if indp == swp-1:  #Color selected curve in bold
-            line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
+            line_list.append(ax.plot(freqs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
                                      color='k', linewidth=3))
         else:
-            line_list.append(ax.plot(fs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
+            line_list.append(ax.plot(freqs, sp_data[num_f*indp:num_f*(indp+1),sp-1],
                                      color=pcolors[indp], linewidth=2, alpha=0.3))
-    plt.xlim(min(fs), max(fs))
+    plt.xlim(min(freqs), max(freqs))
     plt.ylim(bottom=0)
     plt.title(col_names[sp+f_col-1], fontdict=fdict)
     plt.xlabel('Frequency (Hz)', fontdict=fdict)
@@ -138,7 +168,7 @@ def plot_sparam(sp,swp):
     plt.yticks(fontsize=fntsz)
 
 plot_sparam(1,1)
-plt.xlim(min(fs), max(fs))
+plt.xlim(min(freqs), max(freqs))
 plt.ylim(bottom=0)
 
 #Functions for what to when the sliders are changed
