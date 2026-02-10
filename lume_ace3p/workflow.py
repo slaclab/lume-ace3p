@@ -148,7 +148,9 @@ class Omega3PWorkflow(ACE3PWorkflow):
         #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
         #   Then input_tensor is a 6000 x 3 array of all combinations from the 3 parameters
         self.input_tensor = self.input_vardata[0]         #First parameter vector
-        if len(self.input_varname) > 1:
+        if len(self.input_varname) == 1:
+            self.input_tensor = np.reshape(self.input_tensor,(self.input_vardim[0],1))
+        else:
             t1 = np.tile(self.input_tensor,self.input_vardim[1])
             t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
             try:
