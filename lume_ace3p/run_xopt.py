@@ -13,7 +13,6 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     multi_objective = False
-    global tol_achieved
     tol_achieved = False
     if isinstance(vocs_dict['objectives']['s_parameter'],list):
         multi_objective = True
@@ -79,10 +78,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
-            if output_data[S_params[f]][freq_index] <= tols[f]:
-                tol_achieved = True
-            else:
-                tol_achieved = False
 
         return output_dict
 
@@ -136,6 +131,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
             X.step()
             if checking_tols:
+                #check to see if most recent data matches tolerance criteria. tolerance criteria only satisfied if all objectives meet criteria
                 for f in range(len(freqs)):
                     if X.data[S_params[f]+'_'+str(freqs[f])].iloc[-1]<=tols[f]:
                         tol_achieved = True
