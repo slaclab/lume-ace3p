@@ -462,7 +462,6 @@ xopt_parameters :
 ```
 'Generator' refers to the optimization algorithm in use. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations.
 </details>
-</details>
 
 <details><summary><h3>S3P Multifidelity Bayesian Optimization Example</h3></summary>
 This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
