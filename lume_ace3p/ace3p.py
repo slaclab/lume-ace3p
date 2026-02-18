@@ -50,12 +50,13 @@ class ACE3P(CommandWrapper):
         self.input_data = text
         
     def input_parser(self, text):
-        #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
+    #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
         data = self.raw_input_parser(text)
         fixed_data = {}
-        
-        #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
-        #needs to be a subfunction because it is recursive but we don't want self.input_parser to be called recursively
+        print('raw ace3p data')
+        print(data)
+     #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
+     #needs to be a subfunction because it is recursive but we don't want self.input_parser to be called recursively
         def input_to_dict(input_dict, output_dict):
 
             for key in input_dict:
@@ -85,9 +86,9 @@ class ACE3P(CommandWrapper):
                         output_dict[new_key] = str(output_dict[new_key])[:comma_index] + 'COMMA' + str(output_dict[new_key])[comma_index+1:]
                         comma_index = str(output_dict[new_key]).find(',')
             return output_dict
-                
+            
         fixed_data = input_to_dict(data, {})
-        
+    
         return fixed_data
     
     def raw_input_parser(self, text):

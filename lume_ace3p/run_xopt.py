@@ -13,13 +13,14 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     multi_objective = False
+    global tol_achieved
+    tol_achieved = False
     if isinstance(vocs_dict['objectives']['s_parameter'],list):
         multi_objective = True
         S_params = vocs_dict['objectives']['s_parameter']
         freqs = vocs_dict['objectives']['frequency']
         opts = vocs_dict['objectives']['optimization']
-
-        tol_achieved = False
+        
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = vocs_dict['objectives']['tolerance']
             checking_tols = True
@@ -32,15 +33,11 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         freqs = [vocs_dict['objectives']['frequency']]
         opts = [vocs_dict['objectives']['optimization']]
 
-        tol_achieved = False
         if 'tolerance' in vocs_dict['objectives'].keys():
             tols = [vocs_dict['objectives']['tolerance']]
             checking_tols = True
         else:
             checking_tols = False
-    save_model = False
-    if 'save_model' in xopt_dict:
-        save_model = True
 
     #param_and_freq is a dictionary that contains a single keyword for each quantity to be optimized, paired with its optimization keyword
     #example: {'S(0,0)_9.494e9': 'MINIMIZE'}
@@ -52,8 +49,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     vocs = VOCS(variables=vocs_dict['variables'], objectives=param_and_freq, constraints=vocs_dict['constraints'], observables=vocs_dict['observables'])
 
     iteration_index = 0
-    if checking_tols:
-        tol_achieved = False
 
     #Define simulation function for xopt (based on workflow w/ postprocessing)
     def sim_function(input_dict):
@@ -84,20 +79,10 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
-            if checking_tols and multi_objective:
-                #sets tolerance achieved boolean to true if one parameter satisfies condition
-                if output_data[S_params[f]][freq_index] <= tols[f]:
-                    tol_achieved = True
-                else:
-                    tol_achieved = False
-                    #this prevents tolerance from counting as True unless all parameters satisfy their tolerances
-                    break
-            elif checking_tols and not multi_objective:
-                if output_data[S_params[f]][freq_index] <= tols:
-                    tol_achieved = True
-                else: 
-                    tol_achieved = False
-                    break
+            if output_data[S_params[f]][freq_index] <= tols[f]:
+                tol_achieved = True
+            else:
+                tol_achieved = False
 
         return output_dict
 
@@ -148,15 +133,19 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
-        if checking_tols:
-            while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
-                X.step()
-                WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
-                iteration_index += 1
+        while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
+            X.step()
+            if checking_tols:
+                for f in range(len(freqs)):
+                    if X.data[S_params[f]+'_'+str(freqs[f])].iloc[-1]<=tols[f]:
+                        tol_achieved = True
+                    else:
+                        tol_achieved = False
+            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)                
+            iteration_index += 1
                 
     #alternatively, if some kind of cost limit is established, run until a criteria or time limit is reached
     elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys():
-         
         if 'cost_budget' in xopt_dict.keys():
             cost_budget = xopt_dict.get('cost_budget')
             
@@ -184,7 +173,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             def cost_func(x):
                 #weighted cost function based on remaining time
                 val = X.data['xopt_runtime'][0] * torch.exp(torch.tensor(np.log(p1)) * x)
-                time_left = cost_budget - X.calculate_total_cost()
+                time_left = cost_budget - X.data['xopt_runtime'].sum()
                 return val / time_left
             X.generator.cost_function = cost_func
 
@@ -208,13 +197,18 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         iteration_index += num_random
 
         #run optimization until cost budget or tolerance is achieved
+        
         while X.data['xopt_runtime'].sum() < cost_budget and (not tol_achieved):
             X.step()
+            if checking_tols:
+                for f in range(len(freqs)):
+                    if X.data[S_params[f]+'_'+str(freqs[f])].iloc[-1]<=tols[f]:
+                        tol_achieved = True
+                    else:
+                        tol_achieved = False
+            
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
-        
-        if save_model:
-            X.dump("saved_xopt_model.yaml")
 
     else:
         print("No termination criteria specified for Xopt. Provide a criterion such as 'num_step', 'tolerance', or 'cost_budget' (for multi-fidelity).")
