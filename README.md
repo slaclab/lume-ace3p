@@ -391,13 +391,33 @@ LUME-ACE3P is configured with Xopt to allow for single batch job optimization. L
 To set up an S3P optimization problem with LUME-ACE3P, no additional files beyond those needed to run a typical LUME-ACE3P problem are needed. The following must be included in the LUME-ACE3P configuration file:
 - workflow_parameters: as with parameter sweep, this dictionary contains file names, HPC settings, and other configuration settings
 - vocs_parameters: contains variables (required), objectives (required), constants (optional), and constraints (optional) for the optimization problem
-- xopt_parameters: contains choice of optimization algorithm (NelderMeadGenerator and ExpectedImprovementGenerator currently supported) and number of algorithm steps
+    - within objectives, it is required to specify 's_parameter' (ex: S(0,0)), 'frequency' (ex: 11.324+09), and 'optimization' ('MINIMIZE' or 'MAXIMIZE'). For multiobjective optimization, specify each parameter as a list (ex: 's_parameter': S(0,0), S(1,1)). Optionally, users can also include 'tolerance' with a particular stopping criteria for each objective
+- xopt_parameters: contains choice of optimization algorithm and algorithm parameters, as detailed below
+
+The following are the options for xopt_parameters:
+- generator (required): specifies the type of optimization algorithm. Currently supported are
+    - Nelder Mead (specified as NelderMeadGenerator)
+    - Expected Improvement (specified as ExpectedImprovementGenerator)
+    - Expected Hypervolume Improvement (specified as ExpectedHypervolumeImprovementGenerator)
+    - Upper Confidence Bound (specified as UpperConfidenceBoundGenerator)
+    - Multifidelity Bayesian (specified as MultiFidelityGenerator)
+- num_random (optional): number of random exploratory steps to be taken before beginning optimization
+- num_step (optional): fixed number of optimization steps to be taken
+- max_iterations (optional): maximum number of steps after which optimization must end, regardless of other stopping criteria
+- cost_budget (optional): total amount of time, in seconds, allowed for the optimization. Used as a stopping criteria
+- alotted_time (optional): total amount of time, expressed as hours\:minutes:seconds, allowed for problem. Used to determine a stopping criteria
+- save_model (optional): for algorithms that train a GP, like multifidelity Bayesian, setting this parameter to True will output a file "gp_parameters.txt" containing the parameters of the trained GP model so that it can be re-loaded and used for later problems
+
+Multifidelity Bayesian optimization comes with additional customizable parameters:
+- fidelity_variable (required): the name of the parameter in the Cubit file that controls fidelity
+- cost_function (optional): this is the relationship between cost and fidelity. The options are 'exponential' (explicit, exponential relationship between max and min fidelity cost) and 'gaussian_process' (implicit, learned relationship between fidelity and cost). Defaults to exponential
+
+Upper confidence bound and expected hypervolume improvement also come with an additional parameter:
+- generator_options (optional): list additional algorithm parameters, like beta for upper confidence bound
 
 Running LUME-ACE3P with Xopt returns two files. The file called "sim_output.txt" contains all parameter tuples reached and the corresponding value of the parameter(s) to be optimized. The file called "sim_output_all_values.txt" contains all parameter tuples reached and the corresponding values of all output parameters.
     
-LUME-ACE3P is configured for multi-objective optimization, and currently supports Nelder Mead and Expected Improvement algorithms, with more in development.
-    
-<details><summary><h3>S3P Optimization Example</h3></summary>
+<details><summary><h3>S3P Nelder Mead Optimization Example</h3></summary>
     
 This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
     
@@ -440,7 +460,50 @@ xopt_parameters :
     'num_random' : 0
     'num_step' : 25
 ```
-'Generator' refers to the optimization algorithm in use. Currently, Nelder Mead and Expected Improvement algorithms are offered, to be specified as 'NeldermeadGenerator' and 'ExpectedImprovementGenerator', respectively. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations.
+'Generator' refers to the optimization algorithm in use. 'num_random' gives the number of initial random parameter space guesses that the algorithm will make, and 'num_step' gives the number of iterations.
+</details>
+
+<details><summary><h3>S3P Multifidelity Bayesian Optimization Example</h3></summary>
+This example (based on 90 degree bend from the [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)) will set up LUME-ACE3P to run an optimization problem over the scattering parameter S(0,0) at the frequency 12 GHz, with input parameters of waveguide width and chamfer length.
+    
+As in the previous example, the script begins with the ACE3P parameters:
+```yaml
+workflow_parameters :
+    'mode' : 'scalar_optimize'
+    'module' : 's3p'
+    'cubit_input': 'bend-90degree_mf.jou'
+    'ace3p_input': 'bend-90degree_mf.s3p'
+    'ace3p_tasks': 16
+    'ace3p_cores': 16
+    'ace3p_opts' : '--cpu-bind=cores'
+    'workdir': 'lume-ace3p_xopt_workdir'
+```
+Note that the Cubit journal file has to be configured for multifidelity optimization by specifying a variable that controls model fidelity. In this case, fidelity is controlled by a parameter that changes mesh size.
+
+The VOCs parameter setup is similar to that of the previous example:
+```yaml
+vocs_parameters :
+    'variables' :
+        'cornercut': [12.5,13.5]
+        'wgwidth': [21,22]
+    'objectives' :
+        's_parameter' : 'S(1,1)'
+        'frequency' : 12.0e+09
+        'optimization' : 'MINIMIZE'
+        'tolerance' : 1e-03
+```
+Note that we include a tolerance parameter. If the value of S(1,1) at 12 GHz falls below 0.001, the optimization will terminate. 
+
+Finally, we set the Xopt parameters:
+```yaml
+xopt_parameters :
+    'generator' : 'MultiFidelityGenerator'
+    'fidelity_variable' : 'mesh_fidelity'
+    'cost_function' : 'exponential'
+    'alotted_time' : 00:30:00
+    'num_random' : 3
+```
+Here, we are doing multifidelity Bayesian optimization so we use the MultiFidelityGenerator. The fidelity_variable parameter must match exactly with the name of a variable in the Cubit file that controls fidelity. The cost_function is a relationship between fidelity and cost. We have set alotted_time at 30 minutes. This parameter will serve as an additional stopping criteria: if amount of time used gets close to the total alotted time, the algorithm will terminate. Finally, we set the algorithm to begin with three random steps as a starting point for training its internal GP model.
 </details>
 </details>
 
