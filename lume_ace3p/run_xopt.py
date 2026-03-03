@@ -6,7 +6,7 @@ import random
 from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
 from xopt import Xopt
-from lume_ace3p.workflow import S3PWorkflow, evaluate
+from lume_ace3p.workflow import S3PWorkflow
 from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
@@ -24,8 +24,8 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
         freqs = []
         
         for obj in vocs_dict['objectives']:
-            S_params.append(obj[:obj.find(')'+1])
-            freqs.append(obj[obj.find('_'+1:])
+            S_params.append(obj[:obj.find(')')+1])
+            freqs.append(obj[obj.find('_')+1:])
         print('S_params:')
         print(S_params)
         #right now, not configured to have s params as observables
@@ -87,21 +87,29 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
                 t1 = np.tile(input_tensor,(input_vardim[i],1))
                 t2 = np.repeat(input_vardata[i],np.size(input_tensor,0))
                 input_tensor = np.vstack([t1.T,t2]).T   
+    with open("sweep_output.txt", "w") as sweepfile:
+        for iv in input_varname:
+            sweepfile.write(iv+'\t')
+        for obj in vocs_dict['objectives']:
+            sweepfile.write(obj+'\t')
+        sweepfile.write('\n')
+        for i in range(np.size(input_tensor,0)):
+            sweep_input_dict = {}
+            if len(input_varname) > 1:
+                sweep_input_tuple = tuple(input_tensor[i])
+                for j in range(len(input_varname)):
+                    sweep_input_dict[input_varname[j]] = input_tensor[i][j]
+            else:
+                sweep_input_tuple = tuple([input_tensor[i]])
+                sweep_input_dict[input_varname[0]] = input_tensor[i]
     
-    for i in range(np.size(input_tensor,0)):
-        sweep_input_dict = {}
-        if len(input_varname) > 1:
-            sweep_input_tuple = tuple(input_tensor[i])
-            for j in range(len(input_varname)):
-                sweep_input_dict[input_varname[j]] = input_tensor[i][j]
-        else:
-            sweep_input_tuple = tuple([input_tensor[i]])
-            sweep_input_dict[input_varname[0]] = input_tensor[i]
-
-        test_points = pd.DataFrame([sweep_input_dict])
-        output_dict = X.generator.gp_model.posterior_mean(test_points)
-        sweep_data[sweep_input_tuple] = evaluate(output_dict)
-        WriteS3PDataTable("sweep_data.txt", sweep_data, input_varname)
+            test_points = pd.DataFrame([sweep_input_dict])
+            output_dict = X.generator.gp_model.posterior_mean(test_points)
+            for var in input_varname:
+                sweepfile.write(var+'\t')
+            for data_point in output_dict:
+                sweepfile.write(str(data_point)+'\t')
+            sweepfile.write('\n')
 
     if xopt_dict.get('save_model', False):
         try:
