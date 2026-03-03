@@ -6,10 +6,118 @@ import random
 from xopt.vocs import VOCS
 from xopt.evaluator import Evaluator
 from xopt import Xopt
-from lume_ace3p.workflow import S3PWorkflow
+from lume_ace3p.workflow import S3PWorkflow, evaluate
 from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+
+def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
+    from xopt.generators.bayesian import BayesianExplorationGenerator
+    generator = BayesianExplorationGenerator(vocs=vocs)
+
+
+    #format of observable: value of observable, objective: value of objective, constraint: value of constraint exactly as in VOCS
+    def sim_function(input_dict):
+        workflow = S3PWorkflow(workflow_dict,input_dict)
+        output_data = workflow.run()
+        S_params = []
+        freqs = []
+        
+        for obj in vocs_dict['objectives']:
+            S_params.append(obj[:obj.find(')'+1])
+            freqs.append(obj[obj.find('_'+1:])
+        print('S_params:')
+        print(S_params)
+        #right now, not configured to have s params as observables
+        output_dict = {}
+        freq_index = 0
+        
+        for f in range(len(freqs)):
+            try:
+                freq_index = list(output_data['Frequency']).index(float(freqs[f]))
+                output_dict[S_params[f]] = output_data[S_params[f]][freq_index]
+            except ValueError:
+                print("Inputted frequency to be optimized is not in frequency sweep.")
+        print('output_dict:')
+        print(output_dict)
+        param_values = ()
+        param_list = []
+        for key in input_dict:
+            param_list.append(key)
+            param_values = param_values + (input_dict[key],)
+        #this puts the output data in the sweep format needed to run WriteS3PDataTable
+        modified_output_data = {param_values: output_data}
+        #appends data to a file containing information about all frequencies and S parameters for every parameter combination
+        WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
+
+        return output_dict
+    evaluator = Evaluator(function=sim_function)
+    X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+
+    if 'num_step' in xopt_dict.keys():
+        #Run optimization for subsequent steps
+        for i in range(xopt_dict['num_step']):
+            X.step()
+            #writes an output file with information only about S parameter and frequency of interest
+            WriteXoptData('sim_output.txt', vocs_dict['objectives'], X.data, iteration_index)
+            iteration_index += 1
+
+    param_dict = {}
+    for param in sweep_dict:
+        param_dict[param] = np.linspace(sweep_dict[param]['min'], sweep_dict[param]['max'], sweep_dict[param]['num'])
+    
+    input_varname = []  
+    input_vardim = []   
+    input_vardata = []  
+    sweep_data = {}   
+    
+    #Unpack dict of inputs into lists
+    for var, value in param_dict.items():
+        input_varname.append(var)
+        input_vardim.append(len(value))
+        input_vardata.append(np.array(value))
+
+    input_tensor = input_vardata[0]
+    if len(input_varname) > 1:
+        t1 = np.tile(input_tensor,input_vardim[1])
+        t2 = np.repeat(input_vardata[1],input_vardim[0])
+        input_tensor = np.vstack([t1,t2]).T
+        if len(input_varname) > 2:
+            for i in range(2,len(input_varname)):
+                t1 = np.tile(input_tensor,(input_vardim[i],1))
+                t2 = np.repeat(input_vardata[i],np.size(input_tensor,0))
+                input_tensor = np.vstack([t1.T,t2]).T   
+    
+    for i in range(np.size(input_tensor,0)):
+        sweep_input_dict = {}
+        if len(input_varname) > 1:
+            sweep_input_tuple = tuple(input_tensor[i])
+            for j in range(len(input_varname)):
+                sweep_input_dict[input_varname[j]] = input_tensor[i][j]
+        else:
+            sweep_input_tuple = tuple([input_tensor[i]])
+            sweep_input_dict[input_varname[0]] = input_tensor[i]
+
+        test_points = pd.DataFrame([sweep_input_dict])
+        output_dict = X.generator.gp_model.posterior_mean(test_points)
+        sweep_data[sweep_input_tuple] = evaluate(output_dict)
+        WriteS3PDataTable("sweep_data.txt", sweep_data, input_varname)
+
+    if xopt_dict.get('save_model', False):
+        try:
+            if hasattr(X.generator, 'model') and X.generator.model is not None:
+                torch.save(X.generator.model.state_dict(), "Binary_gp_model.pt")
+                with open("gp_parameters.txt", "w") as f:
+                    f.write("Gaussian Process Hyperparameters:\n")
+                    f.write("=================================\n")
+                    for name, param in X.generator.model.named_parameters():
+                        val = param.detach().cpu().numpy()
+                        f.write(f"{name}: {val}\n")
+            else:
+                print(" - Generator has no model to save.")
+        except Exception as e:
+            print(f" - Error saving model: {e}")
+    
 
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     multi_objective = False
@@ -77,6 +185,8 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 print("Inputted frequency to be optimized is not in frequency sweep.")
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
+
+            #ISN'T THIS WRONG??
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
 
         return output_dict

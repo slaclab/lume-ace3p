@@ -1,0 +1,29 @@
+workflow_parameters :
+    'mode' : 'GP_parameter_sweep'
+    'module' : 's3p'
+    'cubit_input': 'bend-90degree_mf.jou'
+    'ace3p_input': 'bend-90degree_mf.s3p'
+    'ace3p_tasks': 16
+    'ace3p_cores': 16
+    'ace3p_opts' : '--cpu-bind=cores'
+    'workdir': 'lume-ace3p_mf_workdir'
+
+sweep_parameters :
+    'cornercut' : 
+        min : 12.5
+        max : 13.5
+        num : 10
+    'wgwidth' : 
+        min : 21
+        max : 22
+        num : 10
+
+vocs_parameters :
+    'variables' :
+        'cornercut': [12.5,13.5]
+        'wgwidth': [21,22]
+    'objectives' :
+        'S(1,1)_12.0e+09': 'explore'
+        
+xopt_parameters :
+    num_step : 3
