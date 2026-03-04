@@ -13,21 +13,21 @@ from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
     from xopt.generators.bayesian import BayesianExplorationGenerator
+    
+    vocs = VOCS(variables=vocs_dict['variables'], observables=vocs_dict['observables'])
     generator = BayesianExplorationGenerator(vocs=vocs)
-
-
-    #format of observable: value of observable, objective: value of objective, constraint: value of constraint exactly as in VOCS
+    
+    iteration_index = 0
     def sim_function(input_dict):
         workflow = S3PWorkflow(workflow_dict,input_dict)
         output_data = workflow.run()
         S_params = []
         freqs = []
         
-        for obj in vocs_dict['objectives']:
+        for obj in vocs_dict['observables']:
             S_params.append(obj[:obj.find(')')+1])
             freqs.append(obj[obj.find('_')+1:])
-        print('S_params:')
-        print(S_params)
+        
         #right now, not configured to have s params as observables
         output_dict = {}
         freq_index = 0
@@ -35,11 +35,10 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
         for f in range(len(freqs)):
             try:
                 freq_index = list(output_data['Frequency']).index(float(freqs[f]))
-                output_dict[S_params[f]] = output_data[S_params[f]][freq_index]
+                output_dict[vocs_dict['observables'][f]] = output_data[S_params[f]][freq_index]
             except ValueError:
                 print("Inputted frequency to be optimized is not in frequency sweep.")
-        print('output_dict:')
-        print(output_dict)
+        
         param_values = ()
         param_list = []
         for key in input_dict:
@@ -49,17 +48,20 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
         modified_output_data = {param_values: output_data}
         #appends data to a file containing information about all frequencies and S parameters for every parameter combination
         WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
-
+        
         return output_dict
     evaluator = Evaluator(function=sim_function)
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
-
+    for i in range(5):
+        X.random_evaluate()
+        iteration_index += 1
+    
     if 'num_step' in xopt_dict.keys():
         #Run optimization for subsequent steps
         for i in range(xopt_dict['num_step']):
             X.step()
             #writes an output file with information only about S parameter and frequency of interest
-            WriteXoptData('sim_output.txt', vocs_dict['objectives'], X.data, iteration_index)
+            WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
             iteration_index += 1
 
     param_dict = {}
@@ -90,7 +92,7 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
     with open("sweep_output.txt", "w") as sweepfile:
         for iv in input_varname:
             sweepfile.write(iv+'\t')
-        for obj in vocs_dict['objectives']:
+        for obj in vocs_dict['observables']:
             sweepfile.write(obj+'\t')
         sweepfile.write('\n')
         for i in range(np.size(input_tensor,0)):
@@ -104,11 +106,12 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
                 sweep_input_dict[input_varname[0]] = input_tensor[i]
     
             test_points = pd.DataFrame([sweep_input_dict])
-            output_dict = X.generator.gp_model.posterior_mean(test_points)
-            for var in input_varname:
-                sweepfile.write(var+'\t')
+            test_points = torch.tensor(test_points.values, dtype=torch.double)
+            output_dict = X.generator.model.posterior(test_points).mean
+            for var in input_tensor[i]:
+                sweepfile.write(str(var)+'\t')
             for data_point in output_dict:
-                sweepfile.write(str(data_point)+'\t')
+                sweepfile.write(str(float(data_point[0]))+'\t')
             sweepfile.write('\n')
 
     if xopt_dict.get('save_model', False):
