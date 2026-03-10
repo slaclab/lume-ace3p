@@ -31,7 +31,7 @@ class Acdtool(CommandWrapper):
             print('Error: Unknown acdtool command.')
             return
         self.write_input()
-        subprocess.run(self.MPI_CALLER + ' -n 1 -c 1 ' + self.ACE3P_PATH + 'acdtool '
+        subprocess.run(self.MPI_CALLER + ' --nodes=1 --ntasks=1 ' + self.ACE3P_PATH + 'acdtool '
                         + acdcommand + ' ' + self.input_file, shell=True, cwd=self.workdir)
         self.load_output()
         
