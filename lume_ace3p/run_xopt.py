@@ -12,11 +12,39 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
-    from xopt.generators.bayesian import BayesianExplorationGenerator
+    from xopt.generators.bayesian import BayesianExplorationGenerator    
     
     vocs = VOCS(variables=vocs_dict['variables'], observables=vocs_dict['observables'])
     generator = BayesianExplorationGenerator(vocs=vocs)
     
+    if 'l2_err_tolerance' in xopt_dict.keys():
+        nested_err_inputs = []
+        var_names = []
+        var_vals = {}
+        num_test_points = 3
+        for v in vocs_dict['variables'].keys():
+            var_names.append(v)
+            var_vals[v] = np.linspace(vocs_dict['variables'][v][0], vocs_dict['variables'][v][1], 10)
+        for j in range(num_test_points):
+            temp_err_dict = {}
+            temp_err_dict = {v: var_vals[v][j] for v in var_names}
+            nested_err_inputs.append(temp_err_dict)
+        err_test_results = []
+        with open("rr_file.txt", "a") as f:
+            f.write("NESTED ERR INPUTS")
+            f.write(str(nested_err_inputs))
+        for j in range(num_test_points):
+            workflow = S3PWorkflow(workflow_dict, nested_err_inputs[j])
+            output = workflow.run()
+            temp_list = []
+            for o in vocs_dict['observables']:
+                freq_index = list(output['Frequency']).index(float(o[o.find(')')+2:]))
+                temp_list.append(output[o[:o.find(')')+1]][freq_index])
+            err_test_results.append(temp_list)
+        with open("rr_file.txt", "a") as f:
+            f.write("ERR TEST RESULTS")
+            f.write(str(err_test_results))
+
     iteration_index = 0
     def sim_function(input_dict):
         workflow = S3PWorkflow(workflow_dict,input_dict)
@@ -50,19 +78,81 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
         WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
         
         return output_dict
+    
+    #if 'improvement_threshold' in xopt_dict:
+    #    convergence_condition = ConvergenceCondition(objective_name="f", improvement_threshold=xopt_dict.get('improvement_threshold', 0.01), patience=5, relative=False)
+    #else:
+    #    convergence_condition = MaxEvaluationsCondition(max_evaluations=xopt_dict.get('max_steps', 20))
     evaluator = Evaluator(function=sim_function)
+    #X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs, stopping_condition=convergence_condition)
+    
     X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
-    for i in range(5):
+    num_random = xopt_dict.get('num_random', 5)
+    for i in range(num_random):
         X.random_evaluate()
         iteration_index += 1
-    
-    if 'num_step' in xopt_dict.keys():
+    #tol_achieved = True
+    #all of the below should be deleted and replaced with X.run()
+    #X.run()
+    hit_max_steps = False
+    steps = 0
+    improvement = xopt_dict.get('improvement_threshold', 0.01)
+    patience = xopt_dict.get('patience', 5)
+    prev_bests = []
+    while not hit_max_steps:
+        X.step()
+        WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
+        iteration_index += 1
+        steps += 1
+        if 'max_steps' in xopt_dict.keys():
+            if steps > xopt_dict['max_steps']:
+                hit_max_steps = True
+        current_best = 0
+        for o in vocs_dict['observables']:
+            current_best += X.data[o].min()
+        current_best = current_best / len(vocs_dict['observables'])
+        prev_bests.append(current_best)
+        #if within checking range, compare to see if current best is close to the best patience iterations ago
+        if len(prev_bests) > patience:
+            old = prev_bests[-(patience+1)]
+            new = prev_bests[-1]
+            if np.abs(old-new)/old < improvement:
+                break
+
+    #if 'l2_norm' in xopt_dict.keys():
+     #   while not hit_max_steps:
+      #      X.step()
+       #     WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
+        #    iteration_index += 1
+         #   l2 = 0
+          #  for j in range(num_test_points):
+           #     test_tensor = torch.tensor(list(nested_err_inputs[j].values()), dtype=torch.double).unsqueeze(0).unsqueeze(1)
+            #    with open("rr_file.txt", "a") as f:
+             #       f.write("tst tensor")
+              #      f.write(str(test_tensor))
+               # pred = X.generator.model.posterior(test_tensor).mean
+                #truth = err_test_results[j]
+    #            with open("rr_file.txt", "a") as f:
+    #                f.write("truth is ")
+    #                f.write(str(truth))
+    #                f.write(" \npred is ")
+    #                f.write(str(pred))                    
+    #            for k in range(len(truth)):
+    #                l2 += (truth[k] - float(pred[k]))**2
+    #        l2 = np.sqrt(l2)
+    #        
+    #        steps += 1
+    #        if steps >= xopt_dict.get('max_steps', False):
+    #            hit_max_steps = True
+    #        if l2 <= err_tol:
+    #            tol_achieved = True
+    #if 'num_step' in xopt_dict.keys():
         #Run optimization for subsequent steps
-        for i in range(xopt_dict['num_step']):
-            X.step()
+    #    for i in range(xopt_dict['num_step']):
+    #        X.step()
             #writes an output file with information only about S parameter and frequency of interest
-            WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
-            iteration_index += 1
+     #       WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
+     #       iteration_index += 1
 
     param_dict = {}
     for param in sweep_dict:
@@ -197,7 +287,6 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
 
-            #ISN'T THIS WRONG??
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
 
         return output_dict
