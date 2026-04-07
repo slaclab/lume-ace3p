@@ -6,7 +6,7 @@ from collections import defaultdict
 import numpy as np
 import copy
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
-from lume_ace3p.run_xopt import run_xopt
+from lume_ace3p.run_xopt import run_xopt, run_lf_sweep
 
 input_file = sys.argv[1]
 
@@ -98,7 +98,6 @@ input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=T
 #Define output dictionary with data to extract from acdtool (optional)
 output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
 
-
 if workflow_dict['mode'].lower() == 'parameter_sweep':
     if workflow_dict['module'].lower() == 's3p':
         workflow = S3PWorkflow(workflow_dict, input_dict)
@@ -118,3 +117,16 @@ if workflow_dict['mode'].lower() == 'scalar_optimize':
         if 'constants' not in vocs_dict:
             vocs_dict['constants'] = {}
         run_xopt(workflow_dict, vocs_dict, xopt_dict)
+        
+if workflow_dict['mode'].lower() == 'gp_parameter_sweep':
+    if workflow_dict['module'].lower() == 's3p':
+        sweep_dict = lume_ace3p_data.get('sweep_parameters')
+        vocs_dict = lume_ace3p_data.get('vocs_parameters')
+        xopt_dict = lume_ace3p_data.get('xopt_parameters')
+        if 'constraints' not in vocs_dict:
+            vocs_dict['constraints'] = {}
+        if 'observables' not in vocs_dict:
+            vocs_dict['observables'] = []
+        if 'constants' not in vocs_dict:
+            vocs_dict['constants'] = {}
+        run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict)

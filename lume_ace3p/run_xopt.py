@@ -11,6 +11,144 @@ from lume_ace3p.tools import WriteXoptData, WriteS3PDataTable
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
+def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
+    from xopt.generators.bayesian import BayesianExplorationGenerator    
+    vocs = VOCS(variables=vocs_dict['variables'], observables=vocs_dict['observables'])
+    generator = BayesianExplorationGenerator(vocs=vocs)
+
+    iteration_index = 0
+    def sim_function(input_dict):
+        workflow = S3PWorkflow(workflow_dict,input_dict)
+        output_data = workflow.run()
+        S_params = []
+        freqs = []
+        
+        for obj in vocs_dict['observables']:
+            S_params.append(obj[:obj.find(')')+1])
+            freqs.append(obj[obj.find('_')+1:])
+        
+        #right now, not configured to have s params as observables
+        output_dict = {}
+        freq_index = 0
+        
+        for f in range(len(freqs)):
+            try:
+                freq_index = list(output_data['Frequency']).index(float(freqs[f]))
+                output_dict[vocs_dict['observables'][f]] = output_data[S_params[f]][freq_index]
+            except ValueError:
+                print("Inputted frequency to be optimized is not in frequency sweep.")
+        
+        param_values = ()
+        param_list = []
+        for key in input_dict:
+            param_list.append(key)
+            param_values = param_values + (input_dict[key],)
+        #this puts the output data in the sweep format needed to run WriteS3PDataTable
+        modified_output_data = {param_values: output_data}
+        #appends data to a file containing information about all frequencies and S parameters for every parameter combination
+        WriteS3PDataTable('sim_output_all_values.txt', modified_output_data, param_list, True, iteration_index)
+        
+        return output_dict
+    
+    evaluator = Evaluator(function=sim_function)
+    X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+    
+    num_random = xopt_dict.get('num_random', 5)
+    for i in range(num_random):
+        X.random_evaluate()
+        iteration_index += 1
+    
+    hit_max_steps = False
+    steps = 0
+    improvement = xopt_dict.get('improvement_threshold', 0.01)
+    patience = xopt_dict.get('patience', 5)
+    prev_bests = []
+    while not hit_max_steps:
+        X.step()
+        WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
+        iteration_index += 1
+        steps += 1
+        if 'max_steps' in xopt_dict.keys():
+            if steps > xopt_dict['max_steps']:
+                hit_max_steps = True
+        current_best = 0
+        for o in vocs_dict['observables']:
+            current_best += X.data[o].min()
+        current_best = current_best / len(vocs_dict['observables'])
+        prev_bests.append(current_best)
+        #if within checking range, compare to see if current best is close to the best patience iterations ago
+        if len(prev_bests) > patience:
+            old = prev_bests[-(patience+1)]
+            new = prev_bests[-1]
+            if np.abs(old-new)/old < improvement:
+                break
+
+    param_dict = {}
+    for param in sweep_dict:
+        param_dict[param] = np.linspace(sweep_dict[param]['min'], sweep_dict[param]['max'], sweep_dict[param]['num'])
+    
+    input_varname = []  
+    input_vardim = []   
+    input_vardata = []  
+    sweep_data = {}   
+    
+    #Unpack dict of inputs into lists
+    for var, value in param_dict.items():
+        input_varname.append(var)
+        input_vardim.append(len(value))
+        input_vardata.append(np.array(value))
+
+    input_tensor = input_vardata[0]
+    if len(input_varname) > 1:
+        t1 = np.tile(input_tensor,input_vardim[1])
+        t2 = np.repeat(input_vardata[1],input_vardim[0])
+        input_tensor = np.vstack([t1,t2]).T
+        if len(input_varname) > 2:
+            for i in range(2,len(input_varname)):
+                t1 = np.tile(input_tensor,(input_vardim[i],1))
+                t2 = np.repeat(input_vardata[i],np.size(input_tensor,0))
+                input_tensor = np.vstack([t1.T,t2]).T   
+    with open("sweep_output.txt", "w") as sweepfile:
+        for iv in input_varname:
+            sweepfile.write(iv+'\t')
+        for obj in vocs_dict['observables']:
+            sweepfile.write(obj+'\t')
+        sweepfile.write('\n')
+        for i in range(np.size(input_tensor,0)):
+            sweep_input_dict = {}
+            if len(input_varname) > 1:
+                sweep_input_tuple = tuple(input_tensor[i])
+                for j in range(len(input_varname)):
+                    sweep_input_dict[input_varname[j]] = input_tensor[i][j]
+            else:
+                sweep_input_tuple = tuple([input_tensor[i]])
+                sweep_input_dict[input_varname[0]] = input_tensor[i]
+    
+            test_points = pd.DataFrame([sweep_input_dict])
+            test_points = torch.tensor(test_points.values, dtype=torch.double)
+            output_dict = X.generator.model.posterior(test_points).mean
+            for var in input_tensor[i]:
+                sweepfile.write(str(var)+'\t')
+            for data_point in output_dict:
+                sweepfile.write(str(float(data_point[0]))+'\t')
+            sweepfile.write('\n')
+
+    if xopt_dict.get('save_model', False):
+        try:
+            if hasattr(X.generator, 'model') and X.generator.model is not None:
+                torch.save(X.generator.model.state_dict(), "Binary_gp_model.pt")
+                with open("gp_parameters.txt", "w") as f:
+                    f.write("Gaussian Process Hyperparameters:\n")
+                    f.write("=================================\n")
+                    for name, param in X.generator.model.named_parameters():
+                        val = param.detach().cpu().numpy()
+                        f.write(f"{name}: {val}\n")
+            else:
+                print(" - Generator has no model to save.")
+        except Exception as e:
+            print(f" - Error saving model: {e}")
+    
+
 def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     multi_objective = False
     tol_achieved = False
@@ -77,6 +215,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
                 print("Inputted frequency to be optimized is not in frequency sweep.")
 
             #example: output_dict['S(0,0)_9.494e9'] = output_data['S(0,0)'][0]
+
             output_dict[S_params[f]+'_'+str(freqs[f])] = output_data[S_params[f]][freq_index]
 
         return output_dict
