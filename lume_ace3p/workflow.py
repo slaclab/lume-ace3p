@@ -111,6 +111,11 @@ class Omega3PWorkflow(ACE3PWorkflow):
                         entry = output_params[2]
                         assert (entry in set(['Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'])), ("Unknown expression '" + entry + "' in 'RoverQ' section.")
                         self.output_data[output_name] = self.acdtool_obj.output_data[section][mode][entry]
+                    elif section == 'kickFactor':
+                        mode = output_params[1]
+                        entry = output_params[2]
+                        assert (entry in set(['Frequency', 'Qext', 'Ks', 'V_r', 'V_i', 'absV'])), ("Unknown expression '" + entry + "' in 'kickFactor' section.")
+                        self.output_data[output_name] = self.acdtool_obj.output_data[section][mode][entry]
                     elif section == 'maxFieldsOnSurface':
                         surface = output_params[1]
                         entry = output_params[2]

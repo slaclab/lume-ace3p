@@ -132,6 +132,26 @@ class Acdtool(CommandWrapper):
                 self.output_data[key][mkey]['absV'] = eval(modeline[5])
                 self.output_data[key][mkey]['RoQ'] = eval(modeline[6])
             self.output_data[key]['ModeIDs'] = modelist
+        elif key == 'kickFactor':
+            modestart = 0
+            for i in range(len(datalines)):
+                if datalines[i].strip().startswith('ModeID'):
+                    modestart = i+1
+                    break
+            modedata = datalines[modestart:end_ind]
+            modelist = []
+            for j in range(len(modedata)):
+                modeline = modedata[j].split()
+                mkey = modeline[0]  #Mode ID number
+                modelist.append(mkey)
+                self.output_data[key][mkey] = {}
+                self.output_data[key][mkey]['Frequency'] = eval(modeline[1])
+                self.output_data[key][mkey]['Qext'] = eval(modeline[2])
+                self.output_data[key][mkey]['Ks'] = eval(modeline[3])
+                self.output_data[key][mkey]['V_r'] = eval(modeline[4])
+                self.output_data[key][mkey]['V_i'] = eval(modeline[5])
+                self.output_data[key][mkey]['absV'] = eval(modeline[6])
+            self.output_data[key]['ModeIDs'] = modelist
         elif key == 'maxFieldsOnSurface':
             surfacelist = []
             for i in range(len(datalines)):
