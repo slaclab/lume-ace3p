@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "lume-ace3p"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "lume-base>=0.3.3",
+    "xopt>=2.2.2",
+    "ruamel.yaml",
+    "numpy",
+    "pandas",
+]
+
+[project.scripts]
+run-lume-ace3p = "lume_ace3p.run_lume_ace3p:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
