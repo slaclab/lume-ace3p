@@ -9,6 +9,4 @@
 #SBATCH --nodes=1
 #SBATCH --time=0-00:30:00
 
-export PYTHONPATH='/global/cfs/cdirs/ace3p/lume-ace3p'
-
-python /global/cfs/cdirs/ace3p/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_sweep.yaml
+run-lume-ace3p demo_s3p_sweep.yaml

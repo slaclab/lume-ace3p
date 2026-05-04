@@ -10,6 +10,5 @@
 #SBATCH --time=0-01:00:00
 
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
 
-python /sdf/group/rfar/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_optimization.yaml
+run-lume-ace3p demo_s3p_optimization.yaml
