@@ -7,7 +7,7 @@ from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.tools import WriteOmega3PDataTable, WriteS3PDataTable
 
 class ACE3PWorkflow:
-    
+
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
         self.input_dict = input_dict
         self.output_dict = output_dict
@@ -17,10 +17,14 @@ class ACE3PWorkflow:
         self.ace3p_cores = workflow_dict.get('ace3p_cores')
         self.ace3p_opts = workflow_dict.get('ace3p_opts')
         self.rfpost_input = workflow_dict.get('rfpost_input')
-        self.workdir_mode = workflow_dict.get('workdir_mode','manual')
-        self.baseworkdir = workflow_dict.get('workdir',os.getcwd())
-        self.sweep_output = workflow_dict.get('sweep_output',False)
+        self.workdir_mode = workflow_dict.get('workdir_mode', 'manual')
+        self.baseworkdir = workflow_dict.get('workdir', os.getcwd())
+        self.sweep_output = workflow_dict.get('sweep_output', False)
         self.sweep_output_file = workflow_dict.get('sweep_output_file')
+        self.skip_cubit = workflow_dict.get('skip_cubit', False)
+        self.skip_solver = workflow_dict.get('skip_solver', False)
+        self.skip_acdtool = workflow_dict.get('skip_acdtool', False)
+        self.skip_meshconvert = workflow_dict.get('skip_meshconvert', False)
 
     def _getworkdir(self, input_dict):
         if self.workdir_mode == 'manual':
@@ -46,52 +50,94 @@ class ACE3PWorkflow:
                 self.workdir = self.baseworkdir
         else:
             raise ValueError("Key: \'workdir_mode\' must be either \'manual\' or \'auto\'.")
-        
+
+    def _build_input_tensor(self, input_dict):
+        """Build the full tensor product of all input parameter combinations."""
+        self.input_varname = []
+        self.input_vardim = []
+        self.input_vardata = []
+
+        for var, value in input_dict.items():
+            self.input_varname.append(var)
+            self.input_vardim.append(len(value))
+            self.input_vardata.append(np.array(value))
+
+        self.input_tensor = self.input_vardata[0]
+        if len(self.input_varname) == 1:
+            self.input_tensor = np.reshape(self.input_tensor, (self.input_vardim[0], 1))
+        else:
+            t1 = np.tile(self.input_tensor, self.input_vardim[1])
+            t2 = np.repeat(self.input_vardata[1], self.input_vardim[0])
+            try:
+                self.input_tensor = np.vstack([t1, t2]).T
+            except ValueError:
+                print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
+            if len(self.input_varname) > 2:
+                for i in range(2, len(self.input_varname)):
+                    t1 = np.tile(self.input_tensor, (self.input_vardim[i], 1))
+                    t2 = np.repeat(self.input_vardata[i], np.size(self.input_tensor, 0))
+                    try:
+                        self.input_tensor = np.vstack([t1.T, t2]).T
+                    except ValueError:
+                        print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
+
     def run(self):
         pass
 
     def evaluate(self):
         pass
-    
+
     def run_sweep(self):
         pass
 
 
 class Omega3PWorkflow(ACE3PWorkflow):
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def run(self, input_dict=None, output_dict=None):
+    def run(self, input_dict=None, output_dict=None,
+            skip_cubit=None, skip_solver=None, skip_acdtool=None, skip_meshconvert=None):
+        # Per-call overrides fall back to instance defaults set from workflow_dict
+        skip_cubit       = self.skip_cubit       if skip_cubit       is None else skip_cubit
+        skip_solver      = self.skip_solver      if skip_solver      is None else skip_solver
+        skip_acdtool     = self.skip_acdtool     if skip_acdtool     is None else skip_acdtool
+        skip_meshconvert = self.skip_meshconvert if skip_meshconvert is None else skip_meshconvert
+
         if input_dict is None:
             input_dict = self.input_dict
         self._getworkdir(input_dict)
 
         #Load Cubit journal, update values, and run
-        if self.cubit_input is not None:
-            self.cubit_obj = Cubit(self.cubit_input,
-                              workdir=self.workdir)
+        if self.cubit_input is not None and not skip_cubit:
+            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
-            self.cubit_obj.run()
+            self.cubit_obj.run(mcflag=not skip_meshconvert)
+        elif skip_cubit:
+            print('Cubit step skipped.')
         else:
             print('Cubit journal file not specified, skipping step.')
 
         #Load Omega3P input and run
-        self.omega3p_obj = Omega3P(self.ace3p_input,
-                              ace3p_tasks=self.ace3p_tasks,
-                              ace3p_cores=self.ace3p_cores,
-                              ace3p_opts=self.ace3p_opts,
-                              workdir=self.workdir)
-        if input_dict is not None:
-            self.omega3p_obj.set_value(input_dict)
-        self.omega3p_obj.run()
+        if not skip_solver:
+            self.omega3p_obj = Omega3P(self.ace3p_input,
+                                  ace3p_tasks=self.ace3p_tasks,
+                                  ace3p_cores=self.ace3p_cores,
+                                  ace3p_opts=self.ace3p_opts,
+                                  workdir=self.workdir)
+            if input_dict is not None:
+                self.omega3p_obj.set_value(input_dict)
+            self.omega3p_obj.run()
+        else:
+            print('ACE3P solver step skipped.')
 
         #Load acdtool rfpost input and run
-        if self.rfpost_input is not None:
-            self.acdtool_obj = Acdtool(self.rfpost_input,
-                                  workdir=self.workdir)
+        if self.rfpost_input is not None and not skip_acdtool:
+            self.acdtool_obj = Acdtool(self.rfpost_input, workdir=self.workdir)
             self.acdtool_obj.run()
+        elif skip_acdtool:
+            print('Acdtool postprocess step skipped.')
         else:
             print('Acdtool postprocess input file not specified, skipping step.')
 
@@ -134,44 +180,15 @@ class Omega3PWorkflow(ACE3PWorkflow):
             input_dict = self.input_dict
         if output_dict is None:
             output_dict = self.output_dict
-        self.input_varname = []     #List of input parameter names
-        self.input_vardim = []      #List of vector lengths for each parameter
-        self.input_vardata = []     #List of numpy array vectors of parameters
-        self.output_varname = []    #List of output parameter names
-        self.sweep_data = {}        #Dict to store parameter sweep data
-        
-        #Unpack dict of inputs into lists
-        for var, value in input_dict.items():
-            self.input_varname.append(var)
-            self.input_vardim.append(len(value))
-            self.input_vardata.append(np.array(value))
-        
+        self.output_varname = []
+        self.sweep_data = {}
+
+        self._build_input_tensor(input_dict)
+
         for var in output_dict.keys():
             self.output_varname.append(var)
 
-        #Build a full tensor product of all combinations of parameters
-        #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
-        #   Then input_tensor is a 6000 x 3 array of all combinations from the 3 parameters
-        self.input_tensor = self.input_vardata[0]         #First parameter vector
-        if len(self.input_varname) == 1:
-            self.input_tensor = np.reshape(self.input_tensor,(self.input_vardim[0],1))
-        else:
-            t1 = np.tile(self.input_tensor,self.input_vardim[1])
-            t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
-            try:
-                self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
-            except ValueError:
-                print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
-            if len(self.input_varname) > 2:
-                for i in range(2,len(self.input_varname)):
-                    t1 = np.tile(self.input_tensor,(self.input_vardim[i],1))
-                    t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
-                    try:
-                        self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
-                    except ValueError:
-                        print("Error in finding input_tensor. Expected and actual dimensions of input data do not match. This often occurs when a list of lists is put as a parameter in the .yaml file, such as [[3,4],[5,6]]. If this is the case, replace with a list of strings: ['3,4','5,6'].")
-        
-        for i in range(np.size(self.input_tensor,0)):
+        for i in range(np.size(self.input_tensor, 0)):
             sweep_input_dict = {}
             sweep_input_tuple = tuple(self.input_tensor[i])
             for j in range(len(self.input_varname)):
@@ -193,44 +210,55 @@ class Omega3PWorkflow(ACE3PWorkflow):
             return
         WriteOmega3PDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)
 
+
 class S3PWorkflow(ACE3PWorkflow):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def run(self, input_dict=None, output_dict=None):
+    def run(self, input_dict=None, output_dict=None,
+            skip_cubit=None, skip_solver=None, skip_meshconvert=None):
+        # Per-call overrides fall back to instance defaults set from workflow_dict
+        skip_cubit       = self.skip_cubit       if skip_cubit       is None else skip_cubit
+        skip_solver      = self.skip_solver      if skip_solver      is None else skip_solver
+        skip_meshconvert = self.skip_meshconvert if skip_meshconvert is None else skip_meshconvert
+
         if input_dict is None:
             input_dict = self.input_dict
         self._getworkdir(input_dict)
 
         #Load Cubit journal, update values, and run
-        if self.cubit_input is not None:
-            self.cubit_obj = Cubit(self.cubit_input,
-                              workdir=self.workdir)
+        if self.cubit_input is not None and not skip_cubit:
+            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
-            self.cubit_obj.run()
+            self.cubit_obj.run(mcflag=not skip_meshconvert)
+        elif skip_cubit:
+            print('Cubit step skipped.')
         else:
             print('Cubit journal file not specified, skipping step.')
 
         #Load S3P input and run
-        self.s3p_obj = S3P(self.ace3p_input,
-                              ace3p_tasks=self.ace3p_tasks,
-                              ace3p_cores=self.ace3p_cores,
-                              ace3p_opts=self.ace3p_opts,
-                              workdir=self.workdir)
-        if input_dict is not None:
-            self.s3p_obj.set_value(input_dict)
-        self.s3p_obj.run()
+        if not skip_solver:
+            self.s3p_obj = S3P(self.ace3p_input,
+                               ace3p_tasks=self.ace3p_tasks,
+                               ace3p_cores=self.ace3p_cores,
+                               ace3p_opts=self.ace3p_opts,
+                               workdir=self.workdir)
+            if input_dict is not None:
+                self.s3p_obj.set_value(input_dict)
+            self.s3p_obj.run()
+        else:
+            print('ACE3P solver step skipped.')
 
         if output_dict is None:
             output_dict = self.output_dict
         return self.evaluate(output_dict)
-    
+
     def evaluate(self, output_dict):
         self.output_data = {}
         if self.s3p_obj is not None:
-            assert (len(self.s3p_obj.output_data)>0), ('No output data found, run S3P first.')
+            assert (len(self.s3p_obj.output_data) > 0), ('No output data found, run S3P first.')
             if output_dict is not None:
                 self.output_data['IndexMap'] = self.s3p_obj.output_data['IndexMap']
                 self.output_data['Frequency'] = self.s3p_obj.output_data['Frequency']
@@ -244,39 +272,17 @@ class S3PWorkflow(ACE3PWorkflow):
             else:
                 self.output_data = self.s3p_obj.output_data
         return self.output_data
-    
+
     def run_sweep(self, input_dict=None, output_dict=None):
         if input_dict is None:
             input_dict = self.input_dict
         if output_dict is None:
             output_dict = self.output_dict
-        self.input_varname = []     #List of input parameter names
-        self.input_vardim = []      #List of vector lengths for each parameter
-        self.input_vardata = []     #List of numpy array vectors of parameters
-        self.sweep_data = {}        #Dict to store parameter sweep data
-        
-        #Unpack dict of inputs into lists
-        for var, value in input_dict.items():
-            self.input_varname.append(var)
-            self.input_vardim.append(len(value))
-            self.input_vardata.append(np.array(value))
+        self.sweep_data = {}
 
-        #Build a full tensor product of all combinations of parameters
-        #   If input_dict has 3 parameters with vectors of length 10, 20, and 30
-        #   Then input_tensor is a 6000 x 3 array of all combinations from the 3 parameters
-        if len(self.input_varname) == 1:
-            self.input_tensor = np.reshape(self.input_tensor,(self.input_vardim[0],1))
-        else:
-            t1 = np.tile(self.input_tensor,self.input_vardim[1])
-            t2 = np.repeat(self.input_vardata[1],self.input_vardim[0])
-            self.input_tensor = np.vstack([t1,t2]).T #Cartesian tensor product of first 2 parameter vectors
-            if len(self.input_varname) > 2:
-                for i in range(2,len(self.input_varname)):
-                    t1 = np.tile(self.input_tensor,(self.input_vardim[i],1))
-                    t2 = np.repeat(self.input_vardata[i],np.size(self.input_tensor,0))
-                    self.input_tensor = np.vstack([t1.T,t2]).T   #Recursive tensor product of 1st-nth parameter tensor array with (n+1)st parameter vector
-        
-        for i in range(np.size(self.input_tensor,0)):
+        self._build_input_tensor(input_dict)
+
+        for i in range(np.size(self.input_tensor, 0)):
             sweep_input_dict = {}
             if len(self.input_varname) > 1:
                 sweep_input_tuple = tuple(self.input_tensor[i])
@@ -291,7 +297,6 @@ class S3PWorkflow(ACE3PWorkflow):
                 self.print_sweep_output()
         return self.sweep_data
 
-            
     def print_sweep_output(self, filename=None):
         if filename is None:
             filename = self.sweep_output_file

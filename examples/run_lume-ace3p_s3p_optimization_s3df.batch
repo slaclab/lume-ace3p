@@ -7,9 +7,10 @@
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
 #SBATCH --mem=480gb
+#SBATCH --ntasks-per-node=120
 #SBATCH --time=0-01:00:00
 
+module load openmpi/v4.1.6-spack
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
 
-python /sdf/group/rfar/lume-ace3p/lume_ace3p/run_lume_ace3p.py demo_s3p_optimization.yaml
+run-lume-ace3p demo_s3p_optimization.yaml

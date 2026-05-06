@@ -15,9 +15,9 @@ vocs_parameters :
         'L1': [12,15]
         'r10': [14,16]
     'objectives' :
-        's_parameter' : 'S(0,0)','S(0,0)','S(0,0)'
-        'frequency' : 11.324+09, 11.424e+09, 11.524e+09
-        'optimization' : 'MINIMIZE','MINIMIZE','MINIMIZE'
+        's_parameter' : ['S(0,0)','S(0,0)','S(0,0)']
+        'frequency' : [11.324+09, 11.424e+09, 11.524e+09]
+        'optimization' : ['MINIMIZE','MINIMIZE','MINIMIZE']
         
 xopt_parameters:
   'generator': 'UpperConfidenceBoundGenerator'
