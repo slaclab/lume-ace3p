@@ -10,6 +10,7 @@
 #SBATCH --ntasks-per-node=120
 #SBATCH --time=0-01:00:00
 
+module load openmpi/v4.1.6-spack
 export OMPI_MCA_sharedfp=^lockedfile
 
 run-lume-ace3p demo_s3p_optimization.yaml
