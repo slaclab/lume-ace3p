@@ -4,8 +4,8 @@ workflow_parameters :
   'cubit_input' : 'pillbox-rtop.jou'
   'ace3p_input' : 'pillbox-rtop.omega3p'
   'rfpost_input' : 'pillbox-rtop.rfpost'
-  'ace3p_tasks' : 16
-  'ace3p_cores' : 16
+  'ace3p_tasks' : 12
+  'ace3p_cores' : 8
   'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_omega3p_workdir'
   'workdir_mode' : 'auto'
