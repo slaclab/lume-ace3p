@@ -1,9 +1,11 @@
 import sys
+import os
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 import numpy as np
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
 from lume_ace3p.run_xopt import run_xopt, run_lf_sweep
+from lume_ace3p.track3p import Track3PParticles
 
 
 #overwriting class from ruamel.yaml that will allow a file to be read in with repeat keys
@@ -131,6 +133,16 @@ def main():
             if 'constants' not in vocs_dict:
                 vocs_dict['constants'] = {}
             run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict)
+
+    if workflow_dict['mode'].lower() == 'particle_weight':
+        if workflow_dict['module'].lower() == 'track3p':
+            particle_params = lume_ace3p_data.get('particle_parameters')
+            particle_input = workflow_dict.get('particle_input')
+            particle_output = workflow_dict.get('particle_output')
+            workdir = workflow_dict.get('workdir', os.getcwd())
+            t3p = Track3PParticles(particle_input, particle_params,
+                                   output_file=particle_output, workdir=workdir)
+            t3p.run()
 
 
 if __name__ == '__main__':
