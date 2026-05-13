@@ -1,0 +1,13 @@
+workflow_parameters :
+  'mode' : 'particle_weight'
+  'module' : 'track3p'
+  'particle_input' : 'sample_track3p_particles.txt'
+  'particle_output' : 'track3p_particles_weighted.txt'
+
+particle_parameters :
+  'impact_order' : 1
+  'impact_face_id' : 4
+  'work_function' : 4.5
+  'dt' : 1.0e-10
+  'num_bins' : 8
+  'beta' : [50, 55, 60, 65, 65, 60, 55, 50]
