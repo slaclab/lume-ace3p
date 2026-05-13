@@ -25,6 +25,11 @@ class ACE3PWorkflow:
         self.skip_solver = workflow_dict.get('skip_solver', False)
         self.skip_acdtool = workflow_dict.get('skip_acdtool', False)
         self.skip_meshconvert = workflow_dict.get('skip_meshconvert', False)
+        # Dry run: explicit flag or auto-detect when ACE3P tools aren't available
+        self.dry_run = workflow_dict.get('dry_run', False)
+        if not self.dry_run and not os.environ.get('ACE3P_PATH', ''):
+            self.dry_run = True
+            print('ACE3P environment not configured, enabling dry run mode.')
 
     def _getworkdir(self, input_dict):
         if self.workdir_mode == 'manual':
@@ -108,6 +113,17 @@ class Omega3PWorkflow(ACE3PWorkflow):
             input_dict = self.input_dict
         self._getworkdir(input_dict)
 
+        if self.dry_run:
+            if not os.path.exists(self.workdir):
+                os.mkdir(self.workdir)
+            with open(os.path.join(self.workdir, 'DRY_RUN.txt'), 'w') as f:
+                f.write('Dry run mode: Cubit, Omega3P, and Acdtool steps skipped.\n')
+                f.write(f'Input parameters: {input_dict}\n')
+            self.acdtool_obj = None
+            if output_dict is None:
+                output_dict = self.output_dict
+            return self.evaluate(output_dict)
+
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None and not skip_cubit:
             self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
@@ -149,7 +165,11 @@ class Omega3PWorkflow(ACE3PWorkflow):
         #Read acdtool postprocess RF output and return values referenced in output_dict
         self.output_data = {}
         if output_dict is not None:
-            if self.acdtool_obj is not None:
+            if self.acdtool_obj is None:
+                for output_name in output_dict.keys():
+                    self.output_data[output_name] = float('nan')
+                return self.output_data
+            else:
                 for output_name, output_params in output_dict.items():
                     section = output_params[0]
                     if section == 'RoverQ':
@@ -227,6 +247,17 @@ class S3PWorkflow(ACE3PWorkflow):
             input_dict = self.input_dict
         self._getworkdir(input_dict)
 
+        if self.dry_run:
+            if not os.path.exists(self.workdir):
+                os.mkdir(self.workdir)
+            with open(os.path.join(self.workdir, 'DRY_RUN.txt'), 'w') as f:
+                f.write('Dry run mode: Cubit and S3P steps skipped.\n')
+                f.write(f'Input parameters: {input_dict}\n')
+            self.s3p_obj = None
+            if output_dict is None:
+                output_dict = self.output_dict
+            return self.evaluate(output_dict)
+
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None and not skip_cubit:
             self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
@@ -257,20 +288,26 @@ class S3PWorkflow(ACE3PWorkflow):
 
     def evaluate(self, output_dict):
         self.output_data = {}
-        if self.s3p_obj is not None:
-            assert (len(self.s3p_obj.output_data) > 0), ('No output data found, run S3P first.')
+        if self.s3p_obj is None:
+            self.output_data['IndexMap'] = {}
+            self.output_data['Frequency'] = np.array([0.0])
             if output_dict is not None:
-                self.output_data['IndexMap'] = self.s3p_obj.output_data['IndexMap']
-                self.output_data['Frequency'] = self.s3p_obj.output_data['Frequency']
-                for output_name, sparameter in output_dict.items():
-                    if isinstance(sparameter, list):
-                        sparameter = sparameter[0]
-                    if sparameter in self.s3p_obj.output_data.keys():
-                        self.output_data[output_name] = self.s3p_obj.output_data[sparameter]
-                    else:
-                        raise ValueError("Unknown section name '" + sparameter + "' in output dict.")
-            else:
-                self.output_data = self.s3p_obj.output_data
+                for output_name in output_dict.keys():
+                    self.output_data[output_name] = np.array([float('nan')])
+            return self.output_data
+        assert (len(self.s3p_obj.output_data) > 0), ('No output data found, run S3P first.')
+        if output_dict is not None:
+            self.output_data['IndexMap'] = self.s3p_obj.output_data['IndexMap']
+            self.output_data['Frequency'] = self.s3p_obj.output_data['Frequency']
+            for output_name, sparameter in output_dict.items():
+                if isinstance(sparameter, list):
+                    sparameter = sparameter[0]
+                if sparameter in self.s3p_obj.output_data.keys():
+                    self.output_data[output_name] = self.s3p_obj.output_data[sparameter]
+                else:
+                    raise ValueError("Unknown section name '" + sparameter + "' in output dict.")
+        else:
+            self.output_data = self.s3p_obj.output_data
         return self.output_data
 
     def run_sweep(self, input_dict=None, output_dict=None):
