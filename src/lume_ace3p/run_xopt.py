@@ -267,17 +267,18 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
             WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
             iteration_index += 1
 
-        while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
-            X.step()
-            if checking_tols:
-                #check to see if most recent data matches tolerance criteria. tolerance criteria only satisfied if all objectives meet criteria
-                for f in range(len(freqs)):
-                    if X.data[S_params[f]+'_'+str(freqs[f])].iloc[-1]<=tols[f]:
-                        tol_achieved = True
-                    else:
-                        tol_achieved = False
-            WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)                
-            iteration_index += 1
+        if 'max_iterations' in xopt_dict:
+            while iteration_index < xopt_dict['max_iterations'] and (not tol_achieved):
+                X.step()
+                if checking_tols:
+                    #check to see if most recent data matches tolerance criteria. tolerance criteria only satisfied if all objectives meet criteria
+                    for f in range(len(freqs)):
+                        if X.data[S_params[f]+'_'+str(freqs[f])].iloc[-1]<=tols[f]:
+                            tol_achieved = True
+                        else:
+                            tol_achieved = False
+                WriteXoptData('sim_output.txt', param_and_freq, X.data, iteration_index)
+                iteration_index += 1
                 
     #alternatively, if some kind of cost limit is established, run until a criteria or time limit is reached
     elif 'cost_budget' in xopt_dict.keys() or 'alotted_time' in xopt_dict.keys():
