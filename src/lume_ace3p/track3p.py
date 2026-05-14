@@ -19,8 +19,10 @@ class Track3PParticles:
         self.particle_file = particle_file
         self.output_file = output_file or particle_file.replace('.txt', '_modified.txt')
         self.workdir = workdir or os.getcwd()
-        self.impact_order = particle_params.get('impact_order')
-        self.impact_face_id = particle_params.get('impact_face_id')
+        impact_order = particle_params.get('impact_order')
+        impact_face_id = particle_params.get('impact_face_id')
+        self.impact_order = impact_order if isinstance(impact_order, list) else [impact_order]
+        self.impact_face_id = impact_face_id if isinstance(impact_face_id, list) else [impact_face_id]
         self.work_function = particle_params.get('work_function')
         self.dt = particle_params.get('dt')
         self.beta = np.array(particle_params.get('beta'))
@@ -39,8 +41,8 @@ class Track3PParticles:
                                 header=None, names=TRACK3P_COLUMNS)
 
     def filter_particles(self):
-        mask = (self.data['ImpactOrder'] == self.impact_order) & \
-               (self.data['ImpactFaceID'] == self.impact_face_id)
+        mask = (self.data['ImpactOrder'].isin(self.impact_order)) & \
+               (self.data['ImpactFaceID'].isin(self.impact_face_id))
         self.filtered = self.data[mask].copy()
 
     def assign_bins(self):
@@ -90,5 +92,6 @@ class Track3PParticles:
         print(f'Track3P particle file written: {self.output_file}')
         print(f'  Filtered particles: {len(self.filtered)} '
               f'(ImpactOrder={self.impact_order}, ImpactFaceID={self.impact_face_id})')
+        print(f'  Bin counts: {np.bincount(self.filtered["Bin"], minlength=self.num_bins).tolist()}')
         print(f'  Bins: {self.num_bins}, Beta values: {self.beta.tolist()}')
         return self.filtered
