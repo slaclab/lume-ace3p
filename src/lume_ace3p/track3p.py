@@ -23,8 +23,8 @@ class Track3PParticles:
         self.impact_face_id = particle_params.get('impact_face_id')
         self.work_function = particle_params.get('work_function')
         self.dt = particle_params.get('dt')
-        self.num_bins = particle_params.get('num_bins')
         self.beta = np.array(particle_params.get('beta'))
+        self.num_bins = particle_params.get('num_bins', len(self.beta))
         self.bin_edges = particle_params.get('bin_edges', None)
         if self.bin_edges is not None:
             self.bin_edges = np.array(self.bin_edges)
