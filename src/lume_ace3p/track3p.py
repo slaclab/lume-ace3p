@@ -25,6 +25,11 @@ class Track3PParticles:
         self.dt = particle_params.get('dt')
         self.num_bins = particle_params.get('num_bins')
         self.beta = np.array(particle_params.get('beta'))
+        self.bin_edges = particle_params.get('bin_edges', None)
+        if self.bin_edges is not None:
+            self.bin_edges = np.array(self.bin_edges)
+            assert len(self.bin_edges) == self.num_bins + 1, (
+                f"Length of bin_edges ({len(self.bin_edges)}) must be num_bins + 1 ({self.num_bins + 1})")
         assert len(self.beta) == self.num_bins, (
             f"Length of beta ({len(self.beta)}) must match num_bins ({self.num_bins})")
 
@@ -40,9 +45,18 @@ class Track3PParticles:
 
     def assign_bins(self):
         z_vals = self.filtered['Initial_z']
-        bin_edges = np.linspace(z_vals.min(), z_vals.max() + 1e-15, self.num_bins + 1)
+        if self.bin_edges is not None:
+            bin_edges = self.bin_edges
+        else:
+            bin_edges = np.linspace(z_vals.min(), z_vals.max() + 1e-15, self.num_bins + 1)
         self.filtered['Bin'] = np.digitize(z_vals, bin_edges) - 1
         self.filtered['Bin'] = self.filtered['Bin'].clip(0, self.num_bins - 1)
+        # Warn if any bins are empty
+        bin_counts = np.bincount(self.filtered['Bin'], minlength=self.num_bins)
+        empty_bins = np.where(bin_counts == 0)[0]
+        if len(empty_bins) > 0:
+            print(f'WARNING: Bins {empty_bins.tolist()} have no particles. '
+                  f'Check that num_bins matches the particle distribution.')
 
     def calculate_particle_weight(self):
         term1 = (1.54 * 10**(-6 + (4.52 / np.sqrt(self.work_function)))) / self.work_function
