@@ -50,9 +50,15 @@ except RuntimeError as e:
     for var in ('ACE3P_PATH', 'CUBIT_PATH', 'MPI_CALLER'):
         os.environ.setdefault(var, '')
 
-from .workflow import Omega3PWorkflow, S3PWorkflow
+# Geant4 env vars are set by the user's external setup script; ensure they exist
+# so module imports do not fail when running unrelated workflows.
+for var in ('GEANT4_APP_PATH', 'GEANT4_APP_EXE'):
+    os.environ.setdefault(var, '')
+
+from .workflow import Omega3PWorkflow, S3PWorkflow, Geant4Workflow
 from .cubit import Cubit
 from .ace3p import Omega3P, S3P
 from .acdtool import Acdtool
+from .geant4 import Geant4
 from .track3p import Track3PParticles
 from .tools import WriteOmega3PDataTable, WriteS3PDataTable, WriteXoptData

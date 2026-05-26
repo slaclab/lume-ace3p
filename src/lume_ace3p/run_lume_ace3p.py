@@ -3,7 +3,7 @@ import os
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import SafeConstructor
 import numpy as np
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow
+from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow, Geant4Workflow
 from lume_ace3p.run_xopt import run_xopt, run_lf_sweep
 from lume_ace3p.track3p import Track3PParticles
 
@@ -97,6 +97,7 @@ def main():
     input_to_dict(lume_ace3p_data.get('input_parameters'), input_dict)
     input_to_dict(lume_ace3p_data.get('cubit_input_parameters'), input_dict)
     input_to_dict(lume_ace3p_data.get('ace3p_input_parameters'), input_dict, ace3p=True)
+    input_to_dict(lume_ace3p_data.get('geant4_input_parameters'), input_dict)
 
     #Define output dictionary with data to extract from acdtool (optional)
     output_dict = lume_ace3p_data.get('output_parameters') #None type if not present
@@ -143,6 +144,13 @@ def main():
             t3p = Track3PParticles(particle_input, particle_params,
                                    output_file=particle_output, workdir=workdir)
             t3p.run()
+
+    if workflow_dict['mode'].lower() == 'geant4':
+        if workflow_dict['module'].lower() == 'geant4':
+            particle_params = lume_ace3p_data.get('particle_parameters')
+            workflow = Geant4Workflow(workflow_dict, input_dict, output_dict,
+                                      particle_params=particle_params)
+            workflow.run()
 
 
 if __name__ == '__main__':
