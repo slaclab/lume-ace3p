@@ -224,7 +224,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     evaluator = Evaluator(function=sim_function)
     generator = None
     if xopt_dict['generator'] == 'NelderMeadGenerator':
-        from xopt.generators.scipy.neldermead import NelderMeadGenerator
+        from xopt.generators.sequential.neldermead import NelderMeadGenerator
         generator = NelderMeadGenerator(vocs=vocs)
     elif xopt_dict['generator'] == 'ExpectedImprovementGenerator':
         from xopt.generators.bayesian import ExpectedImprovementGenerator
