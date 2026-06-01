@@ -13,7 +13,7 @@ TRACK3P_COLUMNS = [
 ]
 
 
-class Track3PParticles:
+class Particles:
 
     def __init__(self, particle_file, particle_params, output_file=None, workdir=None):
         self.particle_file = particle_file

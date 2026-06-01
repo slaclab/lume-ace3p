@@ -5,7 +5,7 @@ from ruamel.yaml.constructor import SafeConstructor
 import numpy as np
 from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow, Geant4Workflow
 from lume_ace3p.run_xopt import run_xopt, run_lf_sweep
-from lume_ace3p.track3p import Track3PParticles
+from lume_ace3p.particles import Particles
 
 
 #overwriting class from ruamel.yaml that will allow a file to be read in with repeat keys
@@ -141,9 +141,9 @@ def main():
             particle_input = workflow_dict.get('particle_input')
             particle_output = workflow_dict.get('particle_output')
             workdir = workflow_dict.get('workdir', os.getcwd())
-            t3p = Track3PParticles(particle_input, particle_params,
-                                   output_file=particle_output, workdir=workdir)
-            t3p.run()
+            particles = Particles(particle_input, particle_params,
+                                  output_file=particle_output, workdir=workdir)
+            particles.run()
 
     if workflow_dict['mode'].lower() == 'geant4':
         if workflow_dict['module'].lower() == 'geant4':
