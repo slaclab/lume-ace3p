@@ -6,7 +6,7 @@ from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import Omega3P, S3P
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
-from lume_ace3p.track3p import Track3PParticles
+from lume_ace3p.particles import Particles
 from lume_ace3p.tools import WriteOmega3PDataTable, WriteS3PDataTable
 
 class ACE3PWorkflow:
@@ -408,10 +408,10 @@ class Geant4Workflow(ACE3PWorkflow):
             dest = os.path.join(self.workdir, src_basename)
             if not os.path.isfile(dest):
                 shutil.copy(self.particle_input, self.workdir)
-            t3p = Track3PParticles(src_basename, self.particle_params,
-                                   output_file=self.particle_output, workdir=self.workdir)
-            t3p.run()
-            particle_file_path = os.path.join(self.workdir, t3p.output_file)
+            particles = Particles(src_basename, self.particle_params,
+                                  output_file=self.particle_output, workdir=self.workdir)
+            particles.run()
+            particle_file_path = os.path.join(self.workdir, particles.output_file)
         else:
             particle_file_path = self.geant4_particle_file
             if particle_file_path is not None:

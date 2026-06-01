@@ -60,5 +60,5 @@ from .cubit import Cubit
 from .ace3p import Omega3P, S3P
 from .acdtool import Acdtool
 from .geant4 import Geant4
-from .track3p import Track3PParticles
+from .particles import Particles
 from .tools import WriteOmega3PDataTable, WriteS3PDataTable, WriteXoptData

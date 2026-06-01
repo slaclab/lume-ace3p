@@ -363,3 +363,11 @@ class T3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 't3p.out'
+
+class Track3P(ACE3P):
+
+    module_name = 'track3p'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.output_file = 'track3p.out'
