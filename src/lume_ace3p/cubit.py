@@ -5,12 +5,11 @@ from lume.base import CommandWrapper
 
 class Cubit(CommandWrapper):
 
-    MPI_CALLER = os.environ['MPI_CALLER']
-    ACE3P_PATH = os.environ['ACE3P_PATH']
-    CUBIT_PATH = os.environ['CUBIT_PATH']
-    
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, ace3p_path=None, cubit_path=None, mpi_caller=None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
+        self.CUBIT_PATH = cubit_path if cubit_path is not None else os.environ.get('CUBIT_PATH', '')
+        self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         if self.workdir is None:
             self.workdir = os.getcwd()
         if not os.path.exists(self.workdir):
