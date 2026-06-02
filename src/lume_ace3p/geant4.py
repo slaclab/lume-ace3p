@@ -6,12 +6,13 @@ from lume.base import CommandWrapper
 
 class Geant4(CommandWrapper):
 
-    MPI_CALLER = os.environ.get('MPI_CALLER', '')
-    GEANT4_APP_PATH = os.environ.get('GEANT4_APP_PATH', '')
-    GEANT4_APP_EXE  = os.environ.get('GEANT4_APP_EXE', '')
-
-    def __init__(self, *args, geant4_threads=1, geant4_opts='', **kwargs):
+    def __init__(self, *args, geant4_threads=1, geant4_opts='',
+                 mpi_caller=None, geant4_app_path=None, geant4_app_exe=None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
+        self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
+        self.GEANT4_APP_PATH = geant4_app_path if geant4_app_path is not None else os.environ.get('GEANT4_APP_PATH', '')
+        self.GEANT4_APP_EXE = geant4_app_exe if geant4_app_exe is not None else os.environ.get('GEANT4_APP_EXE', '')
         self.geant4_threads = geant4_threads
         self.geant4_opts = geant4_opts if geant4_opts is not None else ''
         if self.workdir is None:

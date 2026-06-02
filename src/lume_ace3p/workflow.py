@@ -7,9 +7,12 @@ from lume_ace3p.ace3p import Omega3P, S3P
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles
+from lume_ace3p.paths import resolve_paths
 from lume_ace3p.tools import WriteOmega3PDataTable, WriteS3PDataTable
 
 class ACE3PWorkflow:
+
+    _requires_ace3p = True
 
     def __init__(self, workflow_dict, input_dict=None, output_dict=None):
         self.input_dict = input_dict
@@ -28,9 +31,13 @@ class ACE3PWorkflow:
         self.skip_solver = workflow_dict.get('skip_solver', False)
         self.skip_acdtool = workflow_dict.get('skip_acdtool', False)
         self.skip_meshconvert = workflow_dict.get('skip_meshconvert', False)
-        # Dry run: explicit flag or auto-detect when ACE3P tools aren't available
+        # Resolve executable paths: YAML > env > site default > autodetect
+        self.paths = resolve_paths(workflow_dict.get('paths'))
+        # Dry run: explicit flag or auto-detect when ACE3P tools aren't available.
+        # Subclasses that don't depend on ACE3P (e.g. Geant4Workflow) override
+        # _requires_ace3p and re-evaluate dry_run with their own criteria.
         self.dry_run = workflow_dict.get('dry_run', False)
-        if not self.dry_run and not os.environ.get('ACE3P_PATH', ''):
+        if self._requires_ace3p and not self.dry_run and not self.paths['ace3p']:
             self.dry_run = True
             print('ACE3P environment not configured, enabling dry run mode.')
 
@@ -129,7 +136,10 @@ class Omega3PWorkflow(ACE3PWorkflow):
 
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None and not skip_cubit:
-            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
+            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir,
+                                   ace3p_path=self.paths['ace3p'],
+                                   cubit_path=self.paths['cubit'],
+                                   mpi_caller=self.paths['mpi'])
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
             self.cubit_obj.run(mcflag=not skip_meshconvert)
@@ -144,7 +154,9 @@ class Omega3PWorkflow(ACE3PWorkflow):
                                   ace3p_tasks=self.ace3p_tasks,
                                   ace3p_cores=self.ace3p_cores,
                                   ace3p_opts=self.ace3p_opts,
-                                  workdir=self.workdir)
+                                  workdir=self.workdir,
+                                  ace3p_path=self.paths['ace3p'],
+                                  mpi_caller=self.paths['mpi'])
             if input_dict is not None:
                 self.omega3p_obj.set_value(input_dict)
             self.omega3p_obj.run()
@@ -153,7 +165,9 @@ class Omega3PWorkflow(ACE3PWorkflow):
 
         #Load acdtool rfpost input and run
         if self.rfpost_input is not None and not skip_acdtool:
-            self.acdtool_obj = Acdtool(self.rfpost_input, workdir=self.workdir)
+            self.acdtool_obj = Acdtool(self.rfpost_input, workdir=self.workdir,
+                                       ace3p_path=self.paths['ace3p'],
+                                       mpi_caller=self.paths['mpi'])
             self.acdtool_obj.run()
         elif skip_acdtool:
             print('Acdtool postprocess step skipped.')
@@ -263,7 +277,10 @@ class S3PWorkflow(ACE3PWorkflow):
 
         #Load Cubit journal, update values, and run
         if self.cubit_input is not None and not skip_cubit:
-            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir)
+            self.cubit_obj = Cubit(self.cubit_input, workdir=self.workdir,
+                                   ace3p_path=self.paths['ace3p'],
+                                   cubit_path=self.paths['cubit'],
+                                   mpi_caller=self.paths['mpi'])
             if input_dict is not None:
                 self.cubit_obj.set_value(input_dict)
             self.cubit_obj.run(mcflag=not skip_meshconvert)
@@ -278,7 +295,9 @@ class S3PWorkflow(ACE3PWorkflow):
                                ace3p_tasks=self.ace3p_tasks,
                                ace3p_cores=self.ace3p_cores,
                                ace3p_opts=self.ace3p_opts,
-                               workdir=self.workdir)
+                               workdir=self.workdir,
+                               ace3p_path=self.paths['ace3p'],
+                               mpi_caller=self.paths['mpi'])
             if input_dict is not None:
                 self.s3p_obj.set_value(input_dict)
             self.s3p_obj.run()
@@ -351,6 +370,8 @@ class S3PWorkflow(ACE3PWorkflow):
 
 class Geant4Workflow(ACE3PWorkflow):
 
+    _requires_ace3p = False
+
     def __init__(self, workflow_dict, input_dict=None, output_dict=None,
                  particle_params=None):
         super().__init__(workflow_dict, input_dict, output_dict)
@@ -367,8 +388,7 @@ class Geant4Workflow(ACE3PWorkflow):
         # Re-evaluate dry_run for Geant4: ACE3P_PATH is irrelevant here.
         # Honor an explicit YAML setting; otherwise auto-enable only if Geant4 env is unset.
         if 'dry_run' not in workflow_dict:
-            self.dry_run = (not os.environ.get('GEANT4_APP_PATH', '')
-                            or not os.environ.get('GEANT4_APP_EXE', ''))
+            self.dry_run = not (self.paths['geant4_app_path'] and self.paths['geant4_app_exe'])
             if self.dry_run:
                 print('Geant4 environment not configured, enabling dry run mode.')
 
@@ -440,7 +460,10 @@ class Geant4Workflow(ACE3PWorkflow):
                 self.geant4_obj = Geant4(self.geant4_input,
                                          geant4_threads=self.geant4_threads,
                                          geant4_opts=self.geant4_opts,
-                                         workdir=self.workdir)
+                                         workdir=self.workdir,
+                                         mpi_caller=self.paths['mpi'],
+                                         geant4_app_path=self.paths['geant4_app_path'],
+                                         geant4_app_exe=self.paths['geant4_app_exe'])
                 self.geant4_obj.set_value({'/run/numberOfThreads': self.geant4_threads})
                 if particle_file_path is not None:
                     self.geant4_obj.set_particle_file(particle_file_path,
@@ -455,7 +478,10 @@ class Geant4Workflow(ACE3PWorkflow):
         self.geant4_obj = Geant4(self.geant4_input,
                                  geant4_threads=self.geant4_threads,
                                  geant4_opts=self.geant4_opts,
-                                 workdir=self.workdir)
+                                 workdir=self.workdir,
+                                 mpi_caller=self.paths['mpi'],
+                                 geant4_app_path=self.paths['geant4_app_path'],
+                                 geant4_app_exe=self.paths['geant4_app_exe'])
         self.geant4_obj.set_value({'/run/numberOfThreads': self.geant4_threads})
         if particle_file_path is not None:
             self.geant4_obj.set_particle_file(os.path.basename(particle_file_path),
