@@ -10,8 +10,11 @@ To set up a parameter sweep, two to four dictionaries must be provided in the
 
 - `workflow_parameters` — filenames, HPC settings, and other configuration
   used for the parameter sweep.
-- `cubit_input_parameters` — input names and corresponding vector values to
-  sweep through, for parameters pertaining to the geometry.
+- `cubit_input_parameters` (or, equivalently, `input_parameters`) — input
+  names and corresponding vector values to sweep through, for parameters
+  pertaining to the geometry. The two keys are aliases; the Omega3P
+  example below uses `cubit_input_parameters` for clarity, while the S3P
+  example uses `input_parameters`.
 - `ace3p_input_parameters` — input names and corresponding vector values to
   sweep through, for parameters pertaining to ACE3P settings.
 - `output_parameters` — output quantities to store in an output array for
@@ -219,3 +222,118 @@ interactive plot. To use it, run `s3p_sweep_plot.py` and load the appropriate
 S3P `sweep_output_file` from the file prompt. Try `s3p_demo_sweep_output.txt`
 in the `plotting` folder for an interactive demo. See [](plotting.md) for
 details.
+
+## Gaussian-process (low-fidelity) parameter sweep
+
+For S3P, `lume-ace3p` also supports a low-fidelity sweep mode that fits a
+Gaussian Process to the simulator output and then samples the GP on a
+tensor grid — useful for cheaply exploring parameter space without
+running every grid point through S3P. The mode is selected with
+`mode: 'gp_parameter_sweep'` and `module: 's3p'`.
+
+Three sections must be supplied in addition to `workflow_parameters`:
+
+- `sweep_parameters` — the tensor grid the trained GP is evaluated on.
+- `vocs_parameters` — Xopt VOCS for the exploration phase. The
+  `objectives` block uses `'explore'` as the optimization keyword.
+- `xopt_parameters` — Xopt driver settings. `num_step` controls the
+  number of GP-guided exploration steps; `num_random` (default 5)
+  controls the random-seeding phase; `improvement_threshold` (default
+  0.01) and `patience` (default 5) configure early stopping.
+
+A complete example is shipped as
+[examples/lf_param_sweep.yaml](https://github.com/slaclab/lume-ace3p/blob/main/examples/lf_param_sweep.yaml):
+
+```yaml
+workflow_parameters :
+    'mode' : 'GP_parameter_sweep'
+    'module' : 's3p'
+    'cubit_input': 'bend-90degree_mf.jou'
+    'ace3p_input': 'bend-90degree_mf.s3p'
+    'ace3p_tasks': 16
+    'ace3p_cores': 4
+
+sweep_parameters :
+    'cornercut' :
+        min : 12.5
+        max : 13.5
+        num : 10
+    'wgwidth' :
+        min : 21
+        max : 22
+        num : 10
+
+vocs_parameters :
+    'variables' :
+        'cornercut': [12.5, 13.5]
+        'wgwidth':   [21, 22]
+    'objectives' :
+        'S(1,1)_12.0e+09': 'explore'
+
+xopt_parameters :
+    num_step : 3
+```
+
+The GP-sampled grid is written to `sweep_output.txt`; the actual S3P
+evaluations performed during exploration are written to
+`sim_output.txt` and `sim_output_all_values.txt`.
+
+## Track3P particle weighting
+
+The `mode: 'particle_weight'` workflow is a standalone post-processing
+step that reads a Track3P particle dump, filters by impact order /
+face id, bins by axial position, and writes a weighted-particle file
+suitable as a Geant4 source. No ACE3P invocation occurs.
+
+```yaml
+workflow_parameters :
+  'mode' : 'particle_weight'
+  'module' : 'track3p'
+  'particle_input' : 'sample_track3p_particles.txt'
+  'particle_output' : 'track3p_particles_weighted.txt'
+
+particle_parameters :
+  'impact_order'   : 1
+  'impact_face_id' : 4
+  'work_function'  : 4.5
+  'dt'             : 1.0e-10
+  'num_bins'       : 8
+  'beta'           : [50, 55, 60, 65, 65, 60, 55, 50]
+```
+
+See [](yaml_reference.md#particle_parameters) for the full key list.
+
+## Geant4 dose-calculation workflow
+
+The `mode: 'geant4'` workflow drives a Geant4 application using a macro
+file, optional geometry files, and a particle-source file. The source
+file can either be supplied directly via `geant4_particle_file` or
+generated on the fly from a Track3P dump by also providing a
+`particle_parameters` section (chaining the same logic as
+`mode: 'particle_weight'`).
+
+A minimal YAML skeleton:
+
+```yaml
+workflow_parameters :
+  'mode' : 'geant4'
+  'module' : 'geant4'
+  'geant4_input'          : 'dose.mac'
+  'geant4_geometry_files' : ['cavity.gdml']
+  'geant4_particle_file'  : 'track3p_particles_weighted.txt'
+  'geant4_scoring_output' : 'dose_scoring.txt'
+  'geant4_threads'        : 4
+
+geant4_input_parameters :
+  '/gun/energy' : 1.0
+  # additional macro overrides…
+
+output_parameters :
+  'total_dose' : ['scoring', 'total']
+  'peak_dose'  : ['scoring', 'peak']
+```
+
+Geant4 paths are resolved through the same precedence chain as ACE3P —
+see [](installation.md#executable-paths). If `GEANT4_APP_PATH` /
+`GEANT4_APP_EXE` (or YAML / site-default equivalents) are unset,
+dry-run mode is auto-enabled.

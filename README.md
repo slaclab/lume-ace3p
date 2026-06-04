@@ -14,9 +14,10 @@ by Ryan Roussel for optimization.
 
 The user submits a batch script to HPC nodes which calls `run_lume_ace3p.py`
 with a user-defined YAML configuration. The entry point automatically calls
-Cubit, the requested ACE3P module (Omega3P, S3P, …), and acdtool, parses the
-output, and writes results to a tab-delimited file or hands them to Xopt for
-optimization.
+Cubit, the requested ACE3P module (Omega3P, S3P, T3P, or Track3P), and
+acdtool, parses the output, and writes results to a tab-delimited file or
+hands them to Xopt for optimization. A separate Geant4 module is also
+supported for downstream dose calculations driven by Track3P particle output.
 
 ## Documentation
 
