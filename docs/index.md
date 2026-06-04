@@ -19,9 +19,10 @@ for optimization.
 A user submits a batch script to HPC nodes which calls `run_lume_ace3p.py` with a
 user-defined YAML input file. That input file defines dictionaries for workflow
 settings, input parameters, and output parameters. From there, the entry point
-automatically calls Cubit, the requested ACE3P module (Omega3P, S3P, …), and
-acdtool, parses the output, and writes results to a tab-delimited file or hands
-them to Xopt for optimization.
+automatically calls Cubit, the requested ACE3P module (Omega3P, S3P, T3P, or
+Track3P), and acdtool, parses the output, and writes results to a tab-delimited
+file or hands them to Xopt for optimization. A separate Geant4 module is also
+supported for downstream dose calculations driven by Track3P particle output.
 
 To run a parameter sweep or optimization the user typically provides:
 

@@ -1,7 +1,8 @@
 # Installation and setup
 
-`lume-ace3p` is a Python package that depends on `lume-base>=0.3.3` and
-`xopt>=2.2.2`. On NERSC Perlmutter and SLAC S3DF, pre-made conda environments
+`lume-ace3p` is a Python package that requires Python 3.9 or newer and
+depends on `lume-base>=0.3.3`, `xopt>=2.2.2`, `ruamel.yaml`, `numpy`, and
+`pandas`. On NERSC Perlmutter and SLAC S3DF, pre-made conda environments
 already contain `lume-ace3p` and its dependencies, and no installation step
 is needed — just activate the environment. On any other system, install with
 pip from a clone of the repository.
@@ -28,8 +29,9 @@ package can be imported as `lume_ace3p`.
 
 :::{note}
 ACE3P itself is *not* installed by pip. To run real workflows you need an
-ACE3P installation reachable through the `ACE3P_PATH` environment variable
-(see [](#dry-run-mode) below for testing without ACE3P).
+ACE3P installation reachable through one of the resolution mechanisms
+described in [](#executable-paths) below (or see [](#dry-run-mode) for
+testing without ACE3P).
 :::
 
 ## Perlmutter (NERSC)
@@ -97,6 +99,49 @@ To run the examples from an S3DF iana terminal:
 4. Submit a batch job from one of the *S3DF* examples with `sbatch`.
 5. View results in the folder the job was run from.
 
+(executable-paths)=
+## Executable paths
+
+`lume-ace3p` needs to know where to find ACE3P, Cubit, the MPI launcher,
+and (for Geant4 workflows) the Geant4 application. Each path is resolved
+independently, in the following order of precedence (highest first):
+
+1. **YAML override** — a `paths` mapping in `workflow_parameters`, e.g.
+
+   ```yaml
+   workflow_parameters :
+     'paths' :
+       'ace3p' : '/path/to/ace3p/bin/'
+       'cubit' : '/path/to/cubit/'
+       'mpi'   : 'srun'
+       'geant4_app_path' : '/path/to/geant4-app/'
+       'geant4_app_exe'  : 'my_geant4_app'
+   ```
+
+2. **Environment variable** — one per tool:
+
+   | Path key          | Environment variable |
+   |-------------------|----------------------|
+   | `ace3p`           | `ACE3P_PATH`         |
+   | `cubit`           | `CUBIT_PATH`         |
+   | `mpi`             | `MPI_CALLER`         |
+   | `geant4_app_path` | `GEANT4_APP_PATH`    |
+   | `geant4_app_exe`  | `GEANT4_APP_EXE`     |
+
+3. **Site default** — when running on a recognized site (Perlmutter or
+   S3DF), built-in defaults are used. Site detection compares the
+   hostname (via `NERSC_HOST`, `HOSTNAME`, or `os.uname()`) against the
+   prefixes `'perlmutter'` and `'sdf'`.
+
+4. **Autodetect** — for `ace3p` and `cubit`, `lume-ace3p` looks for the
+   relevant binary on `PATH` (e.g. `omega3p`, `cubit`) and falls back to
+   a recursive glob under `$HOME` (`**/ace3p/bin`, `**/Cubit*`). For
+   `mpi`, it falls back to `mpirun` on `PATH`. The Geant4 keys are not
+   autodetected — they must be set explicitly when needed.
+
+If a path cannot be resolved, the corresponding tool is unavailable and
+the workflow auto-enables dry-run mode (see below).
+
 (dry-run-mode)=
 ## Dry-run mode
 
@@ -111,12 +156,21 @@ or acdtool. This is useful for:
 
 There are two ways to enable it:
 
-1. **Automatic.** If the `ACE3P_PATH` environment variable is unset when the
-   workflow runs, dry-run mode is enabled automatically and `lume-ace3p`
-   prints:
+1. **Automatic.** If the `ace3p` path cannot be resolved (no YAML
+   override, no `ACE3P_PATH`, no site default, and no autodetected
+   binary), dry-run mode is enabled automatically for ACE3P workflows
+   and `lume-ace3p` prints:
 
    ```
    ACE3P environment not configured, enabling dry run mode.
+   ```
+
+   For Geant4 workflows, the analogous trigger is that *both*
+   `geant4_app_path` and `geant4_app_exe` are unresolved, in which case
+   `lume-ace3p` prints:
+
+   ```
+   Geant4 environment not configured, enabling dry run mode.
    ```
 
 2. **Explicit.** Add `dry_run: True` to `workflow_parameters` in the YAML

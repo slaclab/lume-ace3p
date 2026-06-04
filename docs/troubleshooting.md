@@ -2,6 +2,44 @@
 
 ## FAQs
 
+### Why did `lume-ace3p` enable dry-run mode by itself?
+
+When you see one of these messages on startup —
+
+```
+ACE3P environment not configured, enabling dry run mode.
+```
+```
+Geant4 environment not configured, enabling dry run mode.
+```
+
+— `lume-ace3p` could not resolve the path to ACE3P (or to the Geant4
+application, for `mode: 'geant4'`) through any of the four resolution
+mechanisms: a `paths` mapping in `workflow_parameters`, the relevant
+environment variable (`ACE3P_PATH`, `GEANT4_APP_PATH` /
+`GEANT4_APP_EXE`), a built-in site default (Perlmutter / S3DF), or
+autodetection on `PATH`/`$HOME`. The workflow still runs end-to-end in
+Python but skips the external solver call and writes a `DRY_RUN.txt`
+marker in each working directory. To run a real workflow, set one of
+those paths — see [](installation.md#executable-paths) for the full
+precedence chain.
+
+### `lume-ace3p` is using the wrong ACE3P/Cubit/MPI binary — how do I override it?
+
+Add a `paths` mapping under `workflow_parameters`. YAML overrides take
+precedence over environment variables, site defaults, and autodetection:
+
+```yaml
+workflow_parameters :
+  'paths' :
+    'ace3p' : '/my/custom/ace3p/bin/'
+    'cubit' : '/my/custom/cubit/'
+    'mpi'   : 'srun'
+```
+
+This is the recommended way to pin a specific build for a given
+workflow file without changing your shell environment.
+
 ### Why does `lume-ace3p` fail to find the mesh file generated from Cubit?
 
 Check that the `.gen` filename provided in the Cubit journal `export`
