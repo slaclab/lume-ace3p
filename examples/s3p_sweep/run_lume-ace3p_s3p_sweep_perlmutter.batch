@@ -3,12 +3,10 @@
 #SBATCH --constraint=cpu
 #SBATCH --account=m349
 #SBATCH --qos=debug
-#SBATCH --job-name=lume-ace3p_mf_demo
+#SBATCH --job-name=lume-ace3p_psweep_demo
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
 #SBATCH --time=0-00:30:00
 
-export OMPI_MCA_sharedfp=^lockedfile
-
-run-lume-ace3p demo_s3p_mf_optimization.yaml
+run-lume-ace3p s3p_sweep.yaml

@@ -2,14 +2,15 @@
 
 #SBATCH --partition=milano
 #SBATCH --account=rfar:regular
-#SBATCH --job-name=lume-ace3p_xopt_demo
+#SBATCH --job-name=lume-ace3p_psweep_demo
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt
 #SBATCH --nodes=1
 #SBATCH --mem=480gb
+#SBATCH --ntasks-per-node=120
 #SBATCH --time=0-00:30:00
 
+module load openmpi/v4.1.6-spack
 export OMPI_MCA_sharedfp=^lockedfile
-export PYTHONPATH='/sdf/group/rfar/lume-ace3p'
 
-python lume-ace3p_omega3p_xopt.py
+run-lume-ace3p omega3p_ace3p_param_sweep.yaml

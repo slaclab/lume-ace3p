@@ -182,7 +182,7 @@ of the 2-port system (`S(0,0)`, `S(0,1)`, `S(1,0)`, `S(1,1)`).
 
 Identical to the previous example, except no `.s3p` file is submitted. All
 S3P parameters are specified in `ace3p_input_parameters`. Modify the S3P
-sweep `.batch` file to run `demo_s3p_sweep_no_s3p_file.yaml`.
+sweep `.batch` file to run `s3p_sweep_no_s3p_file.yaml`.
 
 ```yaml
 ace3p_input_parameters :
@@ -242,7 +242,7 @@ Three sections must be supplied in addition to `workflow_parameters`:
   0.01) and `patience` (default 5) configure early stopping.
 
 A complete example is shipped as
-[examples/lf_param_sweep.yaml](https://github.com/slaclab/lume-ace3p/blob/main/examples/lf_param_sweep.yaml):
+[examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml](https://github.com/slaclab/lume-ace3p/blob/main/examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml):
 
 ```yaml
 workflow_parameters :

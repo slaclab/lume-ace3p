@@ -9,4 +9,4 @@
 #SBATCH --nodes=1
 #SBATCH --time=0-00:30:00
 
-run-lume-ace3p demo_omega3p_ace3p_param_sweep.yaml
+run-lume-ace3p omega3p_ace3p_param_sweep.yaml
