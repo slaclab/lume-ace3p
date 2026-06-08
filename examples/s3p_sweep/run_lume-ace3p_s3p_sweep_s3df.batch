@@ -13,4 +13,4 @@
 module load openmpi/v4.1.6-spack
 export OMPI_MCA_sharedfp=^lockedfile
 
-run-lume-ace3p demo_s3p_sweep.yaml
+run-lume-ace3p s3p_sweep.yaml

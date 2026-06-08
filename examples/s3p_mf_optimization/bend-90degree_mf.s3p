@@ -1,0 +1,29 @@
+ModelInfo: {
+  File: ./bend-90degree.ncdf
+
+  BoundaryCondition: {
+    Exterior: 6
+    Waveguide: 7, 8
+  }
+}
+
+FiniteElement: {
+  Order: 2
+  CurvedSurfaces: on
+}
+
+FrequencyScan: { 
+  Start: 11.0e+9
+  End:   13.0e+9
+  Interval: 0.1e+9
+}
+
+Port: {
+  ReferenceNumber: 7
+  NumberOfModes: 1
+}
+
+Port: {
+  ReferenceNumber: 8
+  NumberOfModes: 1
+}
