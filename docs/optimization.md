@@ -265,6 +265,12 @@ def sim_function(input_dict):
     return output_data
 ```
 
+The `input_dict` Xopt hands in is a plain `{var_name: scalar}` mapping
+of Cubit variable values; the workflow constructor coerces it into a
+{py:class}`~lume_ace3p.inputs.WorkflowInputs` with that mapping in the
+`cubit` bucket. The ACE3P input file specified by `ace3p_input` is
+copied through to each working directory unchanged.
+
 The Xopt object is built with a chosen optimizer, the VOCS, and the `sim`
 function:
 
