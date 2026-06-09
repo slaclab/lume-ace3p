@@ -126,11 +126,31 @@ provided). The same `min`/`max`/`num` and list conventions as
 `input_parameters` apply to leaf values; non-list scalars are written
 through unchanged.
 
-Two scalar attributes have special meaning when present in a sub-mapping:
+Internally, this block is parsed as an *ordered list of key/value pairs*
+rather than a Python dict, which means **same-named sibling sections are
+preserved**. For example, two `Port:` blocks at the same level are kept
+as two distinct entries and merged positionally into the matching pair of
+`Port` sections in the ACE3P input file:
 
-- `Attribute` — disambiguates blocks that share a name; rendered as
-  `BlockName|<value>|` in the patched ACE3P input.
-- `ReferenceNumber` — likewise, rendered as `BlockName?<value>?`.
+```yaml
+ace3p_input_parameters :
+  'Port' :
+    'ReferenceNumber' : 7
+    'NumberOfModes' : 1
+  'Port' :
+    'ReferenceNumber' : 8
+    'NumberOfModes' : 1
+```
+
+The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`,
+etc. entries; each block lines up positionally with its counterpart in
+the ACE3P input. Use a `ReferenceNumber:` (or other discriminating leaf)
+inside each block to keep the mapping unambiguous when reading the YAML.
+
+Fast path: when a separate ACE3P input file is provided via
+`workflow_parameters.ace3p_input` and `ace3p_input_parameters` does not
+override (or sweep) any values inside it, the file is copied to each
+working directory unchanged — no parse/rewrite round-trip occurs.
 
 See the S3P-without-separate-file example in [](parameter_sweep.md) for a
 complete usage pattern.
@@ -209,34 +229,53 @@ criterion (`num_step`, `cost_budget`, `alotted_time`, or — for `run_lf_sweep`
 
 All three subclass `ACE3PWorkflow` and share the core constructor
 signature shown below. Each can be instantiated using only a workflow
-dict — additional input/output dicts are optional, but no workflow input
-files will be adjusted without them.
+dict — the `inputs` and `output_dict` arguments are optional, but no
+workflow input files will be adjusted without them.
 
 ### Constructor
 
 ```python
-workflow_object = Omega3PWorkflow(workflow_dict, input_dict=None, output_dict=None)
+workflow_object = Omega3PWorkflow(workflow_dict, inputs=None, output_dict=None)
 ```
 
-Creates a workflow object from `workflow_dict` and sets input/output dicts
-(both optional).
+`inputs` may be either a {py:class}`~lume_ace3p.inputs.WorkflowInputs`
+instance (the form built by `run_lume_ace3p` from a YAML file) or a plain
+`dict` of Cubit variable names → scalar values (the form Xopt's
+`sim_function` typically supplies). Plain dicts are coerced into a
+`WorkflowInputs` whose `cubit` bucket holds the supplied scalars and whose
+`ace3p` / `macro` buckets are empty.
 
 ### Methods
 
-- `workflow_object.run(input_dict=None, output_dict=None)` — run the
-  workflow using `input_dict` parameter values (overriding the initial
-  `input_dict`) and return an output data dict (overriding the initial
-  `output_dict`). The `.run()` method does **not** work with input dicts
-  containing lists or vectors — use `.run_sweep()` for multi-valued inputs.
-- `workflow_object.run_sweep(input_dict=None, output_dict=None)` — run the
-  workflow as a parameter sweep using the optionally provided input/output
-  dicts (defaults to the initially provided dicts).
+- `workflow_object.run(inputs=None, output_dict=None)` — run the workflow
+  using the supplied `inputs` (overriding the initial `inputs`) and return
+  an output data dict (overriding the initial `output_dict`). The `.run()`
+  method does **not** work with arrays as leaf values — use
+  `.run_sweep()` for swept inputs.
+- `workflow_object.run_sweep(inputs=None, output_dict=None)` — run the
+  workflow as a parameter sweep over every array-valued leaf surfaced by
+  `inputs.sweep_axes()` (defaults to the initially provided dicts).
 - `workflow_object.evaluate(output_dict=None)` — evaluate quantities
   referenced in `output_dict` (defaults to the initially provided dict)
   and return an output data dict.
 - `workflow_object.print_sweep_output(filename=None)` — write quantities
   from a parameter sweep to the provided filename (defaults to the
   `sweep_output_file` value provided in the workflow dict).
+
+### Input data model
+
+`WorkflowInputs(cubit, ace3p, macro)` is the structured representation
+the workflow consumes internally. The three buckets correspond to the
+three YAML sections that drive workflow inputs:
+
+| Bucket  | YAML source                                              | Type                |
+|---------|----------------------------------------------------------|---------------------|
+| `cubit` | `cubit_input_parameters` / `input_parameters`            | `dict[str, scalar \| ndarray]` |
+| `ace3p` | `ace3p_input_parameters`                                 | ordered tree of `(name, child)` pairs (`Section`) — duplicates preserved |
+| `macro` | `geant4_input_parameters`                                | `dict[str, scalar \| ndarray]` |
+
+Array-valued leaves in any bucket become sweep axes; scalar leaves are
+written through to the matching input file unchanged.
 
 ### Output
 
@@ -245,8 +284,9 @@ Creates a workflow object from `workflow_dict` and sets input/output dicts
   quantities from evaluation.
 - `output_data = workflow_object.run()` — same shape as `.evaluate()`.
 - `output_sweep_data = workflow_object.run_sweep()` — returns a nested dict
-  whose outer keys are tuples of inputs and whose inner values are
-  evaluated output dicts for each input combination.
+  whose outer keys are tuples of swept-axis scalars (in the order returned
+  by `inputs.sweep_axes()`) and whose inner values are evaluated output
+  dicts for each input combination.
 
 For full class- and method-level documentation, see the
 [API reference](api/index).

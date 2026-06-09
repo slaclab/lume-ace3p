@@ -211,6 +211,13 @@ ace3p_input_parameters :
   'NumberOfModes' : 1
 ```
 
+Note the two `'Port'` blocks at the same indentation level. ACE3P
+allows duplicate-named sibling sections (one per port, surface,
+boundary condition, …), and the `ace3p_input_parameters` parser
+preserves them verbatim — entries are matched positionally with the
+ACE3P input file rather than collapsed into a Python `dict`. See
+[](yaml_reference.md#ace3p_input_parameters) for details.
+
 This functions exactly the same as the previous example. Errors may arise if
 a necessary ACE3P input parameter is missing.
 
