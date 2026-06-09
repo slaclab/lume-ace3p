@@ -1,9 +1,211 @@
 import os, shutil
 import subprocess
 import numpy as np
-import copy
 
 from lume.base import CommandWrapper
+
+
+class Section:
+    """An ACE3P input section: ordered list of (name, child) entries.
+
+    A child is either a leaf string or another Section. Same-named siblings
+    are stored as separate entries — order and duplicates are preserved
+    end-to-end through parse / mutate / write.
+    """
+
+    def __init__(self, entries=None):
+        self.entries = list(entries) if entries else []
+
+    def append(self, name, value):
+        self.entries.append((name, value))
+
+    def children(self, name):
+        return [v for k, v in self.entries if k == name]
+
+    def find(self, name, **discriminators):
+        """Return the first child Section matching `name` whose own leaves
+        match every (key, value) pair in `discriminators`. Returns None if
+        nothing matches."""
+        for k, v in self.entries:
+            if k != name or not isinstance(v, Section):
+                continue
+            if all(v.get_leaf(dk) == str(dv) for dk, dv in discriminators.items()):
+                return v
+        return None
+
+    def get_leaf(self, name):
+        for k, v in self.entries:
+            if k == name and not isinstance(v, Section):
+                return v
+        return None
+
+    def set_leaf(self, name, value):
+        for i, (k, v) in enumerate(self.entries):
+            if k == name and not isinstance(v, Section):
+                self.entries[i] = (k, str(value))
+                return
+        self.entries.append((name, str(value)))
+
+
+def parse_ace3p(text):
+    """Parse an .ace3p input string into a Section tree.
+
+    The format is a sequence of `key : value` entries. A value is either a
+    free-form string up to end-of-line (commas inside are kept verbatim) or
+    a `{ ... }` block containing more entries. `//` starts a line comment.
+    """
+    tokens = _tokenize(text)
+    tree, _ = _parse_section(tokens, 0, top_level=True)
+    return tree
+
+
+def write_ace3p(section, indent=0):
+    """Serialize a Section tree back to .ace3p text."""
+    pad = '  ' * indent
+    out = []
+    for name, value in section.entries:
+        if isinstance(value, Section):
+            out.append(pad + name + ' : {\n')
+            out.append(write_ace3p(value, indent + 1))
+            out.append(pad + '}\n')
+        else:
+            out.append(pad + name + ' : ' + str(value) + '\n')
+    return ''.join(out)
+
+
+def _tokenize(text):
+    """Strip comments and emit a flat list of tokens: ('key', str),
+    ('value', str), ('lbrace',), ('rbrace',). Whitespace and newlines
+    are not significant beyond terminating values and comments."""
+    # Strip // line comments first
+    cleaned = []
+    for line in text.split('\n'):
+        i = line.find('//')
+        cleaned.append(line if i == -1 else line[:i])
+    text = '\n'.join(cleaned)
+
+    tokens = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c == '}':
+            tokens.append(('rbrace',))
+            i += 1
+            continue
+        # Read key up to ':'
+        j = i
+        while j < n and text[j] != ':' and text[j] != '}':
+            j += 1
+        if j >= n:
+            break
+        if text[j] == '}':
+            # malformed — skip
+            i = j
+            continue
+        key = text[i:j].strip()
+        tokens.append(('key', key))
+        i = j + 1  # past ':'
+        # Skip whitespace (but not newline yet — we need to peek for '{')
+        while i < n and text[i] in ' \t':
+            i += 1
+        if i < n and text[i] == '{':
+            tokens.append(('lbrace',))
+            i += 1
+            continue
+        # Otherwise read value to end of line
+        j = i
+        while j < n and text[j] != '\n':
+            j += 1
+        value = text[i:j].strip()
+        tokens.append(('value', value))
+        i = j
+    return tokens
+
+
+def _parse_section(tokens, idx, top_level=False):
+    section = Section()
+    while idx < len(tokens):
+        tok = tokens[idx]
+        if tok[0] == 'rbrace':
+            if top_level:
+                idx += 1
+                continue
+            return section, idx + 1
+        if tok[0] != 'key':
+            idx += 1
+            continue
+        key = tok[1]
+        idx += 1
+        if idx >= len(tokens):
+            break
+        nxt = tokens[idx]
+        if nxt[0] == 'lbrace':
+            child, idx = _parse_section(tokens, idx + 1, top_level=False)
+            section.append(key, child)
+        elif nxt[0] == 'value':
+            section.append(key, nxt[1])
+            idx += 1
+        else:
+            # Unexpected — skip
+            idx += 1
+    return section, idx
+
+
+def merge_overrides(target, overrides):
+    """Merge every leaf from `overrides` (a Section) into `target` (also a
+    Section), in-place. Same-named siblings are matched positionally — the
+    n-th `Port` in overrides updates the n-th `Port` in target, creating
+    new siblings as needed."""
+    seen = {}
+    for name, child in overrides.entries:
+        idx = seen.get(name, 0)
+        seen[name] = idx + 1
+        # Find the idx-th existing same-named entry in target (if any).
+        target_idx = -1
+        existing = None
+        for i, (k, v) in enumerate(target.entries):
+            if k == name:
+                target_idx += 1
+                if target_idx == idx:
+                    existing = (i, v)
+                    break
+        if isinstance(child, Section):
+            if existing is not None and isinstance(existing[1], Section):
+                merge_overrides(existing[1], child)
+            else:
+                target.entries.append((name, _clone(child)))
+        else:
+            value = _format_value(child)
+            if existing is not None and not isinstance(existing[1], Section):
+                target.entries[existing[0]] = (name, value)
+            else:
+                target.entries.append((name, value))
+
+
+def _clone(section):
+    out = Section()
+    for name, child in section.entries:
+        if isinstance(child, Section):
+            out.append(name, _clone(child))
+        else:
+            out.append(name, child)
+    return out
+
+
+def _format_value(value):
+    """Format a value for the .ace3p file. Numpy scalars unwrap to their
+    Python value, lists/tuples become comma-joined strings, everything else
+    is str()."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (list, tuple)):
+        return ', '.join(_format_value(v) for v in value)
+    return str(value)
+
 
 class ACE3P(CommandWrapper):
 
@@ -27,7 +229,6 @@ class ACE3P(CommandWrapper):
             self.ace3p_opts = ''
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
-        #will generate a blank file in current directory that gets written to later
         if self.input_file is None:
             print('WARNING: no .ace3p input file specified, writing one based on contents of .yaml file. Errors may occur if essential parameters like ModelInfo are not specified in .yaml file.')
             self.make_default_input()
@@ -35,8 +236,8 @@ class ACE3P(CommandWrapper):
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
             shutil.copy(self.input_file, self.workdir)
         with open(self.input_file) as file:
-            text = file.read()
-            self.input_data = text
+            self.input_data = file.read()
+        self._tree = None  # parsed lazily by set_value
 
     def run(self):
         self.write_input()
@@ -47,208 +248,26 @@ class ACE3P(CommandWrapper):
         if args:
             self.input_file = args[0]
         with open(self.input_file) as file:
-            text = file.read()
-        self.input_data = text
-        
+            self.input_data = file.read()
+        self._tree = None
+
     def input_parser(self, text):
-    #this function reads in .ace3p data, processes it with raw_input_parser, and then parses to get it in the correct format (Attribute and ReferenceNumber stored as part of the keys)
-        data = self.raw_input_parser(text)
-        fixed_data = {}
-        #turns inputted data string into a nested dictionary and adds signifiers for ReferenceNumber and Attribute
-        #needs to be a subfunction because it is recursive but we don't want self.input_parser to be called recursively
-        def input_to_dict(input_dict, output_dict):
+        """Parse .ace3p text into a Section tree. Kept for backward
+        compatibility with any external callers."""
+        return parse_ace3p(text)
 
-            for key in input_dict:
-                new_key = key
-                #if a particular key is associated with an attribute, add |LILA|(attribute number)|LILA&
-                if isinstance(input_dict[key], dict):
-                    #this prevents ReferenceNumber and Attribute from remaining in the dictionary as values
-                    if 'ReferenceNumber' in input_dict[key].keys():
-                        flag_index = str(key).find('.LILA.')
-                        if flag_index != -1:
-                            new_key = key[:flag_index]
-                        new_key = new_key + '?LILA?' + str(input_dict[key]['ReferenceNumber']) + '?LILA&'
-                        output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='ReferenceNumber'}
-                    elif 'Attribute' in input_dict[key].keys():
-                        flag_index = str(key).find('.LILA.')
-                        if flag_index != -1:
-                            new_key = key[:flag_index]
-                        new_key = new_key + '|LILA|' + str(input_dict[key]['Attribute']) + '|LILA&|'
-                        output_dict[new_key] = {k: v for k,v in input_dict[key].items() if k!='Attribute'}
-                    else:
-                        output_dict[new_key] = input_to_dict(input_dict[key], {})
-                #if input_dict[key] is not a dictionary, it is the end of the nested dictionary and is a value. For use in later parsing, replace commas in value with COMMA
-                else:
-                    output_dict[new_key] = input_dict[key]
-                    comma_index = str(input_dict[key]).find(',')
-                    while comma_index != -1:
-                        output_dict[new_key] = str(output_dict[new_key])[:comma_index] + 'COMMA' + str(output_dict[new_key])[comma_index+1:]
-                        comma_index = str(output_dict[new_key]).find(',')
-            return output_dict
-            
-        fixed_data = input_to_dict(data, {})
-    
-        return fixed_data
-    
-    def raw_input_parser(self, text):
-        data = {}
-        key, value  = None, None
-        i, str_start, str_end = 0, 0, 0
-        state = 'key'   #State flag to switch between 'key', 'value', and 'comment' text
-        index = 0
-        while i < len(text):
-            if text[i] not in ['\n','/','{','}',':']:
-                i += 1
-                continue
-            if state == 'key':
-                if text[i] == ':':  #Switch state from 'key' to 'value' and save key
-                    str_end = i
-                    key = text[str_start:str_end].strip()
-                    str_start = i+1
-                    state = 'value'
-                i += 1
-            elif state == 'value':  #Switch state from 'value' to 'key' and write to dict
-                if text[i] == '\n':
-                    str_end = i
-                    value = text[str_start:str_end].strip()
-                    data[key] = value
-                    str_start = i+1
-                    state = 'key'
-                    i += 1
-                    continue
-                elif text[i] == '/':    #Switch state to 'comment' and write value to dict
-                    if text[i+1] == '/':
-                        str_end = i
-                        value = text[str_start:str_end].strip()
-                        data[key] = value
-                        state = 'comment'
-                    i += 2
-                    continue
-                elif text[i] == '{':    #Setup recursion for nested dict
-                    layer = 1
-                    for j in range(i+1,len(text)):  #Find the corresponding closed '}'
-                        if text[j] == '{':
-                            layer += 1
-                        elif text[j] == '}':
-                            layer -= 1
-                            if layer == 0:
-                                break
-                    subtext = text[i+1:j]   #Extract nested dict contents
-                    value = self.raw_input_parser(subtext)  #Recursively parse nested dict
-                    if(key in data):
-                        data[key+'.LILA.'+str(index)+'.LILA.'] = value
-                        index += 1
-                    else:
-                        data[key] = value
-                    str_start = j+1
-                    i = j+1
-                    state = 'key'
-                    continue
-                i += 1
-            elif state == 'comment':    #Switch state from 'comment' to 'key' with newline
-                if text[i] == '\n':
-                    str_start = i+1
-                    state = 'key'
-                i += 1
-        return data
-    
-    def set_value(self, kwargs):
-        #function that will take keys in target_dict and assign their value to matching keys in search_dict
-        #will be used to update parameters being swept over
-        def recursive_update(target_dict, search_dict):
-            for k in target_dict:
-                if k in search_dict:
-                    recursive_update(target_dict.get(k),search_dict.get(k))
-                else:
-                    search_dict.update({k: target_dict.get(k)})
-        
-        param_updates = {}
-        index = 0
-        #takes input_dict and unpacks keys into a nested dictionary
-        for key in kwargs:
-            num_underscore = key.count('_')
-            if(num_underscore==0):
-                param_updates[key] = kwargs[key]
-            else:
-                underscore_index = key.rfind('_')
-                temp_key = key[:underscore_index]
-                temp_dict = {key[underscore_index+1:]: kwargs[key]}
-                for i in range(num_underscore):
-                    new_dictionary = {}
-                    underscore_index = temp_key.rfind('_')
-                    new_dictionary[temp_key[underscore_index+1:]] = temp_dict
-                    temp_dict = new_dictionary
-                    temp_key = temp_key[:underscore_index]
-                #puts temp_dict in correct spot within param_updates--this is needed to avoid repeat keys when multiple parameters fall under the same category (eg both Coating and Frequency fall under SurfaceMaterial
-                recursive_update(temp_dict, param_updates) 
+    def set_value(self, overrides):
+        """Merge `overrides` (a Section of leaf updates) into the parsed
+        input tree and re-serialize. A no-op when `overrides` is empty —
+        which is the fast path for "user provided an .ace3p file and isn't
+        sweeping anything inside it": the file is copied to workdir as-is."""
+        if overrides is None or not overrides.entries:
+            return
+        if self._tree is None:
+            self._tree = parse_ace3p(self.input_data)
+        merge_overrides(self._tree, overrides)
+        self.input_data = write_ace3p(self._tree)
 
-        #generates a dictionary based on contents of .s3p file
-        ace3p_data = self.input_parser(self.input_data) 
-        
-        #eliminates param update values that relate to the cubit file
-        #removes ACE3P and DONTINCLUDE flags
-        ace3p_params = copy.deepcopy(param_updates)
-        for key in param_updates:
-            if key.startswith('DONTINCLUDE'):
-                if key.startswith('DONTINCLUDEACE3P'):
-                    ace3p_params[key[16:]] = ace3p_params[key]
-                else:
-                    ace3p_params[key[11:]] = ace3p_params[key]
-            if key.startswith('ACE3P'):
-                ace3p_params[key[5:]] = ace3p_params[key]
-            del ace3p_params[key]
-
-        def update_dict(new_inputs, dict_to_be_updated):
-            for key in new_inputs:
-                if isinstance(new_inputs.get(key), dict):
-                    if key in dict_to_be_updated:
-                        update_dict(new_inputs.get(key), dict_to_be_updated[key])
-                    else:
-                        dict_to_be_updated[key] = new_inputs[key]
-                else:
-                    dict_to_be_updated[key] = new_inputs[key]
-        #replace values in ace3p_data dictionary where indicated by param_updates dictionary values
-        update_dict(ace3p_params, ace3p_data)
-        
-        #turn updated ace3p_data dictionary into a string that follows .ace3p format
-        ace3p_string = str(ace3p_data)
-        #get rid of beginning and ending { characters
-        ace3p_string = str(ace3p_string)[1:-1]
-        #add newline after nested element begins
-        ace3p_string = ace3p_string.replace("{", "{\n")
-        #replace commas with newline
-        ace3p_string = ace3p_string.replace(", ", "\n")
-        #remove extraneous string signifiers on keys
-        ace3p_string = ace3p_string.replace("'", "")
-        #add a newline after end of each nest element
-        ace3p_string = ace3p_string.replace("}", "\n}")
-        #replace COMMA, a signifier for where a comma is supposed to be in the values, with a comma
-        ace3p_string = ace3p_string.replace("COMMA", ",")
-
-        #find and replace ReferenceNumber signifiers with ReferenceNumber
-        question_index = ace3p_string.find('?LILA?')
-        amp_index = ace3p_string.find('?LILA&')
-        #prevents there being an extra bracket after ReferenceNumber
-        bracket_index = ace3p_string.find('{', amp_index)
-        while question_index != -1:
-            ace3p_string = ace3p_string[:question_index] + ':\n{\nReferenceNumber: ' + ace3p_string[question_index+6] + ace3p_string[bracket_index+1:]
-            question_index = ace3p_string.find('?LILA?')
-            amp_index = ace3p_string.find('?LILA&')
-            bracket_index = ace3p_string.find('{', amp_index)
-        #find and replace Attribute signifiers with Attribue
-        bar_index = ace3p_string.find('|LILA|')
-        amp_index = ace3p_string.find('|LILA&')
-        #prevents there being an extra bracket after Attribute
-        bracket_index = ace3p_string.find('{', amp_index)
-        while bar_index != -1:
-            ace3p_string = ace3p_string[:bar_index] + ':\n{\nAttribute: ' + ace3p_string[bar_index+6] + ace3p_string[bracket_index+1:]
-            bar_index = ace3p_string.find('|LILA|')
-            amp_index = ace3p_string.find('|LILA&')
-            bracket_index = ace3p_string.find('{', amp_index)
-            
-        #sets input data to updated values. self.input_data is written into the input file in self.write_input, called at the beginning of self.run
-        self.input_data = ace3p_string
-    
     def write_input(self, *args):
         if args:
             file = args[0]
@@ -256,23 +275,11 @@ class ACE3P(CommandWrapper):
             file = self.input_file
         if os.path.isfile(os.path.join(self.workdir, self.input_file)):
             if os.path.samefile(os.path.join(self.workdir, self.input_file), os.path.join(os.getcwd(), self.original_input_file)):
-                file = file + '_copy'   #Used to not overwrite original input if in same directory
+                file = file + '_copy'
         self.input_file = file
-        text = self.input_data
-        #write the contents of input_data (which should by now, after set_value is called, be a string in correct format to .ace3p file
-        with open(os.path.join(self.workdir, file), 'w') as file:
-            file.write(text)
+        with open(os.path.join(self.workdir, file), 'w') as f:
+            f.write(self.input_data)
 
-    def unpack_dict(self, data, text, indent):
-        for key, value in data.items():
-            if isinstance(value, dict): #Recursively unpack nested dict
-                text += '  '*indent + key + ' : {\n'
-                text = self.unpack_dict(value, text, indent+1)
-                text += '  '*indent + '}\n'
-            else:
-                text += '  '*indent + key + ' : ' + value + '\n'
-        return text
-    
     def make_default_input(self):
         pass
 
@@ -284,18 +291,19 @@ class ACE3P(CommandWrapper):
 
     def format_data(self):
         return 'Not implemented.'
-    
+
     def configure(self):
         return 'Not implemented.'
-    
+
     def archive(self):
         return 'Not implemented.'
 
     def load_archive(self):
         return 'Not implemented.'
-    
+
     def plot(self):
         return 'Not implemented.'
+
 
 class Omega3P(ACE3P):
 
@@ -304,10 +312,12 @@ class Omega3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 'omega3p.out'
+
     def make_default_input(self):
         self.input_file = 'omega3p_input_file.omega3p'
         with open(self.input_file, 'w') as f:
             pass
+
 
 class S3P(ACE3P):
 
@@ -316,7 +326,7 @@ class S3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
-        
+
     def output_parser(self):
         self.output_data = {}
         with open(os.path.join(self.workdir, 's3p_results/Reflection.out')) as file:
@@ -351,11 +361,12 @@ class S3P(ACE3P):
             for id2 in range(num_ids):
                 sname = 'S(' + str(id1) + ',' + str(id2) + ')'
                 self.output_data[sname] = sparameters[id1*num_ids+id2]
-                
+
     def make_default_input(self):
         self.input_file = 's3p_input_file.s3p'
         with open(self.input_file, 'w') as f:
             pass
+
 
 class T3P(ACE3P):
 
@@ -364,6 +375,7 @@ class T3P(ACE3P):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 't3p.out'
+
 
 class Track3P(ACE3P):
 
