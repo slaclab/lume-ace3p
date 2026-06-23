@@ -25,6 +25,7 @@ class Particles:
         self.impact_face_id = impact_face_id if isinstance(impact_face_id, list) else [impact_face_id]
         self.work_function = particle_params.get('work_function')
         self.dt = particle_params.get('dt')
+        self.output_format = particle_params.get('output_format', 'track3p')
         self.beta = np.array(particle_params.get('beta'))
         self.num_bins = particle_params.get('num_bins', len(self.beta))
         self.bin_edges = particle_params.get('bin_edges', None)
@@ -71,6 +72,12 @@ class Particles:
         self.filtered['ParticleWeight'] = np.round(J * areas * self.dt / Q_E)
 
     def write_output(self):
+        if self.output_format == 'geant4':
+            self._write_output_geant4()
+        else:
+            self._write_output_track3p()
+
+    def _write_output_track3p(self):
         output_path = os.path.join(self.workdir, self.output_file)
         header = '#' + ' '.join(self.filtered.columns.tolist())
         np.savetxt(output_path, self.filtered.values,
@@ -82,6 +89,21 @@ class Particles:
                         '%.6e', '%.6e', '%.6e',
                         '%d', '%.6e', '%.6e',
                         '%d', '%.6e'])
+
+    def _write_output_geant4(self):
+        # 10-column whitespace-separated source file consumed by the Geant4
+        # /lume/particleFile reader. Columns (units in parentheses):
+        #   x y z (m)  phase (rad)  energy (eV)  n_electrons  px py pz  face_id
+        # n_electrons is the rescaled per-particle weight used as the event
+        # weight; px/py/pz are momentum direction components. No header line:
+        # every row is one primary, and the workflow counts rows for /run/beamOn.
+        output_path = os.path.join(self.workdir, self.output_file)
+        columns = ['Impact_x', 'Impact_y', 'Impact_z', 'ImpactPhaseinRFcycle',
+                   'ImpactEnergy', 'ParticleWeight', 'momentum_x', 'momentum_y',
+                   'momentum_z', 'ImpactFaceID']
+        np.savetxt(output_path, self.filtered[columns].values,
+                   fmt=['%.6e', '%.6e', '%.6e', '%.6e', '%.6e',
+                        '%d', '%.6e', '%.6e', '%.6e', '%d'])
 
     def run(self):
         self.load()
