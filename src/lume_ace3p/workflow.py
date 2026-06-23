@@ -379,6 +379,43 @@ class Geant4Workflow(ACE3PWorkflow):
             if self.dry_run:
                 print('Geant4 environment not configured, enabling dry run mode.')
 
+    def _resolve_beta(self, inputs):
+        """Return the particle_params to use for this run. When 'beta_input'
+        (broadcast a single input-space variable to all bins) or 'beta_inputs'
+        (one variable per bin) is set, build the per-bin beta list from the
+        cubit bucket and return a fresh copy with 'beta' overridden. Reading
+        from inputs.cubit makes this work identically for a parameter sweep
+        (materialized scalar) and for Xopt (input_dict scalar)."""
+        params = self.particle_params
+        beta_input = params.get('beta_input')    # str | None
+        beta_inputs = params.get('beta_inputs')  # list[str] | None
+        if beta_input is None and beta_inputs is None:
+            return params
+        if beta_input is not None and beta_inputs is not None:
+            raise ValueError("Set only one of 'beta_input' or 'beta_inputs'.")
+        num_bins = params.get('num_bins')
+        if num_bins is None:
+            raise ValueError("'num_bins' must be set when using "
+                             "'beta_input' or 'beta_inputs'.")
+
+        def cubit_value(name):
+            if name not in inputs.cubit:
+                raise KeyError(f"beta variable '{name}' not found in "
+                               "'input_parameters'.")
+            return float(inputs.cubit[name])
+
+        if beta_input is not None:
+            effective_beta = [cubit_value(beta_input)] * num_bins
+        else:
+            if len(beta_inputs) != num_bins:
+                raise ValueError(f"len(beta_inputs)={len(beta_inputs)} must "
+                                 f"equal num_bins={num_bins}.")
+            effective_beta = [cubit_value(n) for n in beta_inputs]
+
+        params = dict(params)
+        params['beta'] = effective_beta
+        return params
+
     def run(self, inputs=None, output_dict=None, sweep_scalars=None):
         if inputs is None:
             inputs = self.inputs
@@ -389,11 +426,13 @@ class Geant4Workflow(ACE3PWorkflow):
         macro_inputs = dict(inputs.macro) if inputs.macro else None
 
         if self.particle_params is not None and self.particle_input is not None:
+            params = dict(self._resolve_beta(inputs))
+            params.setdefault('output_format', 'geant4')
             src_basename = os.path.basename(self.particle_input)
             dest = os.path.join(self.workdir, src_basename)
             if not os.path.isfile(dest):
                 shutil.copy(self.particle_input, self.workdir)
-            particles = Particles(src_basename, self.particle_params,
+            particles = Particles(src_basename, params,
                                   output_file=self.particle_output, workdir=self.workdir)
             particles.run()
             particle_file_path = os.path.join(self.workdir, particles.output_file)
@@ -447,7 +486,8 @@ class Geant4Workflow(ACE3PWorkflow):
                                  geant4_app_exe=self.paths['geant4_app_exe'])
         self.geant4_obj.set_value({'/run/numberOfThreads': self.geant4_threads})
         if particle_file_path is not None:
-            self.geant4_obj.set_particle_file(os.path.basename(particle_file_path),
+            self.geant4_obj.set_particle_file(particle_file_path,
+                                             macro_value=os.path.basename(particle_file_path),
                                              particle_cmd=self.geant4_particle_cmd)
         if macro_inputs:
             self.geant4_obj.set_value(macro_inputs)
@@ -507,3 +547,34 @@ class Geant4Workflow(ACE3PWorkflow):
         if not values:
             return None
         return {'indices': indices, 'values': np.array(values)}
+
+    def run_sweep(self, inputs=None, output_dict=None):
+        if inputs is None:
+            inputs = self.inputs
+        if output_dict is None:
+            output_dict = self.output_dict or {}
+        self.output_varname = list(output_dict.keys())
+        self.sweep_data = {}
+
+        _run_sweep(self)
+
+        for i in range(self.input_tensor.shape[0]):
+            scalars = self.input_tensor[i].tolist()
+            point = inputs.materialize(scalars)
+            sweep_input_tuple = tuple(scalars)
+            self.run(point, output_dict=output_dict, sweep_scalars=scalars)
+            self.sweep_data[sweep_input_tuple] = self.evaluate(output_dict)
+            if self.sweep_output:
+                self.print_sweep_output()
+        return self.sweep_data
+
+    def print_sweep_output(self, filename=None):
+        if filename is None:
+            filename = self.sweep_output_file
+            if self.sweep_output_file is None:
+                print('No sweep output file specified.')
+                return
+        if not getattr(self, 'input_varname', None):
+            print('Parameter sweep must be run first.')
+            return
+        WriteOmega3PDataTable(filename, self.sweep_data, self.input_varname, self.output_varname)

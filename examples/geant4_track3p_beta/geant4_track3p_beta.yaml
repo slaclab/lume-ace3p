@@ -1,0 +1,64 @@
+workflow_parameters :
+  'mode' : 'parameter_sweep'
+  'module' : 'geant4'
+
+  # --- Geant4 simulation inputs (FILL THESE IN) -----------------------------
+  'geant4_app_exe' : 'sim'
+  'geant4_input' : 'scorebox.mac'               # Geant4 macro file (.mac)
+  'geant4_geometry_files' :                     # geometry/aux files copied into workdir
+    - 'solid.stl'
+    - 'cavity.stl'
+  'geant4_particle_cmd' : '/lume/particleFile'  # macro cmd that receives the source file
+  'geant4_scoring_output' : 'scoring.txt'       # scoring file written by Geant4, read by evaluate()
+  'geant4_threads' : 4                          # -> /run/numberOfThreads
+  'geant4_opts' : ''                            # extra srun/mpirun args, if any
+
+  # --- Track3P -> particle source (the Particles pre-step) ------------------
+  'particle_input' : 'sample_track3p_particles.txt'   # Track3P particle dump (input)
+  'particle_output' : 'particles.data'   # generated Geant4 source file
+
+  # --- Workdir / paths ------------------------------------------------------
+  'workdir' : 'lume-ace3p_geant4_workdir'
+  'workdir_mode' : 'auto'                       # REQUIRED for a sweep: one workdir per beta value
+  'sweep_output' : True
+  'sweep_output_file' : 'geant4_beta_sweep_output.txt'
+  # 'paths' :                                   # uncomment to override executable paths
+  #   'geant4_app_path' : '/path/to/geant4/app'
+  #   'geant4_app_exe' : 'your_geant4_exe'
+
+# Swept input space. 'beta' sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60),
+# i.e. 5 Geant4 runs. Each scalar is broadcast equally to all 8 axial bins
+# (see 'beta_input' below).
+input_parameters :
+  'beta' :
+    'min' : 40.0
+    'max' : 60.0
+    'num' : 5
+
+# Per-bin field-emission weighting applied to the Track3P particles before the
+# Geant4 run. 'beta_input' names the swept input-space variable whose scalar is
+# broadcast to all num_bins bins on every run (run 1 -> [40]*8, run 2 -> [45]*8, ...).
+particle_parameters :
+  'impact_order' : 1
+  'impact_face_id' : 4
+  'work_function' : 4.5
+  'dt' : 1.0e-10
+  'num_bins' : 8
+  'beta_input' : 'beta'        # broadcast the 'beta' input variable to all 8 bins
+  'output_format' : 'geant4'   # 10-column Geant4 source file (default under mode: geant4)
+  # 'bin_edges' : [...]        # optional: explicit edges, length num_bins + 1 (9)
+
+  # Future (Xopt 8-D exploration): declare 8 independent variables in
+  # input_parameters (e.g. beta0..beta7) and map one per bin instead of
+  # broadcasting. The same Geant4Workflow code path handles both:
+  # 'beta_inputs' : ['beta0', 'beta1', 'beta2', 'beta3', 'beta4', 'beta5', 'beta6', 'beta7']
+
+# Optional: override Geant4 macro commands here (keys must start with '/').
+# geant4_input_parameters :
+#   '/your/macro/command' : value
+
+# Optional: pull scalars out of the Geant4 scoring output after each run.
+# These become columns in the sweep output file.
+# output_parameters :
+#   'total_dose' : ['scoring', 'total']
+#   'peak_dose'  : ['scoring', 'peak']

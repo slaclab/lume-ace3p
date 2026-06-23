@@ -187,13 +187,35 @@ from a Track3P dump). Configures the `Particles` helper.
 | `impact_face_id` | `int` or `list`    | *(required)*          | Track3P `ImpactFaceID` value(s) to retain. |
 | `work_function`  | `float`            | *(required)*          | Surface work function (eV) used in the Fowler-Nordheim weighting. |
 | `dt`             | `float`            | *(required)*          | Time step (s) used to convert current density to particles per emission event. |
-| `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. |
+| `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values from the input space. |
 | `num_bins`       | `int`              | `len(beta)`           | Number of axial (`Initial_z`) bins applied to the filtered particles. |
 | `bin_edges`      | `list[float]`      | `None` (auto-spaced)  | Explicit bin edges. If supplied, must have length `num_bins + 1`; otherwise edges are linearly spaced between the min and max `Initial_z` of the filtered particles. |
+| `beta_input`     | `str`              | `None`                | Name of a single input-space variable (declared in `input_parameters`) whose scalar value is broadcast to all `num_bins` bins. Lets a `parameter_sweep` (or Xopt) drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
+| `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables, one per bin — enables independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
+| `output_format`  | `str`              | `'track3p'` (`'geant4'` under `mode: 'geant4'`) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight` (commented header). `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). Defaults to `'geant4'` when the `Particles` step runs inside `Geant4Workflow`. |
 
-The output file (path set by `workflow_parameters.particle_output`, or
-`<input>_modified.txt` if unset) contains the filtered Track3P columns
-plus a `Bin` column and a `ParticleWeight` column.
+The output file path is set by `workflow_parameters.particle_output`, or
+defaults to `<input>_modified.txt` if unset.
+
+With `output_format: 'track3p'` (the default for `mode: 'particle_weight'`)
+the file contains the filtered Track3P columns plus a `Bin` column and a
+`ParticleWeight` column, with a `#`-commented header.
+
+With `output_format: 'geant4'` (the default for `mode: 'geant4'`) the file
+contains 10 whitespace-separated columns and no header — one primary per row:
+
+| Col | Field         | Unit  | Source Track3P column   |
+|-----|---------------|-------|-------------------------|
+| 1   | `x`           | m     | `Impact_x`              |
+| 2   | `y`           | m     | `Impact_y`              |
+| 3   | `z`           | m     | `Impact_z`              |
+| 4   | `phase`       | rad   | `ImpactPhaseinRFcycle`  |
+| 5   | `energy`      | eV    | `ImpactEnergy`          |
+| 6   | `n_electrons` | -     | `ParticleWeight` (event weight; written as an integer) |
+| 7   | `px`          | -     | `momentum_x`            |
+| 8   | `py`          | -     | `momentum_y`            |
+| 9   | `pz`          | -     | `momentum_z`            |
+| 10  | `face_id`     | -     | `ImpactFaceID`          |
 
 ## `xopt_parameters`
 

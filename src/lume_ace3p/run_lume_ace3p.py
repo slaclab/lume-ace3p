@@ -34,6 +34,11 @@ def main():
         elif module == 'omega3p':
             workflow = Omega3PWorkflow(workflow_dict, inputs, output_dict)
             workflow.run_sweep()
+        elif module == 'geant4':
+            particle_params = lume_ace3p_data.get('particle_parameters')
+            workflow = Geant4Workflow(workflow_dict, inputs, output_dict,
+                                      particle_params=particle_params)
+            workflow.run_sweep()
 
     elif mode == 'scalar_optimize':
         if module == 's3p':
