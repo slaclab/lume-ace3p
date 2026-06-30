@@ -365,12 +365,17 @@ class Geant4Workflow(ACE3PWorkflow):
                  particle_params=None):
         super().__init__(workflow_dict, inputs, output_dict)
         self.geant4_input          = workflow_dict.get('geant4_input')
-        self.geant4_threads        = workflow_dict.get('geant4_threads', 1)
+        self.geant4_threads        = workflow_dict.get('geant4_threads')
         self.geant4_opts           = workflow_dict.get('geant4_opts', '')
-        self.geant4_particle_cmd   = workflow_dict.get('geant4_particle_cmd', '/lume/particleFile')
+        self.geant4_particle_cmd   = workflow_dict.get('geant4_particle_cmd', 'particles')
         self.geant4_geometry_files = workflow_dict.get('geant4_geometry_files') or []
         self.geant4_particle_file  = workflow_dict.get('geant4_particle_file')
-        self.geant4_scoring_output = workflow_dict.get('geant4_scoring_output')
+        # Output files are normally named in the Geant4 input file
+        # (output_dose / output_edep); these allow an explicit YAML override.
+        # 'geant4_scoring_output' is kept as a back-compat alias for the dose file.
+        self.geant4_dose_output    = workflow_dict.get('geant4_dose_output') \
+                                     or workflow_dict.get('geant4_scoring_output')
+        self.geant4_edep_output    = workflow_dict.get('geant4_edep_output')
         self.particle_params       = particle_params
         self.particle_input        = workflow_dict.get('particle_input')
         self.particle_output       = workflow_dict.get('particle_output')
@@ -444,7 +449,31 @@ class Geant4Workflow(ACE3PWorkflow):
                     shutil.copy(particle_file_path, self.workdir)
                 particle_file_path = dest
 
-        for geom in self.geant4_geometry_files:
+        # Build the Geant4 object first so we can read the input file's own
+        # settings (STL geometry names, output filenames) before copying files.
+        self.geant4_obj = None
+        if self.geant4_input is not None:
+            self.geant4_obj = Geant4(self.geant4_input,
+                                     geant4_threads=self.geant4_threads or 1,
+                                     geant4_opts=self.geant4_opts,
+                                     workdir=self.workdir,
+                                     mpi_caller=self.paths['mpi'],
+                                     geant4_app_path=self.paths['geant4_app_path'],
+                                     geant4_app_exe=self.paths['geant4_app_exe'])
+            # Threads default is owned by the input file; only override when set.
+            if self.geant4_threads is not None:
+                self.geant4_obj.set_value({'nthreads': self.geant4_threads})
+            if particle_file_path is not None:
+                self.geant4_obj.set_particle_file(particle_file_path,
+                                                 macro_value=os.path.basename(particle_file_path),
+                                                 particle_cmd=self.geant4_particle_cmd)
+            if macro_inputs:
+                self.geant4_obj.set_value(macro_inputs)
+
+        # Geometry files: union of any '*_stl' values named in the input file
+        # and the explicit geant4_geometry_files list, de-duplicated by basename.
+        geom_files = self._geometry_files()
+        for geom in geom_files:
             dest = os.path.join(self.workdir, os.path.basename(geom))
             if not os.path.isfile(dest):
                 shutil.copy(geom, self.workdir)
@@ -452,79 +481,93 @@ class Geant4Workflow(ACE3PWorkflow):
         if self.dry_run:
             with open(os.path.join(self.workdir, 'DRY_RUN.txt'), 'w') as f:
                 f.write('Dry run mode: Geant4 step skipped.\n')
-                f.write(f'Macro: {self.geant4_input}\n')
+                f.write(f'Input file: {self.geant4_input}\n')
                 f.write(f'Particle file: {particle_file_path}\n')
-                f.write(f'Geometry files: {self.geant4_geometry_files}\n')
+                f.write(f'Geometry files: {geom_files}\n')
+                f.write(f'Output files: {self._output_files()}\n')
                 f.write(f'Threads: {self.geant4_threads}\n')
                 f.write(f'Cubit: {inputs.cubit}\n')
-                f.write(f'Macro inputs: {macro_inputs}\n')
-            self.geant4_obj = None
-            if self.geant4_input is not None:
-                self.geant4_obj = Geant4(self.geant4_input,
-                                         geant4_threads=self.geant4_threads,
-                                         geant4_opts=self.geant4_opts,
-                                         workdir=self.workdir,
-                                         mpi_caller=self.paths['mpi'],
-                                         geant4_app_path=self.paths['geant4_app_path'],
-                                         geant4_app_exe=self.paths['geant4_app_exe'])
-                self.geant4_obj.set_value({'/run/numberOfThreads': self.geant4_threads})
-                if particle_file_path is not None:
-                    self.geant4_obj.set_particle_file(particle_file_path,
-                                                     macro_value=os.path.basename(particle_file_path),
-                                                     particle_cmd=self.geant4_particle_cmd)
-                if macro_inputs:
-                    self.geant4_obj.set_value(macro_inputs)
+                f.write(f'Input overrides: {macro_inputs}\n')
+            if self.geant4_obj is not None:
                 self.geant4_obj.write_input()
             return self.evaluate(output_dict)
 
-        self.geant4_obj = Geant4(self.geant4_input,
-                                 geant4_threads=self.geant4_threads,
-                                 geant4_opts=self.geant4_opts,
-                                 workdir=self.workdir,
-                                 mpi_caller=self.paths['mpi'],
-                                 geant4_app_path=self.paths['geant4_app_path'],
-                                 geant4_app_exe=self.paths['geant4_app_exe'])
-        self.geant4_obj.set_value({'/run/numberOfThreads': self.geant4_threads})
-        if particle_file_path is not None:
-            self.geant4_obj.set_particle_file(particle_file_path,
-                                             macro_value=os.path.basename(particle_file_path),
-                                             particle_cmd=self.geant4_particle_cmd)
-        if macro_inputs:
-            self.geant4_obj.set_value(macro_inputs)
         self.geant4_obj.run()
 
         return self.evaluate(output_dict)
+
+    def _geometry_files(self):
+        """Union of STL files named in the Geant4 input file ('*_stl' keys)
+        and the explicit geant4_geometry_files list. The input-file names are
+        resolved relative to the directory of geant4_input so they can be
+        copied into the workdir. De-duplicated by basename."""
+        files = []
+        seen = set()
+
+        def add(path):
+            base = os.path.basename(path)
+            if base and base not in seen:
+                seen.add(base)
+                files.append(path)
+
+        if self.geant4_obj is not None:
+            input_dir = os.path.dirname(self.geant4_input)
+            for key, value in self.geant4_obj.get_values().items():
+                if key.endswith('_stl') and value:
+                    candidate = os.path.join(input_dir, value) if input_dir else value
+                    if os.path.isfile(candidate):
+                        add(candidate)
+                    elif os.path.isfile(value):
+                        add(value)
+        for geom in self.geant4_geometry_files:
+            add(geom)
+        return files
+
+    def _output_files(self):
+        """Resolve the dose / edep output filenames, preferring explicit YAML
+        overrides and otherwise reading output_dose / output_edep from the
+        Geant4 input file."""
+        values = self.geant4_obj.get_values() if self.geant4_obj is not None else {}
+        dose = self.geant4_dose_output or values.get('output_dose')
+        edep = self.geant4_edep_output or values.get('output_edep')
+        return {'dose': dose, 'edep': edep}
 
     def evaluate(self, output_dict):
         self.output_data = {}
         if output_dict is None:
             return self.output_data
-        scoring = self._read_scoring_output()
+        files = self._output_files()
+        # 'scoring' is a back-compat alias for the dose grid.
+        grids = {
+            'dose': self._read_scoring_output(files['dose']),
+            'edep': self._read_scoring_output(files['edep']),
+        }
+        grids['scoring'] = grids['dose']
         for output_name, output_params in output_dict.items():
             if not isinstance(output_params, list) or len(output_params) < 2:
                 self.output_data[output_name] = float('nan')
                 continue
             section, entry = output_params[0], output_params[1]
-            if section == 'scoring':
-                if scoring is None:
-                    self.output_data[output_name] = float('nan')
-                elif entry == 'total':
-                    self.output_data[output_name] = float(np.sum(scoring['values']))
-                elif entry == 'peak':
-                    self.output_data[output_name] = float(np.max(scoring['values']))
-                elif entry == 'peak_index':
-                    idx = int(np.argmax(scoring['values']))
-                    self.output_data[output_name] = tuple(scoring['indices'][idx])
-                else:
-                    raise ValueError("Unknown entry '" + str(entry) + "' in 'scoring' section.")
-            else:
+            if section not in grids:
                 raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
+            scoring = grids[section]
+            if scoring is None:
+                self.output_data[output_name] = float('nan')
+            elif entry == 'total':
+                self.output_data[output_name] = float(np.sum(scoring['values']))
+            elif entry == 'peak':
+                self.output_data[output_name] = float(np.max(scoring['values']))
+            elif entry == 'peak_index':
+                idx = int(np.argmax(scoring['values']))
+                self.output_data[output_name] = tuple(scoring['indices'][idx])
+            else:
+                raise ValueError("Unknown entry '" + str(entry) + "' in '" + str(section) + "' section.")
         return self.output_data
 
-    def _read_scoring_output(self):
-        if not self.geant4_scoring_output:
+    def _read_scoring_output(self, filename):
+        if not filename:
             return None
-        path = os.path.join(self.workdir, self.geant4_scoring_output)
+        path = os.path.join(self.workdir, filename)
         if not os.path.isfile(path):
             return None
         indices = []

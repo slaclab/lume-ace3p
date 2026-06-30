@@ -312,12 +312,16 @@ See [](yaml_reference.md#particle_parameters) for the full key list.
 
 ## Geant4 dose-calculation workflow
 
-The `mode: 'geant4'` workflow drives a Geant4 application using a macro
-file, optional geometry files, and a particle-source file. The source
-file can either be supplied directly via `geant4_particle_file` or
-generated on the fly from a Track3P dump by also providing a
-`particle_parameters` section (chaining the same logic as
-`mode: 'particle_weight'`).
+The `mode: 'geant4'` workflow drives a Geant4 application using a single
+plain-text input file (`key = value` lines, `#` comments) that names its
+own geometry STL files, scoring mesh, thread count, and output files. The
+particle-source file can either be supplied directly via
+`geant4_particle_file` or generated on the fly from a Track3P dump by also
+providing a `particle_parameters` section (chaining the same logic as
+`mode: 'particle_weight'`). The workflow writes the source filename and the
+matching `beam_on` particle count into the input file, copies the STL files
+it names into each working directory, and reads the dose / energy-deposit
+output files after the run.
 
 A minimal YAML skeleton:
 
@@ -325,19 +329,18 @@ A minimal YAML skeleton:
 workflow_parameters :
   'mode' : 'geant4'
   'module' : 'geant4'
-  'geant4_input'          : 'dose.mac'
-  'geant4_geometry_files' : ['cavity.gdml']
-  'geant4_particle_file'  : 'track3p_particles_weighted.txt'
-  'geant4_scoring_output' : 'dose_scoring.txt'
-  'geant4_threads'        : 4
+  'geant4_input'         : 'input_7cell.geant4.txt'
+  'geant4_particle_file' : 'track3p_particles_weighted.txt'
+  # 'geant4_threads'     : 4   # optional; overrides 'nthreads' in the input file
 
 geant4_input_parameters :
-  '/gun/energy' : 1.0
-  # additional macro overrides…
+  'world_z' : 250.0
+  # additional input-file overrides (plain keys, no '/')…
 
 output_parameters :
-  'total_dose' : ['scoring', 'total']
-  'peak_dose'  : ['scoring', 'peak']
+  'total_dose' : ['dose', 'total']
+  'peak_dose'  : ['dose', 'peak']
+  'total_edep' : ['edep', 'total']
 ```
 
 Geant4 paths are resolved through the same precedence chain as ACE3P —

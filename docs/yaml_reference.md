@@ -47,7 +47,7 @@ are recognized; other combinations are silently ignored.
 | `scalar_optimize`     | `s3p`      | `vocs_parameters`, `xopt_parameters`              | Drives Xopt with `S3PWorkflow` as the evaluator. |
 | `gp_parameter_sweep`  | `s3p`      | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration low-fidelity sweep — fits a Gaussian Process to S3P observables, then samples it on a tensor grid defined by `sweep_parameters`. See [examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml](https://github.com/slaclab/lume-ace3p/blob/main/examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml). |
 | `particle_weight`     | `track3p`  | `particle_parameters`                             | Standalone post-processing step (no ACE3P invocation). Reads a Track3P particle dump, filters/bins particles, computes per-particle field-emission weights, and writes a weighted-particle file. See [](#particle_parameters). |
-| `geant4`              | `geant4`   | `geant4_input_parameters` (optional), `output_parameters` (optional), `particle_parameters` (optional) | Drives `Geant4Workflow`. Optionally chains a `Particles` pre-step to generate the particle source from Track3P output. |
+| `geant4`              | `geant4`   | `geant4_input_parameters` (optional), `output_parameters` (optional), `particle_parameters` (optional) | Drives `Geant4Workflow` from a plain `key = value` input file. Optionally chains a `Particles` pre-step to generate the particle source from Track3P output. |
 
 ### Geant4-workflow keys
 
@@ -56,13 +56,14 @@ Used only when `module: 'geant4'` is selected (the workflow class is
 
 | Keyword                   | Type   | Default                | Description |
 |---------------------------|--------|------------------------|-------------|
-| `geant4_input`            | `str`  | `None`                 | Path to the Geant4 macro file (`.mac`) used as the simulation input. |
-| `geant4_threads`          | `int`  | `1`                    | Number of threads passed to `/run/numberOfThreads` in the Geant4 macro. |
+| `geant4_input`            | `str`  | `None`                 | Path to the Geant4 input file (plain `key = value` text, `#` comments) used as the simulation input. |
+| `geant4_threads`          | `int`  | `None`                 | If set, overrides the `nthreads` key in the input file. When unset (the default) the input file's own `nthreads` value is left untouched. |
 | `geant4_opts`             | `str`  | `''`                   | Additional `mpirun`/`srun` arguments when launching the Geant4 application. |
-| `geant4_particle_cmd`     | `str`  | `'/lume/particleFile'` | Macro command used to inject the particle-source file path into the Geant4 macro. |
-| `geant4_geometry_files`   | `list` | `[]`                   | List of geometry/auxiliary files copied into the working directory before the Geant4 run. |
+| `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename (the workflow also writes the matching `beam_on` particle count). |
+| `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, *in addition to* the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
 | `geant4_particle_file`    | `str`  | `None`                 | Path to a pre-existing particle-source file. Ignored when `particle_parameters` is provided (in which case the file is generated from Track3P output). |
-| `geant4_scoring_output`   | `str`  | `None`                 | Filename (relative to the working directory) of the Geant4 scoring output read by `evaluate()`. |
+| `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read by `evaluate()` for the `dose` section. Defaults to the `output_dose` value in the input file. (`geant4_scoring_output` is accepted as a back-compat alias.) |
+| `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read by `evaluate()` for the `edep` section. Defaults to the `output_edep` value in the input file. |
 | `particle_input`          | `str`  | `None`                 | Path to the Track3P particle-data file consumed by `Particles` when generating a Geant4 source. |
 | `particle_output`         | `str`  | `None`                 | Output filename for the generated Geant4 source produced by `Particles`. |
 
@@ -114,6 +115,20 @@ Currently supported values:
     `'Emax_location'`, `'Hmax'`, or `'Hmax_location'`.
   - `string3`: `'x'`, `'y'`, or `'z'` — the component of the
     `'Emax_location'` or `'Hmax_location'` vector.
+
+For `mode: 'geant4'`, the output sections instead refer to the Geant4
+scoring-mesh output files:
+
+- `['dose', entry]` — reads the `output_dose` file (the dose-deposit grid).
+- `['edep', entry]` — reads the `output_edep` file (the energy-deposit grid).
+- `['scoring', entry]` — back-compat alias for `'dose'`.
+  - `entry` is one of `'total'` (sum over all mesh bins), `'peak'` (maximum
+    bin value), or `'peak_index'` (the `(ix, iy, iz)` index of the peak bin).
+
+Both output files use the Geant4 box-mesh scorer format: three `#`-comment
+header lines followed by comma-separated rows
+`iX, iY, iZ, total(value), total(val^2), entry`. The fourth column
+(`total(value)`) is read as the per-bin scored quantity.
 
 More sections and entries will be added in future updates.
 
@@ -167,12 +182,12 @@ spaced).
 (geant4_input_parameters)=
 ## `geant4_input_parameters`
 
-Used only with `mode: 'geant4'`. Supplies overrides for Geant4 macro
-commands. Each key is a Geant4 macro command (typically beginning with
-`/`, e.g. `/run/numberOfThreads`, `/gun/energy`); each value is either a
-scalar to write through unchanged or a `min`/`max`/`num` mapping for a
-parameter sweep. Non-macro keys (those not starting with `/`) are
-filtered out before the macro is patched.
+Used only with `mode: 'geant4'`. Supplies overrides for settings in the
+Geant4 input file. Each key is an input-file key (e.g. `nthreads`,
+`world_z`, `scale_factor`); each value is either a scalar to write through
+unchanged or a `min`/`max`/`num` mapping (or list) for a parameter sweep.
+A swept key becomes an additional sweep axis alongside any
+`input_parameters`. Keys not present in the input file are appended.
 
 (particle_parameters)=
 ## `particle_parameters`

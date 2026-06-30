@@ -1,0 +1,50 @@
+# =============================================================
+# Input file for ACE3P-Geant4 Dose Simulation
+# 7-Cell SRF Cavity Model
+# =============================================================
+# Usage: ./sim input_7cell.geant4.txt
+# All simulation parameters are in this single file.
+# =============================================================
+
+# --- Particle source data file (ACE3P output) ---
+particles = particles.data
+
+# --- Geometry STL files (any STL model can be used) ---
+solid_stl  = 7cell_solid_whole.stl
+cavity_stl = 7cell_cavity_whole.stl
+
+# --- Geometry scale factor (1.0 = no scaling) ---
+scale_factor = 1.0
+
+# --- Number of threads (0 = auto-detect all available cores) ---
+nthreads = 64
+
+# --- World volume half-dimensions in mm ---
+# Must be large enough to fully enclose the STL geometry.
+world_x = 200.0
+world_y = 200.0
+world_z = 250.0
+
+# --- Scoring mesh definition ---
+# Box mesh half-sizes in mm
+mesh_x = 60.0
+mesh_y = 60.0
+mesh_z = 200.0
+
+# Mesh center position in mm
+mesh_cx = 0.0
+mesh_cy = 0.0
+mesh_cz = 0.0
+
+# Number of bins in each direction
+mesh_nx = 12
+mesh_ny = 12
+mesh_nz = 40
+
+# --- Run control ---
+# Number of events (particles) to simulate
+beam_on = 1019
+
+# --- Output files ---
+output_dose = doseDeposit.txt
+output_edep = energyDeposit.txt
