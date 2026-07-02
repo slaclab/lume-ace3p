@@ -3,9 +3,7 @@ workflow_parameters :
   'module' : 'geant4'
 
   # --- Geant4 simulation inputs (FILL THESE IN) -----------------------------
-  'geant4_app_path' : '/sdf/rfar/geant4'
-  'geant4_app_exe' : 'sim'
-  'geant4_input' : 'input_7cell.geant4.txt'     # Geant4 'key = value' input file
+  'geant4_input' : 'input_7cell.geant4'     # Geant4 'key = value' input file
   # The STL files named in the input file (solid_stl / cavity_stl) are copied
   # into each workdir automatically. List any extra aux files here to copy them
   # too (union with the input-file STLs, de-duplicated by basename).
@@ -16,16 +14,16 @@ workflow_parameters :
 
   # --- Track3P -> particle source (the Particles pre-step) ------------------
   'particle_input' : 'sample_track3p_particles.txt'   # Track3P particle dump (input)
-  'particle_output' : 'particles.data'   # generated Geant4 source file
+  'particle_output' : 'particles.data'   # generated Geant4 source file (must match what is in geant4_input)
 
   # --- Workdir / paths ------------------------------------------------------
   'workdir' : 'lume-ace3p_geant4_workdir'
   'workdir_mode' : 'auto'                       # REQUIRED for a sweep: one workdir per beta value
   'sweep_output' : True
-  'sweep_output_file' : 'geant4_beta_sweep_output.txt'
-  # 'paths' :                                   # uncomment to override executable paths
-  #   'geant4_app_path' : '/path/to/geant4/app'
-  #   'geant4_app_exe' : 'your_geant4_exe'
+  'sweep_output_file' : 'geant4_beta_sweep_output'
+  'paths' :                                   # uncomment to override executable paths
+    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
+    'geant4_app_exe' : 'sim'
 
 # Swept input space. 'beta' sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60),
 # i.e. 5 Geant4 runs. Each scalar is broadcast equally to all 8 axial bins
@@ -41,7 +39,7 @@ input_parameters :
 # broadcast to all num_bins bins on every run (run 1 -> [40]*8, run 2 -> [45]*8, ...).
 particle_parameters :
   'impact_order' : 1
-  'impact_face_id' : 4
+  'impact_face_id' : 6
   'work_function' : 4.5
   'dt' : 1.0e-10
   'num_bins' : 8
