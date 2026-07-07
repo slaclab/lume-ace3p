@@ -29,6 +29,72 @@ so the default `1, 2` is appropriate. With more than two swept parameters,
 only two have individual sliders, but all parameter combinations are shown
 and can be examined via the sweep-parameter tuple slider.
 
+## Geant4 dose / energy-deposit viewer
+
+`plotting/geant4_deposit_plot.py` reads a Geant4 dose or energy-deposit file
+produced by the `geant4_track3p_beta` example (`doseDeposit.txt` or
+`energyDeposit.txt`) and shows the 3D scoring mesh as interactive 2D slices.
+To use it:
+
+```bash
+python plotting/geant4_deposit_plot.py [doseDeposit.txt]
+```
+
+If no file is given on the command line, a file dialog is opened. Either the
+dose file (values in Gy) or the energy-deposit file (values in eV) can be
+loaded — the mesh name, scorer name, and units are read automatically from the
+comment header, so no configuration is needed.
+
+The files are comma-separated voxel grids with columns
+`iX, iY, iZ, total(value), total(val^2), entry` over the scoring mesh defined
+in the Geant4 input file (`mesh_nx` x `mesh_ny` x `mesh_nz`). The viewer offers:
+
+- a **slice-normal** selector (X, Y, or Z) that chooses which axis the slider
+  steps through, showing the perpendicular plane,
+- a **slice-index** slider to step through slices along that axis, and
+- a **color-by** selector to switch between the deposited value and the raw
+  scoring-entry count.
+
+The deposited value uses a logarithmic color scale with zero voxels masked,
+since deposits typically span many orders of magnitude and grow steeply with
+`beta` (at small `beta` few particles are emitted, so most voxels are empty).
+The entry count uses a linear scale.
+
+Slices are drawn in accelerator coordinates: the beam axis Z (the long mesh
+direction) is horizontal whenever it lies in the slice plane, and the
+transverse (Z-normal) slice puts X horizontal and Y vertical.
+
+### 3D voxel views
+
+Two companion tools show the whole mesh in 3D instead of one slice at a time.
+Both read the same dose / energy-deposit files and use the same accelerator
+convention (beam axis Z drawn as the long horizontal dimension).
+
+`plotting/geant4_deposit_plot3d.py` is a dependency-free 3D scatter of the
+nonzero voxels, colored on a log scale by the deposited value (or linearly by
+entry count):
+
+```bash
+python plotting/geant4_deposit_plot3d.py [doseDeposit.txt]
+```
+
+It provides a **color-by** selector (value or entries), a **threshold** slider
+that hides voxels below a chosen percentile of the nonzero values (so the beam
+channel stands out in dense, high-`beta` runs), and a **marker-size** slider.
+
+`plotting/geant4_deposit_volume.py` is an optional smooth volumetric render
+whose opacity scales with the (log-compressed) deposited value. It gives the
+best result for dense runs but requires PyVista and an interactive /
+GPU-capable session:
+
+```bash
+pip install pyvista
+python plotting/geant4_deposit_volume.py [doseDeposit.txt]
+```
+
+If PyVista is not installed, the script prints an install hint and exits; use
+the 3D scatter or 2D slice viewers instead.
+
 ## S3P optimization viewers
 
 Three plotting tools are included for visualizing optimization output:
