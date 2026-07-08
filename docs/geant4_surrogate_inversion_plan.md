@@ -1,0 +1,280 @@
+# Geant4 Dose Surrogate & Inversion — Implementation Plan
+
+**Status:** planning complete, not yet started.
+**Owner:** dbizzoze
+**Created:** 2026-07-08
+
+## Goal
+
+Build a surrogate model for the `geant4_track3p_beta` workflow that maps an
+8-dimensional field-enhancement vector `β = (β₀ … β₇)` (one per axial bin) to a
+Geant4 dose-deposit profile, then **invert** it: given a measured/target dose
+file, estimate the β profile that produced it — i.e. *"given dosage data, predict
+the field-enhancement profile."*
+
+A full 8-D tensor sweep is combinatorially infeasible, so the surrogate is
+trained from a modest number of Geant4 evaluations at scattered design points,
+then queried cheaply. Inversion is done against the cheap surrogate, not the
+real solver.
+
+## Confirmed design decisions
+
+- **Surrogate output = full dose profile** via PCA/POD + one GP per retained
+  component (a "PCA-GP" / reduced-basis surrogate). Not scalar reductions —
+  inverting from a scalar is under-determined.
+- **Future alternate input modes** for inversion: reduced "profile summaries"
+  (e.g. per-z-slice dose totals) as *separate* modes. Design the surrogate and
+  inversion interfaces so this can be added without reworking the GP core.
+- **Two inversion methods, both implemented:**
+  - `invert_optimize` — minimize `‖project(target) − c_GP(β)‖²` using existing
+    Xopt generators. Point estimate, reuses all current infrastructure.
+  - `invert_bayesian` — posterior over β via MCMC on the cheap surrogate. For
+    predictive analysis with low data; exposes non-uniqueness and uncertainty.
+  - **No** direct `dose → β` regressor — too ill-posed.
+- **Multi-fidelity** (on Geant4 particle count) is deferred to the last phase and
+  only pursued after single-fidelity accuracy is validated.
+
+## Cross-cutting correctness constraints (apply to every phase)
+
+1. **Fix `bin_edges` explicitly** in `particle_parameters` for all training and
+   inversion runs. The default edges in `Particles.assign_bins`
+   (`src/lume_ace3p/particles.py`) are data-driven (`z_vals.min() .. max()`) and
+   drift per run, making the β→dose map non-stationary and poisoning the GP.
+   Every generated training YAML / run config must carry an explicit, shared
+   `bin_edges` (length `num_bins + 1`).
+2. **Geant4 dose is Monte-Carlo noisy.** The surrogate GPs must include a genuine
+   noise term. Do **not** reuse S3P's low-noise / interpolating prior
+   (`use_low_noise_prior = True` as set for `MultiFidelityGenerator` in
+   `run_xopt.py`). Default to a fitted noise/likelihood.
+
+## Repository orientation (as of 2026-07-08)
+
+- Package lives under `src/lume_ace3p/` (moved from `lume_ace3p/`; a stale
+  `build/lib/lume_ace3p/` copy exists — ignore it).
+- Entry point: `src/lume_ace3p/run_lume_ace3p.py` — dispatches on
+  `workflow_parameters.mode` + `module`.
+- Forward map `β∈ℝ⁸ → dose` is **already callable today** via
+  `Geant4Workflow._resolve_beta` (`src/lume_ace3p/workflow.py`) using
+  `particle_parameters.beta_inputs: [beta0 … beta7]` with `beta0..beta7`
+  declared in `input_parameters`. The single-run path
+  (`materialize → _resolve_beta → Particles → Geant4`) handles an arbitrary
+  8-vector. No changes to the Geant4/particle plumbing are needed to evaluate
+  training points.
+- Xopt driver: `src/lume_ace3p/run_xopt.py` — `run_xopt` (scalar_optimize) and
+  `run_lf_sweep` (gp_parameter_sweep). Both are currently hardwired to
+  `S3PWorkflow` + S-parameter/frequency parsing.
+- Dose grid format & parsing reference: `plotting/geant4_deposit_common.py`
+  (`parse_deposit_file` — comma-separated `iX,iY,iZ,total(value),total(val^2),entry`
+  voxel grid; mesh/scorer/units in header comments).
+
+---
+
+# Phase 1 — Decouple the Xopt driver from S3PWorkflow
+
+**Objective:** Make `run_xopt` / `run_lf_sweep` workflow-agnostic so a
+`Geant4Workflow`-based objective can plug in later, **without changing the input
+file format or output behavior of the current S3P optimization tools.**
+
+### Hard no-change contract (must hold exactly)
+
+For the S3P paths (`mode: scalar_optimize` and `mode: gp_parameter_sweep`,
+`module: s3p`), after this refactor:
+
+- **YAML is byte-for-byte unchanged.** `examples/s3p_optimization/`,
+  `examples/s3p_mf_optimization/`, `examples/s3p_bayesian_sweep/`,
+  `examples/UCB_Example.yaml`, `examples/MOBO_ExpectedHypervolume_Example.yaml`
+  all still run with no edits.
+- **Public function signatures unchanged:** `run_xopt(workflow_dict, vocs_dict,
+  xopt_dict)` and `run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict)`
+  keep their names and arguments (they are called from
+  `run_lume_ace3p.py:43-60`).
+- **Output files identical** (names, columns, formatting, append-vs-overwrite):
+  `sim_output.txt`, `sim_output_all_values.txt`, `sweep_output.txt`,
+  `Binary_gp_model.pt`, `gp_parameters.txt`. Produced via `WriteXoptData` /
+  `WriteS3PDataTable` in `tools.py` — do not touch those writers.
+- All generators still supported: `NelderMeadGenerator`,
+  `ExpectedImprovementGenerator`, `MultiFidelityGenerator`,
+  `UpperConfidenceBoundGenerator`, `ExpectedHypervolumeImprovementGenerator`,
+  `BayesianExplorationGenerator`. Fidelity-variable rename (`s` →
+  `fidelity_variable`) and cost-function logic preserved.
+
+### Approach
+
+Extract the S3P-specific pieces into an injectable object, leaving the Xopt
+orchestration (generator selection, random/step loops, termination criteria,
+model saving) generic:
+
+1. Define a small interface — a `sim_function` factory that takes
+   `(workflow, output-extraction spec)` and returns the `input_dict → output_dict`
+   closure Xopt expects, plus a hook for the per-iteration data logging.
+2. Move the S3P body (build `S3PWorkflow`, run, parse `Frequency` / `S(m,n)`,
+   call `WriteS3PDataTable`) into an S3P-specific implementation of that
+   interface. Behaviorally identical — ideally a pure code move.
+3. `run_xopt` / `run_lf_sweep` keep their signatures but delegate solver-specific
+   work to the injected implementation. The Geant4 implementation is **not**
+   added in this phase — only the seam that will accept it.
+
+### Verification (Phase 1 done when)
+
+- Run `examples/s3p_optimization/s3p_optimization.yaml` and at least one of
+  `s3p_mf_optimization` / `s3p_bayesian_sweep` **before and after** the refactor
+  (dry-run acceptable where ACE3P env is absent) and diff the produced
+  `sim_output*.txt` / `sweep_output.txt` — they must match.
+- No YAML or example file edited.
+- `run_xopt` / `run_lf_sweep` signatures unchanged; `run_lume_ace3p.py` untouched
+  except (optionally) internal wiring that does not alter dispatch behavior.
+
+### Out of scope for Phase 1
+
+Any Geant4 objective, any new mode, any surrogate/PCA code. This phase is a
+pure, behavior-preserving refactor.
+
+---
+
+# Phase 2 — `collect_training_data` mode (DOE sampler over β)
+
+**Objective:** Generate and persist `(β, dose_grid)` training pairs by evaluating
+the existing `Geant4Workflow` at scattered points in the 8-D β space.
+
+### Approach
+
+1. New `mode: collect_training_data`, `module: geant4` in `run_lume_ace3p.py`.
+2. Design-of-experiments sampler over `beta0..beta7`: Latin Hypercube or Sobol
+   (prefer `scipy.stats.qmc`), N points across per-dimension bounds declared in
+   the YAML. **Not** a tensor grid.
+3. For each sample: materialize the 8-vector, drive the existing single-run
+   `Geant4Workflow` path (reuse `beta_inputs`), and record `(β, dose_grid)`.
+4. Persist to a compact, reloadable store (e.g. `.npz`/`.npy` for stacked grids +
+   a table of β rows, plus a manifest with `bin_edges`, mesh shape, grid
+   filenames, units). Must be **resumable** — skip β points whose workdir/dose
+   file already exists (workdir naming already encodes the swept scalars via
+   `_getworkdir`).
+5. Enforce the two cross-cutting constraints: require explicit `bin_edges`; make
+   fidelity (particle count) an explicit recorded field for later.
+
+### Verification (Phase 2 done when)
+
+- A small N (e.g. 8–16) DOE run produces a training store loadable in one call
+  returning aligned `β` matrix and dose-grid tensor with consistent shapes.
+- Re-running the mode skips already-computed points (resumability).
+- Dry-run mode works without the Geant4 app environment (mirrors existing
+  `Geant4Workflow` dry-run behavior) for pipeline testing.
+
+### Deliverables
+
+- New example under `examples/` (e.g. `geant4_beta_surrogate/`) with a YAML
+  declaring `beta0..beta7` bounds, explicit `bin_edges`, DOE size, and the store
+  path.
+- Loader utility (new module, e.g. `src/lume_ace3p/surrogate_data.py`).
+
+---
+
+# Phase 3 — `train_surrogate` mode (PCA-GP forward model)
+
+**Objective:** Build the reduced-basis surrogate from collected data and expose
+cheap `predict_dose(β)` and `project(dose)`.
+
+### Approach
+
+1. New `mode: train_surrogate`. Load the Phase-2 store.
+2. Stack dose grids → matrix `Y (N × M)`, `M` = flattened voxel count. Subtract
+   mean, SVD/PCA → retain top-`k` components (choose `k` by cumulative variance,
+   e.g. ≥99%; dose fields are smooth and low-rank). Store mean + basis `Φ`.
+3. Fit one independent GP per PCA coefficient: `β ∈ ℝ⁸ → cᵢ`. Use a genuine
+   noise term (constraint #2) — do not force a low-noise prior. Reuse Xopt/BoTorch
+   GP machinery where convenient, but a direct `botorch`/`gpytorch` or
+   `sklearn` GP per component is acceptable if cleaner.
+4. Expose an API object:
+   - `predict_dose(β) → (mean_grid, var_grid)` (reconstruct
+     `mean + Σ cᵢ(β)·φᵢ`),
+   - `project(dose_grid) → coefficient vector` in the same basis,
+   - `save()` / `load()` following the existing `torch.save` +
+     hyperparameter-dump pattern in `run_xopt.py`.
+5. Keep the coefficient space the *single* interface the inversion phase talks to,
+   so the future "profile summaries" input mode can supply an alternate
+   `project()` without changing the GPs.
+
+### Verification (Phase 3 done when)
+
+- Held-out β points: reconstructed dose matches Geant4 dose within a reported
+  error metric (e.g. relative L2), and predicted variance is calibrated (not
+  ~0 — sanity check against constraint #2).
+- Round-trip: `project(predict_dose(β))` ≈ `c_GP(β)`.
+- Model saves and reloads to identical predictions.
+
+---
+
+# Phase 4 — `invert_optimize` and `invert_bayesian` modes
+
+**Objective:** Given a target dose file, estimate β. Two modes sharing the same
+surrogate and target-loading code, differing only in what they return.
+
+### Approach
+
+Common: load trained surrogate, load target dose file (reuse
+`plotting/geant4_deposit_common.parse_deposit_file` or a shared parser),
+`project` it into coefficient space.
+
+- **`invert_optimize`:** minimize `‖project(target) − c_GP(β)‖²` (+ optional
+  regularization / bounds) over β using the Phase-1 generic Xopt driver
+  (NelderMead for a point estimate; Bayesian generators optional). Returns β\*
+  and reconstruction diagnostics. This reuses the decoupled driver directly —
+  the "workflow" here is the cheap surrogate, not Geant4.
+- **`invert_bayesian`:** define a likelihood in coefficient space (using the GP
+  predictive variance + assumed dose-noise) and sample the posterior over β via
+  MCMC (`emcee` or `numpyro`/`pymc` — pick one, add as optional dependency).
+  Returns posterior samples / credible intervals and surfaces non-uniqueness
+  (multiple β modes explaining one dose).
+
+### Verification (Phase 4 done when)
+
+- **Recovery test:** generate a dose from a known β (held out or fresh Geant4
+  run), invert, and confirm recovered β (optimize) / posterior mass (bayesian)
+  is consistent with the truth *and* with reconstruction error.
+- Bayesian mode produces sensible uncertainty that widens with fewer training
+  points / noisier targets.
+- Both modes read a real Geant4 dose file end-to-end.
+
+### Deliverables
+
+- Example YAMLs for both inversion modes pointing at a saved surrogate + a
+  target dose file.
+
+---
+
+# Phase 5 — Multi-fidelity (deferred)
+
+**Objective:** Speed up training by mixing cheap/noisy and expensive/accurate
+Geant4 evaluations, using number of primaries (`beam_on` / particle count) —
+and/or scoring-mesh resolution — as the fidelity axis.
+
+**Precondition:** Only start after Phase 3 single-fidelity accuracy is validated.
+
+### Approach
+
+- Reuse the existing `MultiFidelityGenerator` plumbing and cost-function logic in
+  `run_xopt.py` (currently tied to S3P's fidelity variable `s`), now reachable via
+  the Phase-1 generic driver.
+- Fidelity ↔ particle count mapping; cost model from measured runtimes.
+- Integrate multi-fidelity data into the PCA-GP (fidelity-aware GPs on
+  coefficients). Handle the interaction between MC noise level and fidelity
+  (lower particle count = higher noise) — this is the trickiest part and the
+  reason it is last.
+
+### Verification (Phase 5 done when)
+
+- Multi-fidelity training reaches comparable held-out accuracy to single-fidelity
+  at lower total cost, with the cost accounting reported.
+
+---
+
+## Execution notes for fresh-context sessions
+
+- Read `docs/geant4_surrogate_inversion_plan.md` (this file) and the memory note
+  `geant4-surrogate-inversion-project` first.
+- Execute **one phase per session.** Do not start a phase before its precondition
+  phase's verification passes.
+- Update the **Status** line at the top and check off the phase's verification
+  bullets as they pass; note any deviations from the plan inline.
+- Keep the two cross-cutting correctness constraints (fixed `bin_edges`, genuine
+  GP noise) in force in every phase.
