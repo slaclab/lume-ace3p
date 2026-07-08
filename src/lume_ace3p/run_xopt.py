@@ -4,6 +4,8 @@ import torch
 import random
 
 from xopt.vocs import VOCS
+# xopt 3.0.0 moved random_inputs from a VOCS method to a module-level function.
+from xopt.vocs import random_inputs as vocs_random_inputs
 from xopt.evaluator import Evaluator
 from xopt import Xopt
 from lume_ace3p.workflow import S3PWorkflow
@@ -12,8 +14,19 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 
 def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
-    from xopt.generators.bayesian import BayesianExplorationGenerator    
-    vocs = VOCS(variables=vocs_dict['variables'], observables=vocs_dict['observables'])
+    from xopt.generators.bayesian import BayesianExplorationGenerator
+    # xopt 3.0.0's BayesianExplorationGenerator requires 'explore'-type
+    # objectives; the target quantities (e.g. 'S(1,1)_12.0e+09') are declared
+    # under 'objectives' in the YAML with value 'explore'. Older configs may
+    # instead list them under 'observables' -- support both, preferring
+    # objectives so the shipped example runs unchanged.
+    objectives = vocs_dict.get('objectives') or {}
+    if objectives:
+        targets = list(objectives.keys())
+        vocs = VOCS(variables=vocs_dict['variables'], objectives=objectives)
+    else:
+        targets = list(vocs_dict.get('observables', []))
+        vocs = VOCS(variables=vocs_dict['variables'], observables=targets)
     generator = BayesianExplorationGenerator(vocs=vocs)
 
     iteration_index = 0
@@ -22,19 +35,19 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
         output_data = workflow.run()
         S_params = []
         freqs = []
-        
-        for obj in vocs_dict['observables']:
+
+        for obj in targets:
             S_params.append(obj[:obj.find(')')+1])
             freqs.append(obj[obj.find('_')+1:])
-        
+
         #right now, not configured to have s params as observables
         output_dict = {}
         freq_index = 0
-        
+
         for f in range(len(freqs)):
             try:
                 freq_index = list(output_data['Frequency']).index(float(freqs[f]))
-                output_dict[vocs_dict['observables'][f]] = output_data[S_params[f]][freq_index]
+                output_dict[targets[f]] = output_data[S_params[f]][freq_index]
             except ValueError:
                 print("Inputted frequency to be optimized is not in frequency sweep.")
         
@@ -65,16 +78,16 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
     prev_bests = []
     while not hit_max_steps:
         X.step()
-        WriteXoptData('sim_output.txt', vocs_dict['observables'], X.data, iteration_index)
+        WriteXoptData('sim_output.txt', targets, X.data, iteration_index)
         iteration_index += 1
         steps += 1
         if 'max_steps' in xopt_dict.keys():
             if steps > xopt_dict['max_steps']:
                 hit_max_steps = True
         current_best = 0
-        for o in vocs_dict['observables']:
+        for o in targets:
             current_best += X.data[o].min()
-        current_best = current_best / len(vocs_dict['observables'])
+        current_best = current_best / len(targets)
         prev_bests.append(current_best)
         #if within checking range, compare to see if current best is close to the best patience iterations ago
         if len(prev_bests) > patience:
@@ -111,7 +124,7 @@ def run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict):
     with open("sweep_output.txt", "w") as sweepfile:
         for iv in input_varname:
             sweepfile.write(iv+'\t')
-        for obj in vocs_dict['observables']:
+        for obj in targets:
             sweepfile.write(obj+'\t')
         sweepfile.write('\n')
         for i in range(np.size(input_tensor,0)):
@@ -225,7 +238,17 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
     generator = None
     if xopt_dict['generator'] == 'NelderMeadGenerator':
         from xopt.generators.sequential.neldermead import NelderMeadGenerator
-        generator = NelderMeadGenerator(vocs=vocs)
+        # xopt 3.0.0 requires NelderMead to have a starting point: either an
+        # explicit initial_point, initial_simplex, or existing data. When the
+        # config does no random seeding (num_random absent/0), seed the initial
+        # point at the midpoint of each variable's bounds so the example runs
+        # without editing its YAML.
+        if not xopt_dict.get('num_random', 0):
+            initial_point = {name: 0.5 * (bounds[0] + bounds[1])
+                             for name, bounds in vocs_dict['variables'].items()}
+            generator = NelderMeadGenerator(vocs=vocs, initial_point=initial_point)
+        else:
+            generator = NelderMeadGenerator(vocs=vocs)
     elif xopt_dict['generator'] == 'ExpectedImprovementGenerator':
         from xopt.generators.bayesian import ExpectedImprovementGenerator
         generator = ExpectedImprovementGenerator(vocs=vocs)
@@ -291,7 +314,7 @@ def run_xopt(workflow_dict, vocs_dict, xopt_dict):
         
         #do random steps (default 2) to train the GP
         num_random = xopt_dict.get('num_random',2)
-        random_inputs = vocs.random_inputs(num_random)
+        random_inputs = vocs_random_inputs(vocs, num_random)
         #choose initial fidelities evenly spaced from 0 to 1--helps train the GP model
         init_fidelity = np.linspace(0,1,num_random)
         for iter in range(len(random_inputs)):
