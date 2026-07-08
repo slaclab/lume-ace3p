@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 import tkinter as tk
@@ -6,6 +7,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.widgets import Slider, RadioButtons
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from geant4_deposit_common import (parse_deposit_file, is_yaml_file,
+                                   load_sweep, load_sweep_deposit)
 
 # Sequential colormap whose low end is near-white, so nonzero voxels emerge
 # smoothly from the (white) empty background instead of jumping to black.
@@ -20,7 +25,13 @@ VALUE_CMAP.set_bad('white')          # zero / masked voxels render as background
 # mesh_nz). The mesh name, scorer name, and value units are read from the three
 # comment lines at the top of the file.
 #
-# Usage:  python plotting/geant4_deposit_plot.py [doseDeposit.txt]
+# Alternatively, a LUME-ACE3P sweep YAML (e.g. geant4_track3p_beta.yaml) may be
+# passed. The sweep folders (one per swept value, e.g. beta) are discovered from
+# 'workflow_parameters' / 'workdir', and the tool adds a slider per swept
+# variable to choose the folder plus a dose/energy toggle to choose which
+# deposit file in that folder to load.
+#
+# Usage:  python plotting/geant4_deposit_plot.py [doseDeposit.txt | sweep.yaml]
 # If no file is given on the command line, a file dialog is opened.
 
 root = tk.Tk()
@@ -30,75 +41,64 @@ if len(sys.argv) == 2:
     file_path = sys.argv[1]
 else:
     file_path = filedialog.askopenfilename(          # Prompt for file to load
-        title='Choose a Geant4 dose / energy-deposit file')
+        title='Choose a Geant4 deposit file or LUME-ACE3P sweep YAML')
 
 if len(file_path) == 0:
     sys.exit()
 
-# --- Parse the file -------------------------------------------------------
-with open(file_path, 'r') as file:
-    dlines = file.readlines()
+# --- Load: either a single deposit file or a sweep YAML -------------------
+# D holds the currently displayed grids and derived quantities. In sweep mode
+# it is refreshed by reload() whenever a slider / toggle changes.
+D = {}
+sweep = None
+scalar_idx = []          # per-axis current index into axis 'values' (sweep mode)
 
-mesh_name = 'mesh'
-scorer_name = 'value'
-units = ''
-data_rows = []
-for line in dlines:
-    line = line.strip()
-    if not line:
-        continue
-    if line.startswith('#'):
-        text = line.lstrip('#').strip()
-        if text.startswith('mesh name:'):
-            mesh_name = text.split(':', 1)[1].strip()
-        elif text.startswith('primitive scorer name:'):
-            scorer_name = text.split(':', 1)[1].strip()
-        elif 'total(value)' in text:
-            # e.g. "iX, iY, iZ, total(value) [Gy], total(val^2), entry"
-            if '[' in text and ']' in text:
-                units = text[text.index('[') + 1:text.index(']')].strip()
-        continue
-    data_rows.append(line.split(','))
+if is_yaml_file(file_path):
+    sweep = load_sweep(file_path)
+    scalar_idx = [0] * len(sweep.axes)
+    state_source = 'dose' if sweep.dose_name else 'edep'
+else:
+    state_source = 'dose'
 
-if len(data_rows) == 0:
-    print('No data rows found in file.')
-    sys.exit()
 
-raw = np.array(data_rows, dtype=float)
-ix = raw[:, 0].astype(int)
-iy = raw[:, 1].astype(int)
-iz = raw[:, 2].astype(int)
-value = raw[:, 3]        # total deposited value (Gy or eV)
-entry = raw[:, 5]        # number of scoring entries in the voxel
+def _empty_parsed():
+    """A 1x1x1 zero grid so redraw() has something to show when a sweep file
+    is missing."""
+    return {'mesh_name': '(missing)', 'scorer_name': 'value', 'units': '',
+            'vlabel': 'value', 'grid': np.zeros((1, 1, 1)),
+            'entry_grid': np.zeros((1, 1, 1)), 'nx': 1, 'ny': 1, 'nz': 1}
 
-nx = ix.max() + 1
-ny = iy.max() + 1
-nz = iz.max() + 1
 
-# Fill dense grids (missing voxels stay zero).
-grid = np.zeros((nx, ny, nz))
-grid[ix, iy, iz] = value
-entry_grid = np.zeros((nx, ny, nz))
-entry_grid[ix, iy, iz] = entry
+def apply_parsed(parsed):
+    """Copy a parse_deposit_file dict into D and recompute derived state."""
+    if parsed is None:
+        parsed = _empty_parsed()
+    D.update(parsed)
+    grid = D['grid']
+    # Positive floor for the log color scale (smallest nonzero value).
+    nonzero = grid[grid > 0]
+    D['vmin'] = nonzero.min() if nonzero.size else 1.0
+    D['vmax'] = grid.max() if nonzero.size else 1.0
+    if D['vmax'] <= D['vmin']:
+        D['vmax'] = D['vmin'] * 10.0
+    D['sizes'] = {'X': D['nx'], 'Y': D['ny'], 'Z': D['nz']}
+    print('Loaded %s: scorer "%s", grid %d x %d x %d, %d nonzero voxels'
+          % (D['mesh_name'], D['scorer_name'], D['nx'], D['ny'], D['nz'],
+             int(np.count_nonzero(grid))))
 
-vlabel = scorer_name + (' [' + units + ']' if units else '')
-print('Loaded %s: scorer "%s", grid %d x %d x %d, %d nonzero voxels'
-      % (mesh_name, scorer_name, nx, ny, nz, int(np.count_nonzero(grid))))
+
+if sweep is None:
+    apply_parsed(parse_deposit_file(file_path))
+else:
+    _init_scalars = tuple(sweep.axes[i]['values'][scalar_idx[i]]
+                          for i in range(len(sweep.axes)))
+    apply_parsed(load_sweep_deposit(sweep, _init_scalars, state_source))
 
 # --- Slice geometry -------------------------------------------------------
-# axis index -> (name, in-plane axis labels, in-plane sizes)
 AXES = ['X', 'Y', 'Z']
-sizes = {'X': nx, 'Y': ny, 'Z': nz}
 
 fntsz = 16
 fdict = {'family': 'serif', 'weight': 'normal', 'size': fntsz}
-
-# Positive floor for the log color scale (smallest nonzero value in the file).
-nonzero = grid[grid > 0]
-vmin = nonzero.min() if nonzero.size else 1.0
-vmax = grid.max() if nonzero.size else 1.0
-if vmax <= vmin:
-    vmax = vmin * 10.0
 
 fig = plt.figure(figsize=(14, 9))
 ax = fig.add_axes([0.30, 0.15, 0.55, 0.78])
@@ -112,23 +112,50 @@ axis_ax.set_title('Slice normal', fontdict={'size': 12})
 
 # Radio buttons to pick which quantity to color by.
 data_ax = fig.add_axes([0.03, 0.32, 0.16, 0.15])
-data_radio = RadioButtons(data_ax, (vlabel, 'entries'), active=0)
+data_radio = RadioButtons(data_ax, (D['vlabel'], 'entries'), active=0)
 data_ax.set_title('Color by', fontdict={'size': 12})
 
-# Slider to step through slices along the chosen normal axis.
-slice_ax = fig.add_axes([0.30, 0.06, 0.55, 0.03])
-slice_slider = Slider(slice_ax, 'slice index', 0, nz - 1, valinit=nz // 2,
-                      valstep=1)
+# In sweep mode the slice slider and the beta slider(s) share the bottom, so
+# lift the slice slider to make room; otherwise keep the original position.
+if sweep is None:
+    slice_ax = fig.add_axes([0.30, 0.06, 0.55, 0.03])
+else:
+    slice_ax = fig.add_axes([0.30, 0.16, 0.55, 0.03])
+slice_slider = Slider(slice_ax, 'slice index', 0, D['nz'] - 1,
+                      valinit=D['nz'] // 2, valstep=1)
+
+# Sweep-mode controls: a dose/energy toggle and one index slider per swept var.
+source_radio = None
+beta_sliders = []
+if sweep is not None:
+    src_opts = []
+    if sweep.dose_name:
+        src_opts.append('dose')
+    if sweep.edep_name:
+        src_opts.append('energy')
+    source_ax = fig.add_axes([0.03, 0.14, 0.16, 0.12])
+    source_radio = RadioButtons(source_ax, tuple(src_opts),
+                                active=src_opts.index('dose'
+                                    if state_source == 'dose' else 'energy'))
+    source_ax.set_title('Deposit file', fontdict={'size': 12})
+
+    for i, axis in enumerate(sweep.axes):
+        sax = fig.add_axes([0.30, 0.02 + i * 0.045, 0.55, 0.025])
+        n = len(axis['values'])
+        s = Slider(sax, axis['name'], 0, n - 1, valinit=scalar_idx[i],
+                   valstep=1)
+        s.valtext.set_text(str(axis['values'][scalar_idx[i]]))
+        beta_sliders.append(s)
 
 state = {'axis': 'Z', 'source': 'value'}
 
 
 def current_grid():
-    return grid if state['source'] == 'value' else entry_grid
+    return D['grid'] if state['source'] == 'value' else D['entry_grid']
 
 
 def current_label():
-    return vlabel if state['source'] == 'value' else 'entries'
+    return D['vlabel'] if state['source'] == 'value' else 'entries'
 
 
 def get_slice(axis, idx):
@@ -153,7 +180,7 @@ def plane_labels(axis):
 
 def redraw():
     axis = state['axis']
-    idx = int(slice_slider.val)
+    idx = min(int(slice_slider.val), D['sizes'][axis] - 1)
     sl = get_slice(axis, idx)
     xlab, ylab = plane_labels(axis)
 
@@ -165,9 +192,10 @@ def redraw():
     if state['source'] == 'value':
         masked = np.ma.masked_less_equal(sl, 0.0)
         im = ax.imshow(masked, origin='lower', aspect='auto',
-                       norm=LogNorm(vmin=vmin, vmax=vmax), cmap=VALUE_CMAP)
+                       norm=LogNorm(vmin=D['vmin'], vmax=D['vmax']),
+                       cmap=VALUE_CMAP)
     else:
-        emax = entry_grid.max() if entry_grid.max() > 0 else 1
+        emax = D['entry_grid'].max() if D['entry_grid'].max() > 0 else 1
         im = ax.imshow(sl, origin='lower', aspect='auto', vmin=0, vmax=emax,
                        cmap='viridis')
 
@@ -175,9 +203,30 @@ def redraw():
     cbar.set_label(current_label(), fontdict=fdict)
     ax.set_xlabel(xlab, fontdict=fdict)
     ax.set_ylabel(ylab, fontdict=fdict)
-    ax.set_title('%s  |  %s = %d' % (mesh_name, axis, idx), fontdict=fdict)
+    title = '%s  |  %s = %d' % (D['mesh_name'], axis, idx)
+    if sweep is not None:
+        pt = '  '.join('%s=%s' % (sweep.axes[i]['name'],
+                                  sweep.axes[i]['values'][scalar_idx[i]])
+                       for i in range(len(sweep.axes)))
+        title = title + '   [' + pt + ']'
+    ax.set_title(title, fontdict=fdict)
     ax.tick_params(labelsize=fntsz - 4)
     fig.canvas.draw_idle()
+
+
+def reload():
+    """Reload the deposit grid for the current sweep point / source, then
+    refresh the color-by label and slice-slider range before redrawing."""
+    scalars = tuple(sweep.axes[i]['values'][scalar_idx[i]]
+                    for i in range(len(sweep.axes)))
+    apply_parsed(load_sweep_deposit(sweep, scalars, state['source_file']))
+    # The value label may change between dose and energy files.
+    data_radio.labels[0].set_text(D['vlabel'])
+    slice_slider.valmax = D['nz'] - 1
+    slice_ax.set_xlim(0, D['nz'] - 1)
+    if slice_slider.val > D['nz'] - 1:
+        slice_slider.set_val(D['nz'] // 2)
+    redraw()
 
 
 def on_slice(val):
@@ -187,7 +236,7 @@ def on_slice(val):
 def on_axis(label):
     axis = label.split()[-1]           # "slice along Z" -> "Z"
     state['axis'] = axis
-    n = sizes[axis]
+    n = D['sizes'][axis]
     # Reconfigure the slider range for the new axis.
     slice_slider.valmax = n - 1
     slice_ax.set_xlim(0, n - 1)
@@ -198,13 +247,34 @@ def on_axis(label):
 
 
 def on_data(label):
-    state['source'] = 'value' if label == vlabel else 'entries'
+    state['source'] = 'value' if label == D['vlabel'] else 'entries'
     redraw()
+
+
+def on_source(label):
+    state['source_file'] = 'dose' if label == 'dose' else 'edep'
+    reload()
+
+
+def make_on_beta(i):
+    def handler(val):
+        scalar_idx[i] = int(val)
+        beta_sliders[i].valtext.set_text(
+            str(sweep.axes[i]['values'][scalar_idx[i]]))
+        reload()
+    return handler
 
 
 slice_slider.on_changed(on_slice)
 axis_radio.on_clicked(on_axis)
 data_radio.on_clicked(on_data)
+
+if sweep is not None:
+    state['source_file'] = state_source
+    if source_radio is not None:
+        source_radio.on_clicked(on_source)
+    for i, s in enumerate(beta_sliders):
+        s.on_changed(make_on_beta(i))
 
 redraw()
 plt.show()
