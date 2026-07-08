@@ -1,6 +1,13 @@
 # Geant4 Dose Surrogate & Inversion — Implementation Plan
 
-**Status:** Phase 0 (xopt 3.0.0 compat) done; Phase 1 not yet started.
+**Status:** SHELVED (2026-07-08) pending the workflow modularization refactor —
+see `docs/workflow_module_refactor_plan.md`. Phase 0 (xopt 3.0.0 compat) done.
+**Phase 1 (decouple Xopt from S3PWorkflow) is superseded**: it will be delivered
+by the refactor's Phase 4 (generic Xopt mode over any workflow), so its
+hard-no-change contract below no longer applies (the refactor is a deliberate
+clean break). Resume Phases 2–4 (collect_training_data, train_surrogate,
+invert_*) as **new modes** on the new architecture once the refactor reaches its
+Phase 6.
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
