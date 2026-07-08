@@ -1,8 +1,33 @@
 # Geant4 Dose Surrogate & Inversion — Implementation Plan
 
-**Status:** planning complete, not yet started.
+**Status:** Phase 0 (xopt 3.0.0 compat) done; Phase 1 not yet started.
 **Owner:** dbizzoze
 **Created:** 2026-07-08
+
+## Phase 0 — xopt 3.0.0 compatibility (unplanned prerequisite, done 2026-07-08)
+
+The repo was pinned `xopt>=2.2.2` but 3.0.0 was installed (needed for Bayesian
+exploration). 3.0.0 broke the shipped S3P examples, so the Phase-1
+before/after example diff could not be run. Fixed in `run_xopt.py` before
+starting Phase 1:
+
+- `run_lf_sweep`: build VOCS from `objectives` (the `explore` dict the example
+  already declares) instead of the empty `observables`; 3.0.0's
+  `BayesianExplorationGenerator` requires `ExploreObjective` objectives.
+- NelderMead: seed `initial_point` from the midpoint of each variable's bounds
+  when `num_random` is absent/0 (3.0.0 no longer infers a start point).
+- `VOCS.random_inputs(n)` → module-level `xopt.vocs.random_inputs(vocs, n)`
+  (used by the multi-fidelity cost-budget path).
+- Pin bumped to `xopt>=3.0.0` in `pyproject.toml` / `requirements.txt`.
+
+EI, MOBO, and MultiFidelity generators construct/step fine under 3.0.0 — their
+apparent failures were dry-run artifacts (dry-run S3P returns NaN under
+output-name keys, never the real S-parameter keys the optimizer parses), not
+version breakage. Env-independent proof: `tests/test_run_xopt_compat.py`
+monkeypatches `S3PWorkflow` with a synthetic solver and drives all five
+paths (NelderMead / EI / MOBO / MultiFidelity / gp_parameter_sweep) to
+file-writing; 5/5 pass. Real before/after S3P example diffs still require the
+cluster (ACE3P absent locally).
 
 ## Goal
 
