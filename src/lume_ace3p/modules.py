@@ -145,6 +145,16 @@ class Module:
         raise NotImplementedError(
             f"module '{self.type}' exposes no extractable quantities")
 
+    def field_index(self, ctx):
+        """Return ``(label, values)`` for the shared index axis this module's
+        field outputs are aligned to (e.g. S3P's ``('Frequency', array)``), or
+        ``None`` if the module produces no index-aligned field outputs.
+
+        The mode layer uses this seam to emit the S3P long-format sweep table
+        (one row per (grid-point, frequency)) generically, without reaching
+        into any solver-specific code."""
+        return None
+
     def __repr__(self):
         return f'<{type(self).__name__} name={self.name!r}>'
 
@@ -351,6 +361,16 @@ class S3PModule(_SolverModule):
         if isinstance(spec, list):
             return spec[0], None
         return spec, None
+
+    def field_index(self, ctx):
+        """S3P field outputs are indexed by frequency. Return
+        ``('Frequency', array)``; under dry-run (no solver) mirror the legacy
+        ``S3PWorkflow.evaluate`` single-row ``[0.0]`` sentinel so a swept
+        long-format table still has one row per grid point."""
+        solver = self._solver
+        if solver is None:
+            return 'Frequency', np.array([0.0])
+        return 'Frequency', np.asarray(solver.output_data['Frequency'])
 
 
 # --------------------------------------------------------------------------- #

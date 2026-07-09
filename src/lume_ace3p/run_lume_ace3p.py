@@ -7,6 +7,29 @@ from lume_ace3p.run_xopt import run_xopt, run_lf_sweep
 from lume_ace3p.particles import Particles
 
 
+def _run_declarative(lume_ace3p_data):
+    """Phase-3 dispatch: build a declarative Workflow from the ``workflow:``
+    list and drive it through the mode layer for ``single`` / ``parameter_sweep``.
+
+    This runs alongside the legacy ``(mode, module)`` matrix below — the Xopt
+    modes still route through the legacy path until Phase 4. A YAML is treated
+    as declarative when it carries a top-level ``workflow:`` list. The mode
+    config comes from a ``mode:`` block (target schema)."""
+    from lume_ace3p.workflow_graph import Workflow
+    from lume_ace3p.modes import run_mode
+
+    workflow = Workflow.from_config(lume_ace3p_data)
+    mode_cfg = lume_ace3p_data.get('mode') or {}
+    mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode', '')).lower()
+    if mode_type not in ('single', 'parameter_sweep'):
+        raise ValueError(
+            f"declarative workflow mode '{mode_type}' is not yet handled "
+            "(Phase 3 covers single | parameter_sweep; Xopt modes land in "
+            "Phase 4).")
+    return run_mode(mode_cfg, workflow,
+                    output_spec=lume_ace3p_data.get('output_parameters'))
+
+
 def main():
     input_file = sys.argv[1]
 
@@ -15,6 +38,12 @@ def main():
     except Exception as exc:
         print(exc)
         sys.exit(1)
+
+    # New declarative schema: a top-level 'workflow:' list of modules driven by
+    # a 'mode:' block. Dual-dispatched on 'dev' alongside the legacy matrix.
+    if lume_ace3p_data.get('workflow') is not None:
+        _run_declarative(lume_ace3p_data)
+        return
 
     workflow_dict = lume_ace3p_data.get('workflow_parameters')
     assert 'module' in workflow_dict.keys(), "Lume-ACE3P keyword 'module' not defined"

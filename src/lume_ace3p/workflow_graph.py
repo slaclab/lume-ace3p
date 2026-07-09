@@ -256,6 +256,28 @@ class Workflow:
         """Delegate to the input model — the swept axes a mode iterates over."""
         return self.inputs.sweep_axes()
 
+    def output_modules(self):
+        """Return ``{output_name: module}`` — the module that extracts each
+        declared output. Lets a mode ask a module for its field index
+        (:meth:`Module.field_index`) without solver-specific code."""
+        return {name: self._route_output(name, spec)[0]
+                for name, spec in self.output_spec.items()}
+
+    def field_index(self):
+        """Return ``(label, values)`` for the shared field index (e.g. S3P's
+        ``('Frequency', array)``) after an :meth:`evaluate`, or ``None`` if no
+        module exposes one. Scans all modules — the field index is a property of
+        the solver in the chain, independent of which ``output_parameters`` were
+        requested (so an S3P sweep with no declared outputs still goes
+        long-format). Reads from ``self.last_context``."""
+        if self.last_context is None:
+            return None
+        for module in self.modules:
+            idx = module.field_index(self.last_context)
+            if idx is not None:
+                return idx
+        return None
+
     # ---- helpers ---------------------------------------------------------
 
     def _materialize(self, input_scalars):

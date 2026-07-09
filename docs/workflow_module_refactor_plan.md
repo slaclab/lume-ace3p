@@ -1,10 +1,14 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 2 complete (declarative workflow + DAG validation landed:
-`src/lume_ace3p/workflow_graph.py` + `tests/test_workflow_graph.py`, 17 workflow
-tests green; full suite 55 passing; legacy `run_lume_ace3p.py` dispatch and the
-`Omega3P/S3P/Geant4Workflow` subclasses untouched — next: Phase 3 — mode layer
-(`single` + `parameter_sweep`, DataFrame results)). Supersedes
+**Status:** Phase 3 complete (mode layer landed: `src/lume_ace3p/modes.py` +
+`tests/test_modes.py`, 8 mode tests green; full suite 63 passing. `single` +
+`parameter_sweep` reimplemented as workflow-agnostic modes returning pandas
+DataFrames via `DataFrame.to_csv`; `run_lume_ace3p.py` dual-dispatches on a
+top-level `workflow:` list through the new mode layer while the legacy
+`(mode,module)` matrix + `Omega3P/S3P/Geant4Workflow` subclasses stay live for
+the Xopt cells; legacy `workflow.py`/`run_xopt.py`/`tools.py` writers untouched —
+next: Phase 4 — Xopt modes (`scalar_optimize` + `gp_parameter_sweep`)).
+Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
 S3PWorkflow" is absorbed into Phase 4 here). Phases: 0.5 baseline → 1 modules →
@@ -445,22 +449,60 @@ three legacy chains as declared workflows.
 
 ### Verification (Phase 3 done when)
 
-- `parameter_sweep` over each legacy chain produces a DataFrame whose numeric
-  content matches the old sweep output (column layout may differ — clean break).
-- Geant4 β-broadcast sweep (`beta_input`) runs through the mode and yields the
-  expected per-point dose scalars.
-- `single` mode round-trips one evaluation.
+- [x] `parameter_sweep` over each legacy chain produces a DataFrame whose
+  numeric content matches the old sweep output (column layout may differ — clean
+  break). `test_modes.py::test_{s3p,omega3p,omega3p_ace3p_axis}_sweep_matches_baseline`
+  diff the written table against the Phase-0.5 baselines via
+  `baseline_utils.compare_tables`: S3P long-format (inputs + `Frequency`),
+  Omega3P wide (16 rows, NaN outputs under dry-run), and the Omega3P+ACE3P-axis
+  32-row (4×4×2) sweep including the `ace3p:…Sigma` axis column.
+- [x] Geant4 β-broadcast sweep (`beta_input`) runs through the mode and yields
+  the expected per-point outputs. `test_modes.py::test_geant4_beta_broadcast_sweep`
+  drives the 5-point beta sweep and asserts the per-beta `particles.data`
+  matches the frozen `particles_beta40/60.digest.json` — the numeric proof the
+  broadcast reaches `ParticlesModule` per grid point. (Dose *scalars* proper
+  need a real Geant4 run; the checkable numeric artifact under dry-run is the
+  generated source file, per Phase 0.5.)
+- [x] `single` mode round-trips one evaluation.
+  `test_modes.py::test_single_{wide,s3p_long}_round_trip` cover the wide
+  (one-row) and S3P field-indexed (one-row-per-frequency) shapes.
 
 ### Deliverables
 
-- `src/lume_ace3p/modes.py` + tests. `run_lume_ace3p.py` gains a new dispatch on
-  `mode.type` over a built `Workflow` for `single` / `parameter_sweep`. **Leave
-  the legacy `(mode,module)` matrix and the `Omega3P/S3P/Geant4Workflow`
-  subclasses in place** — the Xopt cells still depend on them until Phase 4.
-  Deletion happens in Phase 6, after all modes exist. (A temporarily
-  dual-dispatch `run_lume_ace3p.py` on the `dev` branch is fine; no `master`
-  merge until the whole refactor is tested — so the intermediate state is
-  acceptable and does not need a compatibility shim.)
+- [x] `src/lume_ace3p/modes.py` + `tests/test_modes.py` (8 tests). Two files
+  added, three touched (`git status`: `modes.py` + `test_modes.py` new;
+  `modules.py`/`workflow_graph.py`/`run_lume_ace3p.py` modified); full suite
+  `python -m pytest tests/` = 63 passing (55 prior + 8 new), so the frozen
+  baselines and the legacy path are unchanged. `run_lume_ace3p.py` gains a
+  dispatch on the mode type over a built `Workflow` for `single` /
+  `parameter_sweep`, triggered by a top-level `workflow:` list; the legacy
+  `(mode,module)` matrix and the `Omega3P/S3P/Geant4Workflow` subclasses stay in
+  place (Xopt cells still depend on them until Phase 4). Dual-dispatch on `dev`,
+  no compatibility shim.
+
+**Deviations / notes recorded during Phase 3:**
+
+- **`field_index` seam added to keep the S3P long-format generic.** The plan's
+  "S3P long-format is the one tidy-frame exception" would otherwise force
+  solver-specific code into the mode. Instead `Module.field_index(ctx)` returns
+  the shared index axis (`S3PModule` → `('Frequency', array)`; dry-run mirrors
+  the legacy `[0.0]` sentinel), and `Workflow.field_index()` scans modules for
+  it. The mode goes long-format iff a module exposes an index — no `s3p`/`S(m,n)`
+  string is referenced in `modes.py`. The index is a property of the solver, not
+  of the requested `output_parameters`, so an S3P sweep with **no** declared
+  outputs still goes long-format (matching the legacy `WriteS3PDataTable`, which
+  keyed off `Frequency` regardless of outputs).
+- **Column layout is a clean break, verified on parsed content.** The legacy
+  writers emitted a trailing tab (a phantom `Unnamed` column) and stripped an
+  `ACE3P`-prefixed input name to its last segment; the new `to_csv` path does
+  neither. `compare_tables` reads both through pandas (dropping `Unnamed`
+  columns) and compares column *sets* + numeric values, so the diff is on
+  content, not byte layout — exactly the plan's numeric-equivalence contract.
+- **Geant4 sweep numeric check is the source file, not dose.** With no real
+  Geant4 binary the dose/edep scalars are unreachable (dry-run), so per the
+  Phase-0.5 findings the checkable per-point numeric artifact is the
+  `particles.data` the beta-broadcast produces. Dose-scalar extraction wiring
+  (`Geant4Module.extract`) is already unit-tested in Phase 1.
 
 ---
 
