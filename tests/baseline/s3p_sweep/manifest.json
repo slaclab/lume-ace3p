@@ -1,0 +1,16 @@
+{
+  "checkable": "NUMERIC: swept input grid (cornercut x rcorner2) and Frequency column. Solver outputs absent (dry-run), so the S-parameter values are reachability-only.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_s3p_workdir_12.0_4.0/DRY_RUN.txt"
+    },
+    "s3p_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "s3p_sweep_output.txt"
+    }
+  },
+  "kind": "sweep",
+  "yaml": "s3p_sweep.yaml"
+}

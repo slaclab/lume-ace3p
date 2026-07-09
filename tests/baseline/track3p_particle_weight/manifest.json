@@ -1,0 +1,11 @@
+{
+  "checkable": "NUMERIC (real compute): the field-emission ParticleWeight and all track columns of the filtered/binned output. Frozen as a per-column numeric digest.",
+  "digests": {
+    "weighted_particles.digest.json": {
+      "pattern": "track3p_particles_weighted.txt"
+    }
+  },
+  "files": {},
+  "kind": "particle_weight",
+  "yaml": "track3p_particle_weight.yaml"
+}

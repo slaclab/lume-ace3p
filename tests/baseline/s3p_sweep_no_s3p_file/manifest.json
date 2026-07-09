@@ -1,0 +1,16 @@
+{
+  "checkable": "NUMERIC: swept input grid + Frequency column; the marker also records the parsed ACE3P Section leaves. Reachability for the (absent) solver step.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_s3p_workdir_12.0_4.0/DRY_RUN.txt"
+    },
+    "s3p_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "s3p_sweep_output.txt"
+    }
+  },
+  "kind": "sweep",
+  "yaml": "s3p_sweep_no_s3p_file.yaml"
+}

@@ -1,0 +1,4 @@
+{
+  "UCB_Example": "The shipped UCB_Example.yaml declares three objectives, but xopt 3.0.0's UpperConfidenceBoundGenerator rejects multi-objective VOCS (VOCSError: \"this generator does not support multi-objective optimization\"). The shipped config is not runnable as-is under the pinned xopt; frozen as a known-error, not a numeric baseline.",
+  "s3p_mf_optimization": "MultiFidelity cost-budget path divides by wall-clock xopt_runtime and loops on alotted_time, so the trajectory length and values are timing-dependent: reachability-only, not numerically checkable. Its generator construction/stepping is smoke-tested in tests/test_run_xopt_compat.py::test_multifidelity."
+}

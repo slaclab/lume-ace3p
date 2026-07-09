@@ -1,0 +1,16 @@
+{
+  "checkable": "NUMERIC: swept input grid (cav_radius x ellipticity). Output columns (R/Q, Mode_freq, E_max, loc_*) are NaN without acdtool -> reachability-only.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_omega3p_workdir_90.0_0.5/DRY_RUN.txt"
+    },
+    "omega3p_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "omega3p_sweep_output.txt"
+    }
+  },
+  "kind": "sweep",
+  "yaml": "omega3p_sweep.yaml"
+}
