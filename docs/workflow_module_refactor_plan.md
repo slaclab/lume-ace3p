@@ -1,6 +1,7 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Not started (next: Phase 0.5 — freeze golden baseline). Supersedes
+**Status:** Phase 0.5 complete (golden baseline frozen under `tests/baseline/`;
+self-check green — next: Phase 1 — module layer). Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
 S3PWorkflow" is absorbed into Phase 4 here). Phases: 0.5 baseline → 1 modules →
@@ -192,14 +193,48 @@ now, while the legacy code path is still intact.
 
 ### Verification (Phase 0.5 done when)
 
-- `tests/baseline/` contains reproducible fixtures for all current examples.
-- A "baseline self-check" test re-runs the *current* code and confirms it still
-  matches its own captured fixtures (guards against flaky/nondeterministic
-  captures before they're used as a reference).
+- [x] `tests/baseline/` contains reproducible fixtures for all current examples.
+  9 examples frozen (all except the two below); `tests/freeze_baseline.py`
+  regenerates them from the current code.
+- [x] A "baseline self-check" test re-runs the *current* code and confirms it
+  still matches its own captured fixtures (guards against
+  flaky/nondeterministic captures before they're used as a reference).
+  `tests/test_baseline_selfcheck.py` — 10 passing (9 examples + fixture-presence
+  guard); full suite `python -m pytest tests/` = 15 passing.
 
 ### Deliverables
 
-- `tests/baseline/` fixtures + a comparison helper. No `src/` changes.
+- [x] `tests/baseline/` fixtures + comparison helpers. No `src/` changes.
+  - `tests/baseline_utils.py` — synthetic solver, RNG seeding, per-example
+    registry (`EXAMPLES`), producers, and the compare helpers
+    (`compare_tables` tolerance diff, `compare_marker` numeric-token diff,
+    `numeric_digest`/`compare_digests` for large arrays).
+  - `tests/freeze_baseline.py` — writer; `tests/baseline/<example>/` holds the
+    frozen files + a `manifest.json`; `tests/baseline/README.md` documents
+    per-example checkability; `not_frozen.json` records coverage gaps.
+
+**Findings recorded during capture (feed Phases 3–4):**
+
+- Numerically checkable, seed-reproducible via the synthetic solver:
+  `s3p_optimization` (NelderMead trajectory), `s3p_bayesian_sweep` (10×10 GP
+  posterior-mean sweep + trajectory), `MOBO_ExpectedHypervolume_Example`
+  (MOBO/EHVI trajectory).
+- Numerically checkable via **real** pure-Python compute:
+  `track3p_particle_weight` and the `geant4_track3p_beta` `particles.data`
+  (frozen as per-column digests).
+- Dry-run reachability + input-grid/ACE3P-leaf capture: `s3p_sweep`,
+  `s3p_sweep_no_s3p_file`, `omega3p_sweep`, `omega3p_ace3p_param_sweep`,
+  and the Geant4 dry-run marker. Note: in `omega3p_ace3p_param_sweep` the ACE3P
+  `Sigma: [5.8e7, 1.04e7]` list is treated as a **third sweep axis** (4×4×2 = 32
+  runs) — worth preserving/deciding in Phase 2.
+- **Not frozen** (deviation, with reason): `s3p_mf_optimization` — MultiFidelity
+  trajectory is timing-dependent (cost divides by wall-clock `xopt_runtime`,
+  loops on `alotted_time`), so reachability-only; covered by
+  `test_run_xopt_compat.py::test_multifidelity`. `UCB_Example` — its shipped
+  3-objective config raises `VOCSError` under xopt 3.0.0
+  (UCB rejects multi-objective VOCS), so it is not runnable as-is; recorded as a
+  known-error in `not_frozen.json`, not a numeric baseline. Both should be
+  revisited when their modes are reimplemented in Phase 4.
 
 ---
 

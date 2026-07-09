@@ -1,0 +1,12 @@
+{
+  "checkable": "NUMERIC (synthetic solver, seeded): full NelderMead trajectory (cornercut, rcorner1, objective). Seed-reproducible and cluster-independent.",
+  "digests": {},
+  "files": {
+    "sim_output.txt": {
+      "compare": "table",
+      "pattern": "sim_output.txt"
+    }
+  },
+  "kind": "xopt_scalar",
+  "yaml": "s3p_optimization.yaml"
+}

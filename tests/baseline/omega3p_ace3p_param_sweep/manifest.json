@@ -1,0 +1,16 @@
+{
+  "checkable": "NUMERIC: the swept cubit grid PLUS the ACE3P Sigma list [5.8e7, 1.04e7] which is treated as a third sweep axis (so 4x4x2 = 32 runs, workdir names carry the Sigma suffix). The marker records the parsed ACE3P Section (SurfaceMaterial/Sigma) leaves. Solver outputs reachability-only.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_omega3p_workdir_90.0_0.5_10400000.0/DRY_RUN.txt"
+    },
+    "omega3p_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "omega3p_sweep_output.txt"
+    }
+  },
+  "kind": "sweep",
+  "yaml": "omega3p_ace3p_param_sweep.yaml"
+}

@@ -1,0 +1,8 @@
+Dry run mode: Geant4 step skipped.
+Input file: input_7cell.geant4
+Particle file: lume-ace3p_geant4_workdir_40.0/particles.data
+Geometry files: ['7cell_solid_whole.stl', '7cell_cavity_whole.stl']
+Output files: {'dose': 'doseDeposit.txt', 'edep': 'energyDeposit.txt'}
+Threads: None
+Cubit: {'beta': 40.0}
+Input overrides: None

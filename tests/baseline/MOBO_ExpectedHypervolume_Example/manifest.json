@@ -1,0 +1,12 @@
+{
+  "checkable": "NUMERIC (synthetic solver, seeded): the MOBO/EHVI trajectory (R1, L1, r10, three S(0,0) objectives). Seed-reproducible.",
+  "digests": {},
+  "files": {
+    "sim_output.txt": {
+      "compare": "table",
+      "pattern": "sim_output.txt"
+    }
+  },
+  "kind": "xopt_scalar",
+  "yaml": "MOBO_ExpectedHypervolume_Example.yaml"
+}
