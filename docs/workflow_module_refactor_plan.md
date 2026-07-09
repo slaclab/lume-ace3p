@@ -1,9 +1,10 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 1 complete (module layer landed: `src/lume_ace3p/modules.py`
-+ `tests/test_modules.py`, 23 module tests green; full suite 38 passing; legacy
-`run_lume_ace3p.py` dispatch untouched — next: Phase 2 — declarative
-workflow + DAG validation). Supersedes
+**Status:** Phase 2 complete (declarative workflow + DAG validation landed:
+`src/lume_ace3p/workflow_graph.py` + `tests/test_workflow_graph.py`, 17 workflow
+tests green; full suite 55 passing; legacy `run_lume_ace3p.py` dispatch and the
+`Omega3P/S3P/Geant4Workflow` subclasses untouched — next: Phase 3 — mode layer
+(`single` + `parameter_sweep`, DataFrame results)). Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
 S3PWorkflow" is absorbed into Phase 4 here). Phases: 0.5 baseline → 1 modules →
@@ -361,21 +362,65 @@ three legacy chains as declared workflows.
 
 ### Verification (Phase 2 done when)
 
-- The three legacy chains, expressed as `workflow:` lists, run end-to-end
+- [x] The three legacy chains, expressed as `workflow:` lists, run end-to-end
   (dry-run where solver env absent) and produce the **same artifacts and the
   same extracted output values** as the current `Omega3PWorkflow` /
   `S3PWorkflow` / `Geant4Workflow` single `run()`.
-- A new multi-step chain using only *runnable* modules validates and orders
+  `test_workflow_graph.py::test_{s3p,omega3p,geant4}_chain_matches_legacy*` diff
+  the declared workflow's extracted outputs against a single legacy `run()` on
+  the same point (S3P/Omega3P: NaN sentinel under dry-run; Geant4:
+  `particles.data` numeric digest is byte-for-byte equal), and the Geant4 chain
+  additionally matches the Phase-0.5 `particles_beta40.digest.json`.
+- [x] A new multi-step chain using only *runnable* modules validates and orders
   correctly — e.g. `track3p_source→particles→geant4` (external Track3P dump →
   emission weights → dose), and `cubit→s3p→acdtool`. Dry-run reaches the final
-  step with all required artifacts present.
-- Invalid graphs fail validation with a clear message: missing mesh source,
+  step with all required artifacts present. `test_order_*` check both chains
+  topologically order regardless of YAML list order; the equivalence tests
+  assert the terminal artifacts (`EM_SOLUTION`/`RF_POST`, `DOSE_GRID`/`EDEP_GRID`)
+  are present after `evaluate`.
+- [x] Invalid graphs fail validation with a clear message: missing mesh source,
   acdtool before solver, `particles` with no `track3p_particles` source,
-  `geant4` with no `particle_source`, two mesh sources.
+  `geant4` with no `particle_source`, two mesh sources. `test_missing_mesh_source`,
+  `test_acdtool_before_solver`, `test_particles_no_track3p_source`,
+  `test_geant4_no_particle_source`, `test_two_mesh_sources` — each asserts the
+  message names the offending artifact kind.
 
 ### Deliverables
 
-- Workflow builder/validator module + `tests/test_workflow_graph.py`.
+- [x] Workflow builder/validator module (`src/lume_ace3p/workflow_graph.py`) +
+  `tests/test_workflow_graph.py`. Only two files added
+  (`git status`: `workflow_graph.py`, `test_workflow_graph.py`); full suite
+  `python -m pytest tests/` = 55 passing (38 prior + 17 new), so the frozen
+  baselines and the legacy path are unchanged.
+
+**Deviations / notes recorded during Phase 2:**
+
+- **Ordering is a plain dependency sort, not a general DAG topo-sort.** Because
+  each artifact kind has exactly one producer (enforced as the "two mesh
+  sources" rule), `_resolve_order` schedules a module once every producer of its
+  `requires` has run, using YAML list order only as a stable tiebreaker. This is
+  the minimal rule set the plan asked for and stays additive: a future Track3P
+  solver that `provides {track3p_particles}` simply becomes the producer that
+  satisfies `particles`, with no rule change.
+- **DRY_RUN.txt marker differs from legacy by design.** Phase 1 already made
+  each module *append* its own dry-run block, so an assembled chain yields a
+  combined multi-block marker rather than the legacy single-block text. Phase-2
+  equivalence is therefore checked on **extracted output values + artifacts**
+  (and the real `particles.data` digest), per the plan's numeric-equivalence
+  contract — not on marker bytes.
+- **Legacy bare output specs are still routed.** `output_parameters` entries may
+  name their module explicitly (`{module: s3p, quantity: ...}`, the target
+  schema) or use the older bare forms (`'S(0,0)'`, `['RoverQ', ...]`,
+  `['dose', 'total']`); `_infer_output_module` maps the bare shapes to a module
+  type so the three legacy chains reproduce with their existing specs. An output
+  targeting a module absent from the workflow raises a clear error
+  (`test_output_targets_absent_module`).
+- **`Workflow.evaluate` accepts three input shapes** — `None` (base inputs, a
+  single scalar run), an axis-scalar list aligned with `sweep_axes()` (a sweep
+  grid point), or a cubit-override mapping (the Xopt objective shape) — so the
+  Phase 3/4 modes can drive it without further changes. Workdir naming reuses
+  the legacy `_getworkdir` scheme (auto-mode suffixes verified equal, e.g.
+  `lume-ace3p_geant4_workdir_40.0`).
 
 ---
 
