@@ -1,7 +1,9 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 0.5 complete (golden baseline frozen under `tests/baseline/`;
-self-check green — next: Phase 1 — module layer). Supersedes
+**Status:** Phase 1 complete (module layer landed: `src/lume_ace3p/modules.py`
++ `tests/test_modules.py`, 23 module tests green; full suite 38 passing; legacy
+`run_lume_ace3p.py` dispatch untouched — next: Phase 2 — declarative
+workflow + DAG validation). Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
 S3PWorkflow" is absorbed into Phase 4 here). Phases: 0.5 baseline → 1 modules →
@@ -282,15 +284,47 @@ changes yet — the old `run_lume_ace3p.py` path still works alongside.
 
 ### Verification (Phase 1 done when)
 
-- Each module runs in isolation in dry-run mode from a hand-built `RunContext`,
-  producing/consuming the expected artifact keys.
-- `extract` reproduces the same scalar values the current `evaluate()` methods
-  return for equivalent inputs (unit test with a synthetic solver output file).
-- No change to `run_lume_ace3p.py` dispatch yet; existing examples still run.
+- [x] Each module runs in isolation in dry-run mode from a hand-built
+  `RunContext`, producing/consuming the expected artifact keys. (Source modules
+  + `ParticlesModule` run for real; solver/geant4 run their dry-run path.
+  `tests/test_modules.py` — per-module dry-run + require-artifact tests, and a
+  `test_registry_edges_match_plan` guard that pins every requires/provides set.)
+- [x] `extract` reproduces the same scalar values the current `evaluate()`
+  methods return for equivalent inputs (unit test with a synthetic solver output
+  file). `S3PModule`/`AcdtoolModule`/`Geant4Module` `extract` are diffed against
+  `S3PWorkflow`/`Omega3PWorkflow`/`Geant4Workflow.evaluate` on the same
+  synthetic Reflection.out / rfpost.out / dose+edep fixtures; `ParticlesModule`
+  is diffed against a direct `Particles()` invocation.
+- [x] No change to `run_lume_ace3p.py` dispatch yet; existing examples still
+  run. Only two files added (`git status`: `modules.py`, `test_modules.py`);
+  full suite `python -m pytest tests/` = 38 passing (15 Phase-0.5 baseline +
+  23 new), so the frozen baselines are unchanged.
+
+**Deviations / notes recorded during Phase 1:**
+
+- The skip-flags (`skip_cubit`/`skip_solver`/`skip_acdtool`/`skip_meshconvert`)
+  and the `geant4_particle_file` bypass are **not** carried into the module
+  layer, per the plan. `skip_meshconvert` becomes the per-`CubitModule`
+  `meshconvert:` bool; the rest become "don't list the module" +
+  `MeshSourceModule`/`Track3PSourceModule`/`ParticleSourceModule`. The legacy
+  flags still live on `ACE3PWorkflow`/`Geant4Workflow` until Phase 6.
+- `_resolve_beta` moved into `ParticlesModule`; `_geometry_files`,
+  `_output_files`, `_read_scoring_output` moved into `Geant4Module` (verbatim,
+  workdir sourced from `ctx`). The originals remain on `Geant4Workflow` (still
+  live through Phase 4/5).
+- `Track3PSourceModule` is a **source module only** (external dump →
+  `track3p_particles`); no runnable Track3P/T3P solver. Requires/provides are
+  additive so the future solver (`requires em_solution`, `provides
+  track3p_particles`) slots in without rule changes.
+- `RunContext.artifacts` maps artifact-kind → path. Dry-run modules still
+  populate the key (with a nominal path) so a Phase-2 DAG can verify a
+  downstream `requires` is met even when the upstream binary is skipped. The
+  DRY_RUN.txt marker is **appended** per module (each contributes its block),
+  so an assembled chain yields a combined marker in Phase 2.
 
 ### Deliverables
 
-- `src/lume_ace3p/modules.py` + `tests/test_modules.py`.
+- [x] `src/lume_ace3p/modules.py` + `tests/test_modules.py`.
 
 ---
 
