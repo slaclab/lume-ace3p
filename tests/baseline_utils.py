@@ -54,32 +54,36 @@ BASELINE_DIR = os.path.join(HERE, 'baseline')
 # --------------------------------------------------------------------------- #
 
 # Frequency grid referenced by the example YAMLs so integer-index lookups in
-# run_xopt succeed for every objective frequency the shipped configs use.
+# the synthetic workflow succeed for every objective frequency the configs use.
 SYNTH_FREQS = np.array([
     9.424e9, 9.674e9, 11.324e9, 11.424e9, 11.524e9, 12.0e9, 12.424e9,
 ])
 
 
-class SyntheticS3PWorkflow:
-    """Stand-in for `S3PWorkflow` in `run_xopt`: returns a fixed frequency grid
-    and a smooth, input-dependent S-parameter response. Deterministic given the
-    input dict, so the optimizer sees signal but never touches Cubit/S3P.
+class SyntheticWorkflow:
+    """Stand-in :class:`~lume_ace3p.workflow_graph.Workflow` for the generic Xopt
+    modes: exposes ``evaluate(input_dict) -> {objective_name: scalar}`` computed
+    from a deterministic, input-dependent synthetic S-parameter response, so the
+    optimizer sees signal but never touches Cubit/S3P.
 
-    Mirrors `FakeS3PWorkflow` in `tests/test_run_xopt_compat.py` but with a
-    wider frequency grid covering every example's objective frequency."""
+    ``output_spec`` maps each declared objective name to the
+    ``(s_parameter, frequency)`` it extracts — the S-parameter knowledge lives in
+    the fake *workflow*, so the mode itself stays workflow-agnostic. This is the
+    same shape as ``SynthWorkflow`` in ``tests/test_run_xopt_compat.py`` and uses
+    a frequency grid covering every example's objective frequency."""
 
-    def __init__(self, workflow_dict, input_dict):
-        self.input_dict = input_dict
+    def __init__(self, output_spec):
+        self.output_spec = output_spec
 
-    def run(self):
-        x = float(sum(float(v) for v in self.input_dict.values()))
+    def evaluate(self, input_dict):
+        x = float(sum(float(v) for v in input_dict.values()))
         base = 0.01 * (1.0 + np.cos(SYNTH_FREQS / 1e9 - x))
-        return {
-            'IndexMap': {},
-            'Frequency': SYNTH_FREQS,
-            'S(0,0)': base,
-            'S(1,1)': base * 0.9,
-        }
+        data = {'Frequency': SYNTH_FREQS, 'S(0,0)': base, 'S(1,1)': base * 0.9}
+        out = {}
+        for name, (sparam, freq) in self.output_spec.items():
+            idx = list(SYNTH_FREQS).index(float(freq))
+            out[name] = data[sparam][idx]
+        return out
 
 
 def seed_all(seed=0):
@@ -214,109 +218,94 @@ def compare_digests(baseline_digest, produced_digest, atol=1e-6, rtol=1e-9):
 # --------------------------------------------------------------------------- #
 
 
-def _produce_sweep(example_dir, yaml_name):
-    """Dry-run a `parameter_sweep` example (omega3p / s3p / geant4)."""
-    from lume_ace3p.inputs import load_yaml, build_inputs
-    from lume_ace3p.workflow import (S3PWorkflow, Omega3PWorkflow,
-                                     Geant4Workflow)
+def _drive_declarative(data):
+    """Build a Workflow from a loaded YAML mapping and drive it through the mode
+    layer, forcing dry-run. Used by the sweep / single producers."""
+    from lume_ace3p.workflow_graph import Workflow
+    from lume_ace3p.modes import run_mode
+    data.setdefault('workflow_parameters', {})['dry_run'] = True
+    workflow = Workflow.from_config(data)
+    run_mode(data.get('mode') or {}, workflow,
+             output_spec=data.get('output_parameters'),
+             vocs=data.get('vocs_parameters'),
+             xopt=data.get('xopt_parameters'),
+             sweep=data.get('sweep_parameters'))
+
+
+def _produce_declarative(example_dir, yaml_name, meta):
+    """Dry-run a declarative `parameter_sweep` / `single` example (the s3p /
+    omega3p / geant4 / track3p chains) through the real module/mode path."""
+    from lume_ace3p.inputs import load_yaml
     tmp = _stage_example(example_dir)
     cwd = os.getcwd()
     os.chdir(tmp)
     try:
-        data = load_yaml(yaml_name)
-        wd = data['workflow_parameters']
-        wd['dry_run'] = True  # force dry-run regardless of local environment
-        inputs = build_inputs(data)
-        outd = data.get('output_parameters')
-        module = wd['module'].lower()
-        if module == 'omega3p':
-            Omega3PWorkflow(wd, inputs, outd).run_sweep()
-        elif module == 's3p':
-            S3PWorkflow(wd, inputs).run_sweep()
-        elif module == 'geant4':
-            Geant4Workflow(wd, inputs, outd,
-                           particle_params=data.get('particle_parameters')
-                           ).run_sweep()
-        else:
-            raise ValueError(f'unhandled sweep module {module!r}')
+        _drive_declarative(load_yaml(yaml_name))
     finally:
         os.chdir(cwd)
     return tmp
 
 
-def _produce_particle_weight(example_dir, yaml_name):
-    """Run the real `Particles` field-emission weighting (pure Python, no
-    solver env needed)."""
-    from lume_ace3p.inputs import load_yaml
-    from lume_ace3p.particles import Particles
-    tmp = _stage_example(example_dir)
-    cwd = os.getcwd()
-    os.chdir(tmp)
-    try:
-        data = load_yaml(yaml_name)
-        wd = data['workflow_parameters']
-        Particles(wd.get('particle_input'), data.get('particle_parameters'),
-                  output_file=wd.get('particle_output'),
-                  workdir=os.getcwd()).run()
-    finally:
-        os.chdir(cwd)
-    return tmp
+# The frozen Xopt baselines were captured with objectives auto-named
+# ``S(param)_<freq>`` (e.g. ``S(0,0)_12000000000.0``); the synthetic workflow
+# maps each such name back to the (s_parameter, frequency) it extracts. The
+# example YAMLs may use friendlier objective names, so the baseline producers
+# build the synthetic workflow + VOCS directly against the frozen column names.
+def _synth_spec(objectives):
+    """Parse ``{name: (sparam, freq)}`` from objective names shaped
+    ``S(m,n)_<freq>``."""
+    spec = {}
+    for name in objectives:
+        sparam, _, freq = name.rpartition('_')
+        spec[name] = (sparam, float(freq))
+    return spec
 
 
-def _produce_xopt_scalar(example_dir, yaml_name):
-    """Drive a `scalar_optimize` example through run_xopt with the synthetic
-    solver and a fixed seed."""
-    import lume_ace3p.run_xopt as rx
-    from lume_ace3p.inputs import load_yaml
+def _produce_xopt_scalar(example_dir, yaml_name, meta):
+    """Drive a `scalar_optimize` baseline through the generic mode with the
+    synthetic workflow and a fixed seed (no solver env needed). The synthetic
+    config (objectives / variables / xopt) is carried on the registry entry."""
+    from lume_ace3p import modes
+    synth = meta['synth']
     tmp = _stage_example(example_dir)
     cwd = os.getcwd()
-    yaml_path = os.path.join(EXAMPLES_DIR, example_dir, yaml_name)
-    saved = rx.S3PWorkflow
-    rx.S3PWorkflow = SyntheticS3PWorkflow
+    wf = SyntheticWorkflow(_synth_spec(synth['objectives']))
+    vocs = {'variables': synth['variables'],
+            'objectives': {n: 'MINIMIZE' for n in synth['objectives']}}
     seed_all()
     os.chdir(tmp)
     try:
-        data = load_yaml(yaml_path)
-        voc = data['vocs_parameters']
-        voc.setdefault('constraints', {})
-        voc.setdefault('observables', [])
-        voc.setdefault('constants', {})
-        rx.run_xopt(data['workflow_parameters'], voc, data['xopt_parameters'])
+        modes.scalar_optimize(wf, vocs, synth['xopt'], log_file='sim_output.txt')
     finally:
         os.chdir(cwd)
-        rx.S3PWorkflow = saved
     return tmp
 
 
-def _produce_xopt_gp_sweep(example_dir, yaml_name):
-    """Drive a `gp_parameter_sweep` example through run_lf_sweep with the
-    synthetic solver and a fixed seed."""
-    import lume_ace3p.run_xopt as rx
-    from lume_ace3p.inputs import load_yaml
+def _produce_xopt_gp_sweep(example_dir, yaml_name, meta):
+    """Drive a `gp_parameter_sweep` baseline through the generic mode with the
+    synthetic workflow and a fixed seed."""
+    from lume_ace3p import modes
+    synth = meta['synth']
     tmp = _stage_example(example_dir)
     cwd = os.getcwd()
-    yaml_path = os.path.join(EXAMPLES_DIR, example_dir, yaml_name)
-    saved = rx.S3PWorkflow
-    rx.S3PWorkflow = SyntheticS3PWorkflow
+    wf = SyntheticWorkflow(_synth_spec(synth['objectives']))
+    vocs = {'variables': synth['variables'],
+            'objectives': {n: 'explore' for n in synth['objectives']}}
     seed_all()
     os.chdir(tmp)
     try:
-        data = load_yaml(yaml_path)
-        voc = data['vocs_parameters']
-        voc.setdefault('constraints', {})
-        voc.setdefault('observables', [])
-        voc.setdefault('constants', {})
-        rx.run_lf_sweep(data['workflow_parameters'], data['sweep_parameters'],
-                        voc, data['xopt_parameters'])
+        modes.gp_parameter_sweep(wf, synth['sweep'], vocs, synth['xopt'],
+                                 log_file='sim_output.txt',
+                                 sweep_file='sweep_output.txt')
     finally:
         os.chdir(cwd)
-        rx.S3PWorkflow = saved
     return tmp
 
 
 PRODUCERS = {
-    'sweep': _produce_sweep,
-    'particle_weight': _produce_particle_weight,
+    'sweep': _produce_declarative,
+    'single': _produce_declarative,
+    'particle_weight': _produce_declarative,
     'xopt_scalar': _produce_xopt_scalar,
     'xopt_gp_sweep': _produce_xopt_gp_sweep,
 }
@@ -328,11 +317,20 @@ PRODUCERS = {
 # Each entry:
 #   kind        : producer key in PRODUCERS
 #   yaml        : YAML filename inside examples/<name>/
-#   files       : {fixture_name: (glob_relative_to_workdir, compare_kind)}
-#                 compare_kind in {'table', 'marker'}. glob picks ONE file
-#                 (first sorted match) so per-run temp paths don't leak in.
+#   files       : {fixture_name: (glob_relative_to_workdir, 'table')}. glob picks
+#                 ONE file (first sorted match) so per-run temp paths don't leak.
 #   digests     : {fixture_name: glob} — large numeric arrays frozen as digests
+#   synth       : (xopt kinds only) the synthetic-workflow config used to
+#                 reproduce the frozen Xopt trajectory without a solver env —
+#                 objective names (shaped ``S(m,n)_<freq>``), VOCS variables, the
+#                 xopt block, and (gp sweep) the sweep grid.
 #   checkable   : human note on what is numerically checkable vs reachability
+#
+# DRY_RUN.txt markers are intentionally NOT frozen: the module layer has each
+# module append its own dry-run block, so an assembled chain yields a combined
+# multi-block marker that differs by design from the old single-block text.
+# Per the plan's numeric-equivalence contract, equivalence is checked on the
+# extracted tables + digests, not on marker bytes.
 # --------------------------------------------------------------------------- #
 
 EXAMPLES = {
@@ -341,8 +339,6 @@ EXAMPLES = {
         'yaml': 's3p_sweep.yaml',
         'files': {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
-            'dry_run_marker.txt': ('lume-ace3p_s3p_workdir_12.0_4.0/DRY_RUN.txt',
-                                    'marker'),
         },
         'digests': {},
         'checkable': ('NUMERIC: swept input grid (cornercut x rcorner2) and '
@@ -354,21 +350,17 @@ EXAMPLES = {
         'yaml': 's3p_sweep_no_s3p_file.yaml',
         'files': {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
-            'dry_run_marker.txt': ('lume-ace3p_s3p_workdir_12.0_4.0/DRY_RUN.txt',
-                                    'marker'),
         },
         'digests': {},
-        'checkable': ('NUMERIC: swept input grid + Frequency column; the marker '
-                      'also records the parsed ACE3P Section leaves. '
-                      'Reachability for the (absent) solver step.'),
+        'checkable': ('NUMERIC: swept input grid + Frequency column, with the '
+                      'ACE3P settings supplied inline. Reachability for the '
+                      '(absent) solver step.'),
     },
     'omega3p_sweep': {
         'kind': 'sweep',
         'yaml': 'omega3p_sweep.yaml',
         'files': {
             'omega3p_sweep_output.txt': ('omega3p_sweep_output.txt', 'table'),
-            'dry_run_marker.txt': (
-                'lume-ace3p_omega3p_workdir_90.0_0.5/DRY_RUN.txt', 'marker'),
         },
         'digests': {},
         'checkable': ('NUMERIC: swept input grid (cav_radius x ellipticity). '
@@ -380,24 +372,20 @@ EXAMPLES = {
         'yaml': 'omega3p_ace3p_param_sweep.yaml',
         'files': {
             'omega3p_sweep_output.txt': ('omega3p_sweep_output.txt', 'table'),
-            'dry_run_marker.txt': (
-                'lume-ace3p_omega3p_workdir_90.0_0.5_10400000.0/DRY_RUN.txt',
-                'marker'),
         },
         'digests': {},
         'checkable': ('NUMERIC: the swept cubit grid PLUS the ACE3P Sigma list '
                       '[5.8e7, 1.04e7] which is treated as a third sweep axis '
                       '(so 4x4x2 = 32 runs, workdir names carry the Sigma '
-                      'suffix). The marker records the parsed ACE3P Section '
-                      '(SurfaceMaterial/Sigma) leaves. Solver outputs '
-                      'reachability-only.'),
+                      'suffix). Solver outputs reachability-only.'),
     },
     'track3p_particle_weight': {
-        'kind': 'particle_weight',
+        'kind': 'single',
         'yaml': 'track3p_particle_weight.yaml',
         'files': {},
         'digests': {
-            'weighted_particles.digest.json': 'track3p_particles_weighted.txt',
+            'weighted_particles.digest.json':
+                'lume-ace3p_track3p_workdir/track3p_particles_weighted.txt',
         },
         'checkable': ('NUMERIC (real compute): the field-emission ParticleWeight '
                       'and all track columns of the filtered/binned output. '
@@ -407,8 +395,6 @@ EXAMPLES = {
         'kind': 'sweep',
         'yaml': 'geant4_track3p_beta.yaml',
         'files': {
-            'dry_run_marker.txt': (
-                'lume-ace3p_geant4_workdir_40.0/DRY_RUN.txt', 'marker'),
             'beta_sweep_output': ('geant4_beta_sweep_output', 'table'),
         },
         'digests': {
@@ -420,8 +406,7 @@ EXAMPLES = {
         'checkable': ('NUMERIC (real compute): the Geant4 source file '
                       '(particles.data) generated by the Particles pre-step for '
                       'each beta, frozen as per-column digests; the swept beta '
-                      'grid. The Geant4 solver itself is dry-run (reachability: '
-                      'marker records input/particle/geometry/output files).'),
+                      'grid. The Geant4 solver itself is dry-run.'),
     },
     's3p_optimization': {
         'kind': 'xopt_scalar',
@@ -430,7 +415,13 @@ EXAMPLES = {
             'sim_output.txt': ('sim_output.txt', 'table'),
         },
         'digests': {},
-        'checkable': ('NUMERIC (synthetic solver, seeded): full NelderMead '
+        'synth': {
+            'objectives': ['S(0,0)_12000000000.0'],
+            'variables': {'cornercut': [14, 17], 'rcorner1': [0.5, 2.5]},
+            'xopt': {'generator': 'NelderMeadGenerator', 'num_random': 0,
+                     'num_step': 25},
+        },
+        'checkable': ('NUMERIC (synthetic workflow, seeded): full NelderMead '
                       'trajectory (cornercut, rcorner1, objective). '
                       'Seed-reproducible and cluster-independent.'),
     },
@@ -442,7 +433,14 @@ EXAMPLES = {
             'sim_output.txt': ('sim_output.txt', 'table'),
         },
         'digests': {},
-        'checkable': ('NUMERIC (synthetic solver, seeded): the 10x10 GP '
+        'synth': {
+            'objectives': ['S(1,1)_12.0e+09'],
+            'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
+            'sweep': {'cornercut': {'min': 12.5, 'max': 13.5, 'num': 10},
+                      'wgwidth': {'min': 21, 'max': 22, 'num': 10}},
+            'xopt': {'num_step': 3},
+        },
+        'checkable': ('NUMERIC (synthetic workflow, seeded): the 10x10 GP '
                       'posterior-mean sweep table and the exploration '
                       'trajectory. Seed-reproducible.'),
     },
@@ -454,7 +452,17 @@ EXAMPLES = {
             'sim_output.txt': ('sim_output.txt', 'table'),
         },
         'digests': {},
-        'checkable': ('NUMERIC (synthetic solver, seeded): the MOBO/EHVI '
+        'synth': {
+            'objectives': ['S(0,0)_11.324e+09', 'S(0,0)_11.424e+09',
+                           'S(0,0)_11.524e+09'],
+            'variables': {'R1': [31, 34], 'L1': [12, 15], 'r10': [14, 16]},
+            'xopt': {'generator': 'ExpectedHypervolumeImprovementGenerator',
+                     'generator_options': {'reference_point': {
+                         'S(0,0)_11.324e+09': 0.0, 'S(0,0)_11.424e+09': 0.0,
+                         'S(0,0)_11.524e+09': 0.0}},
+                     'num_random': 2, 'num_step': 5, 'save_model': True},
+        },
+        'checkable': ('NUMERIC (synthetic workflow, seeded): the MOBO/EHVI '
                       'trajectory (R1, L1, r10, three S(0,0) objectives). '
                       'Seed-reproducible.'),
     },
@@ -469,7 +477,8 @@ NOT_FROZEN = {
         'loops on alotted_time, so the trajectory length and values are '
         'timing-dependent: reachability-only, not numerically checkable. Its '
         'generator construction/stepping is smoke-tested in '
-        'tests/test_run_xopt_compat.py::test_multifidelity.'),
+        'tests/test_run_xopt_compat.py::test_generic_multifidelity. Not yet '
+        'migrated to the new workflow:/mode: schema.'),
     'UCB_Example': (
         'The shipped UCB_Example.yaml declares three objectives, but xopt '
         "3.0.0's UpperConfidenceBoundGenerator rejects multi-objective VOCS "
@@ -506,7 +515,7 @@ def resolve_one(workdir, pattern):
 def produce(name, meta):
     """Run the example and return the workdir it produced outputs in."""
     producer = PRODUCERS[meta['kind']]
-    return producer(stage_dir_for(name, meta), meta['yaml'])
+    return producer(stage_dir_for(name, meta), meta['yaml'], meta)
 
 
 def load_json(path):

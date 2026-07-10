@@ -1,10 +1,8 @@
-"""Module layer for the workflow-modularization refactor (Phase 1).
+"""Module layer for the module/workflow/mode architecture.
 
-This introduces the module abstraction that later phases (Phase 2 workflow-DAG,
-Phase 3+ modes) build on, WITHOUT touching the legacy dispatch in
-``run_lume_ace3p.py`` or the ``Omega3P/S3P/Geant4Workflow`` subclasses in
-``workflow.py`` — those stay live and importable alongside this file until the
-refactor lands.
+This is the bottom layer of the three-layer design: modules (here), the
+declarative :class:`~lume_ace3p.workflow_graph.Workflow` DAG that orders them,
+and the workflow-agnostic modes in :mod:`lume_ace3p.modes` that drive it.
 
 A ``Module`` is a thin adapter over one of the existing step wrappers
 (``Cubit``, ``Omega3P``/``S3P``, ``Acdtool``, ``Particles``, ``Geant4``). Each
@@ -15,10 +13,10 @@ edges are deliberately additive: a runnable Track3P/T3P solver (a separate
 future effort) will slot in as ``requires {em_solution}`` / ``provides
 {track3p_particles}`` without changing any rule here.
 
-The skip-flags (``skip_cubit``/``skip_solver``/``skip_acdtool``) and the
-``geant4_particle_file`` bypass from ``workflow.py`` are intentionally NOT
-carried into this layer: in a declarative module list, "skip X" is simply "do
-not list module X", and a prebuilt artifact is expressed as a *source module*
+The old skip-flags (``skip_cubit``/``skip_solver``/``skip_acdtool``) and the
+``geant4_particle_file`` bypass have no place in this layer: in a declarative
+module list, "skip X" is simply "do not list module X", and a prebuilt artifact
+is expressed as a *source module*
 (:class:`MeshSourceModule` / :class:`Track3PSourceModule` /
 :class:`ParticleSourceModule`). The one exception is meshconvert, which is a
 sub-step *inside* :class:`CubitModule` and stays a per-module ``meshconvert``
@@ -212,8 +210,8 @@ class Track3PSourceModule(Module):
 
 class ParticleSourceModule(Module):
     """Provide a ``particle_source`` directly from a Geant4-format particle
-    file — the declarative replacement for the ``geant4_particle_file`` bypass
-    in the legacy Geant4Workflow."""
+    file — the declarative way to supply a prebuilt Geant4 source file directly,
+    bypassing the Particles weighting step."""
 
     type = 'particle_source'
     provides = frozenset({PARTICLE_SOURCE})
@@ -338,8 +336,7 @@ class S3PModule(_SolverModule):
         """Return an S-parameter quantity from the S3P solution.
 
         ``spec`` may be:
-          * a string ``'S(0,0)'`` — the full frequency-indexed array (matches
-            the legacy ``S3PWorkflow.evaluate`` return),
+          * a string ``'S(0,0)'`` — the full frequency-indexed array,
           * a single-element list ``['S(0,0)']`` — same, first element used,
           * a mapping ``{'quantity': 'S(0,0)', 'at': {'frequency': f}}`` — the
             scalar value at frequency ``f`` (the objective form the Xopt driver
@@ -378,9 +375,9 @@ class S3PModule(_SolverModule):
 
     def field_index(self, ctx):
         """S3P field outputs are indexed by frequency. Return
-        ``('Frequency', array)``; under dry-run (no solver) mirror the legacy
-        ``S3PWorkflow.evaluate`` single-row ``[0.0]`` sentinel so a swept
-        long-format table still has one row per grid point."""
+        ``('Frequency', array)``; under dry-run (no solver) return a single-row
+        ``[0.0]`` sentinel so a swept long-format table still has one row per
+        grid point."""
         solver = self._solver
         if solver is None:
             return 'Frequency', np.array([0.0])
@@ -407,8 +404,8 @@ class S3PModule(_SolverModule):
 
 class AcdtoolModule(Module):
     """Requires an ``em_solution``, provides ``rf_post``. Owns extraction of
-    the RoverQ / kickFactor / maxFieldsOnSurface scalars (the quantities the
-    legacy ``Omega3PWorkflow.evaluate`` pulled from the acdtool object)."""
+    the RoverQ / kickFactor / maxFieldsOnSurface scalars pulled from the acdtool
+    postprocess output."""
 
     type = 'acdtool'
     requires = frozenset({EM_SOLUTION})
@@ -437,8 +434,8 @@ class AcdtoolModule(Module):
         ctx.artifacts[RF_POST] = ctx.workdir
 
     def extract(self, ctx, spec):
-        """Mirror the section/entry indexing of the legacy
-        ``Omega3PWorkflow.evaluate``."""
+        """Index the acdtool output by ``[section, mode/surface, entry, ...]``
+        (e.g. ``['RoverQ', '0', 'RoQ']``)."""
         if self._acdtool is None:
             return float('nan')
         output_data = self._acdtool.output_data
@@ -472,11 +469,10 @@ class AcdtoolModule(Module):
 class ParticlesModule(Module):
     """Requires ``track3p_particles``, provides ``particle_source``.
 
-    Owns the ``beta`` / ``beta_input`` / ``beta_inputs`` resolution that was in
-    ``Geant4Workflow._resolve_beta``. Always runs (the weighting is pure Python
-    and produces real numbers), even under dry-run — matching the legacy
-    Geant4Workflow, which ran the Particles pre-step regardless of dry-run and
-    only skipped the Geant4 binary."""
+    Owns the ``beta`` / ``beta_input`` / ``beta_inputs`` resolution. Always runs
+    (the field-emission weighting is pure Python and produces real numbers), even
+    under dry-run — the Geant4 binary is the only thing a dry run skips, so the
+    particle source it consumes is always produced."""
 
     type = 'particles'
     requires = frozenset({TRACK3P_PARTICLES})
@@ -493,7 +489,7 @@ class ParticlesModule(Module):
         """Return the particle params for this run. When ``beta_input``
         (broadcast one input-space variable to all bins) or ``beta_inputs``
         (one variable per bin) is set, build the per-bin beta list from the
-        cubit bucket. Moved verbatim from ``Geant4Workflow._resolve_beta``."""
+        cubit bucket."""
         params = self.params
         beta_input = params.get('beta_input')
         beta_inputs = params.get('beta_inputs')
@@ -567,8 +563,7 @@ class ParticlesModule(Module):
 class Geant4Module(Module):
     """Requires a ``particle_source``, provides ``dose_grid`` / ``edep_grid``.
 
-    Owns ``_geometry_files``, ``_output_files`` and ``_read_scoring_output``
-    (moved verbatim from ``Geant4Workflow``)."""
+    Owns ``_geometry_files``, ``_output_files`` and ``_read_scoring_output``."""
 
     type = 'geant4'
     requires = frozenset({PARTICLE_SOURCE})
@@ -655,7 +650,7 @@ class Geant4Module(Module):
         """Union of STL files named in the Geant4 input file ('*_stl' keys)
         and the explicit geant4_geometry_files list. Input-file names are
         resolved relative to the directory of geant4_input. De-duplicated by
-        basename. Moved verbatim from Geant4Workflow."""
+        basename."""
         files = []
         seen = set()
 
@@ -681,7 +676,7 @@ class Geant4Module(Module):
     def _output_files(self):
         """Resolve the dose / edep output filenames, preferring explicit YAML
         overrides and otherwise reading output_dose / output_edep from the
-        Geant4 input file. Moved verbatim from Geant4Workflow."""
+        Geant4 input file."""
         values = self.geant4_obj.get_values() if self.geant4_obj is not None else {}
         dose = self.geant4_dose_output or values.get('output_dose')
         edep = self.geant4_edep_output or values.get('output_edep')
@@ -689,8 +684,7 @@ class Geant4Module(Module):
 
     def _read_scoring_output(self, ctx, filename):
         """Parse a whitespace ix iy iz value scoring file into
-        ``{'indices': [...], 'values': ndarray}``. Moved verbatim from
-        Geant4Workflow (workdir sourced from ctx)."""
+        ``{'indices': [...], 'values': ndarray}`` (workdir sourced from ctx)."""
         if not filename:
             return None
         path = os.path.join(ctx.workdir, filename)
@@ -718,7 +712,7 @@ class Geant4Module(Module):
         return {'indices': indices, 'values': np.array(values)}
 
     def extract(self, ctx, spec):
-        """Mirror the section/entry logic of ``Geant4Workflow.evaluate``.
+        """Extract a scalar from the Geant4 dose/edep scoring output.
 
         ``spec`` is ``[section, entry]`` with section in {dose, edep, scoring}
         (``scoring`` is a back-compat alias for dose) and entry in

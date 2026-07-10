@@ -1,4 +1,4 @@
-"""Phase-1 module-layer tests (see docs/workflow_module_refactor_plan.md).
+"""Module-layer tests (see docs/workflow_module_refactor_plan.md).
 
 Two things are verified for every module:
 
@@ -6,12 +6,10 @@ Two things are verified for every module:
    consuming the artifact keys it ``requires`` and producing the keys it
    ``provides``. The source modules and the pure-Python ``ParticlesModule`` run
    for real; the solver/geant4 modules run their dry-run path.
-2. **extract equivalence** — for the modules that expose scalars
-   (``S3PModule``, ``AcdtoolModule``, ``Geant4Module``), ``extract`` is checked
-   to reproduce the exact values the legacy ``S3PWorkflow`` / ``Omega3PWorkflow``
-   / ``Geant4Workflow`` ``evaluate`` methods return, fed the same synthetic
-   solver-output fixtures. ``ParticlesModule`` is checked against a direct
-   ``Particles`` invocation (the wrapper it adapts).
+2. **extract** — for the modules that expose scalars (``S3PModule``,
+   ``AcdtoolModule``, ``Geant4Module``), ``extract`` is checked to pull the
+   expected values out of synthetic solver-output fixtures. ``ParticlesModule``
+   is checked against a direct ``Particles`` invocation (the wrapper it adapts).
 
 No ACE3P / Geant4 binary is needed: solver objects are constructed pointing at
 synthetic output files and their ``output_parser`` is driven directly, or the
@@ -35,7 +33,6 @@ from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles, TRACK3P_COLUMNS
 from lume_ace3p.inputs import WorkflowInputs
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow, Geant4Workflow
 
 
 # --------------------------------------------------------------------------- #
@@ -279,7 +276,7 @@ def test_solver_module_requires_mesh(tmp_path):
         S3PModule({'input': 'in.s3p'}).run(ctx)
 
 
-def test_s3p_extract_matches_legacy_evaluate(tmp_path):
+def test_s3p_extract(tmp_path):
     wd = str(tmp_path / 'wd')
     os.makedirs(wd, exist_ok=True)
     s3p = _make_s3p_solver(wd)
@@ -288,14 +285,13 @@ def test_s3p_extract_matches_legacy_evaluate(tmp_path):
     module = S3PModule({'input': 'dummy.s3p'})
     module._solver = s3p  # inject the parsed solver (no binary run)
 
-    # Full frequency-indexed array (string spec / list spec).
-    wf = S3PWorkflow({}, WorkflowInputs())
-    wf.s3p_obj = s3p
-    legacy = wf.evaluate({'refl': 'S(0,0)'})
-    assert np.allclose(module.extract(ctx, 'S(0,0)'), legacy['refl'])
-    assert np.allclose(module.extract(ctx, ['S(0,0)']), legacy['refl'])
+    # Full frequency-indexed array (string spec / list spec) — the three
+    # S(0,0) values from S3P_REFLECTION.
+    expected = np.array([0.10, 0.50, 0.90])
+    assert np.allclose(module.extract(ctx, 'S(0,0)'), expected)
+    assert np.allclose(module.extract(ctx, ['S(0,0)']), expected)
 
-    # Scalar at a frequency (the Xopt objective form).
+    # Scalar at a frequency (the Xopt objective form): S(1,1) @ 12.5e9 = 0.80.
     assert module.extract(ctx, {'quantity': 'S(1,1)',
                                 'at': {'frequency': 12.5e9}}) == pytest.approx(0.80)
 
@@ -328,7 +324,7 @@ def test_acdtool_module_requires_em_solution(tmp_path):
         AcdtoolModule({'input': 'x.rfpost'}).run(ctx)
 
 
-def test_acdtool_extract_matches_legacy_evaluate(tmp_path):
+def test_acdtool_extract(tmp_path):
     wd = str(tmp_path / 'wd')
     os.makedirs(wd, exist_ok=True)
     acd = _make_acdtool(wd)
@@ -337,20 +333,17 @@ def test_acdtool_extract_matches_legacy_evaluate(tmp_path):
     module._acdtool = acd
     ctx = RunContext(wd)
 
-    wf = Omega3PWorkflow({}, WorkflowInputs())
-    wf.acdtool_obj = acd
-
-    output_dict = {
-        'RoQ': ['RoverQ', '0', 'RoQ'],
-        'mode_freq': ['RoverQ', '0', 'Frequency'],
-        'kick_Ks': ['kickFactor', '0', 'Ks'],
-        'E_max': ['maxFieldsOnSurface', '6', 'Emax'],
-        'loc_x': ['maxFieldsOnSurface', '6', 'Emax_location', 'x'],
-        'loc_z': ['maxFieldsOnSurface', '6', 'Emax_location', 'z'],
+    # Values parsed from RFPOST_OUTPUT.
+    expected = {
+        ('RoverQ', '0', 'RoQ'): 250.0,
+        ('RoverQ', '0', 'Frequency'): 1.3e9,
+        ('kickFactor', '0', 'Ks'): 3.3,
+        ('maxFieldsOnSurface', '6', 'Emax'): 1.5e6,
+        ('maxFieldsOnSurface', '6', 'Emax_location', 'x'): 0.1,
+        ('maxFieldsOnSurface', '6', 'Emax_location', 'z'): 0.3,
     }
-    legacy = wf.evaluate(output_dict)
-    for name, spec in output_dict.items():
-        assert module.extract(ctx, spec) == legacy[name], name
+    for spec, value in expected.items():
+        assert module.extract(ctx, list(spec)) == pytest.approx(value), spec
 
 
 # --------------------------------------------------------------------------- #
@@ -463,25 +456,9 @@ def test_geant4_module_requires_particle_source(tmp_path):
         Geant4Module({'geant4_input': input_path}).run(ctx)
 
 
-def test_geant4_extract_matches_legacy_evaluate(tmp_path):
-    output_dict = {
-        'total_dose': ['dose', 'total'],
-        'peak_dose': ['dose', 'peak'],
-        'peak_idx': ['dose', 'peak_index'],
-        'total_edep': ['edep', 'total'],
-        'scoring_total': ['scoring', 'total'],   # back-compat alias for dose
-    }
-
-    # Legacy path: Geant4Workflow dry-run in a workdir with pre-placed scoring.
-    legacy_wd = str(tmp_path / 'legacy')
-    l_input, l_psrc = _stage_geant4(legacy_wd)
-    wf = Geant4Workflow(
-        {'geant4_input': l_input, 'geant4_particle_file': l_psrc,
-         'workdir': legacy_wd, 'workdir_mode': 'manual', 'dry_run': True},
-        WorkflowInputs(), output_dict)
-    legacy = wf.run(output_dict=output_dict)
-
-    # Module path: dry-run in its own workdir, then extract.
+def test_geant4_extract(tmp_path):
+    # Module path: dry-run in its own workdir with pre-placed scoring, then
+    # extract. Values come from DOSE_OUT (1,2,5) and EDEP_OUT (0.5,1.5,3).
     wd = str(tmp_path / 'mod')
     m_input, m_psrc = _stage_geant4(wd)
     ctx = RunContext(wd, inputs=WorkflowInputs(),
@@ -490,8 +467,12 @@ def test_geant4_extract_matches_legacy_evaluate(tmp_path):
     module = Geant4Module({'geant4_input': m_input})
     module.run(ctx)
 
-    for name, spec in output_dict.items():
-        assert module.extract(ctx, spec) == legacy[name], name
+    assert module.extract(ctx, ['dose', 'total']) == pytest.approx(8.0)
+    assert module.extract(ctx, ['dose', 'peak']) == pytest.approx(5.0)
+    assert module.extract(ctx, ['dose', 'peak_index']) == (1, 0, 0)
+    assert module.extract(ctx, ['edep', 'total']) == pytest.approx(5.0)
+    # 'scoring' is a back-compat alias for the dose grid.
+    assert module.extract(ctx, ['scoring', 'total']) == pytest.approx(8.0)
 
 
 if __name__ == '__main__':

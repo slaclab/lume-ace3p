@@ -1,9 +1,42 @@
 # Optimization
 
+````{admonition} Schema updated — declarative workflow: + mode:
+:class: important
+
+LUME-ACE3P now uses a **declarative module/mode schema**: a YAML declares an
+ordered **`workflow:`** list of modules plus a **`mode:`**
+(`type: scalar_optimize` or `type: gp_parameter_sweep`), instead of the old
+`workflow_parameters.mode` + `module` pair. The objective is declared in
+`output_parameters` and referenced by name in the VOCS, so the Xopt driver is
+now workflow-agnostic — **any** workflow (S3P, Geant4, a multi-step chain) can be
+optimized, not just S3P. For example:
+
+```yaml
+workflow:
+  - module: cubit
+    journal: 'bend-90degree.jou'
+  - module: s3p
+    input: 'bend-90degree.s3p'
+mode:
+  type: scalar_optimize
+output_parameters:
+  reflection: {module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}
+vocs_parameters:
+  variables: {cornercut: [14, 17], rcorner1: [0.5, 2.5]}
+  objectives: {reflection: 'MINIMIZE'}
+xopt_parameters: {generator: 'NelderMeadGenerator', num_random: 0, num_step: 25}
+```
+
+See the migrated `examples/` (`s3p_optimization`, `s3p_bayesian_sweep`) and
+`workflow_module_refactor_plan.md` for the full schema. The prose below predates
+the change and is being migrated incrementally; the `vocs_parameters` /
+`xopt_parameters` blocks still apply, but the objective is now named via
+`output_parameters` rather than the `s_parameter`/`frequency` triple.
+````
+
 `lume-ace3p` is configured with [Xopt](https://github.com/xopt-org/Xopt) to
-allow single-batch-job optimization. Optimization problems for the S3P module
-can be run directly from a `lume-ace3p` configuration file. To run an
-optimization with Omega3P, a Python file is required.
+allow single-batch-job optimization. An optimization is run directly from a
+`lume-ace3p` configuration file for any workflow.
 
 ## Optimization with S3P
 

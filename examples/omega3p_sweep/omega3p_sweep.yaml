@@ -1,18 +1,30 @@
+# Omega3P parameter sweep on the declarative module/mode schema:
+#   workflow:  cubit -> omega3p -> acdtool
+#   mode:      parameter_sweep  (wide/scalar table, one row per grid point)
+# The output_parameters below target the acdtool postprocess results. Each entry
+# is a [section, ...] address into the acdtool output; the workflow routes it to
+# the acdtool module automatically (the module that provides rf_post).
+
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 'omega3p'
-  'cubit_input' : 'pillbox-rtop.jou'
-  'ace3p_input' : 'pillbox-rtop.omega3p'
-  'rfpost_input' : 'pillbox-rtop.rfpost'
-  'ace3p_tasks' : 12
-  'ace3p_cores' : 8
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_omega3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 'omega3p_sweep_output.txt'
 
-input_parameters : 
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 12
+    cores : 8
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
+
+mode :
+  type : parameter_sweep
+  output_file : 'omega3p_sweep_output.txt'
+
+input_parameters :
   'cav_radius' :
     'min' : 90.0
     'max' : 120.0

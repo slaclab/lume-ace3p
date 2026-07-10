@@ -1,68 +1,70 @@
+# Geant4 beta sweep on the declarative module/mode schema. This is a runnable
+# multi-step chain — external Track3P dump -> field-emission weighting -> dose:
+#   workflow:  track3p_source -> particles -> geant4
+#   mode:      parameter_sweep  (one Geant4 run per swept beta value)
+#
+# There is no in-pipeline Track3P/T3P solver in this refactor: particle tracking
+# is run externally and the dump is supplied to 'track3p_source'. The 'particles'
+# module owns the per-bin field-emission weighting (formerly particle_parameters),
+# and 'beta_input' broadcasts the swept 'beta' scalar to all num_bins bins.
+
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 'geant4'
-
-  # --- Geant4 simulation inputs (FILL THESE IN) -----------------------------
-  'geant4_input' : 'input_7cell.geant4'     # Geant4 'key = value' input file
-  # The STL files named in the input file (solid_stl / cavity_stl) are copied
-  # into each workdir automatically. List any extra aux files here to copy them
-  # too (union with the input-file STLs, de-duplicated by basename).
-  # 'geant4_geometry_files' :
-  #   - 'extra_aux.stl'
-  # 'geant4_opts' : ''                            # extra srun/mpirun args, if any
-  # 'geant4_threads' : 4                        # overrides 'nthreads' in the input file (else file value is kept)
-
-  # --- Track3P -> particle source (the Particles pre-step) ------------------
-  'particle_input' : 'sample_track3p_particles.txt'   # Track3P particle dump (input)
-  'particle_output' : 'particles.data'   # generated Geant4 source file (must match what is in geant4_input)
-
-  # --- Workdir / paths ------------------------------------------------------
   'workdir' : 'lume-ace3p_geant4_workdir'
-  'workdir_mode' : 'auto'                       # REQUIRED for a sweep: one workdir per beta value
-  'sweep_output' : True
-  'sweep_output_file' : 'geant4_beta_sweep_output'
-  'paths' :                                   # uncomment to override executable paths
+  'workdir_mode' : 'auto'                       # one workdir per beta value
+  'paths' :                                     # override executable paths
     'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
     'geant4_app_exe' : 'sim'
 
-# Swept input space. 'beta' sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60),
-# i.e. 5 Geant4 runs. Each scalar is broadcast equally to all 8 axial bins
-# (see 'beta_input' below).
+workflow :
+  # External Track3P particle dump (produced outside the pipeline).
+  - module : track3p_source
+    file : 'sample_track3p_particles.txt'
+
+  # Field-emission weighting -> Geant4-format source file (particles.data).
+  # 'beta_input' broadcasts the swept 'beta' variable to all num_bins bins
+  # (run 1 -> [40]*8, run 2 -> [45]*8, ...). 'output' must match the
+  # 'particles = ...' line named in the Geant4 input file below.
+  - module : particles
+    impact_order : 1
+    impact_face_id : 6
+    work_function : 4.5
+    dt : 1.0e-10
+    num_bins : 8
+    beta_input : 'beta'
+    output_format : 'geant4'
+    output : 'particles.data'
+    # 'bin_edges' : [...]      # optional: explicit edges, length num_bins + 1 (9)
+
+  # Geant4 dose/edep run. STL files named in the input file (solid_stl /
+  # cavity_stl) are copied into each workdir automatically. Add extra aux files
+  # with 'geant4_geometry_files'; override thread count with 'geant4_threads'.
+  - module : geant4
+    geant4_input : 'input_7cell.geant4'
+
+mode :
+  type : parameter_sweep
+  output_file : 'geant4_beta_sweep_output'
+
+# Swept input space. 'beta' sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60).
 input_parameters :
   'beta' :
     'min' : 40.0
     'max' : 60.0
     'num' : 5
 
-# Per-bin field-emission weighting applied to the Track3P particles before the
-# Geant4 run. 'beta_input' names the swept input-space variable whose scalar is
-# broadcast to all num_bins bins on every run (run 1 -> [40]*8, run 2 -> [45]*8, ...).
-particle_parameters :
-  'impact_order' : 1
-  'impact_face_id' : 6
-  'work_function' : 4.5
-  'dt' : 1.0e-10
-  'num_bins' : 8
-  'beta_input' : 'beta'        # broadcast the 'beta' input variable to all 8 bins
-  'output_format' : 'geant4'   # 10-column Geant4 source file (default under mode: geant4)
-  # 'bin_edges' : [...]        # optional: explicit edges, length num_bins + 1 (9)
-
-  # Future (Xopt 8-D exploration): declare 8 independent variables in
-  # input_parameters (e.g. beta0..beta7) and map one per bin instead of
-  # broadcasting. The same Geant4Workflow code path handles both:
-  # 'beta_inputs' : ['beta0', 'beta1', 'beta2', 'beta3', 'beta4', 'beta5', 'beta6', 'beta7']
-
-# Optional: override settings in the Geant4 input file (plain keys, no '/').
-# A scalar overrides that key on every run; a {min,max,num} mapping (or list)
-# turns the key into an extra sweep axis.
-# geant4_input_parameters :
-#   'nthreads' : 8
-#   'world_z' : {'min' : 200.0, 'max' : 300.0, 'num' : 3}
+  # Future (Xopt 8-D exploration): declare 8 independent variables here (e.g.
+  # beta0..beta7) and set 'beta_inputs: [beta0, ..., beta7]' on the particles
+  # module to map one per bin instead of broadcasting a single scalar.
 
 # Optional: pull scalars out of the Geant4 dose / energy-deposit output after
-# each run. These become columns in the sweep output file. The 'dose' section
-# reads output_dose; the 'edep' section reads output_edep.
+# each run. Each becomes a column in the result table; they route to the geant4
+# module. The 'dose' section reads output_dose; 'edep' reads output_edep.
 # output_parameters :
 #   'total_dose' : ['dose', 'total']
 #   'peak_dose'  : ['dose', 'peak']
 #   'total_edep' : ['edep', 'total']
+
+# Optional: override settings in the Geant4 input file (plain keys, no '/').
+# geant4_input_parameters :
+#   'nthreads' : 8
+#   'world_z' : {'min' : 200.0, 'max' : 300.0, 'num' : 3}

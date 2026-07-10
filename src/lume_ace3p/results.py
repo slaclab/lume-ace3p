@@ -3,9 +3,9 @@
 This is where the refactor's result plumbing finally converges. Every
 result-producing mode (``parameter_sweep``, ``single``, ``scalar_optimize``,
 ``gp_parameter_sweep``) emits its result table through the **one** writer here
-(:func:`write_table`), and the old dict ``sweep_data`` tuple-keyed structure is
-gone from the new code path (it survives only in the legacy ``workflow.py``
-subclasses kept callable for the Phase-5 equivalence tests, deleted in Phase 6).
+(:func:`write_table`), and the old dict ``sweep_data`` tuple-keyed structure and
+the hand-rolled ``tools.py`` writers have been removed entirely — this module is
+the single writer.
 
 The *hybrid* split (confirmed 2026-07-08):
 
@@ -48,7 +48,7 @@ def write_table(df, filename):
     """Write a result :class:`pandas.DataFrame` to a tab-delimited text file.
 
     This is the one writer every result-producing mode routes through — the
-    ``DataFrame.to_csv`` replacement for the manual ``tools.py`` string
+    ``DataFrame.to_csv`` replacement for the hand-rolled sweep-table string
     builders. ``X.data`` from an Xopt run is already a DataFrame, so the Xopt
     modes log through here too. NaNs are rendered as ``nan`` (not blank) so the
     file round-trips through a whitespace reader without column drift.

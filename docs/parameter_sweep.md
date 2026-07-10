@@ -1,5 +1,33 @@
 # Parameter sweeping
 
+````{admonition} Schema updated — declarative workflow: + mode:
+:class: important
+
+LUME-ACE3P now uses a **declarative module/mode schema**: a YAML declares an
+ordered **`workflow:`** list of modules plus a **`mode:`** (here
+`type: parameter_sweep`), instead of the old `workflow_parameters.mode` +
+`module` pair. For example:
+
+```yaml
+workflow:
+  - module: cubit
+    journal: 'bend-90degree.jou'
+  - module: s3p
+    input: 'bend-90degree.s3p'
+mode:
+  type: parameter_sweep
+  output_file: 's3p_sweep_output.txt'
+input_parameters:
+  cornercut: {min: 12.0, max: 16.0, num: 5}
+```
+
+See the migrated `examples/` (`s3p_sweep`, `omega3p_sweep`,
+`omega3p_ace3p_param_sweep`, `geant4_track3p_beta`) and
+`workflow_module_refactor_plan.md` for the full schema. The prose below predates
+the change and is being migrated incrementally; the `*_parameters` /
+`input_parameters` / `output_parameters` blocks still apply unchanged.
+````
+
 `lume-ace3p` has two main use-cases: parameter sweeping and optimization. For
 both, ACE3P workflows are evaluated many times according to parameters set by
 Python dictionaries (defined in YAML). The examples below are intended as

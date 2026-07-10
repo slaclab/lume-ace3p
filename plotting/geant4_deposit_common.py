@@ -150,7 +150,7 @@ def load_sweep(yaml_path):
     """
     try:
         from lume_ace3p.inputs import load_yaml, build_inputs
-        from lume_ace3p.workflow import _scalar_str
+        from lume_ace3p.workflow_graph import _scalar_str
     except ImportError as exc:
         raise ImportError(
             'Loading a LUME-ACE3P sweep YAML requires the lume_ace3p package '
@@ -158,6 +158,15 @@ def load_sweep(yaml_path):
 
     data = load_yaml(yaml_path)
     workflow_dict = data.get('workflow_parameters') or {}
+    # New declarative schema: the geant4 module config lives in the ordered
+    # 'workflow:' list rather than in workflow_parameters. Pull the geant4
+    # entry's keys out so the folder-naming + output-file resolution below works
+    # for a migrated YAML (falls back to workflow_parameters for older configs).
+    geant4_entry = {}
+    for entry in (data.get('workflow') or []):
+        if isinstance(entry, dict) and str(entry.get('module')).lower() == 'geant4':
+            geant4_entry = entry
+            break
 
     inputs = build_inputs(data)
     sweep_axes = inputs.sweep_axes()
@@ -174,12 +183,17 @@ def load_sweep(yaml_path):
     if not os.path.isabs(base_workdir):
         base_workdir = os.path.join(yaml_dir, base_workdir)
 
-    # Dose / energy filenames: prefer explicit YAML overrides, otherwise read
-    # output_dose / output_edep from the Geant4 input file.
-    dose_name = (workflow_dict.get('geant4_dose_output')
+    # Dose / energy filenames: prefer explicit overrides (on the geant4 module,
+    # or legacy workflow_parameters), otherwise read output_dose / output_edep
+    # from the Geant4 input file.
+    dose_name = (geant4_entry.get('geant4_dose_output')
+                 or geant4_entry.get('geant4_scoring_output')
+                 or workflow_dict.get('geant4_dose_output')
                  or workflow_dict.get('geant4_scoring_output'))
-    edep_name = workflow_dict.get('geant4_edep_output')
-    geant4_input = workflow_dict.get('geant4_input')
+    edep_name = (geant4_entry.get('geant4_edep_output')
+                 or workflow_dict.get('geant4_edep_output'))
+    geant4_input = (geant4_entry.get('geant4_input')
+                    or workflow_dict.get('geant4_input'))
     if (dose_name is None or edep_name is None) and geant4_input is not None:
         input_path = geant4_input
         if not os.path.isabs(input_path):

@@ -19,3 +19,13 @@ run-lume-ace3p = "lume_ace3p.run_lume_ace3p:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Slow, botorch-backed GP-fitting tests (real model construction + stepping) are
+# excluded by default so the routine suite stays fast. Opt in for a full run
+# before a master merge:  pytest -m slow   (or  pytest -m ""  for everything).
+addopts = "-m 'not slow'"
+markers = [
+    "slow: botorch GP-fitting tests (~minutes each); excluded by default, run with -m slow",
+]

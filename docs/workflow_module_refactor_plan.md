@@ -1,6 +1,46 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 5 complete (result/data consolidation — hybrid DataFrames).
+**Status: COMPLETE (Phase 6 done, 2026-07-10).** All six phases landed on `dev`;
+the repo is fully on the module/workflow/mode architecture and the dead legacy
+code is removed. `dev` is ready for review/testing before a `master` merge (no
+merge in-session, per plan).
+
+Phase 6 delivered: (1) example YAMLs migrated to the declarative
+`workflow:` + `mode:` + `output_parameters:` schema — one per mode and per solver
+family (`s3p_sweep`, `s3p_sweep_no_s3p_file`, `omega3p_sweep`,
+`omega3p_ace3p_param_sweep`, `s3p_optimization`, `s3p_bayesian_sweep`,
+`track3p_particle_weight`, `geant4_track3p_beta`) plus a new runnable multi-step
+chain example `geant4_dose_single` (`track3p_source→particles→geant4`, `single`
+mode; large assets symlinked from `geant4_track3p_beta`). `MOBO`/`UCB`/
+`s3p_mf_optimization` remain on the old schema (incremental follow-up).
+(2) Legacy `workflow.py` (Omega3P/S3P/Geant4Workflow subclasses), `run_xopt.py`,
+and `tools.py` writers DELETED; `run_lume_ace3p.py` + `__init__.py` are
+declarative-only. (3) README / `docs/index.md` / `docs/yaml_reference.md` /
+`docs/parameter_sweep.md` / `docs/optimization.md` updated to the module/mode
+architecture; new `docs/testing.md`; memory notes (`project_overview`,
+`ace3p_modules_t3p_track3p`, `workflow_module_refactor`,
+`geant4_surrogate_inversion_project`) updated. (4) `geant4_surrogate_inversion_plan.md`
+re-pointed: its Phase 1 marked DELIVERED by this refactor's Phase 4, Phases 2–4
+become new modes. (5) Test-speed hygiene: botorch GP-fitting tests carry
+`@pytest.mark.slow`; `pyproject.toml` sets `addopts = -m 'not slow'` so the
+default run is fast (71 passed, 8 slow deselected); the fast baseline self-check
+now drives the declarative path and still matches the frozen `tests/baseline/`
+fixtures. Verified: migrated examples dry-run and match Phase-0.5 baselines
+numerically (sweep tables, particle-weight + geant4 digests, NelderMead
+trajectory); no references to removed subclasses/writers remain in `src/`.
+
+### Phase 6 verification (all met)
+
+- [x] The migrated examples run (dry-run where env absent) under the new schema
+  and match their Phase-0.5 baselines on numerically-checkable quantities.
+- [x] No references to removed workflow subclasses / writers remain in `src/`.
+- [x] Docs + memory reflect the new architecture.
+- [x] The default test run is fast (slow botorch tests excluded by default but
+  still runnable on demand via `pytest -m slow`).
+
+---
+
+**Prior status:** Phase 5 complete (result/data consolidation — hybrid DataFrames).
 All three result-producing modes now emit through **one** shared writer,
 `src/lume_ace3p/results.py::write_table` (tab-delimited `to_csv`):
 `parameter_sweep`/`single` build a DataFrame and write through it, the Xopt
@@ -717,10 +757,21 @@ result plumbing.
 
 ### Verification (Phase 6 done when)
 
-- The migrated examples run (dry-run where env absent) under the new schema and
-  match their Phase-0.5 baselines on numerically-checkable quantities.
-- No references to removed workflow subclasses / writers remain in `src/`.
-- Docs + memory reflect the new architecture.
+- [x] The migrated examples run (dry-run where env absent) under the new schema
+  and match their Phase-0.5 baselines on numerically-checkable quantities.
+  `tests/test_baseline_selfcheck.py` drives the declarative module/mode path for
+  every frozen example and matches the fixtures (sweep tables, particle-weight +
+  geant4 `particles.data` digests, NelderMead trajectory); the migrated YAMLs
+  were additionally dry-run end-to-end through the CLI.
+- [x] No references to removed workflow subclasses / writers remain in `src/`.
+  `grep` for `Omega3P/S3P/Geant4Workflow`, `run_xopt`, `Write*DataTable`,
+  `WriteXoptData` over `src/` is clean.
+- [x] Docs + memory reflect the new architecture (README, `docs/index.md`,
+  `docs/yaml_reference.md`, `docs/parameter_sweep.md`, `docs/optimization.md`,
+  new `docs/testing.md`; memory notes updated).
+- [x] The default test run is fast — botorch GP-fitting tests carry
+  `@pytest.mark.slow` and `pyproject.toml` sets `addopts = -m 'not slow'`
+  (71 passed, 8 deselected); opt in with `pytest -m slow`.
 
 ---
 

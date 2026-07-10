@@ -14,22 +14,20 @@ through its public seams (:meth:`Workflow.evaluate`, :meth:`Workflow.sweep_axes`
 :meth:`Workflow.field_index`) and never reach into any solver-specific code. In
 particular the two Xopt modes below pull their objective scalar(s) from
 ``workflow.evaluate(input_dict)`` + the declarative ``output_parameters`` spec,
-replacing the S-parameter/frequency parsing hardwired into the legacy
-``run_xopt``. This makes *any* workflow (S3P, Geant4, a multi-step chain)
-optimizable/sweepable — this is the generic-Xopt driver that absorbs the shelved
-Geant4 surrogate-project Phase 1.
+so no S-parameter/frequency parsing lives in the driver. This makes *any*
+workflow (S3P, Geant4, a multi-step chain) optimizable/sweepable — this is the
+generic-Xopt driver that absorbs the shelved Geant4 surrogate-project Phase 1.
 
 Result container for the sweep/single modes = a pandas ``DataFrame`` (the hybrid
 data model from the plan): one row per evaluation, columns = swept input
 variable names + the extracted scalar outputs. Two shapes:
 
 * **wide / scalar** (Omega3P, Geant4, ...) — one row per grid point; each
-  ``output_parameters`` entry is a scalar column. This replaces the legacy
-  ``WriteOmega3PDataTable`` path.
+  ``output_parameters`` entry is a scalar column.
 * **long / tidy** (S3P) — a module that exposes a shared field index
   (:meth:`Module.field_index`, e.g. ``('Frequency', array)``) emits one row per
   ``(grid-point, frequency)``; each S-parameter output becomes a column aligned
-  to that index. This replaces the legacy ``WriteS3PDataTable`` path.
+  to that index.
 
 Per-run *field* outputs (S-parameter vectors, dose/edep voxel grids) are NOT
 exploded into the scalar table — they stay structured. For the wide/scalar
@@ -40,16 +38,13 @@ demand with :func:`lume_ace3p.results.load_field`. The S3P long-format case
 above is the one tidy-frame exception (its field values *are* the rows), so it
 carries no field-artifact column.
 
-The Xopt modes log ``X.data`` (already a DataFrame) via the same shared writer;
-the legacy ``WriteXoptData`` string-dump and the ``WriteS3PDataTable``
-xopt-append path are dropped (clean break — numeric equivalence only, not file
-format).
+The Xopt modes log ``X.data`` (already a DataFrame) via the same shared writer
+(clean break — numeric equivalence only, not file format).
 
-Phase 5: every result-producing mode now routes its table through the single
-shared :func:`lume_ace3p.results.write_table` (a tab-delimited ``to_csv``), and
-the old dict ``sweep_data`` tuple-keyed structure is gone from this path. The
-manual ``tools.py`` writers are reduced to thin ``to_csv`` helpers over the
-same seam (fully removed in Phase 6).
+Every result-producing mode routes its table through the single shared
+:func:`lume_ace3p.results.write_table` (a tab-delimited ``to_csv``). The old
+dict ``sweep_data`` tuple-keyed structure and the hand-rolled ``tools.py``
+writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 """
 
 import os
@@ -250,8 +245,7 @@ def _sample(value, j):
 def _log_xopt(filename, xopt_obj):
     """Log an Xopt run's data table through the shared result writer. ``X.data``
     is already a pandas DataFrame, so this routes straight to
-    :func:`lume_ace3p.results.write_table` — the clean-break replacement for the
-    legacy ``WriteXoptData`` string-dump, and the same code path the sweep modes
+    :func:`lume_ace3p.results.write_table` — the same code path the sweep modes
     use. Overwrites each call so the file always holds the full trajectory."""
     write_table(xopt_obj.data, filename)
 
@@ -400,10 +394,10 @@ def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
     Geant4 dose/weight, a multi-step chain) can be optimized with no changes
     here.
 
-    Preserves the legacy driver's generator set, fidelity-variable rename,
-    cost-function logic, and termination criteria; only the objective extraction
-    (was S-parameter/frequency parsing) and logging (was ``WriteXoptData`` +
-    ``WriteS3PDataTable``) are replaced. Returns the :class:`xopt.Xopt` object."""
+    Supports all six generators with their fidelity-variable rename,
+    cost-function logic, and termination criteria; the objective is extracted
+    generically from the workflow outputs and logged via the shared result
+    writer. Returns the :class:`xopt.Xopt` object."""
     import torch
     from xopt.vocs import random_inputs as vocs_random_inputs
     from xopt.evaluator import Evaluator

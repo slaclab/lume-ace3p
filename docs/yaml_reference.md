@@ -1,11 +1,38 @@
 # YAML configuration reference
 
+```{admonition} Schema updated — declarative workflow: + mode:
+:class: important
+
+The task chain is now declared by a top-level **`workflow:`** list of modules
+and driven by a **`mode:`** block, replacing the old
+`workflow_parameters.mode` + `module` dispatch. Concretely:
+
+- `workflow:` — an ordered list of module entries. Each entry has a `module`
+  type (`cubit`, `mesh`, `omega3p`, `s3p`, `acdtool`, `track3p_source`,
+  `particles`, `particle_source`, `geant4`) plus that module's own keys (e.g.
+  `journal:`, `input:`, `file:`). Order is a hint; the real run order comes from
+  artifact-dependency resolution.
+- `mode:` — `{type: single | parameter_sweep | scalar_optimize |
+  gp_parameter_sweep}`, plus `output_file` / `sweep_output_file` for the table
+  modes.
+- `output_parameters:` — per-module extraction specs; each may name its module
+  explicitly (`{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e9}}`) or
+  use the terse form the Omega3P/Geant4 examples use (`['RoverQ', '0', 'RoQ']`,
+  `['dose', 'total']`).
+
+The `workflow_parameters`, `input_parameters` / `cubit_input_parameters`,
+`ace3p_input_parameters`, `geant4_input_parameters`, `vocs_parameters`,
+`xopt_parameters`, and `sweep_parameters` blocks below are unchanged. The old
+`workflow_parameters.mode` / `module` / `cubit_input` / `ace3p_input` /
+`rfpost_input` keys are replaced by the `workflow:` + `mode:` blocks — see the
+migrated `examples/` and `workflow_module_refactor_plan.md`.
+```
+
 `lume-ace3p` uses Python `dict` objects to control ACE3P workflows, defined
-in YAML configuration files. For a parameter sweep:
-`workflow_parameters`, `input_parameters`, and `output_parameters` configure
-the workflow tasks. For an optimization problem, a workflow dict is used
-together with an output dict and Xopt objects. The class objects for
-workflow control are initialized with these dictionaries.
+in YAML configuration files. A `workflow:` list plus a `mode:` block drive the
+run; `input_parameters` and `output_parameters` configure the swept knobs and
+the extracted scalars. For an optimization problem, `vocs_parameters` and
+`xopt_parameters` are added.
 
 ## `workflow_parameters`
 

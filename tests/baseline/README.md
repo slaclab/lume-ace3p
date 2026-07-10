@@ -17,10 +17,10 @@ content now, while the legacy code path is still intact.
   pure-Python steps that genuinely run (Cubit input mutation recorded in the
   marker; the `Particles` field-emission weighting) produce real numbers and
   are captured for real.
-- **Xopt paths** — driven with the deterministic **synthetic solver**
-  (`SyntheticS3PWorkflow` in `../baseline_utils.py`, same pattern as
-  `../test_run_xopt_compat.py`) under a fixed seed, so the optimizer trajectory
-  / GP predictions are cluster-independent and reproducible.
+- **Xopt paths** — driven through the generic modes with a deterministic
+  **synthetic workflow** (`SyntheticWorkflow` in `../baseline_utils.py`, same
+  pattern as `../test_run_xopt_compat.py`) under a fixed seed, so the optimizer
+  trajectory / GP predictions are cluster-independent and reproducible.
 
 Regenerate (only against the current code, intentionally):
 
@@ -70,7 +70,7 @@ intentionally *not* frozen as numeric baselines, with the reason.
   wall-clock `xopt_runtime` and loops on `alotted_time`, so trajectory length
   and values are timing-dependent: reachability-only, not numerically
   checkable. Generator construction/stepping is smoke-tested in
-  `../test_run_xopt_compat.py::test_multifidelity`.
+  `../test_run_xopt_compat.py::test_generic_multifidelity`.
 - **`UCB_Example`** — the shipped YAML declares three objectives, but xopt
   3.0.0's `UpperConfidenceBoundGenerator` rejects multi-objective VOCS
   (`VOCSError`). Not runnable as-is under the pinned xopt; recorded as a

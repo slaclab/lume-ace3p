@@ -17,24 +17,31 @@ for optimization.
 ## What lume-ace3p does
 
 A user submits a batch script to HPC nodes which calls `run_lume_ace3p.py` with a
-user-defined YAML input file. That input file defines dictionaries for workflow
-settings, input parameters, and output parameters. From there, the entry point
-automatically calls Cubit, the requested ACE3P module (Omega3P, S3P, T3P, or
-Track3P), and acdtool, parses the output, and writes results to a tab-delimited
-file or hands them to Xopt for optimization. A separate Geant4 module is also
-supported for downstream dose calculations driven by Track3P particle output.
+user-defined YAML input file. That input file declares a **`workflow:`** — an
+ordered list of pipeline **modules** — plus a **`mode:`** describing how to drive
+it. The modules are validated into a runnable DAG by their artifact
+dependencies, run in order (Cubit meshing, the requested ACE3P solver, acdtool
+postprocessing, and/or a Geant4 dose run driven by Track3P particle output), and
+the scalars named in `output_parameters` are written to a tab-delimited results
+table or handed to Xopt for optimization.
+
+The three layers — **modules** (one adapter per step), the declarative
+**workflow** DAG, and the workflow-agnostic **modes** (`single`,
+`parameter_sweep`, `scalar_optimize`, `gp_parameter_sweep`) — are described in
+`docs/workflow_module_refactor_plan.md`.
 
 To run a parameter sweep or optimization the user typically provides:
 
-- a `lume-ace3p` input file (`.yaml`) with the workflow settings, input/output
-  parameters, and ACE3P settings
+- a `lume-ace3p` input file (`.yaml`) with the `workflow:` module list, `mode:`,
+  input/output parameters, and any ACE3P settings
 - a Cubit journal (`.jou`) file (required for remeshing)
 - an acdtool postprocess file (e.g. `.rfpost`) with desired postprocessing settings
   (used for Omega3P)
 - a batch script (`.batch`) for submitting the job to HPC resources
 
 ACE3P input parameters can be supplied either as a separate file (`.omega3p`,
-`.s3p`, …) or directly inside the `lume-ace3p` YAML file.
+`.s3p`, …) named on the solver module, or directly inside the `lume-ace3p` YAML
+file via `ace3p_input_parameters`.
 
 ## Where to start
 
@@ -59,6 +66,7 @@ parameter_sweep
 optimization
 yaml_reference
 plotting
+testing
 troubleshooting
 ```
 

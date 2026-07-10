@@ -6,10 +6,7 @@ a runnable :class:`Workflow`: the modules are instantiated from
 ``requires``/``provides`` artifact edges, and executed in order against a single
 :class:`RunContext` to produce artifacts and extracted ``output_parameters``.
 
-It does NOT touch the legacy dispatch in ``run_lume_ace3p.py`` or the
-``Omega3P/S3P/Geant4Workflow`` subclasses in ``workflow.py`` — those stay live
-until later phases. ``WorkflowInputs`` (from ``inputs.py``) is reused unchanged
-as the input model.
+``WorkflowInputs`` (from ``inputs.py``) is reused unchanged as the input model.
 
 Design notes
 ------------
@@ -51,8 +48,8 @@ _GEANT4_TYPES = frozenset({'geant4'})
 
 
 def _scalar_str(value):
-    """Render a scalar for a workdir-name suffix. Matches ``workflow._scalar_str``
-    so auto-mode workdir names are identical to the legacy path."""
+    """Render a scalar for a workdir-name suffix (numpy scalars unwrap; a
+    leading ``./`` is dropped) so auto-mode workdir names stay tidy."""
     if isinstance(value, np.generic):
         value = value.item()
     s = str(value)
@@ -64,9 +61,9 @@ def _scalar_str(value):
 def _infer_output_module(spec):
     """Route a legacy-shaped (bare) output spec to a module *type*.
 
-    The target schema names the module explicitly
-    (``{module: s3p, quantity: ...}``); this handles the older bare forms so the
-    three legacy chains reproduce with their existing ``output_parameters``:
+    The explicit form names the module (``{module: s3p, quantity: ...}``); this
+    handles the terse bare forms used by the Omega3P/Geant4 examples, where the
+    spec shape alone identifies the target module:
 
       * a mapping (``{quantity: 'S(0,0)', at: {...}}``) or an S-parameter string
         -> ``s3p``,
@@ -198,7 +195,7 @@ class Workflow:
             return True
         return False
 
-    # ---- workdir naming (mirrors ACE3PWorkflow._getworkdir) --------------
+    # ---- workdir naming (auto-mode suffixes the swept scalars) -----------
 
     def _getworkdir(self, inputs, sweep_scalars=None):
         if self.workdir_mode == 'manual':

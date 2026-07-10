@@ -1,0 +1,44 @@
+# Single-shot runnable multi-step chain: external Track3P dump -> field-emission
+# weighting -> Geant4 dose, evaluated once (not swept) with a fixed per-bin beta
+# vector, and pulling scalar dose/edep totals out of the Geant4 output:
+#   workflow:  track3p_source -> particles -> geant4
+#   mode:      single  (one evaluation, one result row)
+#
+# This is the declarative expression of the full downstream-dose pipeline the
+# architecture is meant to make first-class. The large shared assets (Track3P
+# dump + STL geometry + Geant4 input) are symlinks into the sibling
+# geant4_track3p_beta/ example, so run this from THIS directory. With the Geant4
+# binary absent the run is dry-run: the particle-weighting step still executes
+# for real and writes particles.data; the dose scalars are NaN until a real
+# Geant4 run produces the scoring files.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_dose_workdir'
+  'workdir_mode' : 'manual'
+  'paths' :
+    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
+    'geant4_app_exe' : 'sim'
+
+workflow :
+  - module : track3p_source
+    file : 'sample_track3p_particles.txt'
+  - module : particles
+    impact_order : 1
+    impact_face_id : 6
+    work_function : 4.5
+    dt : 1.0e-10
+    num_bins : 8
+    beta : [50, 55, 60, 65, 65, 60, 55, 50]
+    output_format : 'geant4'
+    output : 'particles.data'
+  - module : geant4
+    geant4_input : 'input_7cell.geant4'
+
+mode :
+  type : single
+  output_file : 'dose_single_output.txt'
+
+output_parameters :
+  'total_dose' : ['dose', 'total']
+  'peak_dose'  : ['dose', 'peak']
+  'total_edep' : ['edep', 'total']

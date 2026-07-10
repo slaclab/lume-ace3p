@@ -1,4 +1,4 @@
-"""Phase-2 tests: declarative Workflow build + DAG validation + evaluate.
+"""Declarative Workflow build + DAG validation + evaluate tests.
 
 Three groups (see docs/workflow_module_refactor_plan.md):
 
@@ -11,11 +11,10 @@ Three groups (see docs/workflow_module_refactor_plan.md):
    missing/duplicate artifact: missing mesh source, acdtool before a solver,
    particles with no track3p source, geant4 with no particle source, two mesh
    sources.
-3. **Legacy equivalence** — the three legacy chains, expressed as ``workflow:``
-   lists, run end-to-end in dry-run and produce the same extracted output values
-   and artifacts as the current ``S3PWorkflow`` / ``Omega3PWorkflow`` /
-   ``Geant4Workflow`` single ``run()``, and match the Phase-0.5 baselines
-   (the Geant4 ``particles.data`` digest is the real-compute check).
+3. **Chain evaluate** — the three chains, expressed as ``workflow:`` lists, run
+   end-to-end in dry-run and produce the expected extracted output values and
+   artifacts (S3P/Omega3P: NaN under dry-run; Geant4: the real-compute
+   ``particles.data`` digest matches the Phase-0.5 baseline).
 """
 
 import os
@@ -32,7 +31,6 @@ from lume_ace3p.modules import (
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
 )
 from lume_ace3p.inputs import WorkflowInputs
-from lume_ace3p.workflow import S3PWorkflow, Omega3PWorkflow, Geant4Workflow
 
 
 # --------------------------------------------------------------------------- #
@@ -154,10 +152,9 @@ def _stage(example):
     return bu._stage_example(example)
 
 
-def test_s3p_chain_matches_legacy(tmp_path):
-    """cubit -> s3p, dry-run. The declared workflow reaches the solver step
-    with a mesh present and returns the same NaN sentinel the legacy
-    S3PWorkflow.evaluate produces for an S-parameter output."""
+def test_s3p_chain_evaluate(tmp_path):
+    """cubit -> s3p, dry-run. The declared workflow reaches the solver step with
+    a mesh present and returns the NaN sentinel for an S-parameter output."""
     staged = _stage('s3p_sweep')
     cwd = os.getcwd()
     os.chdir(staged)
@@ -179,24 +176,17 @@ def test_s3p_chain_matches_legacy(tmp_path):
         # Mesh + em_solution artifacts present at the final step.
         assert MESH in wf.last_context.artifacts
         assert EM_SOLUTION in wf.last_context.artifacts
-        # Workdir name matches the legacy auto-mode naming.
+        # Auto-mode workdir name suffixes the swept scalars.
         assert wf.workdir == 'lume-ace3p_s3p_workdir_12.0_4.0'
-
-        # Extracted value matches legacy S3PWorkflow dry-run evaluate (NaN).
-        legacy = S3PWorkflow(
-            {'workdir': 'legacy_s3p', 'workdir_mode': 'manual',
-             'dry_run': True}, inputs)
-        legacy.run(inputs, output_dict={'refl': 'S(0,0)'})
-        legacy_out = legacy.evaluate({'refl': 'S(0,0)'})
+        # Extracted value under dry-run is the NaN sentinel.
         assert np.isnan(out['refl']).all()
-        assert np.isnan(legacy_out['refl']).all()
     finally:
         os.chdir(cwd)
 
 
-def test_omega3p_chain_matches_legacy(tmp_path):
-    """cubit -> omega3p -> acdtool, dry-run. Extracted outputs match the legacy
-    Omega3PWorkflow.evaluate (all NaN when acdtool is dry-run)."""
+def test_omega3p_chain_evaluate(tmp_path):
+    """cubit -> omega3p -> acdtool, dry-run. Extracted outputs are all NaN when
+    acdtool is dry-run; the chain orders and reaches rf_post."""
     staged = _stage('omega3p_sweep')
     cwd = os.getcwd()
     os.chdir(staged)
@@ -223,22 +213,16 @@ def test_omega3p_chain_matches_legacy(tmp_path):
         assert _types(wf.modules) == ['cubit', 'omega3p', 'acdtool']
         assert {MESH, EM_SOLUTION, RF_POST} <= set(wf.last_context.artifacts)
         assert wf.workdir == 'lume-ace3p_omega3p_workdir_90.0_0.5'
-
-        legacy = Omega3PWorkflow(
-            {'rfpost_input': 'pillbox-rtop.rfpost', 'workdir': 'legacy_o3p',
-             'workdir_mode': 'manual', 'dry_run': True}, inputs, output_spec)
-        legacy_out = legacy.run(inputs, output_dict=output_spec)
         for name in output_spec:
-            assert np.isnan(out[name]) and np.isnan(legacy_out[name]), name
+            assert np.isnan(out[name]), name
     finally:
         os.chdir(cwd)
 
 
-def test_geant4_chain_matches_legacy_and_baseline(tmp_path):
+def test_geant4_chain_evaluate_and_baseline(tmp_path):
     """track3p_source -> particles -> geant4, dry-run geant4 with real particle
-    weighting. The declared workflow reproduces the legacy Geant4Workflow's
-    particles.data byte-for-byte and matches the Phase-0.5 beta=40 digest."""
-    # --- module path ---
+    weighting. The declared workflow produces particles.data whose numeric digest
+    matches the Phase-0.5 beta=40 baseline (the real-compute equivalence check)."""
     staged = _stage('geant4_track3p_beta')
     cwd = os.getcwd()
     os.chdir(staged)
@@ -268,33 +252,7 @@ def test_geant4_chain_matches_legacy_and_baseline(tmp_path):
     finally:
         os.chdir(cwd)
 
-    # --- legacy path, same single point ---
-    legacy_staged = _stage('geant4_track3p_beta')
-    os.chdir(legacy_staged)
-    try:
-        wf_legacy = Geant4Workflow(
-            {'geant4_input': 'input_7cell.geant4',
-             'particle_input': 'sample_track3p_particles.txt',
-             'particle_output': 'particles.data',
-             'workdir': 'lume-ace3p_geant4_workdir', 'workdir_mode': 'auto',
-             'dry_run': True},
-            WorkflowInputs(cubit={'beta': 40.0}), None,
-            particle_params={'impact_order': 1, 'impact_face_id': 6,
-                             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
-                             'beta_input': 'beta', 'output_format': 'geant4'})
-        wf_legacy.run(sweep_scalars=[40.0])
-        legacy_particles = os.path.join('lume-ace3p_geant4_workdir_40.0',
-                                        'particles.data')
-        assert os.path.isfile(legacy_particles)
-        legacy_digest = bu.numeric_digest(legacy_particles)
-    finally:
-        os.chdir(cwd)
-
-    # module path == legacy path
-    ok, msg = bu.compare_digests(legacy_digest, module_digest)
-    assert ok, f'module vs legacy particles.data: {msg}'
-
-    # module path == Phase-0.5 frozen baseline
+    # module path == Phase-0.5 frozen baseline (real-compute particles.data)
     baseline = bu.load_json(os.path.join(
         bu.BASELINE_DIR, 'geant4_track3p_beta', 'particles_beta40.digest.json'))
     ok, msg = bu.compare_digests(baseline, module_digest)
