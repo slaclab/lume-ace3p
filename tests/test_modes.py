@@ -277,17 +277,18 @@ def test_run_mode_dispatch_and_write(tmp_path):
         os.chdir(cwd)
 
 
-def test_run_mode_rejects_xopt_mode(tmp_path):
-    """Phase 3 handles only single | parameter_sweep; an Xopt mode is a clear
-    error (those route through the legacy path until Phase 4)."""
+def test_run_mode_rejects_unknown_mode(tmp_path):
+    """All four modes (single | parameter_sweep | scalar_optimize |
+    gp_parameter_sweep) are handled after Phase 4; an unrecognized mode is a
+    clear error."""
     cwd = os.getcwd()
     try:
         _data, inputs = _staged('s3p_sweep', 's3p_sweep.yaml')
         entries = [{'module': 'cubit', 'journal': 'bend-90degree.jou'},
                    {'module': 's3p', 'input': 'bend-90degree.s3p'}]
         wf = _build(entries, inputs, 'lume-ace3p_s3p_workdir')
-        with pytest.raises(ValueError, match='parameter_sweep'):
-            run_mode({'type': 'scalar_optimize'}, wf)
+        with pytest.raises(ValueError, match='not handled'):
+            run_mode({'type': 'no_such_mode'}, wf)
     finally:
         os.chdir(cwd)
 

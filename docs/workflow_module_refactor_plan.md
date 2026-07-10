@@ -1,13 +1,24 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 3 complete (mode layer landed: `src/lume_ace3p/modes.py` +
-`tests/test_modes.py`, 8 mode tests green; full suite 63 passing. `single` +
-`parameter_sweep` reimplemented as workflow-agnostic modes returning pandas
-DataFrames via `DataFrame.to_csv`; `run_lume_ace3p.py` dual-dispatches on a
-top-level `workflow:` list through the new mode layer while the legacy
-`(mode,module)` matrix + `Omega3P/S3P/Geant4Workflow` subclasses stay live for
-the Xopt cells; legacy `workflow.py`/`run_xopt.py`/`tools.py` writers untouched —
-next: Phase 4 — Xopt modes (`scalar_optimize` + `gp_parameter_sweep`)).
+**Status:** Phase 4 complete (generic Xopt modes landed: `scalar_optimize` +
+`gp_parameter_sweep` folded into `src/lume_ace3p/modes.py`, driven by
+`workflow.evaluate(input_dict)` + declarative `output_parameters` — no
+S-parameter/frequency parsing in the driver. All six generators (NelderMead,
+ExpectedImprovement, MultiFidelity, UCB, MOBO/EHVI, BayesianExploration)
+preserved with the fidelity-variable rename + cost-function logic unchanged;
+Xopt logging is `X.data.to_csv` (WriteXoptData / WriteS3PDataTable xopt-append
+dropped). Geant4 MC-noise guards added as documented mode config
+(`mc_noisy_objective` → don't force `use_low_noise_prior`; require explicit
+`bin_edges`). `run_lume_ace3p.py` now dispatches all four modes through the
+declarative path; the legacy `(mode,module)` matrix + `run_xopt.py` +
+`Omega3P/S3P/Geant4Workflow` subclasses stay live/callable for the Phase-5
+equivalence tests. Phase-4 tests extend `tests/test_run_xopt_compat.py`
+(generic-path numeric reproduction of `s3p_optimization` + `s3p_bayesian_sweep`
+baselines, all six generators construct+step, Geant4 chain as objective under
+dry-run, MC-noise guards). Known pre-existing flake unrelated to this phase:
+the legacy MOBO/EHVI baseline self-check (`test_baseline_selfcheck.py
+[MOBO_ExpectedHypervolume_Example]`) is nondeterministic under botorch and fails
+on clean HEAD too — next: Phase 5 — result/data consolidation).
 Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
@@ -529,22 +540,48 @@ optimized/swept via generic output extraction.
 
 ### Verification (Phase 4 done when)
 
-- The S3P optimization + GP-sweep examples reproduce the same optimization
+- [x] The S3P optimization + GP-sweep examples reproduce the same optimization
   trajectory / GP predictions as today (numeric, not file-format, equality),
   driven through the generic mode.
-- A Geant4 workflow can be selected as the `scalar_optimize` objective (dry-run
-  proof that `evaluate`→objective wiring works with no S3P-specific code).
-- All six generators construct and step under the generic driver.
+  `test_run_xopt_compat.py::test_generic_s3p_optimization_matches_baseline`
+  (NelderMead trajectory) and `::test_generic_gp_sweep_matches_baseline` (both
+  the exploration trajectory `sim_output.txt` and the 10×10 GP posterior-mean
+  `sweep_output.txt`) diff the generic-mode output against the Phase-0.5
+  baselines via `baseline_utils.compare_tables` — exact numeric match, driven
+  through `modes.scalar_optimize` / `modes.gp_parameter_sweep` with a synthetic
+  `SynthWorkflow` (the S-parameter knowledge lives in the fake *workflow*, not
+  the mode).
+- [x] A Geant4 workflow can be selected as the `scalar_optimize` objective
+  (dry-run proof that `evaluate`→objective wiring works with no S3P-specific
+  code). `test_generic_geant4_objective_dry_run` builds a real declarative
+  `track3p_source→particles→geant4` workflow, extracts `total_weight` off the
+  (real) Particles pre-step as the objective, and optimizes `beta` for 3 steps
+  under dry-run — a genuine finite objective with the Geant4 binary absent.
+- [x] All six generators construct and step under the generic driver.
+  `test_generic_{neldermead,expected_improvement,ucb_single_objective,mobo,
+  multifidelity}` cover five via `scalar_optimize`; BayesianExploration (the
+  sixth) is exercised by `test_generic_gp_sweep_matches_baseline`. UCB is tested
+  single-objective (its multi-objective VOCS rejection under xopt 3.0.0 is the
+  known `UCB_Example` limitation from Phase 0.5).
+- MC-noise mode-config guards documented + tested:
+  `test_mc_noise_guard_requires_bin_edges` (explicit `bin_edges` required when
+  `mc_noisy_objective`) and `test_mc_noise_guard_skips_low_noise_prior`
+  (MultiFidelity does not force `use_low_noise_prior` for an MC-noisy objective).
 
 ### Deliverables
 
-- Xopt modes folded into `modes.py`; `run_xopt.py` reduced to generator
-  construction helpers or removed. Tests extend `tests/test_run_xopt_compat.py`
-  to drive the generic path with a synthetic workflow. After this phase all four
-  modes exist on the new architecture; the legacy dispatch matrix is now
-  unreferenced by the CLI but the `Omega3P/S3P/Geant4Workflow` subclasses stay
-  **importable/callable** so Phase 5 equivalence tests can construct old vs. new
-  on the same input. Actual deletion is Phase 6.
+- [x] Xopt modes folded into `modes.py` (`scalar_optimize`,
+  `gp_parameter_sweep`, `_build_generator`, `_make_vocs`,
+  `_objective_from_workflow`, `_mc_noise_guards`, `_save_model`); the CLI
+  (`run_lume_ace3p.py::_run_declarative`) now dispatches all four modes through
+  the declarative path. Tests extend `tests/test_run_xopt_compat.py` to drive
+  the generic path with a synthetic workflow. `run_xopt.py` + the legacy
+  `(mode,module)` matrix + the `Omega3P/S3P/Geant4Workflow` subclasses are left
+  **importable/callable** (not reduced/removed) so the Phase-5 equivalence tests
+  can construct old vs. new on the same input — actual deletion / reduction is
+  Phase 6. Also: `ParticlesModule.extract` now accepts the target-schema
+  `{module: particles, quantity: ...}` mapping form (needed for the Geant4
+  objective test).
 
 ---
 

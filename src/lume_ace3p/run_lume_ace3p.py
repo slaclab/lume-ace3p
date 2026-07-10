@@ -8,26 +8,34 @@ from lume_ace3p.particles import Particles
 
 
 def _run_declarative(lume_ace3p_data):
-    """Phase-3 dispatch: build a declarative Workflow from the ``workflow:``
-    list and drive it through the mode layer for ``single`` / ``parameter_sweep``.
+    """Declarative dispatch (Phases 3-4): build a :class:`Workflow` from the
+    ``workflow:`` list and drive it through the workflow-agnostic mode layer for
+    all four modes — ``single`` / ``parameter_sweep`` (Phase 3) and
+    ``scalar_optimize`` / ``gp_parameter_sweep`` (Phase 4, the generic Xopt
+    driver).
 
-    This runs alongside the legacy ``(mode, module)`` matrix below — the Xopt
-    modes still route through the legacy path until Phase 4. A YAML is treated
-    as declarative when it carries a top-level ``workflow:`` list. The mode
-    config comes from a ``mode:`` block (target schema)."""
+    A YAML is treated as declarative when it carries a top-level ``workflow:``
+    list. The mode config comes from a ``mode:`` block (target schema); the
+    VOCS / Xopt / sweep blocks are passed through to the Xopt modes. This runs
+    alongside the legacy ``(mode, module)`` matrix below (dual-dispatch on
+    ``dev``); the legacy path only fires for old-schema YAMLs with no
+    ``workflow:`` list."""
     from lume_ace3p.workflow_graph import Workflow
     from lume_ace3p.modes import run_mode
 
     workflow = Workflow.from_config(lume_ace3p_data)
     mode_cfg = lume_ace3p_data.get('mode') or {}
     mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode', '')).lower()
-    if mode_type not in ('single', 'parameter_sweep'):
+    if mode_type not in ('single', 'parameter_sweep', 'scalar_optimize',
+                         'gp_parameter_sweep'):
         raise ValueError(
-            f"declarative workflow mode '{mode_type}' is not yet handled "
-            "(Phase 3 covers single | parameter_sweep; Xopt modes land in "
-            "Phase 4).")
+            f"declarative workflow mode '{mode_type}' is not handled "
+            "(single | parameter_sweep | scalar_optimize | gp_parameter_sweep).")
     return run_mode(mode_cfg, workflow,
-                    output_spec=lume_ace3p_data.get('output_parameters'))
+                    output_spec=lume_ace3p_data.get('output_parameters'),
+                    vocs=lume_ace3p_data.get('vocs_parameters'),
+                    xopt=lume_ace3p_data.get('xopt_parameters'),
+                    sweep=lume_ace3p_data.get('sweep_parameters'))
 
 
 def main():

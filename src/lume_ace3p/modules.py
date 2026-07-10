@@ -517,7 +517,10 @@ class ParticlesModule(Module):
 
         ``spec`` is ``'count'`` (number of filtered particles) or
         ``'total_weight'`` (sum of the field-emission ParticleWeight); a list
-        wrapping either is also accepted."""
+        wrapping either, or the target-schema mapping ``{'quantity': ...}``, is
+        also accepted."""
+        if isinstance(spec, dict):
+            spec = spec.get('quantity')
         if isinstance(spec, list):
             spec = spec[0]
         if self._filtered is None:
