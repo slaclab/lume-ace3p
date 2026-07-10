@@ -178,8 +178,7 @@ There are two ways to enable it:
 
    ```yaml
    workflow_parameters :
-     'mode' : 'parameter_sweep'
-     'module' : 'omega3p'
+     'workdir' : 'lume-ace3p_workdir'
      'dry_run' : True
      # ...
    ```

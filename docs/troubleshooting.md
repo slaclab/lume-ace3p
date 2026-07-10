@@ -14,8 +14,9 @@ Geant4 environment not configured, enabling dry run mode.
 ```
 
 — `lume-ace3p` could not resolve the path to ACE3P (or to the Geant4
-application, for `mode: 'geant4'`) through any of the four resolution
-mechanisms: a `paths` mapping in `workflow_parameters`, the relevant
+application, when the workflow includes a `geant4` module) through any of the
+four resolution mechanisms: a `paths` mapping in `workflow_parameters`, the
+relevant
 environment variable (`ACE3P_PATH`, `GEANT4_APP_PATH` /
 `GEANT4_APP_EXE`), a built-in site default (Perlmutter / S3DF), or
 autodetection on `PATH`/`$HOME`. The workflow still runs end-to-end in
@@ -85,8 +86,10 @@ sweeping `input_1` from 20 to 80 in steps of 10 (7 evaluations: 20, 30,
 continue to 80 (4 evaluations: 50, 60, 70, 80).
 
 :::{important}
-The parameter-sweep output file is *overwritten* on each workflow
-evaluation, so save the incomplete (failed) run output file to a new
-filename before the restart so you can later combine it with the
-restarted run.
+The result table (`mode.output_file`) is written once, when the sweep
+completes, so a job that failed mid-sweep leaves no table for the completed
+rows. The restarted run writes a fresh table at its own `output_file`; give
+the restart a different `output_file` (or move any partial output aside) so
+you can combine the two afterward. The per-evaluation working directories from
+the failed run are preserved regardless.
 :::

@@ -88,11 +88,11 @@ distinguished by `ReferenceNumber`, multiple `SurfaceMaterial:` blocks).
 pairs, so duplicates are preserved end-to-end; matching overrides from
 `ace3p_input_parameters` are merged positionally back into the file.
 
-When you provide an ACE3P input file via `workflow_parameters.ace3p_input`
+When you provide an ACE3P input file via the solver module's `input:` key
 and `ace3p_input_parameters` does not override or sweep any value inside
 it, the file is copied to each working directory verbatim — no parse /
 rewrite round-trip occurs. Parsing only happens when overrides are
-present, or when no `ace3p_input` is provided and the entire input must
+present, or when no `input:` file is provided and the entire input must
 be assembled from the YAML.
 
 For more information on configuring ACE3P input files, see the

@@ -1,42 +1,12 @@
 # Optimization
 
-````{admonition} Schema updated — declarative workflow: + mode:
-:class: important
-
-LUME-ACE3P now uses a **declarative module/mode schema**: a YAML declares an
-ordered **`workflow:`** list of modules plus a **`mode:`**
-(`type: scalar_optimize` or `type: gp_parameter_sweep`), instead of the old
-`workflow_parameters.mode` + `module` pair. The objective is declared in
-`output_parameters` and referenced by name in the VOCS, so the Xopt driver is
-now workflow-agnostic — **any** workflow (S3P, Geant4, a multi-step chain) can be
-optimized, not just S3P. For example:
-
-```yaml
-workflow:
-  - module: cubit
-    journal: 'bend-90degree.jou'
-  - module: s3p
-    input: 'bend-90degree.s3p'
-mode:
-  type: scalar_optimize
-output_parameters:
-  reflection: {module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}
-vocs_parameters:
-  variables: {cornercut: [14, 17], rcorner1: [0.5, 2.5]}
-  objectives: {reflection: 'MINIMIZE'}
-xopt_parameters: {generator: 'NelderMeadGenerator', num_random: 0, num_step: 25}
-```
-
-See the migrated `examples/` (`s3p_optimization`, `s3p_bayesian_sweep`) and
-`workflow_module_refactor_plan.md` for the full schema. The prose below predates
-the change and is being migrated incrementally; the `vocs_parameters` /
-`xopt_parameters` blocks still apply, but the objective is now named via
-`output_parameters` rather than the `s_parameter`/`frequency` triple.
-````
-
 `lume-ace3p` is configured with [Xopt](https://github.com/xopt-org/Xopt) to
-allow single-batch-job optimization. An optimization is run directly from a
-`lume-ace3p` configuration file for any workflow.
+allow single-batch-job optimization, run directly from a `lume-ace3p`
+configuration file. Optimization is a **mode** (`type: scalar_optimize`) that
+drives the declarative `workflow:` chain: the objective is declared in
+`output_parameters` and referenced by name in the VOCS, so the Xopt driver is
+workflow-agnostic — **any** workflow (S3P, Geant4, a multi-step chain) can be
+optimized with the same code, not just S3P.
 
 ## Optimization with S3P
 
@@ -44,15 +14,18 @@ To set up an S3P optimization problem, no additional files beyond those
 needed for a typical `lume-ace3p` problem are required. The configuration
 file must include:
 
-- `workflow_parameters` — file names, HPC settings, and other configuration
-  (same as parameter sweeping).
+- a `workflow:` list — the module chain to drive (e.g. `cubit → s3p`).
+- `mode:` with `type: scalar_optimize`.
+- `output_parameters` — declares the scalar the objective pulls out of the
+  workflow. For an S3P reflection objective this is the explicit form
+  `{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}`.
 - `vocs_parameters` — variables (required), objectives (required), constants
   (optional), and constraints (optional) for the optimization problem.
-  - Within `objectives`, specify `s_parameter` (e.g. `S(0,0)`), `frequency`
-    (e.g. `11.324e+09`), and `optimization` (`MINIMIZE` or `MAXIMIZE`). For
-    multi-objective optimization, specify each parameter as a list (e.g.
-    `s_parameter: S(0,0), S(1,1)`). Optionally include `tolerance` with a
-    stopping criterion for each objective.
+  - `objectives` is the plain Xopt shape: it maps an **`output_parameters`
+    name** to `'MINIMIZE'` or `'MAXIMIZE'`. For multi-objective optimization,
+    declare more than one output/objective pair. A per-objective stopping
+    threshold is supplied via `xopt_parameters.tolerance` (not inside the
+    objective).
 - `xopt_parameters` — choice of optimization algorithm and algorithm
   parameters.
 
@@ -94,58 +67,69 @@ Upper-confidence-bound and expected-hypervolume-improvement also support:
 
 ### Output files
 
-Running `lume-ace3p` with Xopt produces two files:
-
-- `sim_output.txt` — all parameter tuples reached and the corresponding
-  values of the parameter(s) being optimized.
-- `sim_output_all_values.txt` — all parameter tuples reached and the
-  corresponding values of *all* output parameters.
+Running `lume-ace3p` with an Xopt mode logs the full run trajectory to a single
+file — `sim_output.txt` by default, or the path given as `mode.output_file`.
+The file is the Xopt data table (all parameter tuples reached and the
+corresponding output values), overwritten each step so it always holds the
+complete trajectory.
 
 ### S3P Nelder–Mead example
 
-This example (based on the 90-degree bend from the ACE3P tutorials) sets up
-an optimization over the scattering parameter `S(0,0)` at 12 GHz, with input
-parameters of waveguide width and chamfer length.
+This example (based on the 90-degree bend from the ACE3P tutorials, shipped as
+[`examples/s3p_optimization`](https://github.com/slaclab/lume-ace3p/blob/main/examples/s3p_optimization/s3p_optimization.yaml))
+sets up an optimization over the scattering parameter `S(0,0)` at 12 GHz, with
+input parameters of waveguide width and chamfer length.
 
 ```yaml
 workflow_parameters :
-    'mode' : 'scalar_optimize'
-    'module' : 's3p'
-    'cubit_input': 'bend-90degree.jou'
-    'ace3p_input': 'bend-90degree.s3p'
-    'ace3p_tasks': 16
-    'ace3p_cores': 16
-    'ace3p_opts' : '--cpu-bind=cores'
-    'workdir': 'lume-ace3p_xopt_workdir'
+    'workdir' : 'lume-ace3p_xopt_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree.jou'
+  - module : s3p
+    input : 'bend-90degree.s3p'
+    tasks : 16
+    cores : 8
+    opts : '--cpu-bind=cores'
+
+mode :
+    type : scalar_optimize
 ```
 
-This is identical to the workflow parameters for the 90-degree bend
-parameter-sweep example, except `mode` is set to `scalar_optimize`.
+The `workflow:` chain is the same `cubit → s3p` pipeline used for the 90-degree
+bend parameter sweep; only the `mode` differs.
 
+The objective is declared in `output_parameters` and referenced by name in the
 VOCS:
 
 ```yaml
+output_parameters :
+    'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
+
 vocs_parameters :
     'variables' :
         'cornercut': [14,17]
         'rcorner1': [0.5,2.5]
     'objectives' :
-        's_parameter' : 'S(0,0)'
-        'frequency' : 12.0e+09
-        'optimization' : 'MINIMIZE'
+        'reflection' : 'MINIMIZE'
 ```
 
 The variable names `cornercut` and `rcorner1` must match the variable names
-in the Cubit file. Each input variable has a range to explore. Objectives
-for optimization with S3P take the form of a particular S-parameter
-optimized at a particular frequency. To configure a multi-objective problem,
-keep the same format and supply lists:
+in the Cubit file. Each input variable has a range to explore. The objective is
+an `output_parameters` name mapped to `MINIMIZE`/`MAXIMIZE` — the Xopt driver
+never parses S-parameters itself, so to configure a multi-objective problem you
+add more `output_parameters` entries and list each in `objectives`:
 
-```text
+```yaml
+output_parameters :
+    'reflection'    : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
+    'transmission'  : { module: s3p, quantity: 'S(0,1)', at: { frequency: 10.424e+09 } }
+
+vocs_parameters :
     'objectives' :
-        's_parameter' : 'S(0,0)', 'S(0,1)'
-        'frequency' : 12.0, 10.424e+09
-        'optimization' : 'MINIMIZE', 'MINIMIZE'
+        'reflection'   : 'MINIMIZE'
+        'transmission' : 'MINIMIZE'
 ```
 
 Xopt parameters:
@@ -163,19 +147,24 @@ iterations.
 
 ### S3P multifidelity Bayesian example
 
-This example optimizes `S(0,0)` at 12 GHz with input parameters of
+This example optimizes `S(1,1)` at 12 GHz with input parameters of
 waveguide width and chamfer length:
 
 ```yaml
 workflow_parameters :
-    'mode' : 'scalar_optimize'
-    'module' : 's3p'
-    'cubit_input': 'bend-90degree_mf.jou'
-    'ace3p_input': 'bend-90degree_mf.s3p'
-    'ace3p_tasks': 16
-    'ace3p_cores': 16
-    'ace3p_opts' : '--cpu-bind=cores'
-    'workdir': 'lume-ace3p_xopt_workdir'
+    'workdir' : 'lume-ace3p_xopt_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree_mf.jou'
+  - module : s3p
+    input : 'bend-90degree_mf.s3p'
+    tasks : 16
+    cores : 8
+    opts : '--cpu-bind=cores'
+
+mode :
+    type : scalar_optimize
 ```
 
 The Cubit journal file must be configured for multifidelity optimization by
@@ -183,19 +172,19 @@ specifying a variable that controls model fidelity. Here, fidelity is
 controlled by a parameter that changes mesh size.
 
 ```yaml
+output_parameters :
+    'reflection' : { module: s3p, quantity: 'S(1,1)', at: { frequency: 12.0e+09 } }
+
 vocs_parameters :
     'variables' :
         'cornercut': [12.5,13.5]
         'wgwidth': [21,22]
     'objectives' :
-        's_parameter' : 'S(1,1)'
-        'frequency' : 12.0e+09
-        'optimization' : 'MINIMIZE'
-        'tolerance' : 1e-03
+        'reflection' : 'MINIMIZE'
 ```
 
-A `tolerance` is included: if `S(1,1)` at 12 GHz falls below 0.001, the
-optimization terminates.
+The `tolerance` (a stopping criterion) is set in `xopt_parameters`: if the
+objective falls below 0.001, the optimization terminates.
 
 ```yaml
 xopt_parameters :
@@ -204,6 +193,7 @@ xopt_parameters :
     'cost_function' : 'exponential'
     'alotted_time' : 00:30:00
     'num_random' : 3
+    'tolerance' : 1e-03
 ```
 
 The `fidelity_variable` parameter must match exactly the name of the
@@ -213,123 +203,53 @@ expresses the relationship between fidelity and cost. `alotted_time` (here
 time, the algorithm terminates. The algorithm starts with three random
 steps to seed its internal GP model.
 
-## Optimization with Omega3P
+## Optimizing other workflows
 
-To set up an Omega3P optimization problem, an Xopt VOCS object and two
-dicts are required: a workflow dict and an output dict. Additionally, a
-`sim` function must be written that uses an ACE3P workflow class object.
+Because the objective is pulled from `output_parameters` and the workflow is
+driven only through its `evaluate` seam, the same `scalar_optimize` mode
+optimizes any chain — you change the `workflow:` list and point the objective at
+a different module's output. No custom `sim` function or workflow subclass is
+needed (the pre-refactor `Omega3PWorkflow` / `S3PWorkflow` classes and the
+hand-rolled Xopt loop no longer exist).
 
-- VOCS object — variables, objectives, optionally constraints and observables.
-- workflow dict — file names, HPC settings, and other configuration.
-- output dict — output quantities to track for optimization.
-- `sim` function — a Python wrapper that Xopt calls to evaluate a candidate.
+For an **Omega3P R/Q optimization**, the objective is an acdtool bare-form spec
+routed to the `acdtool` module:
 
-Once provided, optimization is run via Xopt object methods (e.g. `.step()`).
+```yaml
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 16
+    cores : 8
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
 
-### Omega3P optimization example
+mode :
+    type : scalar_optimize
 
-This example, based on the rounded-top pillbox from the ACE3P tutorials,
-runs an optimization loop over cavity radius and cavity wall ellipticity to
-maximize R/Q with a target-frequency constraint.
+output_parameters :
+    'R/Q'       : ['RoverQ', '0', 'RoQ']
+    'mode_freq' : ['RoverQ', '0', 'Frequency']
 
-```python
-import numpy as np
-from xopt.vocs import VOCS
-from xopt.evaluator import Evaluator
-from xopt.generators.bayesian import ExpectedImprovementGenerator
-from xopt import Xopt
-from lume_ace3p.workflow import Omega3PWorkflow
-from lume_ace3p.tools import WriteXoptData
-
-workflow_dict = {'cubit_input': 'pillbox-rtop.jou',
-                 'ace3p_input': 'pillbox-rtop.omega3p',
-                 'ace3p_tasks': 16,
-                 'ace3p_cores': 16,
-                 'ace3p_opts' : '--cpu-bind=cores',
-                 'rfpost_input': 'pillbox-rtop.rfpost',
-                 'workdir': 'lume-ace3p_xopt_workdir'}
+vocs_parameters :
+    'variables' :
+        'cav_radius' : [95, 105]
+        'ellipticity' : [0.5, 1.2]
+    'objectives' :
+        'R/Q' : 'MAXIMIZE'
+    'observables' :
+        - 'mode_freq'
 ```
 
-In this example the workflow folder is overwritten on each evaluation;
-`workdir_mode` can also be set to write to separate folders automatically.
-
-Output dict:
-
-```python
-output_dict = {'R/Q': ['RoverQ', '0', 'RoQ'],
-               'mode_freq': ['RoverQ', '0', 'Frequency']}
-```
-
-This dict is used to parse the ACE3P workflow output for use with Xopt.
-
-VOCS:
-
-```python
-vocs = VOCS(
-    variables={"cav_radius": [95, 105], "ellipticity": [0.5, 1.2]},
-    objectives={"R/Q": "MAXIMIZE"},
-    constraints={"freq_error" : ["LESS_THAN", 0.0001]},
-    observables=["mode_freq"]
-)
-```
-
-`variables` are the workflow input parameters and their bounds.
-`objectives` selects the quantity (defined in the output dict) to maximize
-or minimize. `constraints` is optional and specifies an inequality
-constraint. `observables` is optional and is tracked by Xopt but not used
-in optimization.
-
-:::{note}
-While `R/Q` and `mode_freq` are defined in the output dict, `freq_error` is
-not. This is intentional and is addressed in the `sim` function.
-:::
-
-The goal is to optimize R/Q with a constraint that `mode_freq` is within
-1% of a specified `target_freq`. The `sim` function calculates `freq_error`
-on the fly:
-
-```python
-target_freq = 1.3e9
-
-def sim_function(input_dict):
-    workflow = Omega3PWorkflow(workflow_dict, input_dict, output_dict)
-    output_data = workflow.run()
-    output_data['freq_error'] = (output_data['mode_freq'] - target_freq)**2 / target_freq**2
-    return output_data
-```
-
-The `input_dict` Xopt hands in is a plain `{var_name: scalar}` mapping
-of Cubit variable values; the workflow constructor coerces it into a
-{py:class}`~lume_ace3p.inputs.WorkflowInputs` with that mapping in the
-`cubit` bucket. The ACE3P input file specified by `ace3p_input` is
-copied through to each working directory unchanged.
-
-The Xopt object is built with a chosen optimizer, the VOCS, and the `sim`
-function:
-
-```python
-evaluator = Evaluator(function=sim_function)
-generator = ExpectedImprovementGenerator(vocs=vocs)
-X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
-```
-
-To run the optimizer, call `.random_evaluate()` to seed Xopt's internal
-model and `.step()` to optimize:
-
-```python
-for i in range(5):
-    X.random_evaluate()
-    WriteXoptData('sim_output.txt', X)
-
-for i in range(15):
-    X.step()
-    WriteXoptData('sim_output.txt', X)
-```
-
-In this example Xopt calls the ACE3P workflow 5 times with random inputs
-and then optimizes the objective over 15 more workflow evaluations. The
-output file `sim_output.txt` is user-provided and contains the Xopt data
-structure.
+`variables` are the workflow input parameters and their bounds; `objectives`
+selects an `output_parameters` name to maximize or minimize; `observables` are
+tracked by Xopt but not optimized. `constraints` (optional) specify inequality
+constraints on any declared output. Compute a derived constraint such as a
+target-frequency error by declaring the underlying quantity (`mode_freq`) as an
+observable and adding a constraint on it, rather than by writing a `sim`
+function.
 
 ## Viewing S3P optimization output
 
