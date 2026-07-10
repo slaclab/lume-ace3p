@@ -155,6 +155,20 @@ class Module:
         into any solver-specific code."""
         return None
 
+    def field(self, ctx):
+        """Return this module's structured *field* output for the just-run
+        evaluation, or ``None`` if it produces none.
+
+        A field is the ragged/nested per-run output the hybrid data model keeps
+        out of the flat result table (S3P ``{Frequency, S(m,n)...}`` arrays,
+        Geant4 ``{dose/edep: {indices, values}}`` voxel grids). The mode layer
+        persists it per row via :func:`lume_ace3p.results.save_field` and stores
+        only the returned handle in the table's field-artifact column; the arrays
+        reload on demand with :func:`lume_ace3p.results.load_field`. Modules that
+        expose a :meth:`field_index` (S3P) are emitted long-format instead, so
+        their :meth:`field` is not used for the sweep table."""
+        return None
+
     def __repr__(self):
         return f'<{type(self).__name__} name={self.name!r}>'
 
@@ -371,6 +385,19 @@ class S3PModule(_SolverModule):
         if solver is None:
             return 'Frequency', np.array([0.0])
         return 'Frequency', np.asarray(solver.output_data['Frequency'])
+
+    def field(self, ctx):
+        """Return the full S3P spectrum (``{IndexMap, Frequency, S(m,n)...}``)
+        for the just-run evaluation, or ``None`` under dry-run.
+
+        This is the structured field artifact for a single point. In a sweep,
+        S3P goes long-format (its :meth:`field_index` puts one row per
+        frequency), so this is used only when a caller wants to persist the raw
+        spectrum for a row rather than explode it."""
+        solver = self._solver
+        if solver is None:
+            return None
+        return dict(solver.output_data)
 
 
 # --------------------------------------------------------------------------- #
@@ -719,6 +746,24 @@ class Geant4Module(Module):
             return tuple(scoring['indices'][idx])
         raise ValueError("Unknown entry '" + str(entry) + "' in '"
                          + str(section) + "' section.")
+
+    def field(self, ctx):
+        """Return the Geant4 voxel-grid field outputs for the just-run
+        evaluation as ``{'dose': {indices, values}, 'edep': {...}}``, or
+        ``None`` when neither scoring file is present (e.g. dry-run).
+
+        These are the ragged 3-D grids the hybrid model keeps out of the flat
+        table; the mode layer persists them per row and reloads on demand."""
+        files = self._output_files()
+        grids = {}
+        for section in ('dose', 'edep'):
+            grid = self._read_scoring_output(ctx, files[section])
+            if grid is not None:
+                # 'indices' is a list of (ix,iy,iz) tuples; store as a 2-D array
+                # so the field artifact round-trips without pickling.
+                grids[section] = {'indices': np.asarray(grid['indices']),
+                                  'values': grid['values']}
+        return grids or None
 
 
 # --------------------------------------------------------------------------- #

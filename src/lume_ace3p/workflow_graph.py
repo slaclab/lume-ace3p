@@ -278,6 +278,21 @@ class Workflow:
                 return idx
         return None
 
+    def field(self):
+        """Return the structured *field* output of the just-run evaluation
+        (:meth:`Module.field`), or ``None`` if no module in the chain produces
+        one. Scans the modules like :meth:`field_index`; reads from
+        ``self.last_context``. The mode layer persists this per row as a field
+        artifact (see :mod:`lume_ace3p.results`) — the hybrid model's structured
+        half — instead of flattening it into the scalar table."""
+        if self.last_context is None:
+            return None
+        for module in self.modules:
+            fld = module.field(self.last_context)
+            if fld is not None:
+                return fld
+        return None
+
     # ---- helpers ---------------------------------------------------------
 
     def _materialize(self, input_scalars):

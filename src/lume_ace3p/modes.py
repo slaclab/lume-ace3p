@@ -32,20 +32,34 @@ variable names + the extracted scalar outputs. Two shapes:
   to that index. This replaces the legacy ``WriteS3PDataTable`` path.
 
 Per-run *field* outputs (S-parameter vectors, dose/edep voxel grids) are NOT
-exploded into the scalar table — they stay as structured objects / files
-referenced from ``workflow.last_context`` — except the S3P long-format case
-above, which the plan calls out as the one tidy-frame exception.
+exploded into the scalar table — they stay structured. For the wide/scalar
+table a module's structured field (:meth:`Workflow.field`) is persisted per row
+via :func:`lume_ace3p.results.save_field` and referenced by a
+:data:`~lume_ace3p.results.FIELD_ARTIFACT_COLUMN` handle; the arrays reload on
+demand with :func:`lume_ace3p.results.load_field`. The S3P long-format case
+above is the one tidy-frame exception (its field values *are* the rows), so it
+carries no field-artifact column.
 
-The Xopt modes log ``X.data`` (already a DataFrame) via ``to_csv``; the legacy
-``WriteXoptData`` string-dump and the ``WriteS3PDataTable`` xopt-append path are
-dropped (clean break — numeric equivalence only, not file format).
+The Xopt modes log ``X.data`` (already a DataFrame) via the same shared writer;
+the legacy ``WriteXoptData`` string-dump and the ``WriteS3PDataTable``
+xopt-append path are dropped (clean break — numeric equivalence only, not file
+format).
 
-The scalar-table writer is ``DataFrame.to_csv`` (tab-delimited); the manual
-``tools.py`` writers are removed in Phase 6, not here.
+Phase 5: every result-producing mode now routes its table through the single
+shared :func:`lume_ace3p.results.write_table` (a tab-delimited ``to_csv``), and
+the old dict ``sweep_data`` tuple-keyed structure is gone from this path. The
+manual ``tools.py`` writers are reduced to thin ``to_csv`` helpers over the
+same seam (fully removed in Phase 6).
 """
+
+import os
 
 import numpy as np
 import pandas as pd
+
+from lume_ace3p.results import (
+    write_table, save_field, FIELD_ARTIFACT_COLUMN,
+)
 
 
 def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
@@ -98,18 +112,26 @@ def single(workflow):
 
     The base ``inputs`` must already be scalar-valued (no swept axes). Input
     columns are the scalar cubit knobs; output columns are the extracted
-    ``output_parameters``."""
+    ``output_parameters``. When the workflow produces a structured field
+    (Geant4 voxel grids, an S3P spectrum in the wide case), it is persisted and
+    referenced by a field-artifact column."""
     input_names = list(workflow.inputs.cubit.keys())
     scalars = [workflow.inputs.cubit[name] for name in input_names]
     outputs = workflow.evaluate(None)
-    rows = _rows_for_point(workflow, input_names, scalars, outputs)
+    handle = _persist_field(workflow, 0)
+    rows = _rows_for_point(workflow, input_names, scalars, outputs, handle)
     return _frame(workflow, input_names, rows)
 
 
 def parameter_sweep(workflow):
     """Run the workflow over the tensor product of its swept axes, one row per
     grid point (or per ``(grid-point, field-index)`` for a field-indexed
-    solver). Returns the result DataFrame."""
+    solver). Returns the result DataFrame.
+
+    In the wide/scalar case a per-row field-artifact handle is stored (see
+    :func:`_persist_field`) when a module produces a structured field; the
+    long-format (S3P) case carries no field-artifact column — its field values
+    already *are* the rows."""
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
@@ -118,8 +140,29 @@ def parameter_sweep(workflow):
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
         outputs = workflow.evaluate(scalars if axes else None)
-        rows.extend(_rows_for_point(workflow, input_names, scalars, outputs))
+        handle = _persist_field(workflow, i)
+        rows.extend(_rows_for_point(workflow, input_names, scalars, outputs,
+                                    handle))
     return _frame(workflow, input_names, rows)
+
+
+def _persist_field(workflow, point_index):
+    """Persist the just-run evaluation's structured field (if any) to a
+    ``.npz`` under the workflow's workdir and return the stored handle.
+
+    Returns ``None`` when there is no field (dry-run, or a solver that produces
+    none) or in the long-format case — where the field values are exploded into
+    the rows via :meth:`Workflow.field_index`, so storing a redundant artifact
+    would be wrong. The per-point filename keeps rows distinct even in a shared
+    (manual) workdir."""
+    if workflow.field_index() is not None:
+        return None
+    field = workflow.field()
+    if field is None:
+        return None
+    workdir = getattr(workflow, 'workdir', None) or '.'
+    path = os.path.join(workdir, f'field_{point_index}.npz')
+    return save_field(field, path)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,13 +170,15 @@ def parameter_sweep(workflow):
 # --------------------------------------------------------------------------- #
 
 
-def _rows_for_point(workflow, input_names, scalars, outputs):
+def _rows_for_point(workflow, input_names, scalars, outputs, field_handle=None):
     """Build the result row(s) for one evaluation.
 
-    Wide case: a single row of ``{input: scalar, ..., output: scalar}``.
+    Wide case: a single row of ``{input: scalar, ..., output: scalar}``, plus a
+    field-artifact handle column when ``field_handle`` is not ``None``.
     Long case (a module exposes a field index, e.g. S3P frequency): one row per
     index value, each output array sampled at that index — the tidy
-    ``(inputs..., Frequency, S(m,n)...)`` frame the plan calls out."""
+    ``(inputs..., Frequency, S(m,n)...)`` frame the plan calls out (no
+    field-artifact column; the field values already are the rows)."""
     output_names = list(workflow.output_spec.keys())
     base = dict(zip(input_names, scalars))
     index = workflow.field_index()
@@ -141,6 +186,8 @@ def _rows_for_point(workflow, input_names, scalars, outputs):
         row = dict(base)
         for name in output_names:
             row[name] = outputs[name]
+        if field_handle is not None:
+            row[FIELD_ARTIFACT_COLUMN] = field_handle
         return [row]
 
     label, values = index
@@ -156,14 +203,18 @@ def _rows_for_point(workflow, input_names, scalars, outputs):
 
 def _frame(workflow, input_names, rows):
     """Assemble the ordered-column DataFrame. Column order is: swept inputs,
-    then the field-index label (long case only), then outputs — matching the
-    left-to-right layout of the legacy sweep tables."""
+    then the field-index label (long case only), then outputs, then an optional
+    field-artifact column — matching the left-to-right layout of the legacy
+    sweep tables and appending the field reference last so it never displaces a
+    baseline column."""
     output_names = list(workflow.output_spec.keys())
     index = workflow.field_index()
     columns = list(input_names)
     if index is not None:
         columns.append(index[0])
     columns += output_names
+    if index is None and any(FIELD_ARTIFACT_COLUMN in r for r in rows):
+        columns.append(FIELD_ARTIFACT_COLUMN)
     return pd.DataFrame(rows, columns=columns)
 
 
@@ -189,18 +240,6 @@ def _sample(value, j):
 
 
 # --------------------------------------------------------------------------- #
-# Writer — the DataFrame.to_csv replacement for the manual tools.py writers.
-# --------------------------------------------------------------------------- #
-
-
-def write_table(df, filename):
-    """Write a result DataFrame to a tab-delimited text file. NaNs are rendered
-    as ``nan`` (not blank) so the file round-trips through a whitespace reader
-    without column drift."""
-    df.to_csv(filename, sep='\t', index=False, na_rep='nan')
-
-
-# --------------------------------------------------------------------------- #
 # Xopt modes (Phase 4) — the generic, workflow-agnostic optimize/GP-sweep
 # driver. Objective scalars come from ``workflow.evaluate(input_dict)`` +
 # the declarative ``output_parameters`` spec (extraction happens inside the
@@ -209,11 +248,12 @@ def write_table(df, filename):
 
 
 def _log_xopt(filename, xopt_obj):
-    """Log an Xopt run's data table. ``X.data`` is already a pandas DataFrame,
-    so this is a plain ``to_csv`` (tab-delimited) — the clean-break replacement
-    for the legacy ``WriteXoptData`` string-dump. Overwrites each call so the
-    file always holds the full trajectory."""
-    xopt_obj.data.to_csv(filename, sep='\t', index=False, na_rep='nan')
+    """Log an Xopt run's data table through the shared result writer. ``X.data``
+    is already a pandas DataFrame, so this routes straight to
+    :func:`lume_ace3p.results.write_table` — the clean-break replacement for the
+    legacy ``WriteXoptData`` string-dump, and the same code path the sweep modes
+    use. Overwrites each call so the file always holds the full trajectory."""
+    write_table(xopt_obj.data, filename)
 
 
 def _mc_noise_guards(xopt_dict):
@@ -545,23 +585,23 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
     # land in the same order as the Phase-0.5 baseline sweep_output.txt.
     input_tensor = np.stack(_legacy_meshorder(grids), axis=1)
 
-    with open(sweep_file, 'w') as sweepfile:
-        for iv in input_varname:
-            sweepfile.write(iv + '\t')
-        for obj in targets:
-            sweepfile.write(obj + '\t')
-        sweepfile.write('\n')
-        for i in range(input_tensor.shape[0]):
-            row = {input_varname[j]: input_tensor[i][j]
-                   for j in range(len(input_varname))}
-            test_points = torch.tensor(pd.DataFrame([row]).values,
-                                       dtype=torch.double)
-            posterior = X.generator.model.posterior(test_points).mean
-            for value in input_tensor[i]:
-                sweepfile.write(str(value) + '\t')
-            for data_point in posterior:
-                sweepfile.write(str(float(data_point[0])) + '\t')
-            sweepfile.write('\n')
+    # Build the GP posterior-mean sweep as a DataFrame (columns = swept inputs +
+    # explored targets) and write it through the shared result writer — the same
+    # code path the scalar sweep modes and the Xopt log use.
+    sweep_rows = []
+    for i in range(input_tensor.shape[0]):
+        row = {input_varname[j]: input_tensor[i][j]
+               for j in range(len(input_varname))}
+        test_points = torch.tensor(pd.DataFrame([row]).values,
+                                   dtype=torch.double)
+        posterior = X.generator.model.posterior(test_points).mean
+        # One point in -> posterior mean shape (1, n_targets); pull each target.
+        means = posterior[0]
+        for k, obj in enumerate(targets):
+            row[obj] = float(means[k])
+        sweep_rows.append(row)
+    sweep_df = pd.DataFrame(sweep_rows, columns=input_varname + targets)
+    write_table(sweep_df, sweep_file)
 
     _save_model(X, xopt_dict)
     return X

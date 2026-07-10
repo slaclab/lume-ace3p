@@ -1,24 +1,42 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 4 complete (generic Xopt modes landed: `scalar_optimize` +
+**Status:** Phase 5 complete (result/data consolidation — hybrid DataFrames).
+All three result-producing modes now emit through **one** shared writer,
+`src/lume_ace3p/results.py::write_table` (tab-delimited `to_csv`):
+`parameter_sweep`/`single` build a DataFrame and write through it, the Xopt
+modes log `X.data` through it (`modes._log_xopt`), and the GP posterior-mean
+sweep (was a hand-rolled file loop) is now a DataFrame written through it. The
+hybrid model's structured half is `results.save_field`/`load_field` +
+`FIELD_ARTIFACT_COLUMN`: S3P spectra and Geant4 `{indices,values}` voxel grids
+are persisted per row as `.npz` (no pickling) and reload to the same arrays;
+the wide table gains an opt-in, append-only `field_artifact` column (absent
+under dry-run and for the S3P long-format table). The old dict `sweep_data`
+tuple-keyed structure is gone from the module/workflow/mode/results path
+(AST-scanned); `tools.py` writers are **reduced** to thin helpers that build a
+DataFrame and defer to `results.write_table` (still called by the legacy
+subclasses, deleted in Phase 6). `WorkflowInputs`/ACE3P `Section` tree stay
+structured (not DataFrame-ified), per the plan. Tests: `tests/test_results.py`
+(12) + fast suite 59 passing; Phase-0.5 baseline self-check 10 passing
+(unchanged — drives the reduced `tools.py`); generic equivalence tests
+(`test_generic_{s3p_optimization,gp_sweep}_matches_baseline`) still match.
+Slow botorch GP-fitting tests trusted per user (their only touched code path,
+`_log_xopt`→`write_table`, is verified numerically by the two equivalence
+tests). Known pre-existing flake unrelated to this phase: the legacy MOBO/EHVI
+baseline self-check (`test_baseline_selfcheck.py
+[MOBO_ExpectedHypervolume_Example]`) is nondeterministic under botorch and fails
+on clean HEAD too — next: Phase 6 — migrate examples, docs, cleanup.
+
+Phase 4 (prior) complete: generic Xopt modes landed — `scalar_optimize` +
 `gp_parameter_sweep` folded into `src/lume_ace3p/modes.py`, driven by
 `workflow.evaluate(input_dict)` + declarative `output_parameters` — no
 S-parameter/frequency parsing in the driver. All six generators (NelderMead,
 ExpectedImprovement, MultiFidelity, UCB, MOBO/EHVI, BayesianExploration)
-preserved with the fidelity-variable rename + cost-function logic unchanged;
-Xopt logging is `X.data.to_csv` (WriteXoptData / WriteS3PDataTable xopt-append
-dropped). Geant4 MC-noise guards added as documented mode config
-(`mc_noisy_objective` → don't force `use_low_noise_prior`; require explicit
-`bin_edges`). `run_lume_ace3p.py` now dispatches all four modes through the
-declarative path; the legacy `(mode,module)` matrix + `run_xopt.py` +
-`Omega3P/S3P/Geant4Workflow` subclasses stay live/callable for the Phase-5
-equivalence tests. Phase-4 tests extend `tests/test_run_xopt_compat.py`
-(generic-path numeric reproduction of `s3p_optimization` + `s3p_bayesian_sweep`
-baselines, all six generators construct+step, Geant4 chain as objective under
-dry-run, MC-noise guards). Known pre-existing flake unrelated to this phase:
-the legacy MOBO/EHVI baseline self-check (`test_baseline_selfcheck.py
-[MOBO_ExpectedHypervolume_Example]`) is nondeterministic under botorch and fails
-on clean HEAD too — next: Phase 5 — result/data consolidation).
+preserved with the fidelity-variable rename + cost-function logic unchanged.
+Geant4 MC-noise guards added as documented mode config (`mc_noisy_objective` →
+don't force `use_low_noise_prior`; require explicit `bin_edges`).
+`run_lume_ace3p.py` dispatches all four modes through the declarative path; the
+legacy `(mode,module)` matrix + `run_xopt.py` + `Omega3P/S3P/Geant4Workflow`
+subclasses stay live/callable for the Phase-5 equivalence tests.
 Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
@@ -604,14 +622,74 @@ result plumbing.
 
 ### Verification (Phase 5 done when)
 
-- All three modes emit their result DataFrame via one shared code path.
-- Field artifacts for a given row load back to the same arrays.
-- No remaining callers of the old dict `sweep_data` tuple-keyed structure.
+- [x] All three modes emit their result DataFrame via one shared code path.
+  Every result-producing mode routes through the single
+  `src/lume_ace3p/results.py::write_table` seam: `parameter_sweep` / `single`
+  build their DataFrame and write through it; `scalar_optimize` /
+  `gp_parameter_sweep` log `X.data` through it via `modes._log_xopt`; and the GP
+  posterior-mean sweep, previously a hand-rolled file loop, is now built as a
+  DataFrame and written through the same call.
+  `test_results.py::test_{parameter_sweep,single}_writes_through_shared_path`,
+  `::test_log_xopt_uses_shared_writer`, and
+  `::test_gp_sweep_frame_matches_baseline` (the shared-path GP sweep still
+  reproduces the Phase-0.5 `s3p_bayesian_sweep` numerically). The reduced
+  `tools.py` writers also defer to `results.write_table`, so there is one and
+  only one writer.
+- [x] Field artifacts for a given row load back to the same arrays.
+  `results.save_field` / `load_field` round-trip an S3P spectrum (Frequency +
+  S-parameter arrays + nested IndexMap) and a Geant4 `{indices, values}` voxel
+  grid exactly (`test_save_load_field_{s3p_spectrum,geant4_grid}`), and a wide
+  sweep whose workflow produces a field records a per-row `field_artifact`
+  handle (`results.FIELD_ARTIFACT_COLUMN`) that reloads to the module's grid
+  (`test_geant4_sweep_records_loadable_field_artifacts`). The S3P long-format
+  case carries no field-artifact column — its field values already are the rows
+  (`test_s3p_long_format_has_no_field_artifact_column`).
+- [x] No remaining callers of the old dict `sweep_data` tuple-keyed structure.
+  The module/workflow/mode/results code path is free of `sweep_data`
+  (AST-scanned in `test_new_code_path_has_no_sweep_data`); the only remaining
+  users are the legacy `workflow.py` subclasses, kept callable through this
+  phase for the equivalence tests and deleted in Phase 6.
 
 ### Deliverables
 
-- Consolidated result module; `tools.py` writers deleted or reduced to `to_csv`
-  helpers.
+- [x] Consolidated result module `src/lume_ace3p/results.py` (single shared
+  `write_table` + `save_field`/`load_field`/`FIELD_ARTIFACT_COLUMN`
+  field-artifact accessors) + `tests/test_results.py` (12 tests). `tools.py`
+  writers **reduced** to thin helpers that build a DataFrame and defer to
+  `results.write_table` (the legacy subclasses still call them until Phase 6, so
+  they are not deleted here — the baseline self-check drives them and still
+  matches the frozen fixtures). `modes.py` `single`/`parameter_sweep` gained the
+  per-row field-artifact column via new `Module.field` / `Workflow.field` seams
+  (`S3PModule.field` → spectrum, `Geant4Module.field` → voxel grids); `_log_xopt`
+  and the GP sweep now route through `results.write_table`. Full fast suite
+  (`test_modules` + `test_workflow_graph` + `test_modes` + `test_results`) = 59
+  passing; the Phase-0.5 baseline self-check = 10 passing (unchanged); the
+  generic-path numeric equivalence tests
+  (`test_run_xopt_compat.py::test_generic_{s3p_optimization,gp_sweep}_matches_baseline`)
+  still match. Slow botorch GP-fitting tests are trusted per the user (their
+  only touched code path, `_log_xopt`→`write_table`, is verified numerically by
+  the two generic equivalence tests).
+
+**Deviations / notes recorded during Phase 5:**
+
+- **Editable install was required.** The package was installed as a
+  *non-editable copy* in site-packages, so `src/` edits weren't imported until
+  `pip install -e .` was run. Re-confirmed all suites against `src/` afterward.
+- **Field artifact = `.npz`, no pickling.** `save_field` stores numeric leaves
+  as arrays and nested dicts (S3P IndexMap) as embedded JSON (strings encoded as
+  uint8), so `load_field` round-trips with `allow_pickle=False`. Geant4
+  `indices` (a list of `(ix,iy,iz)` tuples) is stored as a 2-D array.
+- **Field-artifact column is append-only and opt-in.** It appears only in the
+  wide table and only when a module actually produces a field (so all dry-run
+  baselines, which have no real field, are byte-for-numeric unchanged), and it
+  is appended *after* the output columns so it never displaces a baseline
+  column. The long-format (S3P) table never carries it.
+- **`tools.py` xopt-append path dropped.** `WriteS3PDataTable(is_xopt=True)` and
+  `WriteXoptData`'s `to_string` pretty-dump are superseded by
+  `modes._log_xopt` (which logs `X.data` through the shared writer). The reduced
+  `tools.py` keeps a minimal iteration-tagged append only so any legacy caller
+  still functions; the baseline self-check (which drives the legacy `run_xopt`)
+  confirms the numeric content is unchanged under `compare_tables`.
 
 ---
 
