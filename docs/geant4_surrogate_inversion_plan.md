@@ -76,36 +76,66 @@ real solver.
 
 ## Cross-cutting correctness constraints (apply to every phase)
 
-1. **Fix `bin_edges` explicitly** in `particle_parameters` for all training and
-   inversion runs. The default edges in `Particles.assign_bins`
-   (`src/lume_ace3p/particles.py`) are data-driven (`z_vals.min() .. max()`) and
-   drift per run, making the β→dose map non-stationary and poisoning the GP.
-   Every generated training YAML / run config must carry an explicit, shared
-   `bin_edges` (length `num_bins + 1`).
+1. **Fix `bin_edges` explicitly** on the `particles` module entry (in the
+   `workflow:` list) for all training and inversion runs. The default edges in
+   `Particles.assign_bins` (`src/lume_ace3p/particles.py`) are data-driven
+   (`z_vals.min() .. max()`) and drift per run, making the β→dose map
+   non-stationary and poisoning the GP. Every generated training YAML / run
+   config must carry an explicit, shared `bin_edges` (length `num_bins + 1`).
+   **Note:** the existing `bin_edges` enforcement in
+   `modes._mc_noise_guards` fires only for the Xopt modes (`scalar_optimize` /
+   `gp_parameter_sweep`). The new `collect_training_data` mode (Phase 2) is a DOE
+   mode, not an Xopt mode, so it does **not** inherit that guard — it must call
+   `_mc_noise_guards` (or replicate the check) to enforce explicit `bin_edges`
+   itself.
 2. **Geant4 dose is Monte-Carlo noisy.** The surrogate GPs must include a genuine
    noise term. Do **not** reuse S3P's low-noise / interpolating prior
-   (`use_low_noise_prior = True` as set for `MultiFidelityGenerator` in
-   `run_xopt.py`). Default to a fitted noise/likelihood.
+   (`use_low_noise_prior`). `modes._build_generator` already leaves it at its
+   default (`False`) when `mc_noisy_objective` is set — mirror that in the
+   surrogate GPs; default to a fitted noise/likelihood.
 
-## Repository orientation (as of 2026-07-08)
+## Repository orientation (updated 2026-07-12, post-refactor)
 
-- Package lives under `src/lume_ace3p/` (moved from `lume_ace3p/`; a stale
-  `build/lib/lume_ace3p/` copy exists — ignore it).
-- Entry point: `src/lume_ace3p/run_lume_ace3p.py` — dispatches on
-  `workflow_parameters.mode` + `module`.
-- Forward map `β∈ℝ⁸ → dose` is **already callable today** via
-  `Geant4Workflow._resolve_beta` (`src/lume_ace3p/workflow.py`) using
-  `particle_parameters.beta_inputs: [beta0 … beta7]` with `beta0..beta7`
-  declared in `input_parameters`. The single-run path
-  (`materialize → _resolve_beta → Particles → Geant4`) handles an arbitrary
-  8-vector. No changes to the Geant4/particle plumbing are needed to evaluate
-  training points.
-- Xopt driver: `src/lume_ace3p/run_xopt.py` — `run_xopt` (scalar_optimize) and
-  `run_lf_sweep` (gp_parameter_sweep). Both are currently hardwired to
-  `S3PWorkflow` + S-parameter/frequency parsing.
-- Dose grid format & parsing reference: `plotting/geant4_deposit_common.py`
-  (`parse_deposit_file` — comma-separated `iX,iY,iZ,total(value),total(val^2),entry`
-  voxel grid; mesh/scorer/units in header comments).
+The module/workflow/mode refactor has landed on `dev`. Legacy `workflow.py`
+(Omega3P/S3P/Geant4Workflow subclasses), `run_xopt.py`, and the `tools.py`
+writers are **deleted** — do not reference them. The three live layers are
+`src/lume_ace3p/modules.py`, `workflow_graph.py`, and `modes.py`, with results
+consolidated through `results.py`.
+
+- Package lives under `src/lume_ace3p/` (a stale `build/lib/lume_ace3p/` copy may
+  exist — ignore it).
+- Entry point: `src/lume_ace3p/run_lume_ace3p.py` — declarative-only:
+  `Workflow.from_config(yaml)` builds/validates the module DAG, then
+  `run_mode(mode_cfg, workflow, ...)` dispatches on `mode.type`.
+- Forward map `β∈ℝ⁸ → dose` is **already callable today** via a declarative
+  `track3p_source → particles → geant4` workflow. The β resolution now lives in
+  `ParticlesModule._resolve_beta` (`src/lume_ace3p/modules.py:488`): set
+  `beta_inputs: [beta0 … beta7]` on the `particles` **module** entry (one per
+  bin) with `beta0..beta7` declared in `input_parameters`, or `beta_input: beta`
+  to broadcast one scalar to all bins. The single-run path handles an arbitrary
+  8-vector; no changes to the Geant4/particle plumbing are needed to evaluate
+  training points. See `examples/geant4_track3p_beta/geant4_track3p_beta.yaml`
+  (ships the scalar-broadcast form; documents the 8-D upgrade inline).
+- Xopt driver: now the generic modes `modes.scalar_optimize` /
+  `modes.gp_parameter_sweep` — workflow-agnostic (objective pulled from
+  `Workflow.evaluate()` + declarative `output_parameters`), not S3P-specific.
+- **Full dose grids are already captured**, not just extracted scalars:
+  `Geant4Module.field(ctx)` (`modules.py:714`) returns
+  `{'dose': {indices, values}, 'edep': {...}}` as arrays; `Workflow` exposes
+  `field()` / `field_index()`; and `results.save_field` / `results.load_field`
+  (`results.py:74` / `:107`) round-trip those grids to `.npz`, referenced from an
+  opt-in `field_artifact` column in the result table. Phases 2–3 should build on
+  this rather than a bespoke store (see Phase 2).
+- Dose scoring-file parsers: **two exist with different output shapes** — pick
+  one canonically for the surrogate (see Phase 4):
+  - `Geant4Module._read_scoring_output` (`modules.py`) — whitespace-or-comma,
+    returns flat `{'indices': [(ix,iy,iz)…], 'values': ndarray}`. This is what
+    `field()` / `save_field` persist, so it is the natural training/inversion
+    parser.
+  - `plotting/geant4_deposit_common.parse_deposit_file` — comma-separated
+    `iX,iY,iZ,total(value),total(val^2),entry`; also returns mesh/scorer/units
+    and reshaped grids. Good for the target-file header metadata, but its shape
+    differs from the stored field arrays.
 
 ---
 
@@ -183,7 +213,8 @@ pure, behavior-preserving refactor.
 # Phase 2 — `collect_training_data` mode (DOE sampler over β)
 
 **Objective:** Generate and persist `(β, dose_grid)` training pairs by evaluating
-the existing `Geant4Workflow` at scattered points in the 8-D β space.
+the declarative `track3p_source → particles → geant4` workflow at scattered
+points in the 8-D β space.
 
 ### Approach
 
@@ -191,30 +222,41 @@ the existing `Geant4Workflow` at scattered points in the 8-D β space.
 2. Design-of-experiments sampler over `beta0..beta7`: Latin Hypercube or Sobol
    (prefer `scipy.stats.qmc`), N points across per-dimension bounds declared in
    the YAML. **Not** a tensor grid.
-3. For each sample: materialize the 8-vector, drive the existing single-run
-   `Geant4Workflow` path (reuse `beta_inputs`), and record `(β, dose_grid)`.
-4. Persist to a compact, reloadable store (e.g. `.npz`/`.npy` for stacked grids +
-   a table of β rows, plus a manifest with `bin_edges`, mesh shape, grid
-   filenames, units). Must be **resumable** — skip β points whose workdir/dose
-   file already exists (workdir naming already encodes the swept scalars via
-   `_getworkdir`).
-5. Enforce the two cross-cutting constraints: require explicit `bin_edges`; make
-   fidelity (particle count) an explicit recorded field for later.
+3. For each sample: materialize the 8-vector and drive the declarative
+   `track3p_source → particles → geant4` workflow via `Workflow.evaluate`
+   (set `beta_inputs: [beta0..beta7]` on the `particles` module). Capture the
+   full grid with `Workflow.field()` (backed by `Geant4Module.field`), not just
+   extracted scalars.
+4. **Reuse the existing field-persistence machinery** rather than a bespoke
+   store: write the β rows to the result table via `results.write_table` with a
+   `field_artifact` column, and persist each dose grid with `results.save_field`
+   (`.npz`); reload with `results.load_field`. Add a small manifest alongside
+   (shared `bin_edges`, mesh shape, units, fidelity) — but the `(β, dose_grid)`
+   pairing itself falls out of the table + field artifacts, so the Phase-2 loader
+   is mostly a thin wrapper over `load_field` + the table, not a new format.
+   Must be **resumable** — skip β points whose workdir/dose file already exists
+   (workdir naming encodes the swept scalars).
+5. Enforce the two cross-cutting constraints: **explicitly require `bin_edges`**
+   in this mode (call `modes._mc_noise_guards` or replicate it — Phase 2 is not
+   an Xopt mode and does not inherit that guard automatically); make fidelity
+   (particle count) an explicit recorded field for later.
 
 ### Verification (Phase 2 done when)
 
 - A small N (e.g. 8–16) DOE run produces a training store loadable in one call
   returning aligned `β` matrix and dose-grid tensor with consistent shapes.
 - Re-running the mode skips already-computed points (resumability).
-- Dry-run mode works without the Geant4 app environment (mirrors existing
-  `Geant4Workflow` dry-run behavior) for pipeline testing.
+- Dry-run mode works without the Geant4 app environment (mirrors the existing
+  `Geant4Module` / `Workflow` dry-run behavior) for pipeline testing.
 
 ### Deliverables
 
 - New example under `examples/` (e.g. `geant4_beta_surrogate/`) with a YAML
   declaring `beta0..beta7` bounds, explicit `bin_edges`, DOE size, and the store
-  path.
-- Loader utility (new module, e.g. `src/lume_ace3p/surrogate_data.py`).
+  path. Base it on `examples/geant4_track3p_beta/` (switch `beta_input` →
+  `beta_inputs: [beta0..beta7]`, add the 8 bounds, uncomment `bin_edges`).
+- Loader utility (new module, e.g. `src/lume_ace3p/surrogate_data.py`) — a thin
+  wrapper over `results.load_field` + the result table, not a new on-disk format.
 
 ---
 
@@ -225,7 +267,8 @@ cheap `predict_dose(β)` and `project(dose)`.
 
 ### Approach
 
-1. New `mode: train_surrogate`. Load the Phase-2 store.
+1. New `mode: train_surrogate`. Load the Phase-2 store (result table +
+   `results.load_field`).
 2. Stack dose grids → matrix `Y (N × M)`, `M` = flattened voxel count. Subtract
    mean, SVD/PCA → retain top-`k` components (choose `k` by cumulative variance,
    e.g. ≥99%; dose fields are smooth and low-rank). Store mean + basis `Φ`.
@@ -238,7 +281,7 @@ cheap `predict_dose(β)` and `project(dose)`.
      `mean + Σ cᵢ(β)·φᵢ`),
    - `project(dose_grid) → coefficient vector` in the same basis,
    - `save()` / `load()` following the existing `torch.save` +
-     hyperparameter-dump pattern in `run_xopt.py`.
+     hyperparameter-dump pattern in `modes._save_model`.
 5. Keep the coefficient space the *single* interface the inversion phase talks to,
    so the future "profile summaries" input mode can supply an alternate
    `project()` without changing the GPs.
@@ -260,9 +303,13 @@ surrogate and target-loading code, differing only in what they return.
 
 ### Approach
 
-Common: load trained surrogate, load target dose file (reuse
-`plotting/geant4_deposit_common.parse_deposit_file` or a shared parser),
-`project` it into coefficient space.
+Common: load trained surrogate, load target dose file, `project` it into
+coefficient space. **Parse the target the same way training grids were stored**
+— via `Geant4Module._read_scoring_output` / `results.load_field` shape — so the
+projection lines up bin-for-bin with the PCA basis. `plotting/
+geant4_deposit_common.parse_deposit_file` returns a *different* shape (reshaped
+grid + mesh/units metadata); use it only for header metadata, not as the vector
+fed to `project()`. Pick one canonical parser and factor it into a shared helper.
 
 - **`invert_optimize`:** minimize `‖project(target) − c_GP(β)‖²` (+ optional
   regularization / bounds) over β using the Phase-1 generic Xopt driver
@@ -302,8 +349,8 @@ and/or scoring-mesh resolution — as the fidelity axis.
 ### Approach
 
 - Reuse the existing `MultiFidelityGenerator` plumbing and cost-function logic in
-  `run_xopt.py` (currently tied to S3P's fidelity variable `s`), now reachable via
-  the Phase-1 generic driver.
+  `modes.py` (the generic `gp_parameter_sweep` / `_build_generator` path), now
+  workflow-agnostic rather than tied to S3P's fidelity variable `s`.
 - Fidelity ↔ particle count mapping; cost model from measured runtimes.
 - Integrate multi-fidelity data into the PCA-GP (fidelity-aware GPs on
   coefficients). Handle the interaction between MC noise level and fidelity
