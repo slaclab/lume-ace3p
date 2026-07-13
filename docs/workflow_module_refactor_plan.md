@@ -11,8 +11,10 @@ family (`s3p_sweep`, `s3p_sweep_no_s3p_file`, `omega3p_sweep`,
 `omega3p_ace3p_param_sweep`, `s3p_optimization`, `s3p_bayesian_sweep`,
 `track3p_particle_weight`, `geant4_track3p_beta`) plus a new runnable multi-step
 chain example `geant4_dose_single` (`track3p_source→particles→geant4`, `single`
-mode; large assets symlinked from `geant4_track3p_beta`). `MOBO`/`UCB`/
-`s3p_mf_optimization` remain on the old schema (incremental follow-up).
+mode; large assets symlinked from `geant4_track3p_beta`). `s3p_mf_optimization`
+is now on the current schema too; `MOBO`/`UCB` are non-runnable legacy
+references relocated to `examples/incomplete/` (missing geometry files — see
+that folder's README).
 (2) Legacy `workflow.py` (Omega3P/S3P/Geant4Workflow subclasses), `run_xopt.py`,
 and `tools.py` writers DELETED; `run_lume_ace3p.py` + `__init__.py` are
 declarative-only. (3) README / `docs/index.md` / `docs/yaml_reference.md` /
@@ -175,13 +177,16 @@ mode:
                                     # scalar_optimize | gp_parameter_sweep
   # ... mode-specific keys (vocs, xopt, sweep) live here or in sibling blocks
 
-# Input variable space (the sweep/optimization knobs). Same three buckets as
-# today's WorkflowInputs: cubit (unprefixed input_parameters, or the equivalent
-# cubit_input_parameters alias), ace3p, macro (geant4_input_parameters).
-input_parameters:                   # equivalently: cubit_input_parameters
+# Input variable space (the sweep/optimization knobs). Three buckets in
+# WorkflowInputs: cubit, ace3p, macro.
+# NOTE (superseded): the flat notation sketched here was later standardized on
+# nested per-code sub-blocks — `input_parameters: {cubit:, ace3p:, geant4:}`.
+# The flat keys below still parse as deprecated aliases. See yaml_reference.md
+# (`input_parameters`) for the current schema.
+input_parameters:                   # now: input_parameters.cubit
   cornercut: [14, 17]               # {min,max,num} or list => sweep/vocs axis
-# ace3p_input_parameters: ...       # duplicate-key block, parsed as pairs
-# geant4_input_parameters: ...
+# ace3p_input_parameters: ...       # now: input_parameters.ace3p (duplicate-key aware)
+# geant4_input_parameters: ...      # now: input_parameters.geant4
 
 # What scalars to pull out of which module's artifacts, exposed to the mode.
 # Replaces the S-parameter-hardcoded extraction in run_xopt.py.
@@ -310,6 +315,12 @@ now, while the legacy code path is still intact.
   (UCB rejects multi-objective VOCS), so it is not runnable as-is; recorded as a
   known-error in `not_frozen.json`, not a numeric baseline. Both should be
   revisited when their modes are reimplemented in Phase 4.
+
+  _Update (post-refactor):_ `s3p_mf_optimization` was migrated to the current
+  `workflow:`/`mode:` schema (still not frozen — timing-dependent — but runnable
+  and smoke-tested). `MOBO_ExpectedHypervolume_Example` and `UCB_Example` were
+  moved to `examples/incomplete/` as non-runnable legacy references (missing
+  `load.jou`/`load.s3p`); the MOBO synthetic baseline is unaffected.
 
 ---
 

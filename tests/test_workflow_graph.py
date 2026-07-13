@@ -283,5 +283,45 @@ def test_from_config_requires_workflow_list():
         Workflow.from_config({'workflow_parameters': {}})
 
 
+# --------------------------------------------------------------------------- #
+# _materialize routes dict overrides to the declaring bucket (optimize path)
+# --------------------------------------------------------------------------- #
+
+
+def _mixed_workflow():
+    """A dry-run cubit->s3p workflow whose inputs span cubit + an ace3p leaf, so
+    a VOCS-style override dict can be routed across buckets."""
+    from lume_ace3p.ace3p import Section
+    ace = Section()
+    fs = Section()
+    fs.append('Start', '9.4e9')
+    ace.append('FrequencyScan', fs)
+    inputs = WorkflowInputs(cubit={'cornercut': 14.0}, ace3p=ace)
+    entries = [
+        {'module': 'cubit', 'journal': 'x.jou'},
+        {'module': 's3p', 'input': 'x.s3p'},
+    ]
+    return Workflow(entries,
+                    workflow_params={'workdir_mode': 'manual', 'dry_run': True},
+                    inputs=inputs,
+                    output_spec={'refl': {'module': 's3p', 'quantity': 'S(0,0)'}})
+
+
+def test_materialize_routes_ace3p_override_to_ace3p_bucket():
+    wf = _mixed_workflow()
+    materialized, sweep = wf._materialize({'ace3p:FrequencyScan.Start': '12e9'})
+    assert sweep is None
+    fs = [c for k, c in materialized.ace3p.entries if k == 'FrequencyScan'][0]
+    assert fs.entries == [('Start', '12e9')]
+    # cubit base value is preserved (not overwritten by the ace3p override).
+    assert materialized.cubit['cornercut'] == 14.0
+
+
+def test_materialize_routes_bare_cubit_override():
+    wf = _mixed_workflow()
+    materialized, _ = wf._materialize({'cornercut': 15.0})
+    assert materialized.cubit['cornercut'] == 15.0
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

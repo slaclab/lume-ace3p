@@ -27,6 +27,14 @@ mode :
 output_parameters :
     'S(1,1)_12.0e+09' : { module: s3p, quantity: 'S(1,1)', at: { frequency: 12.0e+09 } }
 
+# Both exploration variables are Cubit journal knobs, declared under 'cubit:' so
+# each has an explicit home; an Xopt variable routes to the bucket it is declared
+# in. Values are nominal (the sweep_parameters grid and Xopt drive them).
+input_parameters :
+    cubit :
+        'cornercut' : 13.0
+        'wgwidth' : 21.5
+
 sweep_parameters :
     'cornercut' :
         min : 12.5

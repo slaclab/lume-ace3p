@@ -26,17 +26,17 @@ mode :
   type : parameter_sweep
   output_file : 'omega3p_sweep_output.txt'
 
-cubit_input_parameters :
-  'cav_radius' :
-    'min' : 90.0
-    'max' : 120.0
-    'num' : 4
-  'ellipticity' :
-    'min' : 0.5
-    'max' : 1.25
-    'num' : 4
-
-ace3p_input_parameters :
+input_parameters :
+  cubit :
+    'cav_radius' :
+      'min' : 90.0
+      'max' : 120.0
+      'num' : 4
+    'ellipticity' :
+      'min' : 0.5
+      'max' : 1.25
+      'num' : 4
+  ace3p :
     'ModelInfo' :
         'SurfaceMaterial' :
             'ReferenceNumber' : 6

@@ -78,11 +78,11 @@ between those values).
 
 ### Can I restart a parameter sweep if the job failed mid-sweep?
 
-Checkpointing is not currently implemented. As a workaround, adjusting
-`input_parameters` can achieve similar results. For example, when
-sweeping `input_1` from 20 to 80 in steps of 10 (7 evaluations: 20, 30,
-40, 50, 60, 70, 80), if the job fails at `input_1 = 50`, edit
-`input_parameters` to start at 50; the sweep will restart at 50 and
+Checkpointing is not currently implemented. As a workaround, adjusting the
+swept range in `input_parameters` can achieve similar results. For example,
+when sweeping `input_1` (a `cubit:` knob) from 20 to 80 in steps of 10 (7
+evaluations: 20, 30, 40, 50, 60, 70, 80), if the job fails at `input_1 = 50`,
+edit that leaf's range to start at 50; the sweep will restart at 50 and
 continue to 80 (4 evaluations: 50, 60, 70, 80).
 
 :::{important}

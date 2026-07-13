@@ -447,7 +447,10 @@ EXAMPLES = {
     'MOBO_ExpectedHypervolume_Example': {
         'kind': 'xopt_scalar',
         'yaml': 'MOBO_ExpectedHypervolume_Example.yaml',
-        'root_yaml': True,
+        # The shipped YAML is a legacy-schema, non-runnable reference kept under
+        # examples/incomplete/ (see its README); the numeric baseline is driven
+        # by the synthetic workflow below, not by the YAML itself.
+        'stage_dir': os.path.join('incomplete'),
         'files': {
             'sim_output.txt': ('sim_output.txt', 'table'),
         },
@@ -477,29 +480,27 @@ NOT_FROZEN = {
         'loops on alotted_time, so the trajectory length and values are '
         'timing-dependent: reachability-only, not numerically checkable. Its '
         'generator construction/stepping is smoke-tested in '
-        'tests/test_run_xopt_compat.py::test_generic_multifidelity. Not yet '
-        'migrated to the new workflow:/mode: schema.'),
+        'tests/test_run_xopt_compat.py::test_generic_multifidelity. The example '
+        'YAML is on the current workflow:/mode: schema (nested input_parameters).'),
     'UCB_Example': (
-        'The shipped UCB_Example.yaml declares three objectives, but xopt '
-        "3.0.0's UpperConfidenceBoundGenerator rejects multi-objective VOCS "
-        '(VOCSError: "this generator does not support multi-objective '
-        'optimization"). The shipped config is not runnable as-is under the '
-        'pinned xopt; frozen as a known-error, not a numeric baseline.'),
+        'Non-runnable legacy reference now kept under examples/incomplete/ (see '
+        'its README): missing load.jou/load.s3p geometry, legacy schema, and it '
+        'declares three objectives while xopt 3.0.0\'s UpperConfidenceBound '
+        'generator rejects multi-objective VOCS. Not frozen as a baseline.'),
 }
 
 
 def example_root(name, meta):
-    """Directory holding the example's YAML — most live in examples/<name>/,
-    the two MOBO/UCB examples sit at the examples/ root."""
-    if meta.get('root_yaml'):
-        return EXAMPLES_DIR
-    return os.path.join(EXAMPLES_DIR, name)
+    """Directory holding the example's YAML — most live in examples/<name>/.
+    A `stage_dir` override (e.g. the non-runnable MOBO reference under
+    examples/incomplete/) points elsewhere."""
+    return os.path.join(EXAMPLES_DIR, meta.get('stage_dir', name))
 
 
 def stage_dir_for(name, meta):
     """The example_dir argument the producers expect (relative to examples/).
-    Root-level YAMLs stage from examples/ itself ('.')."""
-    return '.' if meta.get('root_yaml') else name
+    Defaults to the example name; `stage_dir` overrides it (e.g. 'incomplete')."""
+    return meta.get('stage_dir', name)
 
 
 def resolve_one(workdir, pattern):

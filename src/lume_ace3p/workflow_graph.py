@@ -296,11 +296,10 @@ class Workflow:
         if input_scalars is None:
             return self.inputs, None
         if isinstance(input_scalars, dict):
-            merged = WorkflowInputs(cubit=dict(self.inputs.cubit),
-                                    ace3p=self.inputs.ace3p,
-                                    macro=dict(self.inputs.macro))
-            merged.cubit.update(input_scalars)
-            return merged, None
+            # Xopt hands us a flat {variable: value} dict; route each override to
+            # the bucket where it was declared (cubit / ace3p / macro) so an
+            # optimization can drive parameters across multiple codes at once.
+            return self.inputs.apply_overrides(input_scalars), None
         # list/tuple of axis scalars aligned with sweep_axes()
         scalars = list(input_scalars)
         return self.inputs.materialize(scalars), scalars
