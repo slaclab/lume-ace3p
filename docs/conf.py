@@ -4,12 +4,23 @@ import os
 import sys
 from datetime import datetime
 
+import tomllib
+
 sys.path.insert(0, os.path.abspath("../src"))
+
+# Single source of truth: read the version straight from pyproject.toml. We parse
+# the file rather than importing the package because the Read the Docs build only
+# installs the Sphinx toolchain (docs/requirements.txt), not lume-ace3p or its
+# runtime deps (numpy/pandas/xopt) — and sphinx-autoapi documents the source
+# statically, so no package import is needed for the build.
+with open(os.path.join(os.path.dirname(__file__), "..", "pyproject.toml"), "rb") as _f:
+    _version = tomllib.load(_f)["project"]["version"]
 
 project = "lume-ace3p"
 author = "David Bizzozero, Lila Fowler"
 copyright = f"{datetime.now().year}, SLAC National Accelerator Laboratory"
-release = "0.1.0"
+release = _version
+version = ".".join(_version.split(".")[:2])
 
 extensions = [
     "myst_parser",

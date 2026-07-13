@@ -48,6 +48,7 @@ writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 """
 
 import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -55,6 +56,16 @@ import pandas as pd
 from lume_ace3p.results import (
     write_table, save_field, FIELD_ARTIFACT_COLUMN,
 )
+
+
+def _deprecation_warning(message):
+    """Emit a clearly-labeled deprecation notice to stderr.
+
+    A plain :class:`DeprecationWarning` via :mod:`warnings` is suppressed by
+    default in a CLI, so this prints directly to guarantee the user sees it.
+    Deprecated aliases still function today but will be removed in a future
+    release; this points the user at the current spelling."""
+    print(f"DeprecationWarning: {message}", file=sys.stderr)
 
 
 def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
@@ -76,6 +87,11 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     ``output_spec`` is accepted for API symmetry but is informational only — the
     workflow already carries its ``output_parameters`` (``workflow.output_spec``)
     and does the extraction inside :meth:`Workflow.evaluate`."""
+    if mode_cfg.get('type') is None and mode_cfg.get('mode') is not None:
+        _deprecation_warning(
+            "the 'mode:' key inside the mode block is a legacy alias for 'type:'. "
+            "Rename it to 'type:' — the 'mode' alias will be removed in a future "
+            "release.")
     mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode')).lower()
     if mode_type == 'single':
         df = single(workflow)
@@ -95,6 +111,15 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
             f"mode '{mode_type}' is not handled by the mode layer "
             "(single | parameter_sweep | scalar_optimize | gp_parameter_sweep).")
 
+    # In the table modes 'sweep_output_file:' is a legacy alias for 'output_file:'
+    # (only the Xopt gp_parameter_sweep mode above, which returned early, uses it
+    # as a distinct key for the GP posterior-mean grid).
+    if (mode_cfg.get('output_file') is None
+            and mode_cfg.get('sweep_output_file') is not None):
+        _deprecation_warning(
+            "'sweep_output_file:' is a legacy alias for 'output_file:' in the "
+            f"'{mode_type}' mode. Rename it to 'output_file:' — the "
+            "'sweep_output_file' alias will be removed in a future release.")
     output_file = mode_cfg.get('output_file') or mode_cfg.get('sweep_output_file')
     if output_file:
         write_table(df, output_file)

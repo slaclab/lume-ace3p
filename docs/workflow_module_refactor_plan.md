@@ -176,18 +176,17 @@ mode:
   # ... mode-specific keys (vocs, xopt, sweep) live here or in sibling blocks
 
 # Input variable space (the sweep/optimization knobs). Same three buckets as
-# today's WorkflowInputs: cubit (unprefixed input_parameters), ace3p, macro
-# (geant4_input_parameters).
-input_parameters:
-  cubit:
-    cornercut: [14, 17]             # {min,max,num} or list => sweep/vocs axis
+# today's WorkflowInputs: cubit (unprefixed input_parameters, or the equivalent
+# cubit_input_parameters alias), ace3p, macro (geant4_input_parameters).
+input_parameters:                   # equivalently: cubit_input_parameters
+  cornercut: [14, 17]               # {min,max,num} or list => sweep/vocs axis
 # ace3p_input_parameters: ...       # duplicate-key block, parsed as pairs
 # geant4_input_parameters: ...
 
 # What scalars to pull out of which module's artifacts, exposed to the mode.
 # Replaces the S-parameter-hardcoded extraction in run_xopt.py.
 output_parameters:
-  reflection: { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e9 } }
+  reflection: { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
 
 vocs_parameters:   { ... }          # for optimize / gp modes
 xopt_parameters:   { ... }
