@@ -111,7 +111,7 @@ consolidated through `results.py`.
   `track3p_source → particles → geant4` workflow. The β resolution now lives in
   `ParticlesModule._resolve_beta` (`src/lume_ace3p/modules.py:488`): set
   `beta_inputs: [beta0 … beta7]` on the `particles` **module** entry (one per
-  bin) with `beta0..beta7` declared in `input_parameters`, or `beta_input: beta`
+  bin) with `beta0..beta7` declared under `input_parameters.cubit`, or `beta_input: beta`
   to broadcast one scalar to all bins. The single-run path handles an arbitrary
   8-vector; no changes to the Geant4/particle plumbing are needed to evaluate
   training points. See `examples/geant4_track3p_beta/geant4_track3p_beta.yaml`
@@ -159,10 +159,12 @@ chain as the objective) and the S3P numeric-equivalence tests.
 For the S3P paths (`mode: scalar_optimize` and `mode: gp_parameter_sweep`,
 `module: s3p`), after this refactor:
 
-- **YAML is byte-for-byte unchanged.** `examples/s3p_optimization/`,
-  `examples/s3p_mf_optimization/`, `examples/s3p_bayesian_sweep/`,
-  `examples/UCB_Example.yaml`, `examples/MOBO_ExpectedHypervolume_Example.yaml`
-  all still run with no edits.
+- The runnable optimization examples `examples/s3p_optimization/`,
+  `examples/s3p_mf_optimization/`, and `examples/s3p_bayesian_sweep/` exercise
+  the Xopt path. (The old `UCB_Example` / `MOBO_ExpectedHypervolume_Example`
+  configs are non-runnable legacy references under `examples/incomplete/`.)
+  Note: example YAMLs were later migrated to the nested `input_parameters`
+  notation — see `docs/yaml_reference.md`.
 - **Public function signatures unchanged:** `run_xopt(workflow_dict, vocs_dict,
   xopt_dict)` and `run_lf_sweep(workflow_dict, sweep_dict, vocs_dict, xopt_dict)`
   keep their names and arguments (they are called from

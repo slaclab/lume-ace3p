@@ -96,10 +96,11 @@ ACE3P sections allow same-named siblings (e.g. two `Port:` blocks
 distinguished by `ReferenceNumber`, multiple `SurfaceMaterial:` blocks).
 `lume-ace3p` parses ACE3P inputs into an ordered tree of name/child
 pairs, so duplicates are preserved end-to-end; matching overrides from
-`ace3p_input_parameters` are merged positionally back into the file.
+the `ace3p:` sub-block of `input_parameters` are merged positionally back
+into the file.
 
 When you provide an ACE3P input file via the solver module's `input:` key
-and `ace3p_input_parameters` does not override or sweep any value inside
+and the `ace3p:` overrides do not change or sweep any value inside
 it, the file is copied to each working directory verbatim — no parse /
 rewrite round-trip occurs. Parsing only happens when overrides are
 present, or when no `input:` file is provided and the entire input must

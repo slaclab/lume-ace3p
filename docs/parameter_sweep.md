@@ -13,13 +13,18 @@ To set up a parameter sweep, provide in the `lume-ace3p` input file:
   input file) live on the module entries.
 - `mode:` with `type: parameter_sweep` and an `output_file` for the result
   table.
-- `cubit_input_parameters` (or, equivalently, `input_parameters`) — input
-  names and corresponding vector values to sweep through, for geometry
-  parameters. The two keys are aliases; the Omega3P example below uses
-  `cubit_input_parameters` for clarity, while the S3P example uses
-  `input_parameters`.
-- `ace3p_input_parameters` (optional) — input names and vector values to sweep,
-  for parameters inside the ACE3P input file.
+- `input_parameters` — the swept input space, organized into per-code
+  sub-blocks so every variable's home is explicit:
+  - `cubit:` — names and vector values for Cubit journal (geometry) knobs.
+  - `ace3p:` (optional) — parameters inside the ACE3P input file.
+  - `geant4:` (optional) — overrides for the Geant4 input file.
+
+  A single sweep can span all three sub-blocks at once (the full tensor product
+  of every array-valued leaf across them). The old flat keys
+  (`cubit_input_parameters`, `ace3p_input_parameters`,
+  `geant4_input_parameters`, and a bare `input_parameters` treated as the cubit
+  block) are still accepted for back-compat, but the nested notation is the
+  standard and is used throughout the examples below.
 - `output_parameters` (optional) — output quantities to extract into the result
   table.
 
@@ -71,36 +76,41 @@ details.
 Next, Cubit input parameters:
 
 ```yaml
-cubit_input_parameters :
-  'cav_radius' :
-    'min' : 90.0
-    'max' : 120.0
-    'num' : 4
-  'ellipticity' :
-    'min' : 0.5
-    'max' : 1.25
-    'num' : 4
+input_parameters :
+  cubit :
+    'cav_radius' :
+      'min' : 90.0
+      'max' : 120.0
+      'num' : 4
+    'ellipticity' :
+      'min' : 0.5
+      'max' : 1.25
+      'num' : 4
 ```
 
-`cubit_input_parameters` is a key-value mapping where each key is the
-**exact** name of a variable defined in the Cubit journal file, and each
-value is either a list of numeric inputs or a nested dict with `min`, `max`,
-`num` (linearly spaced).
+The `cubit:` sub-block is a key-value mapping where each key is the **exact**
+name of a variable defined in the Cubit journal file, and each value is either
+a list of numeric inputs or a nested dict with `min`, `max`, `num` (linearly
+spaced).
 
-Then, ACE3P input parameters:
+ACE3P input parameters live in the `ace3p:` sub-block of the same
+`input_parameters` mapping:
 
 ```yaml
-ace3p_input_parameters :
-'ModelInfo' :
-    'SurfaceMaterial' :
-        'ReferenceNumber' : 6
-        'Sigma' : [5.8e7, 1.04e7]
+input_parameters :
+  ace3p :
+    'ModelInfo' :
+        'SurfaceMaterial' :
+            'ReferenceNumber' : 6
+            'Sigma' : [5.8e7, 1.04e7]
 ```
 
-`ace3p_input_parameters` is a nested mapping organized by ACE3P file
-hierarchy. Here the swept parameter is the conductivity of the surface with
+The `ace3p:` sub-block is a nested mapping organized by ACE3P file hierarchy.
+Here the swept parameter is the conductivity of the surface with
 `ReferenceNumber` 6. Values can use `min/max/num`, a list, or a single value
-if not swept.
+if not swept. (In practice the `cubit:` and `ace3p:` sub-blocks are written
+under one `input_parameters:` header — see
+[`examples/omega3p_ace3p_param_sweep`](https://github.com/slaclab/lume-ace3p/blob/main/examples/omega3p_ace3p_param_sweep/omega3p_ace3p_param_sweep.yaml).)
 
 In this example `cav_radius` and `ellipticity` are length-4 vectors, and
 `Sigma` has two values, giving 4 × 4 × 2 = 32 workflow evaluations. Because
@@ -171,14 +181,15 @@ mode :
 
 ```yaml
 input_parameters :
-  'cornercut' :
-    'min' : 12.0
-    'max' : 16.0
-    'num' : 5
-  'rcorner2' :
-    'min' : 4.0
-    'max' : 16.0
-    'num' : 3
+  cubit :
+    'cornercut' :
+      'min' : 12.0
+      'max' : 16.0
+      'num' : 5
+    'rcorner2' :
+      'min' : 4.0
+      'max' : 16.0
+      'num' : 3
 ```
 
 :::{note}
@@ -203,41 +214,42 @@ system (`S(0,0)`, `S(0,1)`, `S(1,0)`, `S(1,1)`).
 ### S3P parameter sweep with no separate ACE3P file
 
 Identical to the previous example, except no `.s3p` file is submitted. All
-S3P parameters are specified in `ace3p_input_parameters`. Modify the S3P
-sweep `.batch` file to run `s3p_sweep_no_s3p_file.yaml`.
+S3P parameters are specified in the `ace3p:` sub-block of `input_parameters`.
+Modify the S3P sweep `.batch` file to run `s3p_sweep_no_s3p_file.yaml`.
 
 ```yaml
-ace3p_input_parameters :
-'ModelInfo' :
-  'File' : './bend-90degree.ncdf'
+input_parameters :
+  ace3p :
+    'ModelInfo' :
+      'File' : './bend-90degree.ncdf'
 
-  'BoundaryCondition' :
-    'Exterior' : 6
-    'Waveguide' : 7,8
+      'BoundaryCondition' :
+        'Exterior' : 6
+        'Waveguide' : 7,8
 
-'FiniteElement' :
-  'Order' : 2
-  'CurvedSurfaces' : 'on'
+    'FiniteElement' :
+      'Order' : 2
+      'CurvedSurfaces' : 'on'
 
-'FrequencyScan':
-  'Start' : 9.424e+9
-  'End' : 12.424e+9
-  'Interval' : 0.25e+9
+    'FrequencyScan':
+      'Start' : 9.424e+9
+      'End' : 12.424e+9
+      'Interval' : 0.25e+9
 
-'Port':
-  'ReferenceNumber' : 7
-  'NumberOfModes' : 1
+    'Port':
+      'ReferenceNumber' : 7
+      'NumberOfModes' : 1
 
-'Port' :
-  'ReferenceNumber': 8
-  'NumberOfModes' : 1
+    'Port' :
+      'ReferenceNumber': 8
+      'NumberOfModes' : 1
 ```
 
 Note the two `'Port'` blocks at the same indentation level. ACE3P
 allows duplicate-named sibling sections (one per port, surface,
-boundary condition, …), and the `ace3p_input_parameters` parser
-preserves them verbatim — entries are matched positionally with the
-ACE3P input file rather than collapsed into a Python `dict`. See
+boundary condition, …), and the `ace3p:` parser preserves them verbatim —
+entries are matched positionally with the ACE3P input file rather than
+collapsed into a Python `dict`. See
 [](yaml_reference.md#ace3p_input_parameters) for details.
 
 This functions exactly the same as the previous example. Errors may arise if
@@ -404,8 +416,9 @@ output_parameters :
   'total_edep' : ['edep', 'total']
 ```
 
-Optional Geant4 input-file overrides go in `geant4_input_parameters` (plain
-keys, no `/`); a swept override there becomes an additional sweep axis. Geant4
+Optional Geant4 input-file overrides go in the `geant4:` sub-block of
+`input_parameters` (plain keys, no `/`); a swept override there becomes an
+additional sweep axis alongside any `cubit:`/`ace3p:` axes. Geant4
 paths are resolved through the same precedence chain as ACE3P — see
 [](installation.md#executable-paths). If `GEANT4_APP_PATH` / `GEANT4_APP_EXE`
 (or YAML / site-default equivalents) are unset, dry-run mode is auto-enabled

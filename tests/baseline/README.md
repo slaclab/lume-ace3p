@@ -62,7 +62,7 @@ intentionally *not* frozen as numeric baselines, with the reason.
 | `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest); swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
 | `s3p_optimization` | scalar_optimize, synthetic solver (seeded) | full NelderMead trajectory (cornercut, rcorner1, objective) | — |
 | `s3p_bayesian_sweep` | gp_parameter_sweep, synthetic solver (seeded) | 10×10 GP posterior-mean sweep + exploration trajectory | — |
-| `MOBO_ExpectedHypervolume_Example` | scalar_optimize (MOBO/EHVI), synthetic solver (seeded) | MOBO trajectory (R1, L1, r10, three S(0,0) objectives) | — |
+| `MOBO_ExpectedHypervolume_Example` | scalar_optimize (MOBO/EHVI), synthetic solver (seeded); YAML staged from `examples/incomplete/` | MOBO trajectory (R1, L1, r10, three S(0,0) objectives) | — |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 
@@ -70,8 +70,9 @@ intentionally *not* frozen as numeric baselines, with the reason.
   wall-clock `xopt_runtime` and loops on `alotted_time`, so trajectory length
   and values are timing-dependent: reachability-only, not numerically
   checkable. Generator construction/stepping is smoke-tested in
-  `../test_run_xopt_compat.py::test_generic_multifidelity`.
-- **`UCB_Example`** — the shipped YAML declares three objectives, but xopt
-  3.0.0's `UpperConfidenceBoundGenerator` rejects multi-objective VOCS
-  (`VOCSError`). Not runnable as-is under the pinned xopt; recorded as a
-  known-error rather than a numeric baseline.
+  `../test_run_xopt_compat.py::test_generic_multifidelity`. (The example YAML is
+  on the current `workflow:`/`mode:` schema.)
+- **`UCB_Example`** — non-runnable legacy reference now under
+  `examples/incomplete/` (missing `load.jou`/`load.s3p`, legacy schema, and a
+  3-objective config that xopt 3.0.0's `UpperConfidenceBoundGenerator` rejects).
+  Not a numeric baseline.

@@ -3,8 +3,8 @@
 #   workflow:  cubit -> s3p
 #   mode:      parameter_sweep
 # The s3p module lists no 'input:' file — its ACE3P settings come entirely from
-# the ace3p_input_parameters block below (duplicate-key aware, e.g. two Port
-# blocks). cubit_input_parameters feeds the Cubit knobs.
+# the input_parameters.ace3p block below (duplicate-key aware, e.g. two Port
+# blocks). input_parameters.cubit feeds the Cubit knobs.
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_s3p_workdir'
@@ -22,17 +22,17 @@ mode :
   type : parameter_sweep
   output_file : 's3p_sweep_output.txt'
 
-cubit_input_parameters :
-  'cornercut' :
-    'min' : 12.0
-    'max' : 16.0
-    'num' : 5
-  'rcorner2' :
-    'min' : 4.0
-    'max' : 16.0
-    'num' : 3
-
-ace3p_input_parameters :
+input_parameters :
+  cubit :
+    'cornercut' :
+      'min' : 12.0
+      'max' : 16.0
+      'num' : 5
+    'rcorner2' :
+      'min' : 4.0
+      'max' : 16.0
+      'num' : 3
+  ace3p :
     'ModelInfo' :
       'File' : './bend-90degree.ncdf'
 

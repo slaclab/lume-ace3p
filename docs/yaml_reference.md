@@ -44,7 +44,7 @@ Selects how the workflow is driven. One `type` is required.
 | `type`                | Extra sections required | Behavior |
 |-----------------------|-------------------------|----------|
 | `single`              | —                       | Run the workflow once (base inputs must be scalar-valued). Returns a one-row result table (or one-row-per-field-index for a field-indexed solver like S3P). |
-| `parameter_sweep`     | `input_parameters` and/or `ace3p_input_parameters` | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
+| `parameter_sweep`     | `input_parameters` (any of its `cubit:`/`ace3p:`/`geant4:` sub-blocks) | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
 | `scalar_optimize`     | `vocs_parameters`, `xopt_parameters` | Drives an Xopt optimization loop. The objective is a name in `output_parameters` referenced from the VOCS. |
 | `gp_parameter_sweep`  | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration sweep — fits a Gaussian Process to the explored objective(s), then samples the GP posterior mean on the `sweep_parameters` tensor grid. |
 
@@ -105,25 +105,51 @@ a `particles` module), use a `particle_source` module with a `file:` key. The
 old `geant4_particle_file` / `particle_input` / `particle_output` keys no longer
 exist.
 
-## `input_parameters` / `cubit_input_parameters`
+(input_parameters)=
+## `input_parameters`
 
-The `input_parameters` (and equivalently `cubit_input_parameters`) keywords
-and values are user-defined. The structure is:
+`input_parameters` declares the input variable space, grouped into per-code
+sub-blocks so every variable's home is explicit:
 
-- `input_parameter`: `list`, or `dict` with `min`, `max`, and `num` defined.
+```yaml
+input_parameters :
+  cubit :                       # Cubit journal knobs (-> cubit bucket)
+    cornercut : {min: 12.0, max: 16.0, num: 5}
+  ace3p :                       # values inside the ACE3P input file
+    FrequencyScan : {Start: 9.424e9}
+  geant4 :                      # Geant4 input-file overrides
+    nthreads : 8
+```
 
-If any input keyword's value is a vector-like object (a list), the workflow
-can only be run as a parameter sweep — not a single evaluation.
+Each leaf value is a single scalar, a `list`, or a `dict` with `min`, `max`,
+and `num` defined. If any leaf is vector-like (a list, or a `min/max/num`
+range), the workflow can only be run as a parameter sweep — not a single
+evaluation. The three sub-blocks map to the three
+[`WorkflowInputs`](workflow_inputs.md) buckets (`geant4:` → the *macro*
+bucket); their per-block conventions are detailed in
+[](#ace3p_input_parameters) (duplicate-key aware) and
+[](#geant4_input_parameters).
 
 :::{important}
-Input dictionary keywords must **exactly** match the variable names in
-Cubit journal files.
+`cubit:` keys must **exactly** match the variable names in the Cubit journal
+file.
 :::
 
-During parameter sweeping, all possible combinations of the parameters are
-evaluated (the full tensor product of all input-parameter vectors). For
-example, if three input parameters are provided with lists of lengths 10,
-12, and 15, the workflow runs 10 × 12 × 15 = 1800 times.
+During parameter sweeping, all combinations of the array-valued leaves across
+**all** sub-blocks are evaluated (the full tensor product). For example, three
+swept leaves — whether in one sub-block or spread across `cubit:`, `ace3p:`,
+and `geant4:` — with lists of lengths 10, 12, and 15 run the workflow
+10 × 12 × 15 = 1800 times.
+
+:::{note}
+**Deprecated flat aliases.** The pre-standardization keys
+`cubit_input_parameters`, `ace3p_input_parameters`, `geant4_input_parameters`,
+and a bare `input_parameters` (treated as the cubit block) are still accepted
+so existing configs keep running, but the nested notation above is the
+standard. A cubit knob literally named `cubit`, `ace3p`, or `geant4` (which
+would collide with the reserved sub-block names) must be declared with the flat
+`cubit_input_parameters` key.
+:::
 
 ## `output_parameters`
 
@@ -180,14 +206,16 @@ header lines followed by comma-separated rows
 
 More sections and entries will be added in future updates.
 
-## `ace3p_input_parameters`
+(ace3p_input_parameters)=
+## `input_parameters.ace3p`
 
-A nested mapping organized by ACE3P input-file hierarchy, used to override
-or sweep over values inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p`
-input files (or to supply them inline when no separate ACE3P input file is
-provided). The same `min`/`max`/`num` and list conventions as
-`input_parameters` apply to leaf values; non-list scalars are written
-through unchanged.
+The `ace3p:` sub-block of [`input_parameters`](#input_parameters) is a nested
+mapping organized by ACE3P input-file hierarchy, used to override or sweep over
+values inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p` input files (or to
+supply them inline when no separate ACE3P input file is provided). The same
+`min`/`max`/`num` and list conventions as the other sub-blocks apply to leaf
+values; non-list scalars are written through unchanged. (The deprecated
+top-level `ace3p_input_parameters:` key is equivalent.)
 
 Internally, this block is parsed as an *ordered list of key/value pairs*
 rather than a Python dict, which means **same-named sibling sections are
@@ -196,13 +224,14 @@ as two distinct entries and merged positionally into the matching pair of
 `Port` sections in the ACE3P input file:
 
 ```yaml
-ace3p_input_parameters :
-  'Port' :
-    'ReferenceNumber' : 7
-    'NumberOfModes' : 1
-  'Port' :
-    'ReferenceNumber' : 8
-    'NumberOfModes' : 1
+input_parameters :
+  ace3p :
+    'Port' :
+      'ReferenceNumber' : 7
+      'NumberOfModes' : 1
+    'Port' :
+      'ReferenceNumber' : 8
+      'NumberOfModes' : 1
 ```
 
 The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`,
@@ -211,9 +240,9 @@ the ACE3P input. Use a `ReferenceNumber:` (or other discriminating leaf)
 inside each block to keep the mapping unambiguous when reading the YAML.
 
 Fast path: when a separate ACE3P input file is provided via the solver
-module's `input:` key and `ace3p_input_parameters` does not override (or
-sweep) any values inside it, the file is copied to each working directory
-unchanged — no parse/rewrite round-trip occurs.
+module's `input:` key and the `ace3p:` block does not override (or sweep) any
+values inside it, the file is copied to each working directory unchanged — no
+parse/rewrite round-trip occurs.
 
 See the S3P-without-separate-file example in [](parameter_sweep.md) for a
 complete usage pattern.
@@ -223,19 +252,21 @@ complete usage pattern.
 
 Used only with `mode: {type: gp_parameter_sweep}`. Defines the
 tensor-product grid on which the trained Gaussian Process is sampled after
-the Xopt exploration phase. Same shape as `input_parameters`: each key is a
-variable name, each value is a `min`/`max`/`num` mapping (linearly
-spaced).
+the Xopt exploration phase. Each key is a variable name (matching a name
+declared in `input_parameters`), each value is a `min`/`max`/`num` mapping
+(linearly spaced).
 
 (geant4_input_parameters)=
-## `geant4_input_parameters`
+## `input_parameters.geant4`
 
-Used when the workflow includes a `geant4` module. Supplies overrides for
-settings in the Geant4 input file. Each key is an input-file key (e.g.
-`nthreads`, `world_z`, `scale_factor`); each value is either a scalar to write
-through unchanged or a `min`/`max`/`num` mapping (or list) for a parameter
-sweep. A swept key becomes an additional sweep axis alongside any
-`input_parameters`. Keys not present in the input file are appended.
+The `geant4:` sub-block of [`input_parameters`](#input_parameters) is used when
+the workflow includes a `geant4` module. It supplies overrides for settings in
+the Geant4 input file. Each key is an input-file key (e.g. `nthreads`,
+`world_z`, `scale_factor`); each value is either a scalar to write through
+unchanged or a `min`/`max`/`num` mapping (or list) for a parameter sweep. A
+swept key becomes an additional sweep axis alongside any `cubit:`/`ace3p:`
+axes. Keys not present in the input file are appended. (The deprecated
+top-level `geant4_input_parameters:` key is equivalent.)
 
 (particle_parameters)=
 ## `particle_parameters`
@@ -278,6 +309,31 @@ whitespace-separated columns and no header — one primary per row:
 | 9   | `pz`          | -     | `momentum_z`            |
 | 10  | `face_id`     | -     | `ImpactFaceID`          |
 
+(vocs_parameters)=
+## `vocs_parameters`
+
+Declares the Xopt VOCS for the `scalar_optimize` and `gp_parameter_sweep`
+modes: a `variables` mapping of name → `[low, high]` bounds, plus `objectives`
+(name → `MINIMIZE`/`MAXIMIZE`/`explore`) and optional `constraints`. Objective
+names are `output_parameters` names, so no solver-specific parsing lives in the
+driver.
+
+**Variable routing.** Each Xopt variable is written into the input bucket where
+it is declared in [`input_parameters`](#input_parameters) (cubit / ace3p /
+geant4), so a single optimization can drive parameters across multiple codes at
+once. Resolution rule:
+
+- A **bare** variable name (`cornercut`) routes to its declaring bucket when
+  that name is unique across all buckets.
+- If the same bare name is declared in more than one bucket (e.g. a `cubit:`
+  knob and an `ace3p:` leaf both named `start`), a bare reference is a hard
+  error; **qualify** it with its bucket label — `cubit:start`,
+  `ace3p:FrequencyScan.Start`, or `geant4:nthreads` (the ACE3P label is the
+  dotted section path, matching the sweep-table column label).
+- A variable not declared in any `input_parameters` bucket falls back to the
+  cubit bucket (so a config that only lists `vocs_parameters.variables` keeps
+  working).
+
 ## `xopt_parameters`
 
 Controls the Xopt driver used by the `scalar_optimize` and
@@ -319,7 +375,8 @@ solver-specific code) are:
   for one input point and return `{output_name: value}` for the
   `output_parameters` spec. `input_scalars` may be `None` (use the base inputs
   as-is), a list aligned with `sweep_axes()` (materialize that grid point), or a
-  `{var: scalar}` mapping (cubit-parameter overrides — the shape Xopt passes).
+  `{var: scalar}` mapping (variable overrides routed to their declaring bucket —
+  the shape Xopt passes; see [](#vocs_parameters)).
 - `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
 - `Workflow.field_index()` / `Workflow.field()` — the shared field index (e.g.
   S3P's `('Frequency', array)`) and the structured per-run field output (S3P
@@ -330,16 +387,18 @@ solver-specific code) are:
 
 `WorkflowInputs(cubit, ace3p, macro)` is the structured representation the
 workflow consumes internally, built by `inputs.build_inputs` from the YAML. The
-three buckets correspond to the three YAML sections that drive workflow inputs:
+three buckets correspond to the three `input_parameters` sub-blocks:
 
-| Bucket  | YAML source                                              | Type                |
-|---------|----------------------------------------------------------|---------------------|
-| `cubit` | `cubit_input_parameters` / `input_parameters`            | `dict[str, scalar \| ndarray]` |
-| `ace3p` | `ace3p_input_parameters`                                 | ordered tree of `(name, child)` pairs (`Section`) — duplicates preserved |
-| `macro` | `geant4_input_parameters`                                | `dict[str, scalar \| ndarray]` |
+| Bucket  | YAML source (nested)          | Deprecated flat alias      | Type                |
+|---------|-------------------------------|----------------------------|---------------------|
+| `cubit` | `input_parameters.cubit`      | `cubit_input_parameters` / bare `input_parameters` | `dict[str, scalar \| ndarray]` |
+| `ace3p` | `input_parameters.ace3p`      | `ace3p_input_parameters`   | ordered tree of `(name, child)` pairs (`Section`) — duplicates preserved |
+| `macro` | `input_parameters.geant4`     | `geant4_input_parameters`  | `dict[str, scalar \| ndarray]` |
 
 Array-valued leaves in any bucket become sweep axes; scalar leaves are
-written through to the matching input file unchanged.
+written through to the matching input file unchanged. During optimization,
+each VOCS variable is routed to the bucket where it is declared (see
+[](#vocs_parameters)).
 
 ### Results
 

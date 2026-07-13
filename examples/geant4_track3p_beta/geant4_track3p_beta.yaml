@@ -45,16 +45,25 @@ mode :
   type : parameter_sweep
   output_file : 'geant4_beta_sweep_output'
 
-# Swept input space. 'beta' sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60).
+# Swept input space, grouped by the code each variable drives. 'beta' is a Cubit
+# knob (the particles module's 'beta_input' reads it), so it lives under 'cubit:'.
+# It sweeps 40 -> 60 in 5 steps (40, 45, 50, 55, 60).
 input_parameters :
-  'beta' :
-    'min' : 40.0
-    'max' : 60.0
-    'num' : 5
+  cubit :
+    'beta' :
+      'min' : 40.0
+      'max' : 60.0
+      'num' : 5
 
-  # Future (Xopt 8-D exploration): declare 8 independent variables here (e.g.
-  # beta0..beta7) and set 'beta_inputs: [beta0, ..., beta7]' on the particles
-  # module to map one per bin instead of broadcasting a single scalar.
+  # Future (Xopt 8-D exploration): declare 8 independent variables under 'cubit:'
+  # (e.g. beta0..beta7) and set 'beta_inputs: [beta0, ..., beta7]' on the
+  # particles module to map one per bin instead of broadcasting a single scalar.
+
+  # Optional: override settings in the Geant4 input file (plain keys, no '/').
+  # A swept value here becomes an additional sweep axis.
+  # geant4 :
+  #   'nthreads' : 8
+  #   'world_z' : {'min' : 200.0, 'max' : 300.0, 'num' : 3}
 
 # Optional: pull scalars out of the Geant4 dose / energy-deposit output after
 # each run. Each becomes a column in the result table; they route to the geant4
@@ -63,8 +72,3 @@ input_parameters :
 #   'total_dose' : ['dose', 'total']
 #   'peak_dose'  : ['dose', 'peak']
 #   'total_edep' : ['edep', 'total']
-
-# Optional: override settings in the Geant4 input file (plain keys, no '/').
-# geant4_input_parameters :
-#   'nthreads' : 8
-#   'world_z' : {'min' : 200.0, 'max' : 300.0, 'num' : 3}

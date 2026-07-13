@@ -1,26 +1,51 @@
+# S3P multi-fidelity scalar optimization on the declarative module/mode schema:
+#   workflow:           cubit -> s3p
+#   mode:               scalar_optimize   (an Xopt loop, MultiFidelityGenerator)
+#   output_parameters:  the scalar the objective pulls out of the s3p module
+# The MultiFidelityGenerator trades solver cost against fidelity: 'mesh_fidelity'
+# is the Cubit knob that sets mesh resolution, exposed to Xopt as the fidelity
+# axis via xopt_parameters.fidelity_variable. The VOCS objective name
+# ('reflection') is an output_parameters name, so the driver never parses
+# S-parameters itself.
+
 workflow_parameters :
-    'mode' : 'scalar_optimize'
-    'module' : 's3p'
-    'cubit_input': 'bend-90degree_mf.jou'
-    'ace3p_input': 'bend-90degree_mf.s3p'
-    'ace3p_tasks': 16
-    'ace3p_cores': 4
-    'ace3p_opts' : '--cpu-bind=cores'
-    'workdir': 'lume-ace3p_mf_workdir'
+    'workdir' : 'lume-ace3p_mf_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree_mf.jou'
+  - module : s3p
+    input : 'bend-90degree_mf.s3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+    type : scalar_optimize
+
+output_parameters :
+    'reflection' : { module: s3p, quantity: 'S(1,1)', at: { frequency: 12.0e+09 } }
+
+# Optimization knobs, grouped by the code each drives. All three are Cubit
+# journal variables. 'mesh_fidelity' is driven as the Xopt fidelity axis (see
+# xopt_parameters below); its scalar value here is a nominal starting point.
+input_parameters :
+    cubit :
+        'cornercut' : 13.0
+        'wgwidth' : 21.5
+        'mesh_fidelity' : 0.0
 
 vocs_parameters :
-    'variables' :
-        'cornercut': [12.5,13.5]
-        'wgwidth': [21,22]
+    'variables' :          # bounds only; names route via input_parameters above
+        'cornercut' : [12.5, 13.5]
+        'wgwidth' : [21, 22]
     'objectives' :
-        's_parameter' : 'S(1,1)'
-        'frequency' : 12.0e+09
-        'optimization' : 'MINIMIZE'
-        'tolerance' : 1e-03
-        
+        'reflection' : 'MINIMIZE'
+
 xopt_parameters :
     'generator' : 'MultiFidelityGenerator'
     'fidelity_variable' : 'mesh_fidelity'
     'cost_function' : 'exponential'
-    'alotted_time' : 00:30:00
+    'alotted_time' : '00:30:00'
     'num_random' : 3
+    'tolerance' : 1.0e-03

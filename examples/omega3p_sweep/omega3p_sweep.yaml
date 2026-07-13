@@ -25,14 +25,15 @@ mode :
   output_file : 'omega3p_sweep_output.txt'
 
 input_parameters :
-  'cav_radius' :
-    'min' : 90.0
-    'max' : 120.0
-    'num' : 4
-  'ellipticity' :
-    'min' : 0.5
-    'max' : 1.25
-    'num' : 4
+  cubit :
+    'cav_radius' :
+      'min' : 90.0
+      'max' : 120.0
+      'num' : 4
+    'ellipticity' :
+      'min' : 0.5
+      'max' : 1.25
+      'num' : 4
 
 output_parameters :
   'R/Q' : ['RoverQ', '0', 'RoQ']

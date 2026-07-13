@@ -20,11 +20,21 @@ workflow :
 mode :
     type : scalar_optimize
 
+# Declare the optimization knobs and where they live. Both are Cubit journal
+# variables, so they go under 'cubit:'. This gives each VOCS variable an explicit
+# home: an Xopt variable routes to the bucket where it is declared, so an
+# optimization can drive Cubit, ACE3P, and Geant4 parameters at once. The scalar
+# values are nominal starting points (Xopt overrides them each step).
+input_parameters :
+    cubit :
+        'cornercut' : 15.0
+        'rcorner1' : 1.0
+
 output_parameters :
     'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
 
 vocs_parameters :
-    'variables' :
+    'variables' :          # bounds only; names route via input_parameters above
         'cornercut' : [14, 17]
         'rcorner1' : [0.5, 2.5]
     'objectives' :

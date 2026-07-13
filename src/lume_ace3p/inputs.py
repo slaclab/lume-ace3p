@@ -74,34 +74,144 @@ class WorkflowInputs:
             setter(copy, scalar)
         return copy
 
+    # ---- variable routing (optimize) -------------------------------------
+
+    def _route_registry(self):
+        """Build the map from a VOCS variable name to a `(bucket, setter)`.
+
+        Each declared variable is registered under its fully-qualified label
+        (``cubit:name`` / ``ace3p:Section.Leaf`` / ``geant4:name``) — always
+        unambiguous — and, when the *bare* name is unique across all buckets,
+        under that bare name too. A bare name declared in more than one bucket
+        is recorded in `ambiguous` and left out of the bare routes, so a bare
+        reference to it is a hard error (the caller must qualify it).
+
+        Returns `(routes, ambiguous)` where `routes` maps name -> setter and
+        `ambiguous` maps a colliding bare name -> sorted list of its qualified
+        labels."""
+        qualified = {}   # qualified label -> setter
+        bare_hits = {}   # bare name -> list of (qualified label, setter)
+
+        def add(bare, qualified_label, setter):
+            qualified[qualified_label] = setter
+            bare_hits.setdefault(bare, []).append((qualified_label, setter))
+
+        for name in self.cubit:
+            add(name, f'cubit:{name}', _make_cubit_setter(name))
+        for path, _ in _walk_ace3p(self.ace3p):
+            label = _label_ace3p_path(path)          # e.g. 'ace3p:FrequencyScan.Start'
+            bare = path[-1][0]                       # terminal leaf name
+            add(bare, label, _make_ace3p_setter(path))
+        for name in self.macro:
+            add(name, f'geant4:{name}', _make_macro_setter(name))
+
+        routes = dict(qualified)
+        ambiguous = {}
+        for bare, hits in bare_hits.items():
+            if len(hits) == 1:
+                routes[bare] = hits[0][1]
+            else:
+                ambiguous[bare] = sorted(label for label, _ in hits)
+        return routes, ambiguous
+
+    def apply_overrides(self, overrides):
+        """Return a copy with each `{name: value}` override applied to the bucket
+        where `name` is declared. Used by the optimize modes, whose Xopt variable
+        names route to the cubit / ace3p / macro buckets.
+
+        `name` may be a bare variable name (allowed only when unique across
+        buckets) or a fully-qualified label (``cubit:…`` / ``ace3p:…`` /
+        ``geant4:…``). A bare name declared in more than one bucket raises a
+        `ValueError`. A name not declared in any bucket falls back to the cubit
+        bucket (back-compat with configs that declare VOCS variables but no
+        `input_parameters`)."""
+        copy = WorkflowInputs(
+            cubit=dict(self.cubit),
+            ace3p=_clone_section(self.ace3p),
+            macro=dict(self.macro),
+        )
+        routes, ambiguous = self._route_registry()
+        for name, value in overrides.items():
+            if name in routes:
+                routes[name](copy, value)
+            elif name in ambiguous:
+                raise ValueError(
+                    f"variable '{name}' is declared in more than one input "
+                    f"bucket; qualify it as one of {ambiguous[name]}.")
+            else:
+                copy.cubit[name] = value
+        return copy
+
 
 # ---- YAML loading --------------------------------------------------------
+
+
+# Reserved sub-block names under a nested `input_parameters:` mapping. Each maps
+# to one WorkflowInputs bucket (geant4 -> macro).
+_INPUT_BUCKETS = ('cubit', 'ace3p', 'geant4')
 
 
 def load_yaml(path):
     """Load a LUME-ACE3P YAML, returning the raw mapping.
 
-    `ace3p_input_parameters` is unique in allowing duplicate keys (one block
-    per same-named ACE3P section). We extract that block, parse it as a list
-    of pairs, and parse the remainder of the file as a normal mapping.
+    The ACE3P inputs are unique in allowing duplicate keys (one block per
+    same-named ACE3P section). We extract that block textually, parse it as a
+    list of pairs, and parse the remainder of the file as a normal mapping. The
+    ACE3P block may be given either as the nested `input_parameters: {ace3p: …}`
+    sub-block (the standard notation) or as the flat top-level
+    `ace3p_input_parameters:` key (a deprecated back-compat alias); both land in
+    the canonical `ace3p_input_parameters` slot of the returned mapping.
     """
     with open(path) as f:
         text = f.read()
-    raw_ace3p, remainder = _extract_top_block(text, 'ace3p_input_parameters')
+    raw_ace3p, text = _extract_nested_block(text, ['input_parameters', 'ace3p'])
+    if raw_ace3p is None:
+        raw_ace3p, text = _extract_nested_block(text, ['ace3p_input_parameters'])
     yaml = YAML(typ='safe')
-    data = yaml.load(remainder) or {}
+    data = yaml.load(text) or {}
     if raw_ace3p is not None:
         data['ace3p_input_parameters'] = _load_pairs(raw_ace3p)
     return data
 
 
-def build_inputs(yaml_data):
-    """Translate a loaded YAML mapping into a WorkflowInputs."""
-    cubit = {}
-    _collect_scalar_block(yaml_data.get('cubit_input_parameters'), cubit)
-    _collect_scalar_block(yaml_data.get('input_parameters'), cubit)
+def _is_nested_input_parameters(block):
+    """True if an `input_parameters:` value uses the nested bucket notation
+    (`{cubit: …, ace3p: …, geant4: …}`) rather than the legacy flat cubit
+    block. A non-empty mapping whose keys are all reserved bucket names is
+    treated as nested."""
+    return isinstance(block, dict) and bool(block) and all(
+        key in _INPUT_BUCKETS for key in block)
 
+
+def build_inputs(yaml_data):
+    """Translate a loaded YAML mapping into a WorkflowInputs.
+
+    Accepts the standard nested notation ::
+
+        input_parameters:
+          cubit:  {…}      # -> cubit bucket
+          ace3p:  {…}      # -> ace3p bucket (duplicate-key aware)
+          geant4: {…}      # -> macro bucket
+
+    as well as the deprecated flat aliases (`cubit_input_parameters`,
+    `ace3p_input_parameters`, `geant4_input_parameters`, and a bare
+    `input_parameters` treated as the cubit block).
+    """
+    cubit = {}
     macro = {}
+
+    input_params = yaml_data.get('input_parameters')
+    if _is_nested_input_parameters(input_params):
+        _collect_scalar_block(input_params.get('cubit'), cubit)
+        _collect_scalar_block(input_params.get('geant4'), macro)
+        # The nested `ace3p:` sub-block was lifted into `ace3p_input_parameters`
+        # by load_yaml (duplicate-key aware), so it is read below.
+    else:
+        # Legacy: a bare `input_parameters` block is the cubit bucket.
+        _collect_scalar_block(input_params, cubit)
+
+    # Deprecated flat aliases (still honored for back-compat).
+    _collect_scalar_block(yaml_data.get('cubit_input_parameters'), cubit)
     _collect_scalar_block(yaml_data.get('geant4_input_parameters'), macro)
 
     ace3p = _build_section(yaml_data.get('ace3p_input_parameters') or [])
@@ -119,36 +229,70 @@ def _is_array(value):
     )
 
 
-def _extract_top_block(text, key):
-    """Split `text` into (block, remainder). `block` is the indented body
-    of `key:` with leading indentation stripped (so the inner mapping starts
-    at column 0). `remainder` is the original text with that block removed
-    (the `key:` header line is also dropped). Returns (None, text) if the
-    key isn't found at the top level."""
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def _line_key_matches(line, key):
+    """True if `line` is the `key:` mapping header (allowing `key :`)."""
+    s = line.strip()
+    if not s.startswith(key):
+        return False
+    return s[len(key):].lstrip().startswith(':')
+
+
+def _extract_nested_block(text, path):
+    """Split `text` into (block, remainder), where `block` is the indented body
+    of the mapping key reached by following `path` (a list of keys, each nested
+    one level under the previous). `block` has its common leading indentation
+    stripped so the inner mapping starts at column 0. `remainder` is the original
+    text with that block removed (its header line is dropped too). Returns
+    (None, text) if the path is not found.
+
+    A single-element path locates a top-level key; a two-element path
+    (e.g. ``['input_parameters', 'ace3p']``) locates a direct sub-block. This
+    textual pre-extraction is what lets the ACE3P block preserve duplicate keys
+    (see :func:`_load_pairs`)."""
     lines = text.split('\n')
-    header = None
-    for i, line in enumerate(lines):
-        s = line.lstrip()
-        if not s or s.startswith('#'):
+    lo, hi = 0, len(lines)
+    expected_indent = 0
+    for depth, key in enumerate(path):
+        header_idx = None
+        for i in range(lo, hi):
+            line = lines[i]
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            if _indent(line) == expected_indent and _line_key_matches(line, key):
+                header_idx = i
+                break
+        if header_idx is None:
+            return None, text
+        # Body runs until the next line at or above the header's indent level.
+        body_lo = header_idx + 1
+        body_hi = hi
+        for j in range(header_idx + 1, hi):
+            l = lines[j]
+            if l.strip() and not l.lstrip().startswith('#') \
+                    and _indent(l) <= expected_indent:
+                body_hi = j
+                break
+        body_lines = lines[body_lo:body_hi]
+        indents = [_indent(l) for l in body_lines
+                   if l.strip() and not l.lstrip().startswith('#')]
+        if depth < len(path) - 1:
+            # Descend: the next key sits at the body's shallowest indent.
+            if not indents:
+                return None, text
+            expected_indent = min(indents)
+            lo, hi = body_lo, body_hi
             continue
-        if line.startswith(key) and ':' in line[:len(key) + 5]:
-            header = i
-            break
-    if header is None:
-        return None, text
-    end = len(lines)
-    for j in range(header + 1, len(lines)):
-        line = lines[j]
-        if line and not line[0].isspace() and not line.lstrip().startswith('#'):
-            end = j
-            break
-    body_lines = lines[header + 1:end]
-    # Find common leading indent and strip it
-    indents = [len(l) - len(l.lstrip()) for l in body_lines if l.strip()]
-    pad = min(indents) if indents else 0
-    block = '\n'.join(l[pad:] if len(l) >= pad else l for l in body_lines)
-    remainder = '\n'.join(lines[:header] + lines[end:])
-    return block, remainder
+        # Target reached — return its de-indented body and the remainder.
+        pad = min(indents) if indents else 0
+        block = '\n'.join(l[pad:] if len(l) >= pad else l for l in body_lines)
+        remainder = '\n'.join(lines[:header_idx] + lines[body_hi:])
+        return block, remainder
+    return None, text
 
 
 def _load_pairs(text):

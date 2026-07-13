@@ -41,7 +41,7 @@ To run a parameter sweep or optimization the user typically provides:
 
 ACE3P input parameters can be supplied either as a separate file (`.omega3p`,
 `.s3p`, …) named on the solver module, or directly inside the `lume-ace3p` YAML
-file via `ace3p_input_parameters`.
+file via the `ace3p:` sub-block of `input_parameters`.
 
 ## Where to start
 
