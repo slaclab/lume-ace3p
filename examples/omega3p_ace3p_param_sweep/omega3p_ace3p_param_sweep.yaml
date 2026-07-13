@@ -1,18 +1,32 @@
+# Omega3P sweep with an ACE3P input parameter as an extra sweep axis, on the
+# declarative module/mode schema:
+#   workflow:  cubit -> omega3p -> acdtool
+#   mode:      parameter_sweep
+# The ACE3P 'Sigma: [5.8e7, 1.04e7]' list is a two-value axis, so the sweep is
+# 4 x 4 x 2 = 32 runs (two cubit axes x the ACE3P Sigma axis). The mode iterates
+# every swept axis generically, so the ACE3P axis rides alongside the cubit ones
+# with no special-casing and appears as its own column in the result table.
+
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 'omega3p'
-  'cubit_input' : 'pillbox-rtop.jou'
-  'ace3p_input' : 'pillbox-rtop.omega3p'
-  'rfpost_input' : 'pillbox-rtop.rfpost'
-  'ace3p_tasks' : 12
-  'ace3p_cores' : 8
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_omega3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 'omega3p_sweep_output.txt'
 
-cubit_input_parameters : 
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 12
+    cores : 8
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
+
+mode :
+  type : parameter_sweep
+  output_file : 'omega3p_sweep_output.txt'
+
+cubit_input_parameters :
   'cav_radius' :
     'min' : 90.0
     'max' : 120.0
@@ -21,7 +35,7 @@ cubit_input_parameters :
     'min' : 0.5
     'max' : 1.25
     'num' : 4
-    
+
 ace3p_input_parameters :
     'ModelInfo' :
         'SurfaceMaterial' :

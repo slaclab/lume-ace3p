@@ -1,16 +1,28 @@
+# S3P parameter sweep with the ACE3P settings supplied inline (no separate
+# .s3p file) on the declarative module/mode schema:
+#   workflow:  cubit -> s3p
+#   mode:      parameter_sweep
+# The s3p module lists no 'input:' file — its ACE3P settings come entirely from
+# the ace3p_input_parameters block below (duplicate-key aware, e.g. two Port
+# blocks). cubit_input_parameters feeds the Cubit knobs.
+
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 's3p'
-  'cubit_input' : 'bend-90degree.jou'
-  'ace3p_tasks' : 16
-  'ace3p_cores' : 4
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_s3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 's3p_sweep_output.txt'
 
-cubit_input_parameters : 
+workflow :
+  - module : cubit
+    journal : 'bend-90degree.jou'
+  - module : s3p
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 's3p_sweep_output.txt'
+
+cubit_input_parameters :
   'cornercut' :
     'min' : 12.0
     'max' : 16.0
@@ -19,8 +31,8 @@ cubit_input_parameters :
     'min' : 4.0
     'max' : 16.0
     'num' : 3
-    
-ace3p_input_parameters : 
+
+ace3p_input_parameters :
     'ModelInfo' :
       'File' : './bend-90degree.ncdf'
 
@@ -31,7 +43,7 @@ ace3p_input_parameters :
     'FiniteElement' :
       'Order' : 2
       'CurvedSurfaces' : 'on'
-    
+
     'FrequencyScan':
       'Start' : 9.424e+9
       'End' : 12.424e+9

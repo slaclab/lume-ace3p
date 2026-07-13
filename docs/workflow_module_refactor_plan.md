@@ -1,7 +1,83 @@
 # Workflow Modularization Refactor — Implementation Plan
 
-**Status:** Phase 0.5 complete (golden baseline frozen under `tests/baseline/`;
-self-check green — next: Phase 1 — module layer). Supersedes
+**Status: COMPLETE (Phase 6 done, 2026-07-10).** All six phases landed on `dev`;
+the repo is fully on the module/workflow/mode architecture and the dead legacy
+code is removed. `dev` is ready for review/testing before a `master` merge (no
+merge in-session, per plan).
+
+Phase 6 delivered: (1) example YAMLs migrated to the declarative
+`workflow:` + `mode:` + `output_parameters:` schema — one per mode and per solver
+family (`s3p_sweep`, `s3p_sweep_no_s3p_file`, `omega3p_sweep`,
+`omega3p_ace3p_param_sweep`, `s3p_optimization`, `s3p_bayesian_sweep`,
+`track3p_particle_weight`, `geant4_track3p_beta`) plus a new runnable multi-step
+chain example `geant4_dose_single` (`track3p_source→particles→geant4`, `single`
+mode; large assets symlinked from `geant4_track3p_beta`). `MOBO`/`UCB`/
+`s3p_mf_optimization` remain on the old schema (incremental follow-up).
+(2) Legacy `workflow.py` (Omega3P/S3P/Geant4Workflow subclasses), `run_xopt.py`,
+and `tools.py` writers DELETED; `run_lume_ace3p.py` + `__init__.py` are
+declarative-only. (3) README / `docs/index.md` / `docs/yaml_reference.md` /
+`docs/parameter_sweep.md` / `docs/optimization.md` updated to the module/mode
+architecture; new `docs/testing.md`; memory notes (`project_overview`,
+`ace3p_modules_t3p_track3p`, `workflow_module_refactor`,
+`geant4_surrogate_inversion_project`) updated. (4) `geant4_surrogate_inversion_plan.md`
+re-pointed: its Phase 1 marked DELIVERED by this refactor's Phase 4, Phases 2–4
+become new modes. (5) Test-speed hygiene: botorch GP-fitting tests carry
+`@pytest.mark.slow`; `pyproject.toml` sets `addopts = -m 'not slow'` so the
+default run is fast (71 passed, 8 slow deselected); the fast baseline self-check
+now drives the declarative path and still matches the frozen `tests/baseline/`
+fixtures. Verified: migrated examples dry-run and match Phase-0.5 baselines
+numerically (sweep tables, particle-weight + geant4 digests, NelderMead
+trajectory); no references to removed subclasses/writers remain in `src/`.
+
+### Phase 6 verification (all met)
+
+- [x] The migrated examples run (dry-run where env absent) under the new schema
+  and match their Phase-0.5 baselines on numerically-checkable quantities.
+- [x] No references to removed workflow subclasses / writers remain in `src/`.
+- [x] Docs + memory reflect the new architecture.
+- [x] The default test run is fast (slow botorch tests excluded by default but
+  still runnable on demand via `pytest -m slow`).
+
+---
+
+**Prior status:** Phase 5 complete (result/data consolidation — hybrid DataFrames).
+All three result-producing modes now emit through **one** shared writer,
+`src/lume_ace3p/results.py::write_table` (tab-delimited `to_csv`):
+`parameter_sweep`/`single` build a DataFrame and write through it, the Xopt
+modes log `X.data` through it (`modes._log_xopt`), and the GP posterior-mean
+sweep (was a hand-rolled file loop) is now a DataFrame written through it. The
+hybrid model's structured half is `results.save_field`/`load_field` +
+`FIELD_ARTIFACT_COLUMN`: S3P spectra and Geant4 `{indices,values}` voxel grids
+are persisted per row as `.npz` (no pickling) and reload to the same arrays;
+the wide table gains an opt-in, append-only `field_artifact` column (absent
+under dry-run and for the S3P long-format table). The old dict `sweep_data`
+tuple-keyed structure is gone from the module/workflow/mode/results path
+(AST-scanned); `tools.py` writers are **reduced** to thin helpers that build a
+DataFrame and defer to `results.write_table` (still called by the legacy
+subclasses, deleted in Phase 6). `WorkflowInputs`/ACE3P `Section` tree stay
+structured (not DataFrame-ified), per the plan. Tests: `tests/test_results.py`
+(12) + fast suite 59 passing; Phase-0.5 baseline self-check 10 passing
+(unchanged — drives the reduced `tools.py`); generic equivalence tests
+(`test_generic_{s3p_optimization,gp_sweep}_matches_baseline`) still match.
+Slow botorch GP-fitting tests trusted per user (their only touched code path,
+`_log_xopt`→`write_table`, is verified numerically by the two equivalence
+tests). Known pre-existing flake unrelated to this phase: the legacy MOBO/EHVI
+baseline self-check (`test_baseline_selfcheck.py
+[MOBO_ExpectedHypervolume_Example]`) is nondeterministic under botorch and fails
+on clean HEAD too — next: Phase 6 — migrate examples, docs, cleanup.
+
+Phase 4 (prior) complete: generic Xopt modes landed — `scalar_optimize` +
+`gp_parameter_sweep` folded into `src/lume_ace3p/modes.py`, driven by
+`workflow.evaluate(input_dict)` + declarative `output_parameters` — no
+S-parameter/frequency parsing in the driver. All six generators (NelderMead,
+ExpectedImprovement, MultiFidelity, UCB, MOBO/EHVI, BayesianExploration)
+preserved with the fidelity-variable rename + cost-function logic unchanged.
+Geant4 MC-noise guards added as documented mode config (`mc_noisy_objective` →
+don't force `use_low_noise_prior`; require explicit `bin_edges`).
+`run_lume_ace3p.py` dispatches all four modes through the declarative path; the
+legacy `(mode,module)` matrix + `run_xopt.py` + `Omega3P/S3P/Geant4Workflow`
+subclasses stay live/callable for the Phase-5 equivalence tests.
+Supersedes
 the near-term sequencing of `geant4_surrogate_inversion_plan.md` (that project is
 **shelved until this refactor lands** — its Phase 1 "decouple Xopt from
 S3PWorkflow" is absorbed into Phase 4 here). Phases: 0.5 baseline → 1 modules →
@@ -282,15 +358,47 @@ changes yet — the old `run_lume_ace3p.py` path still works alongside.
 
 ### Verification (Phase 1 done when)
 
-- Each module runs in isolation in dry-run mode from a hand-built `RunContext`,
-  producing/consuming the expected artifact keys.
-- `extract` reproduces the same scalar values the current `evaluate()` methods
-  return for equivalent inputs (unit test with a synthetic solver output file).
-- No change to `run_lume_ace3p.py` dispatch yet; existing examples still run.
+- [x] Each module runs in isolation in dry-run mode from a hand-built
+  `RunContext`, producing/consuming the expected artifact keys. (Source modules
+  + `ParticlesModule` run for real; solver/geant4 run their dry-run path.
+  `tests/test_modules.py` — per-module dry-run + require-artifact tests, and a
+  `test_registry_edges_match_plan` guard that pins every requires/provides set.)
+- [x] `extract` reproduces the same scalar values the current `evaluate()`
+  methods return for equivalent inputs (unit test with a synthetic solver output
+  file). `S3PModule`/`AcdtoolModule`/`Geant4Module` `extract` are diffed against
+  `S3PWorkflow`/`Omega3PWorkflow`/`Geant4Workflow.evaluate` on the same
+  synthetic Reflection.out / rfpost.out / dose+edep fixtures; `ParticlesModule`
+  is diffed against a direct `Particles()` invocation.
+- [x] No change to `run_lume_ace3p.py` dispatch yet; existing examples still
+  run. Only two files added (`git status`: `modules.py`, `test_modules.py`);
+  full suite `python -m pytest tests/` = 38 passing (15 Phase-0.5 baseline +
+  23 new), so the frozen baselines are unchanged.
+
+**Deviations / notes recorded during Phase 1:**
+
+- The skip-flags (`skip_cubit`/`skip_solver`/`skip_acdtool`/`skip_meshconvert`)
+  and the `geant4_particle_file` bypass are **not** carried into the module
+  layer, per the plan. `skip_meshconvert` becomes the per-`CubitModule`
+  `meshconvert:` bool; the rest become "don't list the module" +
+  `MeshSourceModule`/`Track3PSourceModule`/`ParticleSourceModule`. The legacy
+  flags still live on `ACE3PWorkflow`/`Geant4Workflow` until Phase 6.
+- `_resolve_beta` moved into `ParticlesModule`; `_geometry_files`,
+  `_output_files`, `_read_scoring_output` moved into `Geant4Module` (verbatim,
+  workdir sourced from `ctx`). The originals remain on `Geant4Workflow` (still
+  live through Phase 4/5).
+- `Track3PSourceModule` is a **source module only** (external dump →
+  `track3p_particles`); no runnable Track3P/T3P solver. Requires/provides are
+  additive so the future solver (`requires em_solution`, `provides
+  track3p_particles`) slots in without rule changes.
+- `RunContext.artifacts` maps artifact-kind → path. Dry-run modules still
+  populate the key (with a nominal path) so a Phase-2 DAG can verify a
+  downstream `requires` is met even when the upstream binary is skipped. The
+  DRY_RUN.txt marker is **appended** per module (each contributes its block),
+  so an assembled chain yields a combined marker in Phase 2.
 
 ### Deliverables
 
-- `src/lume_ace3p/modules.py` + `tests/test_modules.py`.
+- [x] `src/lume_ace3p/modules.py` + `tests/test_modules.py`.
 
 ---
 
@@ -327,21 +435,65 @@ three legacy chains as declared workflows.
 
 ### Verification (Phase 2 done when)
 
-- The three legacy chains, expressed as `workflow:` lists, run end-to-end
+- [x] The three legacy chains, expressed as `workflow:` lists, run end-to-end
   (dry-run where solver env absent) and produce the **same artifacts and the
   same extracted output values** as the current `Omega3PWorkflow` /
   `S3PWorkflow` / `Geant4Workflow` single `run()`.
-- A new multi-step chain using only *runnable* modules validates and orders
+  `test_workflow_graph.py::test_{s3p,omega3p,geant4}_chain_matches_legacy*` diff
+  the declared workflow's extracted outputs against a single legacy `run()` on
+  the same point (S3P/Omega3P: NaN sentinel under dry-run; Geant4:
+  `particles.data` numeric digest is byte-for-byte equal), and the Geant4 chain
+  additionally matches the Phase-0.5 `particles_beta40.digest.json`.
+- [x] A new multi-step chain using only *runnable* modules validates and orders
   correctly — e.g. `track3p_source→particles→geant4` (external Track3P dump →
   emission weights → dose), and `cubit→s3p→acdtool`. Dry-run reaches the final
-  step with all required artifacts present.
-- Invalid graphs fail validation with a clear message: missing mesh source,
+  step with all required artifacts present. `test_order_*` check both chains
+  topologically order regardless of YAML list order; the equivalence tests
+  assert the terminal artifacts (`EM_SOLUTION`/`RF_POST`, `DOSE_GRID`/`EDEP_GRID`)
+  are present after `evaluate`.
+- [x] Invalid graphs fail validation with a clear message: missing mesh source,
   acdtool before solver, `particles` with no `track3p_particles` source,
-  `geant4` with no `particle_source`, two mesh sources.
+  `geant4` with no `particle_source`, two mesh sources. `test_missing_mesh_source`,
+  `test_acdtool_before_solver`, `test_particles_no_track3p_source`,
+  `test_geant4_no_particle_source`, `test_two_mesh_sources` — each asserts the
+  message names the offending artifact kind.
 
 ### Deliverables
 
-- Workflow builder/validator module + `tests/test_workflow_graph.py`.
+- [x] Workflow builder/validator module (`src/lume_ace3p/workflow_graph.py`) +
+  `tests/test_workflow_graph.py`. Only two files added
+  (`git status`: `workflow_graph.py`, `test_workflow_graph.py`); full suite
+  `python -m pytest tests/` = 55 passing (38 prior + 17 new), so the frozen
+  baselines and the legacy path are unchanged.
+
+**Deviations / notes recorded during Phase 2:**
+
+- **Ordering is a plain dependency sort, not a general DAG topo-sort.** Because
+  each artifact kind has exactly one producer (enforced as the "two mesh
+  sources" rule), `_resolve_order` schedules a module once every producer of its
+  `requires` has run, using YAML list order only as a stable tiebreaker. This is
+  the minimal rule set the plan asked for and stays additive: a future Track3P
+  solver that `provides {track3p_particles}` simply becomes the producer that
+  satisfies `particles`, with no rule change.
+- **DRY_RUN.txt marker differs from legacy by design.** Phase 1 already made
+  each module *append* its own dry-run block, so an assembled chain yields a
+  combined multi-block marker rather than the legacy single-block text. Phase-2
+  equivalence is therefore checked on **extracted output values + artifacts**
+  (and the real `particles.data` digest), per the plan's numeric-equivalence
+  contract — not on marker bytes.
+- **Legacy bare output specs are still routed.** `output_parameters` entries may
+  name their module explicitly (`{module: s3p, quantity: ...}`, the target
+  schema) or use the older bare forms (`'S(0,0)'`, `['RoverQ', ...]`,
+  `['dose', 'total']`); `_infer_output_module` maps the bare shapes to a module
+  type so the three legacy chains reproduce with their existing specs. An output
+  targeting a module absent from the workflow raises a clear error
+  (`test_output_targets_absent_module`).
+- **`Workflow.evaluate` accepts three input shapes** — `None` (base inputs, a
+  single scalar run), an axis-scalar list aligned with `sweep_axes()` (a sweep
+  grid point), or a cubit-override mapping (the Xopt objective shape) — so the
+  Phase 3/4 modes can drive it without further changes. Workdir naming reuses
+  the legacy `_getworkdir` scheme (auto-mode suffixes verified equal, e.g.
+  `lume-ace3p_geant4_workdir_40.0`).
 
 ---
 
@@ -366,22 +518,60 @@ three legacy chains as declared workflows.
 
 ### Verification (Phase 3 done when)
 
-- `parameter_sweep` over each legacy chain produces a DataFrame whose numeric
-  content matches the old sweep output (column layout may differ — clean break).
-- Geant4 β-broadcast sweep (`beta_input`) runs through the mode and yields the
-  expected per-point dose scalars.
-- `single` mode round-trips one evaluation.
+- [x] `parameter_sweep` over each legacy chain produces a DataFrame whose
+  numeric content matches the old sweep output (column layout may differ — clean
+  break). `test_modes.py::test_{s3p,omega3p,omega3p_ace3p_axis}_sweep_matches_baseline`
+  diff the written table against the Phase-0.5 baselines via
+  `baseline_utils.compare_tables`: S3P long-format (inputs + `Frequency`),
+  Omega3P wide (16 rows, NaN outputs under dry-run), and the Omega3P+ACE3P-axis
+  32-row (4×4×2) sweep including the `ace3p:…Sigma` axis column.
+- [x] Geant4 β-broadcast sweep (`beta_input`) runs through the mode and yields
+  the expected per-point outputs. `test_modes.py::test_geant4_beta_broadcast_sweep`
+  drives the 5-point beta sweep and asserts the per-beta `particles.data`
+  matches the frozen `particles_beta40/60.digest.json` — the numeric proof the
+  broadcast reaches `ParticlesModule` per grid point. (Dose *scalars* proper
+  need a real Geant4 run; the checkable numeric artifact under dry-run is the
+  generated source file, per Phase 0.5.)
+- [x] `single` mode round-trips one evaluation.
+  `test_modes.py::test_single_{wide,s3p_long}_round_trip` cover the wide
+  (one-row) and S3P field-indexed (one-row-per-frequency) shapes.
 
 ### Deliverables
 
-- `src/lume_ace3p/modes.py` + tests. `run_lume_ace3p.py` gains a new dispatch on
-  `mode.type` over a built `Workflow` for `single` / `parameter_sweep`. **Leave
-  the legacy `(mode,module)` matrix and the `Omega3P/S3P/Geant4Workflow`
-  subclasses in place** — the Xopt cells still depend on them until Phase 4.
-  Deletion happens in Phase 6, after all modes exist. (A temporarily
-  dual-dispatch `run_lume_ace3p.py` on the `dev` branch is fine; no `master`
-  merge until the whole refactor is tested — so the intermediate state is
-  acceptable and does not need a compatibility shim.)
+- [x] `src/lume_ace3p/modes.py` + `tests/test_modes.py` (8 tests). Two files
+  added, three touched (`git status`: `modes.py` + `test_modes.py` new;
+  `modules.py`/`workflow_graph.py`/`run_lume_ace3p.py` modified); full suite
+  `python -m pytest tests/` = 63 passing (55 prior + 8 new), so the frozen
+  baselines and the legacy path are unchanged. `run_lume_ace3p.py` gains a
+  dispatch on the mode type over a built `Workflow` for `single` /
+  `parameter_sweep`, triggered by a top-level `workflow:` list; the legacy
+  `(mode,module)` matrix and the `Omega3P/S3P/Geant4Workflow` subclasses stay in
+  place (Xopt cells still depend on them until Phase 4). Dual-dispatch on `dev`,
+  no compatibility shim.
+
+**Deviations / notes recorded during Phase 3:**
+
+- **`field_index` seam added to keep the S3P long-format generic.** The plan's
+  "S3P long-format is the one tidy-frame exception" would otherwise force
+  solver-specific code into the mode. Instead `Module.field_index(ctx)` returns
+  the shared index axis (`S3PModule` → `('Frequency', array)`; dry-run mirrors
+  the legacy `[0.0]` sentinel), and `Workflow.field_index()` scans modules for
+  it. The mode goes long-format iff a module exposes an index — no `s3p`/`S(m,n)`
+  string is referenced in `modes.py`. The index is a property of the solver, not
+  of the requested `output_parameters`, so an S3P sweep with **no** declared
+  outputs still goes long-format (matching the legacy `WriteS3PDataTable`, which
+  keyed off `Frequency` regardless of outputs).
+- **Column layout is a clean break, verified on parsed content.** The legacy
+  writers emitted a trailing tab (a phantom `Unnamed` column) and stripped an
+  `ACE3P`-prefixed input name to its last segment; the new `to_csv` path does
+  neither. `compare_tables` reads both through pandas (dropping `Unnamed`
+  columns) and compares column *sets* + numeric values, so the diff is on
+  content, not byte layout — exactly the plan's numeric-equivalence contract.
+- **Geant4 sweep numeric check is the source file, not dose.** With no real
+  Geant4 binary the dose/edep scalars are unreachable (dry-run), so per the
+  Phase-0.5 findings the checkable per-point numeric artifact is the
+  `particles.data` the beta-broadcast produces. Dose-scalar extraction wiring
+  (`Geant4Module.extract`) is already unit-tested in Phase 1.
 
 ---
 
@@ -408,22 +598,48 @@ optimized/swept via generic output extraction.
 
 ### Verification (Phase 4 done when)
 
-- The S3P optimization + GP-sweep examples reproduce the same optimization
+- [x] The S3P optimization + GP-sweep examples reproduce the same optimization
   trajectory / GP predictions as today (numeric, not file-format, equality),
   driven through the generic mode.
-- A Geant4 workflow can be selected as the `scalar_optimize` objective (dry-run
-  proof that `evaluate`→objective wiring works with no S3P-specific code).
-- All six generators construct and step under the generic driver.
+  `test_run_xopt_compat.py::test_generic_s3p_optimization_matches_baseline`
+  (NelderMead trajectory) and `::test_generic_gp_sweep_matches_baseline` (both
+  the exploration trajectory `sim_output.txt` and the 10×10 GP posterior-mean
+  `sweep_output.txt`) diff the generic-mode output against the Phase-0.5
+  baselines via `baseline_utils.compare_tables` — exact numeric match, driven
+  through `modes.scalar_optimize` / `modes.gp_parameter_sweep` with a synthetic
+  `SynthWorkflow` (the S-parameter knowledge lives in the fake *workflow*, not
+  the mode).
+- [x] A Geant4 workflow can be selected as the `scalar_optimize` objective
+  (dry-run proof that `evaluate`→objective wiring works with no S3P-specific
+  code). `test_generic_geant4_objective_dry_run` builds a real declarative
+  `track3p_source→particles→geant4` workflow, extracts `total_weight` off the
+  (real) Particles pre-step as the objective, and optimizes `beta` for 3 steps
+  under dry-run — a genuine finite objective with the Geant4 binary absent.
+- [x] All six generators construct and step under the generic driver.
+  `test_generic_{neldermead,expected_improvement,ucb_single_objective,mobo,
+  multifidelity}` cover five via `scalar_optimize`; BayesianExploration (the
+  sixth) is exercised by `test_generic_gp_sweep_matches_baseline`. UCB is tested
+  single-objective (its multi-objective VOCS rejection under xopt 3.0.0 is the
+  known `UCB_Example` limitation from Phase 0.5).
+- MC-noise mode-config guards documented + tested:
+  `test_mc_noise_guard_requires_bin_edges` (explicit `bin_edges` required when
+  `mc_noisy_objective`) and `test_mc_noise_guard_skips_low_noise_prior`
+  (MultiFidelity does not force `use_low_noise_prior` for an MC-noisy objective).
 
 ### Deliverables
 
-- Xopt modes folded into `modes.py`; `run_xopt.py` reduced to generator
-  construction helpers or removed. Tests extend `tests/test_run_xopt_compat.py`
-  to drive the generic path with a synthetic workflow. After this phase all four
-  modes exist on the new architecture; the legacy dispatch matrix is now
-  unreferenced by the CLI but the `Omega3P/S3P/Geant4Workflow` subclasses stay
-  **importable/callable** so Phase 5 equivalence tests can construct old vs. new
-  on the same input. Actual deletion is Phase 6.
+- [x] Xopt modes folded into `modes.py` (`scalar_optimize`,
+  `gp_parameter_sweep`, `_build_generator`, `_make_vocs`,
+  `_objective_from_workflow`, `_mc_noise_guards`, `_save_model`); the CLI
+  (`run_lume_ace3p.py::_run_declarative`) now dispatches all four modes through
+  the declarative path. Tests extend `tests/test_run_xopt_compat.py` to drive
+  the generic path with a synthetic workflow. `run_xopt.py` + the legacy
+  `(mode,module)` matrix + the `Omega3P/S3P/Geant4Workflow` subclasses are left
+  **importable/callable** (not reduced/removed) so the Phase-5 equivalence tests
+  can construct old vs. new on the same input — actual deletion / reduction is
+  Phase 6. Also: `ParticlesModule.extract` now accepts the target-schema
+  `{module: particles, quantity: ...}` mapping form (needed for the Geant4
+  objective test).
 
 ---
 
@@ -446,14 +662,74 @@ result plumbing.
 
 ### Verification (Phase 5 done when)
 
-- All three modes emit their result DataFrame via one shared code path.
-- Field artifacts for a given row load back to the same arrays.
-- No remaining callers of the old dict `sweep_data` tuple-keyed structure.
+- [x] All three modes emit their result DataFrame via one shared code path.
+  Every result-producing mode routes through the single
+  `src/lume_ace3p/results.py::write_table` seam: `parameter_sweep` / `single`
+  build their DataFrame and write through it; `scalar_optimize` /
+  `gp_parameter_sweep` log `X.data` through it via `modes._log_xopt`; and the GP
+  posterior-mean sweep, previously a hand-rolled file loop, is now built as a
+  DataFrame and written through the same call.
+  `test_results.py::test_{parameter_sweep,single}_writes_through_shared_path`,
+  `::test_log_xopt_uses_shared_writer`, and
+  `::test_gp_sweep_frame_matches_baseline` (the shared-path GP sweep still
+  reproduces the Phase-0.5 `s3p_bayesian_sweep` numerically). The reduced
+  `tools.py` writers also defer to `results.write_table`, so there is one and
+  only one writer.
+- [x] Field artifacts for a given row load back to the same arrays.
+  `results.save_field` / `load_field` round-trip an S3P spectrum (Frequency +
+  S-parameter arrays + nested IndexMap) and a Geant4 `{indices, values}` voxel
+  grid exactly (`test_save_load_field_{s3p_spectrum,geant4_grid}`), and a wide
+  sweep whose workflow produces a field records a per-row `field_artifact`
+  handle (`results.FIELD_ARTIFACT_COLUMN`) that reloads to the module's grid
+  (`test_geant4_sweep_records_loadable_field_artifacts`). The S3P long-format
+  case carries no field-artifact column — its field values already are the rows
+  (`test_s3p_long_format_has_no_field_artifact_column`).
+- [x] No remaining callers of the old dict `sweep_data` tuple-keyed structure.
+  The module/workflow/mode/results code path is free of `sweep_data`
+  (AST-scanned in `test_new_code_path_has_no_sweep_data`); the only remaining
+  users are the legacy `workflow.py` subclasses, kept callable through this
+  phase for the equivalence tests and deleted in Phase 6.
 
 ### Deliverables
 
-- Consolidated result module; `tools.py` writers deleted or reduced to `to_csv`
-  helpers.
+- [x] Consolidated result module `src/lume_ace3p/results.py` (single shared
+  `write_table` + `save_field`/`load_field`/`FIELD_ARTIFACT_COLUMN`
+  field-artifact accessors) + `tests/test_results.py` (12 tests). `tools.py`
+  writers **reduced** to thin helpers that build a DataFrame and defer to
+  `results.write_table` (the legacy subclasses still call them until Phase 6, so
+  they are not deleted here — the baseline self-check drives them and still
+  matches the frozen fixtures). `modes.py` `single`/`parameter_sweep` gained the
+  per-row field-artifact column via new `Module.field` / `Workflow.field` seams
+  (`S3PModule.field` → spectrum, `Geant4Module.field` → voxel grids); `_log_xopt`
+  and the GP sweep now route through `results.write_table`. Full fast suite
+  (`test_modules` + `test_workflow_graph` + `test_modes` + `test_results`) = 59
+  passing; the Phase-0.5 baseline self-check = 10 passing (unchanged); the
+  generic-path numeric equivalence tests
+  (`test_run_xopt_compat.py::test_generic_{s3p_optimization,gp_sweep}_matches_baseline`)
+  still match. Slow botorch GP-fitting tests are trusted per the user (their
+  only touched code path, `_log_xopt`→`write_table`, is verified numerically by
+  the two generic equivalence tests).
+
+**Deviations / notes recorded during Phase 5:**
+
+- **Editable install was required.** The package was installed as a
+  *non-editable copy* in site-packages, so `src/` edits weren't imported until
+  `pip install -e .` was run. Re-confirmed all suites against `src/` afterward.
+- **Field artifact = `.npz`, no pickling.** `save_field` stores numeric leaves
+  as arrays and nested dicts (S3P IndexMap) as embedded JSON (strings encoded as
+  uint8), so `load_field` round-trips with `allow_pickle=False`. Geant4
+  `indices` (a list of `(ix,iy,iz)` tuples) is stored as a 2-D array.
+- **Field-artifact column is append-only and opt-in.** It appears only in the
+  wide table and only when a module actually produces a field (so all dry-run
+  baselines, which have no real field, are byte-for-numeric unchanged), and it
+  is appended *after* the output columns so it never displaces a baseline
+  column. The long-format (S3P) table never carries it.
+- **`tools.py` xopt-append path dropped.** `WriteS3PDataTable(is_xopt=True)` and
+  `WriteXoptData`'s `to_string` pretty-dump are superseded by
+  `modes._log_xopt` (which logs `X.data` through the shared writer). The reduced
+  `tools.py` keeps a minimal iteration-tagged append only so any legacy caller
+  still functions; the baseline self-check (which drives the legacy `run_xopt`)
+  confirms the numeric content is unchanged under `compare_tables`.
 
 ---
 
@@ -481,10 +757,21 @@ result plumbing.
 
 ### Verification (Phase 6 done when)
 
-- The migrated examples run (dry-run where env absent) under the new schema and
-  match their Phase-0.5 baselines on numerically-checkable quantities.
-- No references to removed workflow subclasses / writers remain in `src/`.
-- Docs + memory reflect the new architecture.
+- [x] The migrated examples run (dry-run where env absent) under the new schema
+  and match their Phase-0.5 baselines on numerically-checkable quantities.
+  `tests/test_baseline_selfcheck.py` drives the declarative module/mode path for
+  every frozen example and matches the fixtures (sweep tables, particle-weight +
+  geant4 `particles.data` digests, NelderMead trajectory); the migrated YAMLs
+  were additionally dry-run end-to-end through the CLI.
+- [x] No references to removed workflow subclasses / writers remain in `src/`.
+  `grep` for `Omega3P/S3P/Geant4Workflow`, `run_xopt`, `Write*DataTable`,
+  `WriteXoptData` over `src/` is clean.
+- [x] Docs + memory reflect the new architecture (README, `docs/index.md`,
+  `docs/yaml_reference.md`, `docs/parameter_sweep.md`, `docs/optimization.md`,
+  new `docs/testing.md`; memory notes updated).
+- [x] The default test run is fast — botorch GP-fitting tests carry
+  `@pytest.mark.slow` and `pyproject.toml` sets `addopts = -m 'not slow'`
+  (71 passed, 8 deselected); opt in with `pytest -m slow`.
 
 ---
 

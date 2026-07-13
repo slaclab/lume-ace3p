@@ -1,61 +1,72 @@
 # Parameter sweeping
 
 `lume-ace3p` has two main use-cases: parameter sweeping and optimization. For
-both, ACE3P workflows are evaluated many times according to parameters set by
-Python dictionaries (defined in YAML). The examples below are intended as
-templates.
+both, an ACE3P workflow is evaluated many times according to parameters set in
+a YAML file. A parameter sweep is a **mode** (`type: parameter_sweep`) that
+drives the declarative `workflow:` chain over the full tensor product of the
+swept input axes. The examples below are intended as templates.
 
-To set up a parameter sweep, two to four dictionaries must be provided in the
-`lume-ace3p` input file:
+To set up a parameter sweep, provide in the `lume-ace3p` input file:
 
-- `workflow_parameters` — filenames, HPC settings, and other configuration
-  used for the parameter sweep.
+- a `workflow:` list — the ordered module chain to run (e.g. `cubit → omega3p →
+  acdtool`, or `cubit → s3p`). Solver settings (`tasks`, `cores`, `opts`, the
+  input file) live on the module entries.
+- `mode:` with `type: parameter_sweep` and an `output_file` for the result
+  table.
 - `cubit_input_parameters` (or, equivalently, `input_parameters`) — input
-  names and corresponding vector values to sweep through, for parameters
-  pertaining to the geometry. The two keys are aliases; the Omega3P
-  example below uses `cubit_input_parameters` for clarity, while the S3P
-  example uses `input_parameters`.
-- `ace3p_input_parameters` — input names and corresponding vector values to
-  sweep through, for parameters pertaining to ACE3P settings.
-- `output_parameters` — output quantities to store in an output array for
-  printing (Omega3P only).
+  names and corresponding vector values to sweep through, for geometry
+  parameters. The two keys are aliases; the Omega3P example below uses
+  `cubit_input_parameters` for clarity, while the S3P example uses
+  `input_parameters`.
+- `ace3p_input_parameters` (optional) — input names and vector values to sweep,
+  for parameters inside the ACE3P input file.
+- `output_parameters` (optional) — output quantities to extract into the result
+  table.
 
-Once these dicts are defined in the `.yaml` file, the parameter sweep can be
-run with the `run_lume_ace3p.py` entry point.
+Once these are defined in the `.yaml` file, the parameter sweep is run with the
+`run-lume-ace3p` entry point.
 
 ## Omega3P parameter sweep example
 
 This example (based on the rounded-top pillbox from the
-[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23))
+[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23),
+shipped as
+[`examples/omega3p_sweep`](https://github.com/slaclab/lume-ace3p/blob/main/examples/omega3p_sweep/omega3p_sweep.yaml))
 configures `lume-ace3p` to run a parameter sweep over cavity radius and cavity
 wall ellipticity. The goal is to automate the entire mesh-generation,
-Omega3P calculation, and mode postprocessing pipeline into a single Python
-script submitted to HPC resources.
+Omega3P calculation, and mode postprocessing pipeline into a single job
+submitted to HPC resources.
 
-The script begins with the workflow parameters:
+The script begins with the workflow-level settings, the module chain, and the
+mode:
 
 ```yaml
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 'omega3p'
-  'cubit_input' : 'pillbox-rtop.jou'
-  'ace3p_input' : 'pillbox-rtop.omega3p'
-  'rfpost_input' : 'pillbox-rtop.rfpost'
-  'ace3p_tasks' : 16
-  'ace3p_cores' : 16
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_omega3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 'omega3p_sweep_output.txt'
+
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 16
+    cores : 16
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
+
+mode :
+  type : parameter_sweep
+  output_file : 'omega3p_sweep_output.txt'
 ```
 
-This dictionary contains input file paths (assumed to be in the same
-directory), working-directory settings, and HPC-specific commands for ACE3P.
-For this example: workflows are run in separate sub-directories (auto-named
-from input values), and Omega3P uses 16 MPI tasks × 16 cores/task with
-`--cpu-bind=cores`. `sweep_output` enables file output to `sweep_output_file`.
-See [](yaml_reference.md) for full details.
+`workflow_parameters` holds only directory settings here: workflows are run in
+separate sub-directories (`workdir_mode: auto`, auto-named from input values).
+Each module entry names its own input file and, for the solver, its MPI settings
+(16 tasks × 16 cores/task with `--cpu-bind=cores`). The `mode` block enables the
+result table written to `output_file`. See [](yaml_reference.md) for full
+details.
 
 Next, Cubit input parameters:
 
@@ -108,10 +119,11 @@ output_parameters :
   'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']
 ```
 
-`output_parameters` maps user-chosen labels to a list specifying the section
-id (`'RoverQ'`), mode/surface id string (`'0'`), and entry name (`'RoQ'`)
-extracted from `rfpost.out`. The `sweep_output_file` is a tab-delimited file
-with one column per input or output, one row per workflow evaluation.
+`output_parameters` maps user-chosen labels to a bare-form list specifying the
+section id (`'RoverQ'`), mode/surface id string (`'0'`), and entry name
+(`'RoQ'`); the workflow routes each to the `acdtool` module, which extracts it
+from `rfpost.out`. The `output_file` is a tab-delimited table with one column
+per input or output, one row per workflow evaluation.
 
 In this example the first row contains 8 text entries (`cav_radius`,
 `ellipticity`, `R/Q`, `mode_freq`, `E_max`, `loc_x`, `loc_y`, `loc_z`); each
@@ -135,17 +147,21 @@ combinations of parameters and frequencies.
 
 ```yaml
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 's3p'
-  'cubit_input' : 'bend-90degree.jou'
-  'ace3p_input' : 'bend-90degree.s3p'
-  'ace3p_tasks' : 32
-  'ace3p_cores' : 4
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_s3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 's3p_sweep_output.txt'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree.jou'
+  - module : s3p
+    input : 'bend-90degree.s3p'
+    tasks : 32
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 's3p_sweep_output.txt'
 ```
 
 ```yaml
@@ -168,15 +184,16 @@ Frequencies to scan with S3P are not "inputs" set here — they are set in the
 In this example `cornercut` and `rcorner2` are length 5 and 3, giving 5 × 3 =
 15 workflow evaluations and 15 distinct folders.
 
-Unlike Omega3P, the S3P parameter sweep does not use any output dict — only
-the `s3p_results/Reflection.out` file inside each workflow directory. Those
-contents are collected for each S3P run and combined into a single
-`sweep_output_file`, with extra columns for all combinations of inputs.
+S3P exposes a frequency field index, so its sweep table is emitted in
+**long format**: one row per `(grid-point, frequency)` rather than one row per
+grid point. `output_parameters` are optional here — even with none declared, the
+per-frequency S-parameters are tabulated because the frequency index alone
+drives the long-format rows.
 
 In the example, S3P scans 13 frequencies for each of the 15 workflow
-evaluations, giving 195 lines of data in `sweep_output_file`. Each line has
-`cornercut`, `rcorner2`, and `frequency`, followed by the four S-parameters
-of the 2-port system (`S(0,0)`, `S(0,1)`, `S(1,0)`, `S(1,1)`).
+evaluations, giving 195 rows in `output_file`. Each row has `cornercut`,
+`rcorner2`, and `Frequency`, followed by the four S-parameters of the 2-port
+system (`S(0,0)`, `S(0,1)`, `S(1,0)`, `S(1,1)`).
 
 ### S3P parameter sweep with no separate ACE3P file
 
@@ -232,33 +249,45 @@ details.
 
 ## Gaussian-process (low-fidelity) parameter sweep
 
-For S3P, `lume-ace3p` also supports a low-fidelity sweep mode that fits a
-Gaussian Process to the simulator output and then samples the GP on a
-tensor grid — useful for cheaply exploring parameter space without
-running every grid point through S3P. The mode is selected with
-`mode: 'gp_parameter_sweep'` and `module: 's3p'`.
+`lume-ace3p` also supports a Bayesian-exploration sweep mode that fits a
+Gaussian Process to the simulator output and then samples the GP posterior mean
+on a tensor grid — useful for cheaply exploring parameter space without running
+every grid point through the solver. The mode is selected with
+`mode: {type: gp_parameter_sweep}`.
 
-Three sections must be supplied in addition to `workflow_parameters`:
+Three sections must be supplied in addition to the `workflow:` chain:
 
 - `sweep_parameters` — the tensor grid the trained GP is evaluated on.
-- `vocs_parameters` — Xopt VOCS for the exploration phase. The
-  `objectives` block uses `'explore'` as the optimization keyword.
-- `xopt_parameters` — Xopt driver settings. `num_step` controls the
-  number of GP-guided exploration steps; `num_random` (default 5)
-  controls the random-seeding phase; `improvement_threshold` (default
-  0.01) and `patience` (default 5) configure early stopping.
+- `vocs_parameters` — Xopt VOCS for the exploration phase. The `objectives`
+  block maps an `output_parameters` name to `'explore'`.
+- `xopt_parameters` — Xopt driver settings. `max_steps` caps the GP-guided
+  exploration steps; `num_random` (default 5) controls the random-seeding
+  phase; `improvement_threshold` (default 0.01) and `patience` (default 5)
+  configure early stopping.
 
 A complete example is shipped as
 [examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml](https://github.com/slaclab/lume-ace3p/blob/main/examples/s3p_bayesian_sweep/s3p_bayesian_sweep.yaml):
 
 ```yaml
 workflow_parameters :
-    'mode' : 'GP_parameter_sweep'
-    'module' : 's3p'
-    'cubit_input': 'bend-90degree_mf.jou'
-    'ace3p_input': 'bend-90degree_mf.s3p'
-    'ace3p_tasks': 16
-    'ace3p_cores': 4
+    'workdir' : 'lume-ace3p_mf_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree_mf.jou'
+  - module : s3p
+    input : 'bend-90degree_mf.s3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+    type : gp_parameter_sweep
+    output_file : 'sim_output.txt'
+    sweep_output_file : 'sweep_output.txt'
+
+output_parameters :
+    'S(1,1)_12.0e+09' : { module: s3p, quantity: 'S(1,1)', at: { frequency: 12.0e+09 } }
 
 sweep_parameters :
     'cornercut' :
@@ -278,64 +307,92 @@ vocs_parameters :
         'S(1,1)_12.0e+09': 'explore'
 
 xopt_parameters :
-    num_step : 3
+    max_steps : 3
 ```
 
-The GP-sampled grid is written to `sweep_output.txt`; the actual S3P
-evaluations performed during exploration are written to
-`sim_output.txt` and `sim_output_all_values.txt`.
+The explored objective (`S(1,1)_12.0e+09`) is an `output_parameters` name, so
+the driver pulls it from the workflow generically. The GP posterior-mean grid is
+written to the `sweep_output_file`; the actual S3P evaluations performed during
+exploration are logged to the `output_file` trajectory table.
 
 ## Track3P particle weighting
 
-The `mode: 'particle_weight'` workflow is a standalone post-processing
-step that reads a Track3P particle dump, filters by impact order /
-face id, bins by axial position, and writes a weighted-particle file
-suitable as a Geant4 source. No ACE3P invocation occurs.
+Field-emission particle weighting is the `particles` module — a
+post-processing step that reads a Track3P particle dump, filters by impact order
+/ face id, bins by axial position, and writes a weighted-particle file suitable
+as a Geant4 source. There is no ACE3P solver in this chain; the external dump is
+supplied by a `track3p_source` module and the whole thing runs in `single` mode
+(the weighting is pure Python). This is
+[`examples/track3p_particle_weight`](https://github.com/slaclab/lume-ace3p/blob/main/examples/track3p_particle_weight/track3p_particle_weight.yaml):
 
 ```yaml
 workflow_parameters :
-  'mode' : 'particle_weight'
-  'module' : 'track3p'
-  'particle_input' : 'sample_track3p_particles.txt'
-  'particle_output' : 'track3p_particles_weighted.txt'
+  'workdir' : 'lume-ace3p_track3p_workdir'
+  'workdir_mode' : 'manual'
 
-particle_parameters :
-  'impact_order'   : 1
-  'impact_face_id' : 4
-  'work_function'  : 4.5
-  'dt'             : 1.0e-10
-  'num_bins'       : 8
-  'beta'           : [50, 55, 60, 65, 65, 60, 55, 50]
+workflow :
+  - module : track3p_source
+    file : 'sample_track3p_particles.txt'
+  - module : particles
+    impact_order : 1
+    impact_face_id : 4
+    work_function : 4.5
+    dt : 1.0e-10
+    num_bins : 8
+    beta : [50, 55, 60, 65, 65, 60, 55, 50]
+    output_format : 'track3p'
+    output : 'track3p_particles_weighted.txt'
+
+mode :
+  type : single
 ```
 
-See [](yaml_reference.md#particle_parameters) for the full key list.
+`output_format: 'track3p'` writes the weighted-Track3P dump (all filtered
+columns plus `Bin` and `ParticleWeight`); the module default `'geant4'` instead
+writes the 10-column Geant4 source file. See
+[](yaml_reference.md#particles-module-keys) for the full key list.
 
 ## Geant4 dose-calculation workflow
 
-The `mode: 'geant4'` workflow drives a Geant4 application using a single
-plain-text input file (`key = value` lines, `#` comments) that names its
-own geometry STL files, scoring mesh, thread count, and output files. The
-particle-source file can either be supplied directly via
-`geant4_particle_file` or generated on the fly from a Track3P dump by also
-providing a `particle_parameters` section (chaining the same logic as
-`mode: 'particle_weight'`). The workflow writes the source filename and the
-matching `beam_on` particle count into the input file, copies the STL files
-it names into each working directory, and reads the dose / energy-deposit
-output files after the run.
+The `geant4` module drives a Geant4 application using a single plain-text input
+file (`key = value` lines, `#` comments) that names its own geometry STL files,
+scoring mesh, thread count, and output files. The particle source is supplied by
+an upstream module in the chain — either a `particles` weighting step (fed by a
+`track3p_source`) or a `particle_source` module naming a prebuilt Geant4-format
+file directly. The `geant4` module writes the source filename and the matching
+`beam_on` particle count into the input file, copies the STL files it names into
+each working directory, and reads the dose / energy-deposit output files after
+the run.
 
-A minimal YAML skeleton:
+The full runnable chain (`track3p_source → particles → geant4`) is shipped as
+[`examples/geant4_track3p_beta`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_track3p_beta/geant4_track3p_beta.yaml)
+(a `beta` sweep) and
+[`examples/geant4_dose_single`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_dose_single/geant4_dose_single.yaml)
+(a single evaluation). A minimal skeleton:
 
 ```yaml
 workflow_parameters :
-  'mode' : 'geant4'
-  'module' : 'geant4'
-  'geant4_input'         : 'input_7cell.geant4.txt'
-  'geant4_particle_file' : 'track3p_particles_weighted.txt'
-  # 'geant4_threads'     : 4   # optional; overrides 'nthreads' in the input file
+  'workdir' : 'lume-ace3p_dose_workdir'
+  'workdir_mode' : 'manual'
 
-geant4_input_parameters :
-  'world_z' : 250.0
-  # additional input-file overrides (plain keys, no '/')…
+workflow :
+  - module : track3p_source
+    file : 'sample_track3p_particles.txt'
+  - module : particles
+    impact_order : 1
+    impact_face_id : 6
+    work_function : 4.5
+    dt : 1.0e-10
+    num_bins : 8
+    beta : [50, 55, 60, 65, 65, 60, 55, 50]
+    output_format : 'geant4'
+    output : 'particles.data'      # must match the 'particles = ...' line in the Geant4 input
+  - module : geant4
+    geant4_input : 'input_7cell.geant4'
+
+mode :
+  type : single
+  output_file : 'dose_single_output.txt'
 
 output_parameters :
   'total_dose' : ['dose', 'total']
@@ -343,7 +400,10 @@ output_parameters :
   'total_edep' : ['edep', 'total']
 ```
 
-Geant4 paths are resolved through the same precedence chain as ACE3P —
-see [](installation.md#executable-paths). If `GEANT4_APP_PATH` /
-`GEANT4_APP_EXE` (or YAML / site-default equivalents) are unset,
-dry-run mode is auto-enabled.
+Optional Geant4 input-file overrides go in `geant4_input_parameters` (plain
+keys, no `/`); a swept override there becomes an additional sweep axis. Geant4
+paths are resolved through the same precedence chain as ACE3P — see
+[](installation.md#executable-paths). If `GEANT4_APP_PATH` / `GEANT4_APP_EXE`
+(or YAML / site-default equivalents) are unset, dry-run mode is auto-enabled
+(the `particles` weighting still runs for real; only the Geant4 binary is
+skipped).

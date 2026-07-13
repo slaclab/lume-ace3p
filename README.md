@@ -13,11 +13,34 @@ by Christopher Mayes and uses [Xopt](https://github.com/xopt-org/Xopt)
 by Ryan Roussel for optimization.
 
 The user submits a batch script to HPC nodes which calls `run_lume_ace3p.py`
-with a user-defined YAML configuration. The entry point automatically calls
-Cubit, the requested ACE3P module (Omega3P, S3P, T3P, or Track3P), and
-acdtool, parses the output, and writes results to a tab-delimited file or
-hands them to Xopt for optimization. A separate Geant4 module is also
-supported for downstream dose calculations driven by Track3P particle output.
+with a user-defined YAML configuration. The YAML declares a **`workflow:`** — an
+ordered list of pipeline **modules** (`cubit`, `omega3p`/`s3p`, `acdtool`,
+`track3p_source`, `particles`, `geant4`, and mesh/particle source modules) — plus
+a **`mode:`** that says how to drive it (`single`, `parameter_sweep`,
+`scalar_optimize`, `gp_parameter_sweep`). The modules are validated into a
+runnable DAG by their artifact dependencies, run in order, and the scalars named
+in `output_parameters` are pulled out into a tab-delimited results table or
+handed to Xopt for optimization. Because the modes are workflow-agnostic, any
+chain — an S3P sweep, a Geant4 dose optimization, or a full
+`track3p_source → particles → geant4` pipeline — is driven by the same code.
+
+### Architecture
+
+Three cleanly separated layers (see
+[`docs/workflow_module_refactor_plan.md`](docs/workflow_module_refactor_plan.md)):
+
+1. **Modules** (`src/lume_ace3p/modules.py`) — one adapter per pipeline step,
+   each declaring the artifact kinds it `requires` and `provides`.
+2. **Workflow** (`src/lume_ace3p/workflow_graph.py`) — a declarative,
+   YAML-defined list of modules validated into an ordered DAG, exposing a single
+   black-box `evaluate(input_dict) -> output_dict`.
+3. **Modes** (`src/lume_ace3p/modes.py`) — how the workflow is driven; they call
+   only `evaluate`/`sweep_axes` and own the outer loop (tensor product, Xopt
+   generators, termination). Results flow through one shared writer
+   (`src/lume_ace3p/results.py`).
+
+See the [`examples/`](examples/) directory for a YAML per mode and solver family,
+and [`docs/testing.md`](docs/testing.md) for how to run the test suite.
 
 ## Documentation
 

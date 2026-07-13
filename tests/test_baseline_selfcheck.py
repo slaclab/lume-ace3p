@@ -1,14 +1,22 @@
-"""Phase-0.5 baseline self-check.
+"""Baseline self-check — the fast default correctness gate.
 
-Re-runs the *current* (pre-refactor) code for every frozen example and confirms
-it still reproduces its own `tests/baseline/` fixtures within tolerance. This is
-the guard the plan requires: if a capture is flaky or nondeterministic, this
-test fails *before* the fixture is trusted as a reference in later phases.
+Re-runs each frozen example through the **declarative module/mode path** and
+confirms it still reproduces its own `tests/baseline/` fixtures within tolerance.
+This is the numeric-equivalence gate the refactor relies on: the fixtures were
+frozen from the pre-refactor code (Phase 0.5), and the new code path must still
+match them on the numerically-checkable quantities.
 
-Run:  python -m pytest tests/test_baseline_selfcheck.py -v
-or standalone:  python tests/test_baseline_selfcheck.py
+Most examples run fast (dry-run sweeps + pure-Python particle weighting + a
+NelderMead trajectory). The botorch GP-fitting examples (MOBO/EHVI and the
+BayesianExploration GP sweep) are slow (~minutes) and one is a known
+nondeterministic flake, so they carry `@pytest.mark.slow` and are excluded from
+the default run. Opt in with `pytest -m slow` before a master merge.
 
-Regenerate fixtures (only on the current code, intentionally):
+Run (fast default):  python -m pytest tests/test_baseline_selfcheck.py
+Include slow:         python -m pytest -m slow tests/test_baseline_selfcheck.py
+or standalone:        python tests/test_baseline_selfcheck.py
+
+Regenerate fixtures (intentionally, from the current code):
     python tests/freeze_baseline.py
 """
 
@@ -17,6 +25,17 @@ import os
 import pytest
 
 import baseline_utils as bu
+
+
+# Botorch GP-fitting examples: slow (~minutes) and, for MOBO/EHVI,
+# nondeterministic. Excluded from the default run; see docs/testing.md.
+SLOW_EXAMPLES = {'MOBO_ExpectedHypervolume_Example', 's3p_bayesian_sweep'}
+
+
+def _param(name):
+    """Attach @pytest.mark.slow to the botorch-backed examples."""
+    marks = [pytest.mark.slow] if name in SLOW_EXAMPLES else []
+    return pytest.param(name, marks=marks)
 
 
 def _check_example(name, meta):
@@ -60,7 +79,7 @@ def _check_example(name, meta):
     return failures
 
 
-@pytest.mark.parametrize('name', sorted(bu.EXAMPLES))
+@pytest.mark.parametrize('name', [_param(n) for n in sorted(bu.EXAMPLES)])
 def test_baseline_matches(name):
     meta = bu.EXAMPLES[name]
     failures = _check_example(name, meta)

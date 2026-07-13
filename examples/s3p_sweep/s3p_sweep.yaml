@@ -1,17 +1,28 @@
+# S3P parameter sweep on the declarative module/mode schema:
+#   workflow:  cubit -> s3p
+#   mode:      parameter_sweep  (tensor product over the swept input axes)
+# S3P exposes a Frequency field index, so the result table is emitted long-format
+# (one row per (cornercut, rcorner2, Frequency)). 'output_file' names the result
+# table written via the shared DataFrame.to_csv writer.
+
 workflow_parameters :
-  'mode' : 'parameter_sweep'
-  'module' : 's3p'
-  'cubit_input' : 'bend-90degree.jou'
-  'ace3p_input' : 'bend-90degree.s3p'
-  'ace3p_tasks' : 16
-  'ace3p_cores' : 4
-  'ace3p_opts' : '--cpu-bind=cores'
   'workdir' : 'lume-ace3p_s3p_workdir'
   'workdir_mode' : 'auto'
-  'sweep_output' : True
-  'sweep_output_file' : 's3p_sweep_output.txt'
 
-input_parameters : 
+workflow :
+  - module : cubit
+    journal : 'bend-90degree.jou'
+  - module : s3p
+    input : 'bend-90degree.s3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 's3p_sweep_output.txt'
+
+input_parameters :
   'cornercut' :
     'min' : 12.0
     'max' : 16.0

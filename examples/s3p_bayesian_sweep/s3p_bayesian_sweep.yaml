@@ -1,29 +1,48 @@
+# S3P Bayesian-exploration GP sweep on the declarative module/mode schema:
+#   workflow:  cubit -> s3p
+#   mode:      gp_parameter_sweep  (Xopt BayesianExploration + a GP posterior-mean
+#                                   sweep over the sweep_parameters grid)
+# The explored objective name ('S(1,1)_12.0e+09') is an output_parameters name,
+# so the driver pulls it from the workflow generically — no S-parameter parsing
+# in the mode. 'output_file'/'sweep_output_file' name the trajectory and the
+# GP posterior-mean sweep tables.
+
 workflow_parameters :
-    'mode' : 'GP_parameter_sweep'
-    'module' : 's3p'
-    'cubit_input': 'bend-90degree_mf.jou'
-    'ace3p_input': 'bend-90degree_mf.s3p'
-    'ace3p_tasks': 16
-    'ace3p_cores': 4
-    'ace3p_opts' : '--cpu-bind=cores'
-    'workdir': 'lume-ace3p_mf_workdir'
+    'workdir' : 'lume-ace3p_mf_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'bend-90degree_mf.jou'
+  - module : s3p
+    input : 'bend-90degree_mf.s3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+    type : gp_parameter_sweep
+    output_file : 'sim_output.txt'
+    sweep_output_file : 'sweep_output.txt'
+
+output_parameters :
+    'S(1,1)_12.0e+09' : { module: s3p, quantity: 'S(1,1)', at: { frequency: 12.0e+09 } }
 
 sweep_parameters :
-    'cornercut' : 
+    'cornercut' :
         min : 12.5
         max : 13.5
         num : 10
-    'wgwidth' : 
+    'wgwidth' :
         min : 21
         max : 22
         num : 10
 
 vocs_parameters :
     'variables' :
-        'cornercut': [12.5,13.5]
-        'wgwidth': [21,22]
+        'cornercut' : [12.5, 13.5]
+        'wgwidth' : [21, 22]
     'objectives' :
-        'S(1,1)_12.0e+09': 'explore'
-        
+        'S(1,1)_12.0e+09' : 'explore'
+
 xopt_parameters :
     num_step : 3

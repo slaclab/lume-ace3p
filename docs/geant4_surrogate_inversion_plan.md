@@ -1,13 +1,21 @@
 # Geant4 Dose Surrogate & Inversion — Implementation Plan
 
-**Status:** SHELVED (2026-07-08) pending the workflow modularization refactor —
-see `docs/workflow_module_refactor_plan.md`. Phase 0 (xopt 3.0.0 compat) done.
-**Phase 1 (decouple Xopt from S3PWorkflow) is superseded**: it will be delivered
-by the refactor's Phase 4 (generic Xopt mode over any workflow), so its
-hard-no-change contract below no longer applies (the refactor is a deliberate
-clean break). Resume Phases 2–4 (collect_training_data, train_surrogate,
-invert_*) as **new modes** on the new architecture once the refactor reaches its
-Phase 6.
+**Status:** UNSHELVED (2026-07-10). The workflow modularization refactor is
+complete (see `docs/workflow_module_refactor_plan.md`), so this project resumes
+on the new module/workflow/mode architecture.
+**Phase 0 (xopt 3.0.0 compat) done. Phase 1 (decouple Xopt from S3PWorkflow) is
+DELIVERED** by the refactor's Phase 4: `scalar_optimize` / `gp_parameter_sweep`
+in `src/lume_ace3p/modes.py` are now generic over any `Workflow` (objective
+pulled from `evaluate()` + declarative `output_parameters`), so the S3P-hardwired
+`run_xopt.py` and its hard-no-change contract below are gone (the refactor was a
+deliberate clean break — the legacy `S3PWorkflow`/`run_xopt` no longer exist).
+The MC-noise correctness constraints (constraint #2) are already wired as mode
+config (`mc_noisy_objective`, required explicit `bin_edges`) in
+`modes._mc_noise_guards` / `_build_generator`.
+**Next: Phases 2–4 (collect_training_data, train_surrogate, invert_*) become
+NEW MODES** on the new architecture — each a workflow-agnostic mode in
+`modes.py` (or a sibling module) driving the existing Geant4 `Workflow`, exactly
+as `parameter_sweep`/`scalar_optimize` do today.
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
@@ -101,13 +109,22 @@ real solver.
 
 ---
 
-# Phase 1 — Decouple the Xopt driver from S3PWorkflow
+# Phase 1 — Decouple the Xopt driver from S3PWorkflow — DELIVERED
 
-**Objective:** Make `run_xopt` / `run_lf_sweep` workflow-agnostic so a
-`Geant4Workflow`-based objective can plug in later, **without changing the input
-file format or output behavior of the current S3P optimization tools.**
+**Delivered by the modularization refactor's Phase 4 (2026-07-10).** The Xopt
+driver is now workflow-agnostic: `modes.scalar_optimize` / `modes.gp_parameter_sweep`
+pull the objective scalar(s) from `Workflow.evaluate(input_dict)` + the
+declarative `output_parameters` spec, so a Geant4 (or any) workflow plugs in with
+no S3P-specific code. Verified by
+`tests/test_run_xopt_compat.py::test_generic_geant4_objective_dry_run` (a Geant4
+chain as the objective) and the S3P numeric-equivalence tests.
 
-### Hard no-change contract (must hold exactly)
+> **The hard-no-change contract below is VOID.** It predates the decision to
+> make the refactor a clean break (new declarative YAML + `DataFrame.to_csv`
+> outputs, example YAMLs rewritten). It is kept here only as a record of the
+> original Phase-1 intent; do not treat it as a live requirement.
+
+### Hard no-change contract (superseded — historical, do NOT enforce)
 
 For the S3P paths (`mode: scalar_optimize` and `mode: gp_parameter_sweep`,
 `module: s3p`), after this refactor:
