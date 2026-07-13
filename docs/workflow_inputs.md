@@ -1,10 +1,15 @@
 # Setting up workflow input files
 
-Internally, `lume-ace3p` evaluates ACE3P workflows (e.g. Cubit → Omega3P →
-acdtool task chains), each of which requires its own input files. Typical
-input files used in ACE3P workflows need only minimal adjustment for use with
-`lume-ace3p`. The main consideration is making sure variable and file names
-are consistent throughout each input file.
+A `lume-ace3p` run is a user-composed **`workflow:`** — an ordered list of
+modules (`cubit`, `omega3p`/`s3p`, `acdtool`, `track3p_source`, `particles`,
+`geant4`, …) that are validated into a runnable DAG by their artifact
+dependencies. The chain is *not* a fixed pipeline: you list only the modules you
+want (an Omega3P sweep is `cubit → omega3p → acdtool`; an S3P sweep is
+`cubit → s3p`), and each module carries its own input-file references. This page
+covers the external input files those modules consume; see [](yaml_reference.md)
+for the module list itself. Typical ACE3P input files need only minimal
+adjustment for use with `lume-ace3p` — the main consideration is making sure
+variable and file names are consistent throughout each input file.
 
 ## Cubit journal files
 
@@ -40,9 +45,14 @@ option, e.g.:
 export Genesis "my_mesh_file.gen" block all overwrite
 ```
 
-This exports the generated mesh into a `.gen` file, and `lume-ace3p`
-automatically calls acdtool to convert it to a `.ncdf` file with the same name
-(`my_mesh_file.ncdf` here).
+This exports the generated mesh into a `.gen` file. The mesh conversion is a
+sub-step *inside* the `cubit` module — after meshing, the module calls acdtool
+to convert the `.gen` file to a `.ncdf` file of the same name (`my_mesh_file.ncdf`
+here). It is not a separate workflow entry; toggle it with `meshconvert: false`
+on the `cubit` module entry when the journal already exports a `.ncdf` mesh (or
+you otherwise want to skip conversion). To skip Cubit meshing entirely, drop the
+`cubit` module and provide the mesh with a `mesh` source module instead — see
+[](yaml_reference.md).
 
 For more information on Cubit journal files, see the official
 [Cubit documentation](https://cubit.sandia.gov/documentation/).

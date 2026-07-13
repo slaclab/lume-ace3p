@@ -104,8 +104,11 @@ if not swept.
 
 In this example `cav_radius` and `ellipticity` are length-4 vectors, and
 `Sigma` has two values, giving 4 × 4 × 2 = 32 workflow evaluations. Because
-`workdir_mode` is `auto`, each evaluation creates a folder named
-`lume-ace3p_demo_workdir_X_Y_Z` for a total of 32 folders.
+`workdir_mode` is `auto`, each evaluation creates a folder named from the
+`workdir` base plus the swept scalar values (e.g.
+`lume-ace3p_omega3p_workdir_90.0_0.5_58000000.0`) for a total of 32 folders. The
+full `cubit → omega3p → acdtool` chain — including the in-`cubit` meshconvert —
+re-runs in each folder.
 
 Then, output parameters:
 
@@ -125,10 +128,12 @@ section id (`'RoverQ'`), mode/surface id string (`'0'`), and entry name
 from `rfpost.out`. The `output_file` is a tab-delimited table with one column
 per input or output, one row per workflow evaluation.
 
-In this example the first row contains 8 text entries (`cav_radius`,
-`ellipticity`, `R/Q`, `mode_freq`, `E_max`, `loc_x`, `loc_y`, `loc_z`); each
-subsequent row holds the input values and the corresponding 6 outputs. See
-[](yaml_reference.md) for the full list of supported output sections.
+In this example the table has 9 columns — one per swept axis (`cav_radius`,
+`ellipticity`, and the swept ACE3P leaf, whose column is labeled by its path
+`ace3p:ModelInfo.SurfaceMaterial.Sigma`) followed by the 6 declared outputs
+(`R/Q`, `Mode_freq`, `E_max`, `loc_x`, `loc_y`, `loc_z`) — with one row per
+workflow evaluation. See [](yaml_reference.md) for the full list of supported
+output sections.
 
 If no output dict is specified, the parameter sweep still runs but
 `rfpost.out` data will not be parsed or tabulated (useful when only the
@@ -240,12 +245,11 @@ a necessary ACE3P input parameter is missing.
 
 ## Viewing S3P parameter sweep output
 
-A simple plotting tool is included with `lume-ace3p` which reads
-`sweep_output_file` from an S3P workflow and plots the results in an
-interactive plot. To use it, run `s3p_sweep_plot.py` and load the appropriate
-S3P `sweep_output_file` from the file prompt. Try `s3p_demo_sweep_output.txt`
-in the `plotting` folder for an interactive demo. See [](plotting.md) for
-details.
+A simple plotting tool is included with `lume-ace3p` which reads the S3P sweep
+result table (the `mode.output_file`) and plots the results in an interactive
+plot. To use it, run `s3p_sweep_plot.py` and load the appropriate S3P
+`output_file` from the file prompt. Try `s3p_demo_sweep_output.txt` in the
+`plotting` folder for an interactive demo. See [](plotting.md) for details.
 
 ## Gaussian-process (low-fidelity) parameter sweep
 
