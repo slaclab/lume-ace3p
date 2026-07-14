@@ -16,6 +16,7 @@ point in the sweep.
 """
 
 import os
+import itertools
 import numpy as np
 
 
@@ -120,14 +121,18 @@ class SweepInfo:
         base_dir:  the sweep base workdir (absolute, resolved from the YAML dir)
         dose_name: dose deposit filename inside each folder (or None)
         edep_name: energy deposit filename inside each folder (or None)
+        geant4_input: absolute path to the Geant4 input file (or None) — source
+                   of the scoring-mesh geometry and STL geometry for an overlay.
     """
 
-    def __init__(self, axes, base_dir, dose_name, edep_name, scalar_str):
+    def __init__(self, axes, base_dir, dose_name, edep_name, scalar_str,
+                 geant4_input=None):
         self.axes = axes
         self.base_dir = base_dir
         self.dose_name = dose_name
         self.edep_name = edep_name
         self._scalar_str = scalar_str
+        self.geant4_input = geant4_input
 
     def folder_for(self, scalar_tuple):
         """Return the workdir path for a tuple of swept-axis scalar values,
@@ -194,18 +199,20 @@ def load_sweep(yaml_path):
                  or workflow_dict.get('geant4_edep_output'))
     geant4_input = (geant4_entry.get('geant4_input')
                     or workflow_dict.get('geant4_input'))
-    if (dose_name is None or edep_name is None) and geant4_input is not None:
+    input_path = None
+    if geant4_input is not None:
         input_path = geant4_input
         if not os.path.isabs(input_path):
             input_path = os.path.join(yaml_dir, input_path)
-        if os.path.isfile(input_path):
+        if (dose_name is None or edep_name is None) and os.path.isfile(input_path):
             kv = _read_key_value_file(input_path)
             if dose_name is None:
                 dose_name = kv.get('output_dose')
             if edep_name is None:
                 edep_name = kv.get('output_edep')
 
-    return SweepInfo(axes, base_workdir, dose_name, edep_name, _scalar_str)
+    return SweepInfo(axes, base_workdir, dose_name, edep_name, _scalar_str,
+                     geant4_input=input_path)
 
 
 def load_sweep_deposit(sweep, scalar_tuple, source):
@@ -230,3 +237,252 @@ def load_sweep_deposit(sweep, scalar_tuple, source):
     except ValueError as exc:
         print('Warning: ' + str(exc))
         return None
+
+
+def _log_field(parsed):
+    """Log10-compress a parsed deposit grid into the viewer's voxel-axis order.
+
+    Shared by `log_igrid` and `physical_log_igrid` so the log transform and the
+    accelerator axis convention live in exactly one place. Returns a 5-tuple:
+
+        (logval_t, vlabel, mesh_name, logmin, logmax)
+
+    where `logval_t` is the log10 field transposed to (nz, nx, ny) — beam axis Z
+    first, then transverse X, Y — with zero voxels held at the log floor, and
+    (logmin, logmax) are the log10 range over the nonzero voxels. If `parsed` is
+    None or has no nonzero voxels, `logval_t` is None.
+    """
+    if parsed is None:
+        return None, 'value', '(missing)', None, None
+    grid = parsed['grid']
+    vlabel = parsed['vlabel']
+    nonzero = grid[grid > 0]
+    if nonzero.size == 0:
+        return None, vlabel, parsed['mesh_name'], None, None
+
+    # Map nonzero values to log10; leave zero voxels at the floor (fully clear).
+    logmin = float(np.log10(nonzero.min()))
+    logmax = float(np.log10(nonzero.max()))
+    logval = np.full(grid.shape, logmin)
+    logval[grid > 0] = np.log10(grid[grid > 0])
+
+    # Accelerator convention: beam axis Z first, then transverse X, Y.
+    logval = np.transpose(logval, (2, 0, 1))   # (nz, nx, ny)
+    return logval, vlabel, parsed['mesh_name'], logmin, logmax
+
+
+def log_igrid(parsed):
+    """Build a PyVista ImageData holding the log10-compressed deposit field.
+
+    Shared by the volumetric viewer and the animation tool so the log transform
+    and voxel-axis convention live in one place. `parsed` is a parse_deposit_file
+    dict (or None). Returns a 5-tuple:
+
+        (igrid, vlabel, mesh_name, logmin, logmax)
+
+    where igrid is a pv.ImageData with cell scalars `vlabel` (log10 of the
+    deposit, zero voxels held at the floor), and (logmin, logmax) are the log10
+    range over the nonzero voxels. If there are no nonzero voxels, igrid is None
+    and logmin/logmax are None. The grid sits in voxel-index space (unit spacing,
+    origin at 0); see `physical_log_igrid` for a version placed in physical mm.
+
+    PyVista is imported lazily so the dependency-free 2D/3D-scatter viewers can
+    keep importing this module without PyVista installed.
+    """
+    import pyvista as pv
+
+    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed)
+    if logval is None:
+        return None, vlabel, mesh_name, logmin, logmax
+
+    # PyVista expects point/cell scalars in Fortran order for these dimensions.
+    igrid = pv.ImageData(dimensions=np.array(logval.shape) + 1)
+    igrid.cell_data[vlabel] = logval.flatten(order='F')
+    return igrid, vlabel, mesh_name, logmin, logmax
+
+
+def read_mesh_geometry(geant4_input_path):
+    """Read the Geant4 scoring-mesh geometry from a Geant4 input file.
+
+    Pulls the scoring-mesh keys (`mesh_cx/cy/cz` center, `mesh_x/y/z` half-sizes,
+    `mesh_nx/ny/nz` bin counts — all in mm) via `_read_key_value_file` and returns
+    a dict describing the box in the viewer's VTK-axis order (Z, X, Y):
+
+        {'origin': (oz, ox, oy),          # low corner, mm, VTK order
+         'spacing': (sz, sx, sy),         # per-voxel size, mm, VTK order
+         'center': (cx, cy, cz),          # raw physical center, mm
+         'half': (hx, hy, hz),            # raw physical half-sizes, mm
+         'bins': (nx, ny, nz)}            # raw bin counts
+
+    Origin/spacing follow the (nz, nx, ny) transpose used by `_log_field`, so a
+    physical ImageData built with them lines up with the log field. Spacing is
+    computed per-axis (never assumes cubic voxels). Returns None if the path is
+    missing/unreadable or any required key is absent or non-numeric.
+    """
+    if not geant4_input_path or not os.path.isfile(geant4_input_path):
+        return None
+    kv = _read_key_value_file(geant4_input_path)
+    keys = ('mesh_cx', 'mesh_cy', 'mesh_cz', 'mesh_x', 'mesh_y', 'mesh_z',
+            'mesh_nx', 'mesh_ny', 'mesh_nz')
+    if any(k not in kv for k in keys):
+        return None
+    try:
+        cx, cy, cz = (float(kv['mesh_cx']), float(kv['mesh_cy']),
+                      float(kv['mesh_cz']))
+        hx, hy, hz = (float(kv['mesh_x']), float(kv['mesh_y']),
+                      float(kv['mesh_z']))
+        nx, ny, nz = (int(float(kv['mesh_nx'])), int(float(kv['mesh_ny'])),
+                      int(float(kv['mesh_nz'])))
+    except (ValueError, TypeError):
+        return None
+    if nx <= 0 or ny <= 0 or nz <= 0:
+        return None
+
+    # VTK order (Z, X, Y): spacing = full extent / bins per axis; origin = the
+    # low corner (center - half), because ImageData cell i spans
+    # [origin + i*spacing, origin + (i+1)*spacing].
+    spacing = (2.0 * hz / nz, 2.0 * hx / nx, 2.0 * hy / ny)
+    origin = (cz - hz, cx - hx, cy - hy)
+    return {'origin': origin, 'spacing': spacing,
+            'center': (cx, cy, cz), 'half': (hx, hy, hz),
+            'bins': (nx, ny, nz)}
+
+
+def physical_log_igrid(parsed, geom):
+    """Like `log_igrid`, but place the volume in physical mm space.
+
+    Builds the ImageData with the `origin` and `spacing` (mm, VTK Z/X/Y order)
+    from `read_mesh_geometry`, so the deposit volume co-locates with a physical
+    STL overlay. Same 5-tuple contract as `log_igrid`. Falls back to unit spacing
+    / zero origin if `geom` is None (equivalent to `log_igrid`).
+    """
+    import pyvista as pv
+
+    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed)
+    if logval is None:
+        return None, vlabel, mesh_name, logmin, logmax
+
+    igrid = pv.ImageData(dimensions=np.array(logval.shape) + 1)
+    if geom is not None:
+        igrid.origin = geom['origin']
+        igrid.spacing = geom['spacing']
+    igrid.cell_data[vlabel] = logval.flatten(order='F')
+    return igrid, vlabel, mesh_name, logmin, logmax
+
+
+def read_geant4_geometry(geant4_input_path):
+    """Resolve the Geant4 geometry STL paths from a Geant4 input file.
+
+    Reads `solid_stl` / `cavity_stl` (filenames, resolved against the input
+    file's directory) and `scale_factor` (float, default 1.0) via
+    `_read_key_value_file`. Returns a dict:
+
+        {'solid_stl': abs path or None,
+         'cavity_stl': abs path or None,
+         'scale_factor': float}
+
+    or None if the input file is missing/unreadable. The `solid_stl` entry is
+    None when the key is absent or the referenced file does not exist (the viewer
+    overlays only the solid; cavity is returned for completeness).
+    """
+    if not geant4_input_path or not os.path.isfile(geant4_input_path):
+        return None
+    kv = _read_key_value_file(geant4_input_path)
+    base = os.path.dirname(os.path.abspath(geant4_input_path))
+
+    def _resolve(name):
+        if not name:
+            return None
+        path = name if os.path.isabs(name) else os.path.join(base, name)
+        return path if os.path.isfile(path) else None
+
+    try:
+        scale = float(kv.get('scale_factor', 1.0))
+    except (ValueError, TypeError):
+        scale = 1.0
+    return {'solid_stl': _resolve(kv.get('solid_stl')),
+            'cavity_stl': _resolve(kv.get('cavity_stl')),
+            'scale_factor': scale}
+
+
+def scan_sweep_logrange(sweep, source_list):
+    """Scan every point in a sweep and return the global log10 deposit range.
+
+    Iterates all axis-index combinations, loads each deposit file for the given
+    source(s), and tracks the smallest / largest nonzero deposit across all of
+    them. Returns (logmin, logmax) in log10 units, or None if no frame has any
+    nonzero voxels. `source_list` is a list of sources to include, e.g.
+    ['dose'], ['edep'], or ['dose', 'edep'].
+    """
+    lo = None
+    hi = None
+    ranges = [range(len(axis['values'])) for axis in sweep.axes]
+    for combo in itertools.product(*ranges):
+        scalars = tuple(sweep.axes[i]['values'][combo[i]]
+                        for i in range(len(sweep.axes)))
+        for source in source_list:
+            parsed = load_sweep_deposit(sweep, scalars, source)
+            if parsed is None:
+                continue
+            grid = parsed['grid']
+            nonzero = grid[grid > 0]
+            if nonzero.size == 0:
+                continue
+            vmin = float(np.log10(nonzero.min()))
+            vmax = float(np.log10(nonzero.max()))
+            lo = vmin if lo is None else min(lo, vmin)
+            hi = vmax if hi is None else max(hi, vmax)
+    if lo is None:
+        return None
+    return lo, hi
+
+
+# --- Volume colormaps -----------------------------------------------------
+# The volumetric viewers ramp voxel opacity from transparent (low deposit) to
+# opaque (high). For faint / no-data cells to blend into the render background
+# instead of leaving a visible seam, the colormap's LOWEST color must equal the
+# background. build_volume_cmap() anchors the low stop to the chosen background,
+# so any (scheme, background) pair is seam-free by construction.
+#
+# Each scheme lists only the UPPER color stops (low -> high); the background is
+# prepended as the lowest stop. Stops are picked saturated/mid so they stay
+# visible on both light and dark backgrounds.
+VOLUME_SCHEMES = {
+    'hot':     ['#ffcc33', '#ff8800', '#ee3300', '#aa0000'],
+    'cool':    ['#7fdbff', '#2f9fe0', '#1155cc', '#04206a'],
+    'viridis': ['#7ad151', '#22a884', '#2a788e', '#414487'],
+    'gray':    ['#bdbdbd', '#888888', '#4d4d4d', '#111111'],
+    # Classic "jet" ramp (blue -> cyan -> green -> yellow -> red) spanning the
+    # full hue range. Low deposits read blue, high reads red.
+    'jet':     ['#0000ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000'],
+}
+
+# Selectable render backgrounds (index 0 is the default).
+BACKGROUNDS = ['white', 'black']
+
+
+def build_volume_cmap(scheme, background):
+    """Return a matplotlib LinearSegmentedColormap whose lowest color equals
+    `background`, ramping up through the named scheme's stops.
+
+    `scheme` is a key of VOLUME_SCHEMES; `background` is any matplotlib color.
+    Matplotlib is imported lazily so the dependency-free scatter viewers don't
+    pay for it. Raises KeyError for an unknown scheme name.
+    """
+    from matplotlib.colors import LinearSegmentedColormap, to_rgb
+
+    stops = [to_rgb(background)] + [to_rgb(c) for c in VOLUME_SCHEMES[scheme]]
+    return LinearSegmentedColormap.from_list('volume_' + scheme, stops)
+
+
+def contrast_color(background):
+    """Return 'black' or 'white' — whichever reads against `background`.
+
+    Used to keep grid lines, axis labels, and scalar-bar text legible when the
+    background is switched. Uses a simple perceptual-luminance test.
+    """
+    from matplotlib.colors import to_rgb
+
+    r, g, b = to_rgb(background)
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return 'black' if luminance > 0.5 else 'white'
