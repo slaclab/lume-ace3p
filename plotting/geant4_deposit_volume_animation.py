@@ -39,16 +39,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from geant4_deposit_common import (is_yaml_file, load_sweep, load_sweep_deposit,
                                    log_igrid, physical_log_igrid,
                                    read_mesh_geometry, scan_sweep_logrange,
-                                   VOLUME_SCHEMES, BACKGROUNDS,
+                                   VOLUME_SCHEMES, BACKGROUNDS, VOLUME_N_COLORS,
                                    build_volume_cmap, contrast_color)
 
 # Same opacity ramp as the interactive volume viewer.
 OPACITY = [0.0, 0.02, 0.08, 0.2, 0.45, 0.8]
 
-# Camera plane -> PyVista view method name. The axes map (see add_axes in the
-# viewer) is Z (beam) -> VTK x, X -> VTK y, Y -> VTK z, so 'xy' shows the Z-X
-# plane, 'xz' the Z-Y plane, and 'yz' the transverse X-Y plane.
-VIEWS = {'xy': 'view_xy', 'xz': 'view_xz', 'yz': 'view_yz',
+# Requested physical plane -> PyVista view method name. The data axes map to VTK
+# axes as Z (beam) -> VTK x, X -> VTK y, Y -> VTK z (see add_axes), so a PyVista
+# view_ab method actually shows a permuted physical plane: view_xy -> physical
+# Z-X, view_xz -> physical Z-Y, view_yz -> physical X-Y. The --view names below
+# denote the PHYSICAL plane the user wants to look at, so each maps to whichever
+# PyVista method renders that physical plane (the permutation is applied here).
+#   'xy' -> physical X-Y (transverse)  = VTK y-z plane -> view_yz
+#   'xz' -> physical X-Z (beam & X)    = VTK x-y plane -> view_xy
+#   'yz' -> physical Y-Z (beam & Y)    = VTK x-z plane -> view_xz
+VIEWS = {'xy': 'view_yz', 'xz': 'view_xy', 'yz': 'view_xz',
          'iso': 'view_isometric'}
 
 
@@ -194,7 +200,7 @@ def main():
     p = pv.Plotter(off_screen=True)
     p.background_color = args.background
     p.add_axes(xlabel='Z (beam)', ylabel='X', zlabel='Y', color=fg)
-    p.show_grid(xtitle='iZ (beam axis)', ytitle='iX', ztitle='iY', color=fg)
+    p.show_grid(xtitle='Z (beam axis)', ytitle='X', ztitle='Y', color=fg)
 
     # The solid overlay is static across frames; add it once. A translucent
     # steel-blue shell reads clearly over the jet-colored volume (matches the
@@ -236,6 +242,7 @@ def main():
             vol_kw = {'clim': clim} if clim is not None else {}
             vol_actor = p.add_volume(
                 igrid, scalars=vlabel, cmap=cmap, opacity=OPACITY,
+                n_colors=VOLUME_N_COLORS,
                 scalar_bar_args={'title': 'log10 ' + vlabel, 'color': fg},
                 **vol_kw)
             txt_actor = p.add_text('%s  |  log10 %s   [%s]'

@@ -464,31 +464,48 @@ def scan_sweep_logrange(sweep, source_list):
 # prepended as the lowest stop. Stops are picked saturated/mid so they stay
 # visible on both light and dark backgrounds.
 VOLUME_SCHEMES = {
-    'hot':     ['#ffcc33', '#ff8800', '#ee3300', '#aa0000'],
-    'cool':    ['#7fdbff', '#2f9fe0', '#1155cc', '#04206a'],
-    'viridis': ['#7ad151', '#22a884', '#2a788e', '#414487'],
-    'gray':    ['#bdbdbd', '#888888', '#4d4d4d', '#111111'],
+    'hot':     ['#ffe08a', '#ffcc33', '#ffa100', '#ff6a00', '#ee3300',
+                '#c00000', '#aa0000'],
+    'cool':    ['#bfefff', '#7fdbff', '#4fb8ec', '#2f9fe0', '#1e77d0',
+                '#1155cc', '#0a3a9e', '#04206a'],
+    'viridis': ['#addc30', '#7ad151', '#4ac16d', '#22a884', '#2a788e',
+                '#33638d', '#414487', '#472d7b'],
+    'gray':    ['#d9d9d9', '#bdbdbd', '#9e9e9e', '#888888', '#666666',
+                '#4d4d4d', '#2b2b2b', '#111111'],
     # Classic "jet" ramp (blue -> cyan -> green -> yellow -> red) spanning the
-    # full hue range. Low deposits read blue, high reads red.
-    'jet':     ['#0000ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000'],
+    # full hue range. Low deposits read blue, high reads red. Extra intermediate
+    # stops keep the hue sweep (and the white->blue rise off the background)
+    # smooth rather than showing kinks at a handful of primary colors.
+    'jet':     ['#0000ff', '#0055ff', '#0088ff', '#00c4ff', '#00ffff',
+                '#00ffaa', '#00ff55', '#00ff00', '#55ff00', '#aaff00',
+                '#ffff00', '#ffcc00', '#ff8800', '#ff4400', '#ff0000'],
 }
 
 # Selectable render backgrounds (index 0 is the default).
 BACKGROUNDS = ['white', 'black']
 
+# Number of quantization levels in the volume colormap / scalar bar. A high
+# count makes the gradient (and the color bar) read as a continuous ramp rather
+# than a few discrete bands. Passed both to the colormap LUT (so the samples
+# exist) and to add_volume's n_colors (so the mapper uses them).
+VOLUME_N_COLORS = 512
 
-def build_volume_cmap(scheme, background):
+
+def build_volume_cmap(scheme, background, n_colors=VOLUME_N_COLORS):
     """Return a matplotlib LinearSegmentedColormap whose lowest color equals
     `background`, ramping up through the named scheme's stops.
 
     `scheme` is a key of VOLUME_SCHEMES; `background` is any matplotlib color.
-    Matplotlib is imported lazily so the dependency-free scatter viewers don't
-    pay for it. Raises KeyError for an unknown scheme name.
+    `n_colors` is the size of the color lookup table — larger means a smoother
+    gradient (defaults to VOLUME_N_COLORS). Matplotlib is imported lazily so the
+    dependency-free scatter viewers don't pay for it. Raises KeyError for an
+    unknown scheme name.
     """
     from matplotlib.colors import LinearSegmentedColormap, to_rgb
 
     stops = [to_rgb(background)] + [to_rgb(c) for c in VOLUME_SCHEMES[scheme]]
-    return LinearSegmentedColormap.from_list('volume_' + scheme, stops)
+    return LinearSegmentedColormap.from_list('volume_' + scheme, stops,
+                                             N=n_colors)
 
 
 def contrast_color(background):
