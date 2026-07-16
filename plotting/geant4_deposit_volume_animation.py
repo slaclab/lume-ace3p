@@ -40,10 +40,12 @@ from geant4_deposit_common import (is_yaml_file, load_sweep, load_sweep_deposit,
                                    log_igrid, physical_log_igrid,
                                    read_mesh_geometry, scan_sweep_logrange,
                                    VOLUME_SCHEMES, BACKGROUNDS, VOLUME_N_COLORS,
+                                   VOLUME_OPACITY,
                                    build_volume_cmap, contrast_color)
 
-# Same opacity ramp as the interactive volume viewer.
-OPACITY = [0.0, 0.02, 0.08, 0.2, 0.45, 0.8]
+# Shared opacity ramp (rises to full by ~25% of the range); see
+# VOLUME_OPACITY in geant4_deposit_common.
+OPACITY = VOLUME_OPACITY
 
 # Requested physical plane -> PyVista view method name. The data axes map to VTK
 # axes as Z (beam) -> VTK x, X -> VTK y, Y -> VTK z (see add_axes), so a PyVista
