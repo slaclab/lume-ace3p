@@ -213,11 +213,18 @@ def main():
         scalars = tuple(sweep.axes[i]['values'][scalar_idx[i]]
                         for i in range(len(sweep.axes)))
         parsed = load_sweep_deposit(sweep, scalars, source)
+        # In global-scale mode, hold empty voxels at the GLOBAL log floor
+        # (clim[0]) rather than each frame's own minimum. With the color range
+        # locked, a per-frame floor would drift within the fixed range and stop
+        # mapping empty space to zero opacity, making the baseline color/haze
+        # flicker frame to frame even though the color bar itself is fixed.
+        floor = clim[0] if clim is not None else None
         # Physical mm placement when overlaying geometry, else voxel-index.
         if geom is not None:
-            igrid, vlabel, mesh_name, _lo, _hi = physical_log_igrid(parsed, geom)
+            igrid, vlabel, mesh_name, _lo, _hi = physical_log_igrid(
+                parsed, geom, floor=floor)
         else:
-            igrid, vlabel, mesh_name, _lo, _hi = log_igrid(parsed)
+            igrid, vlabel, mesh_name, _lo, _hi = log_igrid(parsed, floor=floor)
 
         vol_actor = None
         label = '%s = %g' % (anim_axis['name'], value)
