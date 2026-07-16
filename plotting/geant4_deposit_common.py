@@ -487,15 +487,15 @@ BACKGROUNDS = ['white', 'black']
 # Opacity transfer function for the volume renderers, mapped across the log
 # color range (evenly spaced control points, low deposit -> high). Empty voxels
 # sit at the floor (position 0, fully transparent) so background stays clear,
-# but opacity then rises and reaches FULL by ~50% of the range. The nine points
+# but opacity ramps up to max in the 25%-62.5% range. The nine points
 # land at 0, 0.125, 0.25, ... 1.0; the fifth (0.5) is the first at 1.0.
-VOLUME_OPACITY = [0.0, 0.15, 0.35, 0.6, 1.0, 1.0, 1.0, 1.0, 1.0]
+VOLUME_OPACITY = [0.0, 0.0, 0.1, 0.3, 0.7, 0.9, 1.0, 1.0, 1.0]
 
 # Number of quantization levels in the volume colormap / scalar bar. A high
 # count makes the gradient (and the color bar) read as a continuous ramp rather
 # than a few discrete bands. Passed both to the colormap LUT (so the samples
 # exist) and to add_volume's n_colors (so the mapper uses them).
-VOLUME_N_COLORS = 512
+VOLUME_N_COLORS = 1024
 
 
 def build_volume_cmap(scheme, background, n_colors=VOLUME_N_COLORS):
