@@ -239,7 +239,7 @@ def load_sweep_deposit(sweep, scalar_tuple, source):
         return None
 
 
-def _log_field(parsed):
+def _log_field(parsed, floor=None):
     """Log10-compress a parsed deposit grid into the viewer's voxel-axis order.
 
     Shared by `log_igrid` and `physical_log_igrid` so the log transform and the
@@ -251,6 +251,15 @@ def _log_field(parsed):
     first, then transverse X, Y — with zero voxels held at the log floor, and
     (logmin, logmax) are the log10 range over the nonzero voxels. If `parsed` is
     None or has no nonzero voxels, `logval_t` is None.
+
+    `floor` fixes the value assigned to empty (zero) voxels. By default it is the
+    per-frame log minimum, which is correct for a single autoscaled view. When a
+    caller locks the color range across frames (global scaling), it must pass the
+    GLOBAL log minimum here: otherwise a frame whose own minimum sits above the
+    global floor would map its empty voxels to a nonzero position in the fixed
+    range, so the opacity ramp no longer clears them and the whole box fills with
+    a per-frame haze — the choppy, "the scale changed" artifact global scaling is
+    meant to avoid.
     """
     if parsed is None:
         return None, 'value', '(missing)', None, None
@@ -263,7 +272,8 @@ def _log_field(parsed):
     # Map nonzero values to log10; leave zero voxels at the floor (fully clear).
     logmin = float(np.log10(nonzero.min()))
     logmax = float(np.log10(nonzero.max()))
-    logval = np.full(grid.shape, logmin)
+    fill = logmin if floor is None else float(floor)
+    logval = np.full(grid.shape, fill)
     logval[grid > 0] = np.log10(grid[grid > 0])
 
     # Accelerator convention: beam axis Z first, then transverse X, Y.
@@ -271,7 +281,7 @@ def _log_field(parsed):
     return logval, vlabel, parsed['mesh_name'], logmin, logmax
 
 
-def log_igrid(parsed):
+def log_igrid(parsed, floor=None):
     """Build a PyVista ImageData holding the log10-compressed deposit field.
 
     Shared by the volumetric viewer and the animation tool so the log transform
@@ -286,12 +296,15 @@ def log_igrid(parsed):
     and logmin/logmax are None. The grid sits in voxel-index space (unit spacing,
     origin at 0); see `physical_log_igrid` for a version placed in physical mm.
 
+    `floor` sets the value used for empty voxels; pass the global log minimum
+    when locking the color range across frames (see `_log_field`).
+
     PyVista is imported lazily so the dependency-free 2D/3D-scatter viewers can
     keep importing this module without PyVista installed.
     """
     import pyvista as pv
 
-    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed)
+    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed, floor=floor)
     if logval is None:
         return None, vlabel, mesh_name, logmin, logmax
 
@@ -348,17 +361,20 @@ def read_mesh_geometry(geant4_input_path):
             'bins': (nx, ny, nz)}
 
 
-def physical_log_igrid(parsed, geom):
+def physical_log_igrid(parsed, geom, floor=None):
     """Like `log_igrid`, but place the volume in physical mm space.
 
     Builds the ImageData with the `origin` and `spacing` (mm, VTK Z/X/Y order)
     from `read_mesh_geometry`, so the deposit volume co-locates with a physical
     STL overlay. Same 5-tuple contract as `log_igrid`. Falls back to unit spacing
     / zero origin if `geom` is None (equivalent to `log_igrid`).
+
+    `floor` sets the value used for empty voxels; pass the global log minimum
+    when locking the color range across frames (see `_log_field`).
     """
     import pyvista as pv
 
-    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed)
+    logval, vlabel, mesh_name, logmin, logmax = _log_field(parsed, floor=floor)
     if logval is None:
         return None, vlabel, mesh_name, logmin, logmax
 

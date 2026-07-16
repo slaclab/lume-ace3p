@@ -117,11 +117,17 @@ def make_igrid(parsed):
     shared log_igrid / physical_log_igrid helpers; returns (igrid, vlabel,
     mesh_name) and logs a load summary, keeping render() unchanged. Uses physical
     mm placement when an overlay set state['geom']; otherwise voxel-index."""
+    # In global mode, hold empty voxels at the fixed global log floor (clim[0])
+    # so they keep mapping to zero opacity under the locked color range; in auto
+    # mode let each frame use its own per-frame floor.
+    floor = None
+    if state['color_mode'] == 'global' and state['clim'] is not None:
+        floor = state['clim'][0]
     if state['geom'] is not None:
-        igrid, vlabel, mesh_name, _lo, _hi = physical_log_igrid(parsed,
-                                                                state['geom'])
+        igrid, vlabel, mesh_name, _lo, _hi = physical_log_igrid(
+            parsed, state['geom'], floor=floor)
     else:
-        igrid, vlabel, mesh_name, _lo, _hi = log_igrid(parsed)
+        igrid, vlabel, mesh_name, _lo, _hi = log_igrid(parsed, floor=floor)
     if igrid is not None:
         print('Loaded %s: scorer "%s", grid %d x %d x %d, %d nonzero voxels'
               % (mesh_name, parsed['scorer_name'], parsed['nx'],
