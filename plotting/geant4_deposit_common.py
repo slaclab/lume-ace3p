@@ -472,14 +472,13 @@ VOLUME_SCHEMES = {
                 '#33638d', '#414487', '#472d7b'],
     'gray':    ['#d9d9d9', '#bdbdbd', '#9e9e9e', '#888888', '#666666',
                 '#4d4d4d', '#2b2b2b', '#111111'],
-    # "jet"-style ramp reading white(bg) -> blue -> green -> yellow -> red. Blue
-    # is held across the first few stops so it stays PROMINENT at the low end
-    # (rather than sliding straight into cyan), then the ramp moves briskly
-    # through a single teal blend into green, yellow, and red. Deliberately light
-    # on cyan so low deposits read as a strong blue, not faint blue-green.
-    'jet':     ['#0000ff', '#0000ff', '#0000ff', '#0044ff', '#00b36b',
-                '#00ff00', '#66ff00', '#ffff00', '#ff9900', '#ff3300',
-                '#ff0000'],
+    # Classic "jet" ramp (blue -> cyan -> green -> yellow -> red) spanning the
+    # full hue range. Low deposits read blue, high reads red. Extra intermediate
+    # stops keep the hue sweep (and the white->blue rise off the background)
+    # smooth rather than showing kinks at a handful of primary colors.
+    'jet':     ['#0000ff', '#0055ff', '#0088ff', '#00c4ff', '#00ffff',
+                '#00ffaa', '#00ff55', '#00ff00', '#55ff00', '#aaff00',
+                '#ffff00', '#ffcc00', '#ff8800', '#ff4400', '#ff0000'],
 }
 
 # Selectable render backgrounds (index 0 is the default).
@@ -488,11 +487,9 @@ BACKGROUNDS = ['white', 'black']
 # Opacity transfer function for the volume renderers, mapped across the log
 # color range (evenly spaced control points, low deposit -> high). Empty voxels
 # sit at the floor (position 0, fully transparent) so background stays clear,
-# but opacity then rises quickly and reaches FULL by ~25% of the range so even
-# low-deposit (blue) voxels render as solid, saturated color instead of a faint
-# wash. The nine points land at 0, 0.125, 0.25, ... 1.0; the third (0.25) is the
-# first at 1.0.
-VOLUME_OPACITY = [0.0, 0.55, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+# but opacity then rises and reaches FULL by ~50% of the range. The nine points
+# land at 0, 0.125, 0.25, ... 1.0; the fifth (0.5) is the first at 1.0.
+VOLUME_OPACITY = [0.0, 0.15, 0.35, 0.6, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 # Number of quantization levels in the volume colormap / scalar bar. A high
 # count makes the gradient (and the color bar) read as a continuous ramp rather
