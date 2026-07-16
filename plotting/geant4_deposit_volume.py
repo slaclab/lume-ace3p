@@ -40,7 +40,7 @@ from geant4_deposit_common import (parse_deposit_file, is_yaml_file,
                                    load_sweep, load_sweep_deposit,
                                    log_igrid, physical_log_igrid,
                                    read_mesh_geometry, scan_sweep_logrange,
-                                   BACKGROUNDS,
+                                   BACKGROUNDS, VOLUME_N_COLORS,
                                    build_volume_cmap, contrast_color)
 
 try:
@@ -224,6 +224,7 @@ def render():
         cmap = build_volume_cmap(state['scheme'], state['background'])
         _actor['volume'] = p.add_volume(
             igrid, scalars=vlabel, cmap=cmap, opacity=OPACITY,
+            n_colors=VOLUME_N_COLORS,
             scalar_bar_args={'title': 'log10 ' + vlabel, 'color': fg},
             **vol_kw)
         _actor['text'] = p.add_text('%s  |  log10 %s%s'
@@ -239,7 +240,7 @@ def draw_frame_decor():
     fg = contrast_color(state['background'])
     p.remove_bounds_axes()
     p.add_axes(xlabel='Z (beam)', ylabel='X', zlabel='Y', color=fg)
-    p.show_grid(xtitle='iZ (beam axis)', ytitle='iX', ztitle='iY', color=fg)
+    p.show_grid(xtitle='Z (beam axis)', ytitle='X', ztitle='Y', color=fg)
 
 
 p.background_color = state['background']
