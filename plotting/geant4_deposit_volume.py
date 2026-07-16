@@ -41,6 +41,7 @@ from geant4_deposit_common import (parse_deposit_file, is_yaml_file,
                                    log_igrid, physical_log_igrid,
                                    read_mesh_geometry, scan_sweep_logrange,
                                    BACKGROUNDS, VOLUME_N_COLORS,
+                                   VOLUME_OPACITY,
                                    build_volume_cmap, contrast_color)
 
 try:
@@ -145,8 +146,9 @@ def load_current():
     return load_sweep_deposit(sweep, scalars, state['source_file'])
 
 
-# Opacity ramps from transparent (low) to opaque (high) across the log range.
-OPACITY = [0.0, 0.02, 0.08, 0.2, 0.45, 0.8]
+# Shared opacity ramp (transparent at the floor, rising to full by ~25% of the
+# range); see VOLUME_OPACITY in geant4_deposit_common.
+OPACITY = VOLUME_OPACITY
 
 p = pv.Plotter()
 _actor = {'volume': None, 'text': None, 'stl': None}
