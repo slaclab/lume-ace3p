@@ -12,6 +12,7 @@ dependencies = [
     "ruamel.yaml",
     "numpy",
     "pandas",
+    "scipy",
 ]
 
 [project.scripts]

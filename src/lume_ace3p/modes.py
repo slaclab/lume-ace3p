@@ -56,6 +56,7 @@ import pandas as pd
 from lume_ace3p.results import (
     write_table, save_field, FIELD_ARTIFACT_COLUMN,
 )
+from lume_ace3p import surrogate_data
 
 
 def _deprecation_warning(message):
@@ -97,6 +98,8 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         df = single(workflow)
     elif mode_type == 'parameter_sweep':
         df = parameter_sweep(workflow)
+    elif mode_type == 'collect_training_data':
+        return collect_training_data(mode_cfg, workflow)
     elif mode_type == 'scalar_optimize':
         return scalar_optimize(
             workflow, vocs, xopt,
@@ -109,7 +112,8 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     else:
         raise ValueError(
             f"mode '{mode_type}' is not handled by the mode layer "
-            "(single | parameter_sweep | scalar_optimize | gp_parameter_sweep).")
+            "(single | parameter_sweep | collect_training_data | "
+            "scalar_optimize | gp_parameter_sweep).")
 
     # In the table modes 'sweep_output_file:' is a legacy alias for 'output_file:'
     # (only the Xopt gp_parameter_sweep mode above, which returned early, uses it
@@ -183,6 +187,201 @@ def _persist_field(workflow, point_index):
     workdir = getattr(workflow, 'workdir', None) or '.'
     path = os.path.join(workdir, f'field_{point_index}.npz')
     return save_field(field, path)
+
+
+# --------------------------------------------------------------------------- #
+# collect_training_data (Phase 2) — DOE sampler over β driving the Geant4
+# workflow, persisting (β, dose_grid) pairs into a resumable training store.
+# Workflow-agnostic in the same spirit as the sweep modes: it drives the chain
+# only through ``workflow.evaluate`` / ``workflow.field`` and reuses the shared
+# field-persistence machinery instead of a bespoke store.
+# --------------------------------------------------------------------------- #
+
+
+def _require_fixed_bin_edges(workflow):
+    """Validate correctness constraint #1 on the resolved ``particles`` module.
+
+    The β→dose binning is governed by ``bin_edges`` on the *particles* module
+    entry (``particles.py`` reads it there), NOT by any mode-dict key — so this
+    inspects the built workflow's particles module directly and hard-fails if
+    ``bin_edges`` is absent or not length ``num_bins + 1``. This is deliberately
+    stronger than :func:`_mc_noise_guards` (which only checks a mode-dict key and
+    does not plumb into the particles module); do not substitute one for the
+    other. Returns ``(beta_names, num_bins)`` — the per-bin β variable order the
+    DOE must sample, taken from the module's ``beta_inputs``."""
+    particles = [m for m in workflow.modules if m.type == 'particles']
+    if not particles:
+        raise ValueError(
+            "collect_training_data requires a 'particles' module in the "
+            "workflow (the β→dose weighting step).")
+    if len(particles) > 1:
+        raise ValueError(
+            "collect_training_data expects exactly one 'particles' module; "
+            f"found {len(particles)}.")
+    params = particles[0].params
+    num_bins = params.get('num_bins')
+    if num_bins is None:
+        raise ValueError(
+            "the 'particles' module must set 'num_bins' for training-data "
+            "collection.")
+    bin_edges = params.get('bin_edges')
+    if bin_edges is None:
+        raise ValueError(
+            "correctness constraint #1: the 'particles' module must fix "
+            "'bin_edges' explicitly for training-data collection. The default "
+            "data-driven edges drift per run and poison the surrogate. Provide "
+            f"an explicit 'bin_edges' of length num_bins + 1 ({num_bins + 1}).")
+    if len(bin_edges) != num_bins + 1:
+        raise ValueError(
+            f"'bin_edges' has length {len(bin_edges)} but must be num_bins + 1 "
+            f"({num_bins + 1}).")
+
+    beta_inputs = params.get('beta_inputs')
+    if not beta_inputs:
+        raise ValueError(
+            "collect_training_data needs the 'particles' module to declare "
+            "'beta_inputs: [beta0, ...]' (one input-space variable per bin) so "
+            "the DOE has a per-bin β to sample. A scalar 'beta_input' broadcast "
+            "collapses the 8-D design to 1-D and is not a valid training design.")
+    if len(beta_inputs) != num_bins:
+        raise ValueError(
+            f"len(beta_inputs)={len(beta_inputs)} must equal num_bins={num_bins}.")
+    return list(beta_inputs), int(num_bins)
+
+
+def _doe_bounds(mode_cfg, beta_names):
+    """Resolve the per-bin β bounds for the DOE from the mode config.
+
+    ``mode_cfg['variables']`` maps each β variable name to ``[lo, hi]`` (or
+    ``{min, max}``). Every name in ``beta_names`` must have a bound; extra keys
+    are an error so a typo does not silently drop a dimension."""
+    variables = mode_cfg.get('variables')
+    if not variables:
+        raise ValueError(
+            "collect_training_data requires a 'variables' block in the mode "
+            "config giving [lo, hi] bounds for each β variable "
+            f"({beta_names}).")
+    bounds = []
+    for name in beta_names:
+        if name not in variables:
+            raise ValueError(
+                f"no DOE bound for β variable '{name}' in mode 'variables'.")
+        spec = variables[name]
+        if isinstance(spec, dict):
+            lo, hi = spec['min'], spec['max']
+        else:
+            lo, hi = spec[0], spec[1]
+        bounds.append((float(lo), float(hi)))
+    extra = [k for k in variables if k not in beta_names]
+    if extra:
+        raise ValueError(
+            f"mode 'variables' has entries {extra} that are not β variables "
+            f"({beta_names}); check for a typo.")
+    return bounds
+
+
+def collect_training_data(mode_cfg, workflow):
+    """Generate and persist ``(β, dose_grid)`` training pairs (Phase 2).
+
+    Samples ``num_samples`` scattered points in the D-dimensional β space via a
+    Latin-Hypercube / Sobol DOE (:func:`surrogate_data.sample_beta_doe`), and
+    for each point drives the declarative ``track3p_source → particles →
+    geant4`` chain once through :meth:`Workflow.evaluate` (β passed as an
+    override dict, one value per ``beta_inputs`` bin). The full dose/edep voxel
+    grid is captured with :meth:`Workflow.field` and persisted per sample with
+    :func:`results.save_field`; the β row + fidelity + field handle go into the
+    shared result table. A ``manifest.json`` records the fixed ``bin_edges`` /
+    ``num_bins``, β order, mesh shape, and DOE provenance.
+
+    **Resumable:** each sample runs in its own ``<store>/sample_NNNNN`` workdir;
+    a sample whose dose grid was already persisted is skipped on re-run.
+
+    Returns the training-store result :class:`pandas.DataFrame`."""
+    beta_names, num_bins = _require_fixed_bin_edges(workflow)
+    bounds = _doe_bounds(mode_cfg, beta_names)
+
+    store = mode_cfg.get('store') or mode_cfg.get('output_dir') or 'training_store'
+    num_samples = int(mode_cfg.get('num_samples', 8))
+    sampler = mode_cfg.get('sampler', 'sobol')
+    seed = int(mode_cfg.get('seed', 0))
+    fidelity = mode_cfg.get('fidelity')
+    if not os.path.isdir(store):
+        os.makedirs(store, exist_ok=True)
+
+    design = surrogate_data.sample_beta_doe(bounds, num_samples,
+                                            sampler=sampler, seed=seed)
+
+    # Drive each sample in its own manual workdir. Save/restore the workflow's
+    # own workdir settings so this mutation is contained to the collection loop.
+    saved_mode, saved_base = workflow.workdir_mode, workflow.baseworkdir
+    workflow.workdir_mode = 'manual'
+
+    rows = []
+    mesh_shape = None
+    try:
+        for i in range(num_samples):
+            beta_vec = design[i]
+            sample_dir = os.path.join(store, f'sample_{i:05d}')
+            field_path = os.path.join(sample_dir, 'field.npz')
+            overrides = {name: float(v)
+                         for name, v in zip(beta_names, beta_vec)}
+
+            if os.path.isfile(field_path):
+                # Resume: the dose grid for this β was already persisted.
+                handle = field_path
+            else:
+                workflow.baseworkdir = sample_dir
+                workflow.evaluate(overrides)
+                handle = save_field(workflow.field(), field_path)
+
+            if handle is not None and mesh_shape is None:
+                mesh_shape = _mesh_shape(handle)
+
+            row = dict(overrides)
+            row[surrogate_data.FIDELITY_COLUMN] = (
+                float(fidelity) if fidelity is not None else np.nan)
+            if handle is not None:
+                row[FIELD_ARTIFACT_COLUMN] = handle
+            rows.append(row)
+    finally:
+        workflow.workdir_mode, workflow.baseworkdir = saved_mode, saved_base
+
+    columns = list(beta_names) + [surrogate_data.FIDELITY_COLUMN]
+    if any(FIELD_ARTIFACT_COLUMN in r for r in rows):
+        columns.append(FIELD_ARTIFACT_COLUMN)
+    df = pd.DataFrame(rows, columns=columns)
+    write_table(df, os.path.join(store, surrogate_data.TABLE_FILENAME))
+
+    surrogate_data.write_manifest(store, {
+        'beta_names': beta_names,
+        'num_bins': num_bins,
+        'bin_edges': list(_particles_params(workflow)['bin_edges']),
+        'num_samples': num_samples,
+        'sampler': sampler,
+        'seed': seed,
+        'bounds': [list(b) for b in bounds],
+        'fidelity': fidelity,
+        'mesh_shape': mesh_shape,
+        'dry_run': bool(workflow.dry_run),
+    })
+    return df
+
+
+def _particles_params(workflow):
+    return [m for m in workflow.modules if m.type == 'particles'][0].params
+
+
+def _mesh_shape(handle):
+    """Voxel count of a persisted dose/edep field (for the manifest), or
+    ``None`` if the artifact has no grid."""
+    from lume_ace3p.results import load_field
+    field = load_field(handle)
+    if not field:
+        return None
+    section = field.get('dose') or field.get('edep')
+    if section is None:
+        return None
+    return [int(len(np.asarray(section['values'])))]
 
 
 # --------------------------------------------------------------------------- #
