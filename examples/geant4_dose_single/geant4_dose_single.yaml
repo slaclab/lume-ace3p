@@ -15,6 +15,9 @@
 workflow_parameters :
   'workdir' : 'lume-ace3p_dose_workdir'
   'workdir_mode' : 'manual'
+  'stage_mode' : 'symlink'                      # symlink large static inputs (Track3P dump,
+                                                # STL geometry) into the workdir instead of
+                                                # copying. copy (default) | symlink | hardlink
   'paths' :
     'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
     'geant4_app_exe' : 'sim'

@@ -21,6 +21,9 @@
 
 workflow_parameters :
   'workdir' : 'geant4_beta_surrogate_store'    # base; per-sample subdirs nest here
+  'stage_mode' : 'symlink'                     # symlink large static inputs (e.g. the
+                                               # Track3P dump) into each per-sample workdir
+                                               # instead of copying. copy (default) | symlink | hardlink
   'paths' :
     'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
     'geant4_app_exe' : 'sim'
@@ -58,7 +61,7 @@ mode :
   num_samples : 16                        # DOE size (power of 2 is ideal for Sobol)
   sampler : 'sobol'                       # 'sobol' (default) or 'lhs'
   seed : 0                                # reproducible design; enables clean resume
-  fidelity : 1019                         # recorded Geant4 primary count (for Phase 5)
+  fidelity : 10000                        # recorded Geant4 primary count (for Phase 5)
 
   # Per-bin beta bounds the DOE samples across (one entry per beta_inputs name).
   # [lo, hi] or {min: .., max: ..} are both accepted.

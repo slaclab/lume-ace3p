@@ -72,13 +72,14 @@ class RunContext:
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
-                 dry_run=False, paths=None):
+                 dry_run=False, paths=None, stage_mode='copy'):
         self.workdir = workdir
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.artifacts = dict(artifacts) if artifacts else {}
         self.outputs = dict(outputs) if outputs else {}
         self.dry_run = dry_run
         self.paths = dict(paths) if paths else {}
+        self.stage_mode = stage_mode
 
     def ensure_workdir(self):
         if self.workdir and not os.path.exists(self.workdir):
@@ -100,16 +101,52 @@ def _append_marker(ctx, text):
         f.write(text)
 
 
+STAGE_MODES = frozenset({'copy', 'symlink', 'hardlink'})
+
+
+def _link_or_copy(mode, src, dest):
+    """Materialize ``src`` at ``dest`` using the requested staging strategy.
+
+    ``symlink`` writes an *absolute* symlink (the tool runs with ``cwd=workdir``,
+    so a relative link would not resolve). ``hardlink`` falls back to a real copy
+    on ``OSError`` — cross-device links (``EXDEV``) and filesystems that forbid
+    hardlinks are common on WSL / network mounts — and warns so the fallback is
+    not silent."""
+    if mode == 'symlink':
+        os.symlink(os.path.abspath(src), dest)
+    elif mode == 'hardlink':
+        try:
+            os.link(src, dest)
+        except OSError as exc:
+            print(f"Warning: hardlink of {src} failed ({exc}); copying instead.")
+            shutil.copy(src, dest)
+    else:
+        shutil.copy(src, dest)
+
+
 def _stage_file(ctx, src):
-    """Copy a source file into the workdir (unless already there) and return
+    """Stage a source file into the workdir (unless already there) and return
     the in-workdir path. Used by the source modules and by any module that
-    consumes an externally-supplied file."""
+    consumes an externally-supplied file.
+
+    Honors ``ctx.stage_mode`` (``copy`` | ``symlink`` | ``hardlink``): all three
+    land the file at ``workdir/basename`` so the co-location contract — every
+    referenced file resolves as a bare basename under the run's ``cwd`` — is
+    identical regardless of mode.
+
+    INVARIANT: staged files are treated as read-only. Symlink and hardlink modes
+    share bytes with the source, so any in-place write to a staged file would
+    corrupt the original. Modules that mutate an input (Cubit/ACE3P/Geant4
+    parameter merges) copy and rewrite their own input files separately; they do
+    not go through this helper."""
     ctx.ensure_workdir()
     base = os.path.basename(src)
     dest = os.path.join(ctx.workdir, base)
-    if os.path.isfile(src) and os.path.abspath(src) != os.path.abspath(dest) \
-            and not os.path.isfile(dest):
-        shutil.copy(src, ctx.workdir)
+    if not os.path.isfile(src) or os.path.abspath(src) == os.path.abspath(dest):
+        return dest
+    if os.path.lexists(dest):          # real file or a pre-existing/stale symlink
+        return dest
+    _link_or_copy(ctx.stage_mode, src, dest)
     return dest
 
 
@@ -618,9 +655,7 @@ class Geant4Module(Module):
         # and the explicit geant4_geometry_files list, de-duplicated by basename.
         geom_files = self._geometry_files()
         for geom in geom_files:
-            dest = os.path.join(ctx.workdir, os.path.basename(geom))
-            if not os.path.isfile(dest):
-                shutil.copy(geom, ctx.workdir)
+            _stage_file(ctx, geom)
 
         if ctx.dry_run:
             _append_marker(ctx, 'Dry run mode: Geant4 step skipped.\n'
