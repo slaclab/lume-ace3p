@@ -12,13 +12,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from geant4_deposit_common import (parse_deposit_file, is_yaml_file,
                                    load_sweep, load_sweep_deposit)
 
-# Sequential colormap whose low end is near-white, so nonzero voxels emerge
-# smoothly from the (white) empty background instead of jumping to black.
-VALUE_CMAP = mpl.colormaps['YlOrRd'].copy()
+# Jet colormap for the deposited value, matching the deposit-volume viewer.
+# Zero / masked voxels render as the (white) empty background instead of the
+# dark-blue low end of jet, so nonzero voxels stand out.
+VALUE_CMAP = mpl.colormaps['jet'].copy()
 VALUE_CMAP.set_bad('white')          # zero / masked voxels render as background
 
 # Interactive viewer for Geant4 dose / energy-deposit output produced by the
-# geant4_track3p_beta example (doseDeposit.txt / energyDeposit.txt). The files
+# geant4_track3p_beta example (doseDeposit.txt / energyDeposit.txt). The 3D
+# voxel grid can be viewed either as a single slice normal to a chosen axis, or
+# as a projection that sums every voxel along the slice-normal axis (3D -> 2D),
+# e.g. selecting the X-Y plane sums each (x, y) column over all z. The files
 # are comma-separated voxel grids with the columns
 #     iX, iY, iZ, total(value), total(val^2), entry
 # over the scoring mesh defined in the Geant4 input file (mesh_nx x mesh_ny x
@@ -104,6 +108,12 @@ fig = plt.figure(figsize=(14, 9))
 ax = fig.add_axes([0.30, 0.15, 0.55, 0.78])
 cax = fig.add_axes([0.88, 0.15, 0.025, 0.78])   # dedicated colorbar axis
 
+# Radio buttons to pick the view mode: a single slice, or a sum (projection)
+# over the whole slice-normal axis (3D -> 2D).
+view_ax = fig.add_axes([0.03, 0.80, 0.16, 0.10])
+view_radio = RadioButtons(view_ax, ('slice', 'sum (project)'), active=0)
+view_ax.set_title('View mode', fontdict={'size': 12})
+
 # Radio buttons to pick the slice-normal axis.
 axis_ax = fig.add_axes([0.03, 0.55, 0.16, 0.20])
 axis_radio = RadioButtons(axis_ax, ('slice along X', 'slice along Y',
@@ -147,7 +157,7 @@ if sweep is not None:
         s.valtext.set_text(str(axis['values'][scalar_idx[i]]))
         beta_sliders.append(s)
 
-state = {'axis': 'Z', 'source': 'value'}
+state = {'axis': 'Z', 'source': 'value', 'view': 'slice'}
 
 
 def current_grid():
@@ -158,15 +168,32 @@ def current_label():
     return D['vlabel'] if state['source'] == 'value' else 'entries'
 
 
-def get_slice(axis, idx):
+def _orient(axis, plane):
     # Accelerator convention: Z (beam axis) is horizontal whenever it is in the
-    # slice plane; the transverse (Z-normal) slice puts X horizontal, Y vertical.
+    # plane; the Z-normal plane puts X horizontal, Y vertical. plane is indexed
+    # by the two non-normal axes in ascending order (X<Y<Z).
+    if axis == 'X':
+        return plane                  # rows = Y, cols = Z
+    if axis == 'Y':
+        return plane                  # rows = X, cols = Z
+    return plane.T                    # rows = Y, cols = X (Z-normal)
+
+
+def get_slice(axis, idx):
     g = current_grid()
     if axis == 'X':
-        return g[idx, :, :]            # rows = Y, cols = Z
+        return _orient(axis, g[idx, :, :])   # rows = Y, cols = Z
     if axis == 'Y':
-        return g[:, idx, :]            # rows = X, cols = Z
-    return g[:, :, idx].T              # rows = Y, cols = X (slice along Z)
+        return _orient(axis, g[:, idx, :])   # rows = X, cols = Z
+    return _orient(axis, g[:, :, idx])       # rows = Y, cols = X (slice along Z)
+
+
+def get_projection(axis):
+    # Sum every voxel along the slice-normal axis (3D -> 2D), collapsing that
+    # axis so each cell holds the total over the full extent.
+    g = current_grid()
+    dim = AXES.index(axis)
+    return _orient(axis, g.sum(axis=dim))
 
 
 def plane_labels(axis):
@@ -180,8 +207,12 @@ def plane_labels(axis):
 
 def redraw():
     axis = state['axis']
-    idx = min(int(slice_slider.val), D['sizes'][axis] - 1)
-    sl = get_slice(axis, idx)
+    project = state['view'] == 'project'
+    if project:
+        sl = get_projection(axis)
+    else:
+        idx = min(int(slice_slider.val), D['sizes'][axis] - 1)
+        sl = get_slice(axis, idx)
     xlab, ylab = plane_labels(axis)
 
     ax.clear()
@@ -191,11 +222,24 @@ def redraw():
     # integer counts, so a linear scale reads better there.
     if state['source'] == 'value':
         masked = np.ma.masked_less_equal(sl, 0.0)
+        # Projection sums span a wider range than single voxels, so scale the
+        # log limits to the displayed 2D array rather than the voxel vmin/vmax.
+        if project:
+            pos = sl[sl > 0]
+            vmin = pos.min() if pos.size else 1.0
+            vmax = sl.max() if pos.size else 1.0
+            if vmax <= vmin:
+                vmax = vmin * 10.0
+        else:
+            vmin, vmax = D['vmin'], D['vmax']
         im = ax.imshow(masked, origin='lower', aspect='auto',
-                       norm=LogNorm(vmin=D['vmin'], vmax=D['vmax']),
+                       norm=LogNorm(vmin=vmin, vmax=vmax),
                        cmap=VALUE_CMAP)
     else:
-        emax = D['entry_grid'].max() if D['entry_grid'].max() > 0 else 1
+        if project:
+            emax = sl.max() if sl.max() > 0 else 1
+        else:
+            emax = D['entry_grid'].max() if D['entry_grid'].max() > 0 else 1
         im = ax.imshow(sl, origin='lower', aspect='auto', vmin=0, vmax=emax,
                        cmap='viridis')
 
@@ -203,7 +247,10 @@ def redraw():
     cbar.set_label(current_label(), fontdict=fdict)
     ax.set_xlabel(xlab, fontdict=fdict)
     ax.set_ylabel(ylab, fontdict=fdict)
-    title = '%s  |  %s = %d' % (D['mesh_name'], axis, idx)
+    if project:
+        title = '%s  |  sum over %s' % (D['mesh_name'], axis)
+    else:
+        title = '%s  |  %s = %d' % (D['mesh_name'], axis, idx)
     if sweep is not None:
         pt = '  '.join('%s=%s' % (sweep.axes[i]['name'],
                                   sweep.axes[i]['values'][scalar_idx[i]])
@@ -230,6 +277,14 @@ def reload():
 
 
 def on_slice(val):
+    if state['view'] == 'slice':
+        redraw()
+
+
+def on_view(label):
+    state['view'] = 'project' if label.startswith('sum') else 'slice'
+    # Grey out the (now inert) slice slider in projection mode.
+    slice_slider.ax.set_visible(state['view'] == 'slice')
     redraw()
 
 
@@ -240,8 +295,8 @@ def on_axis(label):
     # Reconfigure the slider range for the new axis.
     slice_slider.valmax = n - 1
     slice_ax.set_xlim(0, n - 1)
-    if slice_slider.val > n - 1:
-        slice_slider.set_val(n // 2)
+    if state['view'] == 'slice' and slice_slider.val > n - 1:
+        slice_slider.set_val(n // 2)   # redraws via on_slice
     else:
         redraw()
 
@@ -266,6 +321,7 @@ def make_on_beta(i):
 
 
 slice_slider.on_changed(on_slice)
+view_radio.on_clicked(on_view)
 axis_radio.on_clicked(on_axis)
 data_radio.on_clicked(on_data)
 
