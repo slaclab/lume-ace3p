@@ -71,8 +71,34 @@ gone — they now sit on the `workflow:` module entries and the `mode:` block.
 |---------------------|----------------|----------------|-------------|
 | `workdir`           | `str` / `Path` | `os.getcwd()`  | Path to the working directory in which `lume-ace3p` runs. |
 | `workdir_mode`      | `str`          | `'manual'`     | `'manual'` (single workflow folder) or `'auto'` (one auto-named folder per evaluation, suffixed with the swept scalar values). |
+| `stage_mode`        | `str`          | `'copy'`       | How large static input files (prebuilt meshes, Track3P dumps, Geant4 STL geometry, prebuilt particle sources) are placed in each workdir: `'copy'`, `'symlink'`, or `'hardlink'` — see [](#stage-mode) below. |
 | `dry_run`           | `bool`         | `False`        | If `True`, run the full Python pipeline but skip the Cubit/solver/acdtool/Geant4 binary calls (writes a `DRY_RUN.txt` marker). Auto-enabled when the relevant tool path cannot be resolved — see [](installation.md#dry-run-mode). |
 | `paths`             | `dict`         | `None`         | Mapping of executable-path overrides. Recognized keys: `ace3p`, `cubit`, `mpi`, `geant4_app_path`, `geant4_app_exe`. Each value takes highest precedence in path resolution — see [](installation.md#executable-paths). |
+
+(stage-mode)=
+### `stage_mode` — storage-efficient staging
+
+Source modules (`mesh`, `track3p_source`, `particle_source`) and the `geant4`
+module bring externally-supplied files into each run's workdir under their bare
+basename, so the tool resolves them with `cwd=workdir`. By default these files
+are **copied**, which duplicates large static assets (e.g. a ~60 MB Track3P dump,
+multi-MB STL meshes) into every workdir — once per evaluation in an `'auto'`
+sweep, and once per DOE sample in `collect_training_data`. `stage_mode` chooses
+the staging strategy instead:
+
+| Value        | Behavior | Use when |
+|--------------|----------|----------|
+| `'copy'`     | Independent copy in each workdir (default; unchanged legacy behavior). | Workdirs must be self-contained/archival, or may live on a different filesystem than the source. |
+| `'symlink'`  | Absolute symlink to the source file. | You want the storage savings and the source files stay in place for the run's lifetime. Works across filesystems. |
+| `'hardlink'` | Hard link sharing the source's bytes; falls back to a copy (with a warning) when the link fails (e.g. cross-device `EXDEV`). | You want deduplication that survives the source being moved, **and** each workdir is on the same filesystem as the source. |
+
+Staged files are treated as **read-only** — `symlink`/`hardlink` share bytes with
+the source, so an in-place edit would corrupt the original. The pipeline never
+writes back to staged inputs (modules that mutate an input file, such as Cubit /
+ACE3P / Geant4 parameter merges, copy and rewrite their own input files
+separately and are unaffected by `stage_mode`). With `'symlink'`, deleting or
+moving a source file after a run leaves dangling links in the workdirs that
+referenced it.
 
 (particles-module-keys)=
 ### `particles` module keys

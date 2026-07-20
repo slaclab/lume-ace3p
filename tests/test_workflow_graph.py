@@ -323,5 +323,39 @@ def test_materialize_routes_bare_cubit_override():
     assert materialized.cubit['cornercut'] == 15.0
 
 
+# --------------------------------------------------------------------------- #
+# stage_mode — validated at build, propagated into the RunContext
+# --------------------------------------------------------------------------- #
+
+
+def test_stage_mode_defaults_to_copy():
+    wf = Workflow([{'module': 'track3p_source', 'file': 'dump.txt'}],
+                  workflow_params={'dry_run': True})
+    assert wf.stage_mode == 'copy'
+
+
+def test_stage_mode_invalid_rejected():
+    with pytest.raises(ValueError, match='stage_mode'):
+        Workflow([{'module': 'track3p_source', 'file': 'dump.txt'}],
+                 workflow_params={'dry_run': True, 'stage_mode': 'bogus'})
+
+
+def test_stage_mode_propagates_to_run_context(tmp_path):
+    """The workflow's stage_mode reaches the per-evaluation RunContext, so every
+    workdir stages with the configured strategy."""
+    src = tmp_path / 'dump.txt'
+    src.write_text('payload')
+    entries = [{'module': 'track3p_source', 'file': str(src)}]
+    wf = Workflow(entries,
+                  workflow_params={'workdir_mode': 'manual',
+                                   'workdir': str(tmp_path / 'wd'),
+                                   'stage_mode': 'symlink'},
+                  output_spec={})
+    wf.evaluate(None)
+    assert wf.last_context.stage_mode == 'symlink'
+    staged = os.path.join(str(tmp_path / 'wd'), 'dump.txt')
+    assert os.path.islink(staged)
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

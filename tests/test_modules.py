@@ -27,6 +27,7 @@ from lume_ace3p.modules import (
     Track3PSourceModule, ParticlesModule, ParticleSourceModule, Geant4Module,
     JOURNAL, MESH, EM_SOLUTION, RF_POST, TRACK3P_PARTICLES, PARTICLE_SOURCE,
     DOSE_GRID, EDEP_GRID,
+    _stage_file, STAGE_MODES,
 )
 from lume_ace3p.ace3p import S3P, Section
 from lume_ace3p.acdtool import Acdtool
@@ -473,6 +474,98 @@ def test_geant4_extract(tmp_path):
     assert module.extract(ctx, ['edep', 'total']) == pytest.approx(5.0)
     # 'scoring' is a back-compat alias for the dose grid.
     assert module.extract(ctx, ['scoring', 'total']) == pytest.approx(8.0)
+
+
+# --------------------------------------------------------------------------- #
+# Staging modes (copy / symlink / hardlink) — storage-efficient staging.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize('mode', sorted(STAGE_MODES))
+def test_stage_file_modes_land_at_basename(tmp_path, mode):
+    """All three modes land the file at ``workdir/basename`` (the co-location
+    contract), and each produces the expected link kind."""
+    src = tmp_path / 'big.stl'
+    _write(str(src), 'x' * 1024)
+    wd = tmp_path / 'wd'
+    ctx = RunContext(str(wd), stage_mode=mode)
+
+    dest = _stage_file(ctx, str(src))
+
+    assert dest == os.path.join(str(wd), 'big.stl')
+    assert os.path.isfile(dest)
+    if mode == 'symlink':
+        assert os.path.islink(dest)
+        # Absolute target so it resolves under the tool's cwd=workdir.
+        assert os.path.isabs(os.readlink(dest))
+    elif mode == 'hardlink':
+        assert not os.path.islink(dest)
+        assert os.stat(src).st_ino == os.stat(dest).st_ino
+    else:
+        assert not os.path.islink(dest)
+        assert os.stat(src).st_ino != os.stat(dest).st_ino
+
+
+@pytest.mark.parametrize('mode', sorted(STAGE_MODES))
+def test_stage_file_is_idempotent(tmp_path, mode):
+    """A pre-existing dest (real file or stale symlink) makes a re-run a no-op —
+    no exception, dest still resolves to the source bytes."""
+    src = tmp_path / 'dump.txt'
+    _write(str(src), 'payload')
+    ctx = RunContext(str(tmp_path / 'wd'), stage_mode=mode)
+
+    dest = _stage_file(ctx, str(src))
+    dest2 = _stage_file(ctx, str(src))          # must not raise
+
+    assert dest == dest2
+    with open(dest) as f:
+        assert f.read() == 'payload'
+
+
+def test_stage_file_hardlink_falls_back_to_copy(tmp_path, monkeypatch):
+    """Cross-device / unsupported hardlink (OSError from os.link) falls back to a
+    real copy rather than propagating."""
+    src = tmp_path / 'dump.txt'
+    _write(str(src), 'payload')
+    ctx = RunContext(str(tmp_path / 'wd'), stage_mode='hardlink')
+
+    def _boom(*a, **k):
+        raise OSError('Invalid cross-device link')
+    monkeypatch.setattr('lume_ace3p.modules.os.link', _boom)
+
+    dest = _stage_file(ctx, str(src))
+
+    assert os.path.isfile(dest)
+    assert not os.path.islink(dest)
+    assert os.stat(src).st_ino != os.stat(dest).st_ino   # a copy, not a link
+    with open(dest) as f:
+        assert f.read() == 'payload'
+
+
+def test_stage_file_default_mode_is_copy(tmp_path):
+    """A RunContext built without stage_mode copies (unchanged legacy behavior)."""
+    src = tmp_path / 'mesh.ncdf'
+    _write(str(src), 'mesh')
+    ctx = RunContext(str(tmp_path / 'wd'))       # no stage_mode -> 'copy'
+
+    dest = _stage_file(ctx, str(src))
+
+    assert os.path.isfile(dest) and not os.path.islink(dest)
+
+
+def test_symlinked_source_module_resolves_at_workdir(tmp_path):
+    """Regression for the co-location contract: a symlink-staged source artifact
+    still resolves to ``workdir/basename`` (what every downstream tool reads)."""
+    src = tmp_path / 'dump.txt'
+    _make_track3p_dump(str(src))
+    wd = tmp_path / 'wd'
+    ctx = RunContext(str(wd), stage_mode='symlink')
+
+    Track3PSourceModule({'file': str(src)}).run(ctx)
+
+    staged = ctx.artifacts[TRACK3P_PARTICLES]
+    assert staged == os.path.join(str(wd), 'dump.txt')
+    assert os.path.islink(staged) and os.path.isfile(staged)
 
 
 if __name__ == '__main__':

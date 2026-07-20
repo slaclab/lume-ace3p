@@ -30,7 +30,7 @@ import os
 
 import numpy as np
 
-from lume_ace3p.modules import RunContext, build_module
+from lume_ace3p.modules import RunContext, build_module, STAGE_MODES
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 
@@ -155,6 +155,11 @@ class Workflow:
         self.module_types = {m.type for m in self.modules}
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
+        self.stage_mode = self.workflow_params.get('stage_mode', 'copy')
+        if self.stage_mode not in STAGE_MODES:
+            raise ValueError(
+                "Key: 'stage_mode' must be one of "
+                f"{sorted(STAGE_MODES)}; got {self.stage_mode!r}.")
         self.baseworkdir = self.workflow_params.get('workdir', os.getcwd())
         self.paths = resolve_paths(self.workflow_params.get('paths'))
         self.dry_run = self._resolve_dry_run()
@@ -235,7 +240,7 @@ class Workflow:
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = self._getworkdir(inputs, sweep_scalars)
         ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
-                         paths=self.paths)
+                         paths=self.paths, stage_mode=self.stage_mode)
         ctx.ensure_workdir()
 
         for module in self.modules:
