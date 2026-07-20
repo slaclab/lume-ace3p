@@ -16,8 +16,48 @@ config (`mc_noisy_objective`, required explicit `bin_edges`) in
 NEW MODES** on the new architecture — each a workflow-agnostic mode in
 `modes.py` (or a sibling module) driving the existing Geant4 `Workflow`, exactly
 as `parameter_sweep`/`scalar_optimize` do today.
+**Phase 2 (`collect_training_data`) DELIVERED (2026-07-20)** — DOE sampler +
+resumable training store + dry-run pipeline, all local. See the Phase 2 section
+below for the verification checklist (all bars met).
 **Owner:** dbizzoze
 **Created:** 2026-07-08
+
+## Re-scope (2026-07-20): synthetic-first, trustworthy-forward-surrogate-first
+
+The original phase order is linear and treats each phase as cluster-gated behind
+a real Geant4 training campaign. Two facts change the strategy:
+
+- **Geant4 runs are cluster-only** (no ACE3P/Geant4 env locally). The expensive,
+  blocking part of Phase 2 is the *campaign* (producing real `(β, dose)` pairs),
+  not the *mode code* (sampler + `Workflow.evaluate` loop + `save_field`/
+  `load_field` reuse + dry-run), which is buildable and testable locally now.
+- **Phases 3–4 do not need real Geant4 data to validate the machinery.** A known
+  analytic β→dose map with injected MC-style noise exercises the full PCA-GP fit,
+  held-out accuracy, variance calibration, save/reload, and even the inversion
+  recovery test — all locally. Real dose files validate the *science*, not the
+  *plumbing*.
+
+**Adopted strategy (user-confirmed 2026-07-20):**
+
+1. **Build on synthetic first.** Implement the Phase-2 `collect_training_data`
+   mode (+ resumable store + dry-run pipeline test) AND develop Phases 3–4
+   against a synthetic analytic β→dose fixture with injected noise. Decouples all
+   ML/inversion machinery from the cluster.
+2. **Trustworthy forward surrogate is the primary near-term deliverable.** The
+   Phase-3 PCA-GP must hit its verification bar first — held-out reconstruction
+   accuracy *and* calibrated (non-zero) predictive variance per constraint #2 —
+   before inversion (Phase 4) is treated as done. Get the forward map right;
+   inversion rides on it.
+3. The real Geant4 training campaign (cluster) and the science-level recovery
+   tests slot in after the synthetic machinery is validated — they swap the
+   synthetic fixture for real `(β, dose)` pairs without reworking the GP/inversion
+   core (that separation is exactly what constraint #1/#2 and the PCA-GP interface
+   are designed to preserve).
+
+This does not delete any phase or change the verification bars below — it reorders
+*when* they run and lets Phase 3 lead on synthetic data instead of waiting on a
+cluster campaign. The MCMC library for `invert_bayesian` (emcee vs numpyro vs
+pymc) is still an open one-time decision to make when Phase 4 starts.
 
 ## Phase 0 — xopt 3.0.0 compatibility (unplanned prerequisite, done 2026-07-08)
 
@@ -78,23 +118,34 @@ real solver.
 
 1. **Fix `bin_edges` explicitly** on the `particles` module entry (in the
    `workflow:` list) for all training and inversion runs. The default edges in
-   `Particles.assign_bins` (`src/lume_ace3p/particles.py`) are data-driven
+   `Particles.assign_bins` (`src/lume_ace3p/particles.py:49`) are data-driven
    (`z_vals.min() .. max()`) and drift per run, making the β→dose map
    non-stationary and poisoning the GP. Every generated training YAML / run
    config must carry an explicit, shared `bin_edges` (length `num_bins + 1`).
-   **Note:** the existing `bin_edges` enforcement in
-   `modes._mc_noise_guards` fires only for the Xopt modes (`scalar_optimize` /
-   `gp_parameter_sweep`). The new `collect_training_data` mode (Phase 2) is a DOE
-   mode, not an Xopt mode, so it does **not** inherit that guard — it must call
-   `_mc_noise_guards` (or replicate the check) to enforce explicit `bin_edges`
-   itself.
+   **Note — the existing guard checks the WRONG place for this purpose.**
+   `modes._mc_noise_guards` (`modes.py:278`) only asserts that `'bin_edges'` is
+   a key in the **mode / xopt config dict**, and it fires only for the Xopt modes
+   (`scalar_optimize` / `gp_parameter_sweep`) when `mc_noisy_objective` is set.
+   But the `bin_edges` that actually governs the β→dose binning is read off the
+   **`particles` module entry** (`particles.py:31`, consumed at `:51`), and
+   *nothing plumbs the mode-dict value into the particles module* — they are
+   disconnected keys. So calling `_mc_noise_guards` alone would NOT guarantee the
+   binning is pinned. The new `collect_training_data` mode (Phase 2) must instead
+   **validate `bin_edges` on the resolved `particles` module config** (inspect the
+   built `Workflow`'s particles module and hard-fail if `bin_edges` is absent or
+   not length `num_bins + 1`). Do not rely on `_mc_noise_guards` for this.
 2. **Geant4 dose is Monte-Carlo noisy.** The surrogate GPs must include a genuine
    noise term. Do **not** reuse S3P's low-noise / interpolating prior
    (`use_low_noise_prior`). `modes._build_generator` already leaves it at its
    default (`False`) when `mc_noisy_objective` is set — mirror that in the
    surrogate GPs; default to a fitted noise/likelihood.
 
-## Repository orientation (updated 2026-07-12, post-refactor)
+## Repository orientation (updated 2026-07-12, re-verified 2026-07-20)
+
+*(2026-07-20 review: the only substantive change since the 07-12 reconciliation
+is commit `3d0916d` — nested `input_parameters` + cross-code VOCS routing, v0.2.1
+— which confirms rather than contradicts the notation below. All file:line
+citations here re-checked against `dev`.)*
 
 The module/workflow/mode refactor has landed on `dev`. Legacy `workflow.py`
 (Omega3P/S3P/Geant4Workflow subclasses), `run_xopt.py`, and the `tools.py`
@@ -109,7 +160,8 @@ consolidated through `results.py`.
   `run_mode(mode_cfg, workflow, ...)` dispatches on `mode.type`.
 - Forward map `β∈ℝ⁸ → dose` is **already callable today** via a declarative
   `track3p_source → particles → geant4` workflow. The β resolution now lives in
-  `ParticlesModule._resolve_beta` (`src/lume_ace3p/modules.py:488`): set
+  `ParticlesModule._resolve_beta` (`src/lume_ace3p/modules.py:488`, verified
+  current 2026-07-20): set
   `beta_inputs: [beta0 … beta7]` on the `particles` **module** entry (one per
   bin) with `beta0..beta7` declared under `input_parameters.cubit`, or `beta_input: beta`
   to broadcast one scalar to all bins. The single-run path handles an arbitrary
@@ -120,7 +172,7 @@ consolidated through `results.py`.
   `modes.gp_parameter_sweep` — workflow-agnostic (objective pulled from
   `Workflow.evaluate()` + declarative `output_parameters`), not S3P-specific.
 - **Full dose grids are already captured**, not just extracted scalars:
-  `Geant4Module.field(ctx)` (`modules.py:714`) returns
+  `Geant4Module.field(ctx)` (`modules.py:744`) returns
   `{'dose': {indices, values}, 'edep': {...}}` as arrays; `Workflow` exposes
   `field()` / `field_index()`; and `results.save_field` / `results.load_field`
   (`results.py:74` / `:107`) round-trip those grids to `.npz`, referenced from an
@@ -243,22 +295,53 @@ points in the 8-D β space.
    an Xopt mode and does not inherit that guard automatically); make fidelity
    (particle count) an explicit recorded field for later.
 
-### Verification (Phase 2 done when)
+### Verification (Phase 2 done when) — ALL MET (2026-07-20)
 
-- A small N (e.g. 8–16) DOE run produces a training store loadable in one call
-  returning aligned `β` matrix and dose-grid tensor with consistent shapes.
-- Re-running the mode skips already-computed points (resumability).
-- Dry-run mode works without the Geant4 app environment (mirrors the existing
-  `Geant4Module` / `Workflow` dry-run behavior) for pipeline testing.
+- [x] A small N (e.g. 8–16) DOE run produces a training store loadable in one
+  call returning aligned `β` matrix and dose-grid tensor with consistent shapes.
+  → `surrogate_data.load_training_store` returns aligned `(N,D)` β + `(N,M)`
+  dose; `test_full_store_roundtrip_and_alignment` checks the β↔dose alignment.
+- [x] Re-running the mode skips already-computed points (resumability).
+  → each sample runs in `<store>/sample_NNNNN`; a persisted `field.npz` is
+  skipped. `test_resume_skips_computed_points` proves only missing points
+  re-evaluate; `test_resume_reproduces_same_design` proves the seeded DOE
+  reproduces identical β on resume.
+- [x] Dry-run mode works without the Geant4 app environment.
+  → `test_dry_run_pipeline_produces_store` + the CLI runs the shipped example
+  end-to-end under auto-enabled dry-run.
 
-### Deliverables
+### Deliverables — DONE
 
-- New example under `examples/` (e.g. `geant4_beta_surrogate/`) with a YAML
-  declaring `beta0..beta7` bounds, explicit `bin_edges`, DOE size, and the store
-  path. Base it on `examples/geant4_track3p_beta/` (switch `beta_input` →
-  `beta_inputs: [beta0..beta7]`, add the 8 bounds, uncomment `bin_edges`).
-- Loader utility (new module, e.g. `src/lume_ace3p/surrogate_data.py`) — a thin
-  wrapper over `results.load_field` + the result table, not a new on-disk format.
+- Example `examples/geant4_beta_surrogate/geant4_beta_surrogate.yaml` —
+  `beta0..beta7` bounds (mode `variables:`), explicit fixed `bin_edges`, DOE
+  size/sampler/seed, store path. Large geometry/particle files are **symlinked**
+  to the sibling `examples/geant4_track3p_beta/` (tracked as git symlinks, no
+  multi-MB duplicates).
+- Loader utility `src/lume_ace3p/surrogate_data.py` — DOE sampler
+  (`sample_beta_doe`, scipy `qmc` Sobol/LHS) + `load_training_store`, a thin
+  wrapper over `results.load_field` + the result table (+ a `manifest.json`
+  recording the fixed `bin_edges`/`num_bins`, β order, mesh shape, DOE
+  provenance). Not a new on-disk format.
+
+### Implementation notes / deviations
+
+- **DOE bounds live in the `mode:` block** (`variables: {beta0: [lo,hi], ...}`)
+  rather than `input_parameters` — the β values under `input_parameters.cubit`
+  are placeholders the DOE overrides per sample. This keeps the sampled design
+  in the mode config (where inversion Phase 4 will also declare VOCS bounds) and
+  the `input_parameters` block declaring only that the 8 β knobs exist.
+- **`bin_edges` guard** (`modes._require_fixed_bin_edges`) inspects the resolved
+  **`particles` module** config (constraint #1), hard-failing on missing /
+  wrong-length `bin_edges`, a scalar `beta_input` (must be per-bin
+  `beta_inputs`), or `len(beta_inputs) != num_bins`. It does NOT reuse
+  `_mc_noise_guards` (which only checks a disconnected mode-dict key), per the
+  constraint-#1 note above.
+- **`fidelity`** is a recorded mode-config field written to every table row +
+  the manifest, ready for Phase 5 multi-fidelity filtering.
+- Under dry-run there is no dose grid (the Geant4 binary is skipped), so the
+  dry-run store carries β + fidelity rows but no `field_artifact` column; the
+  field-persistence / resume / loader-alignment paths are exercised with real
+  arrays via a synthetic-dose fake workflow in the tests.
 
 ---
 

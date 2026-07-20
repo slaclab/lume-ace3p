@@ -1,0 +1,1 @@
+../geant4_track3p_beta/sample_track3p_particles.txt

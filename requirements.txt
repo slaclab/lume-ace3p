@@ -1,3 +1,4 @@
 lume-base>=0.3.3
 xopt>=3.0.0
 ruamel.yaml
+scipy
