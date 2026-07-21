@@ -56,8 +56,14 @@ mode :
   holdout : 0.2                           # hold out 20% for an accuracy report
                                           # (relative-L2 + mean predicted std)
 
+# The 8 beta variables are field-enhancement knobs of the particles module
+# (the post-Track3P Fowler-Nordheim weighting step), so they live under the
+# 'particles:' input bucket -- NOT 'cubit:' (Cubit is not part of this
+# track3p_source -> particles -> geant4 chain). Values are placeholders; the
+# store already holds the collected betas, so this block is carried only for
+# schema symmetry with the collection example.
 input_parameters :
-  cubit :
+  particles :
     'beta0' : 50.0
     'beta1' : 50.0
     'beta2' : 50.0

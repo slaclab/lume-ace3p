@@ -167,7 +167,7 @@ def test_geant4_beta_broadcast_sweep(tmp_path):
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4'},
         ]
         # beta sweeps 40 -> 60 in 5 steps (the example's input_parameters).
-        inputs = WorkflowInputs(cubit={'beta': np.linspace(40.0, 60.0, 5)})
+        inputs = WorkflowInputs(particles={'beta': np.linspace(40.0, 60.0, 5)})
         wf = _build(entries, inputs, 'lume-ace3p_geant4_workdir')
         df = parameter_sweep(wf)
 

@@ -205,7 +205,9 @@ consolidated through `results.py`.
   `ParticlesModule._resolve_beta` (`src/lume_ace3p/modules.py:488`, verified
   current 2026-07-20): set
   `beta_inputs: [beta0 … beta7]` on the `particles` **module** entry (one per
-  bin) with `beta0..beta7` declared under `input_parameters.cubit`, or `beta_input: beta`
+  bin) with `beta0..beta7` declared under `input_parameters.particles` (the
+  field-enhancement bucket; a legacy `input_parameters.cubit` declaration is
+  still honored), or `beta_input: beta`
   to broadcast one scalar to all bins. The single-run path handles an arbitrary
   8-vector; no changes to the Geant4/particle plumbing are needed to evaluate
   training points. See `examples/geant4_track3p_beta/geant4_track3p_beta.yaml`
@@ -369,7 +371,7 @@ points in the 8-D β space.
 ### Implementation notes / deviations
 
 - **DOE bounds live in the `mode:` block** (`variables: {beta0: [lo,hi], ...}`)
-  rather than `input_parameters` — the β values under `input_parameters.cubit`
+  rather than `input_parameters` — the β values under `input_parameters.particles`
   are placeholders the DOE overrides per sample. This keeps the sampled design
   in the mode config (where inversion Phase 4 will also declare VOCS bounds) and
   the `input_parameters` block declaring only that the 8 β knobs exist.

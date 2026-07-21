@@ -9,12 +9,13 @@ duplicate-named ACE3P sections cleanly.
 This module replaces that with a small, explicit data model:
 
   WorkflowInputs(
-      cubit  = {var_name: scalar | numpy.ndarray, ...},
-      ace3p  = Section(...),                   # tree of (name, child) pairs
-      macro  = {macro_cmd: scalar | numpy.ndarray, ...},
+      cubit     = {var_name: scalar | numpy.ndarray, ...},
+      ace3p     = Section(...),                # tree of (name, child) pairs
+      macro     = {macro_cmd: scalar | numpy.ndarray, ...},
+      particles = {var_name: scalar | numpy.ndarray, ...},
   )
 
-`sweep_axes()` walks all three buckets and surfaces array-valued leaves as
+`sweep_axes()` walks all four buckets and surfaces array-valued leaves as
 named sweep axes. `materialize(axis_values)` returns a fresh ``WorkflowInputs``
 with each swept leaf collapsed to a scalar — that's what the workflow hands
 to the per-iteration `set_value` calls.
@@ -27,10 +28,11 @@ from lume_ace3p.ace3p import Section
 
 
 class WorkflowInputs:
-    def __init__(self, cubit=None, ace3p=None, macro=None):
+    def __init__(self, cubit=None, ace3p=None, macro=None, particles=None):
         self.cubit = dict(cubit) if cubit else {}
         self.ace3p = ace3p if ace3p is not None else Section()
         self.macro = dict(macro) if macro else {}
+        self.particles = dict(particles) if particles else {}
 
     # ---- sweep machinery -------------------------------------------------
 
@@ -58,6 +60,11 @@ class WorkflowInputs:
                 axes.append((name, np.asarray(value),
                              _make_macro_setter(name)))
 
+        for name, value in self.particles.items():
+            if _is_array(value):
+                axes.append((name, np.asarray(value),
+                             _make_particles_setter(name)))
+
         return axes
 
     def materialize(self, axis_scalars):
@@ -69,6 +76,7 @@ class WorkflowInputs:
             cubit=dict(self.cubit),
             ace3p=_clone_section(self.ace3p),
             macro=dict(self.macro),
+            particles=dict(self.particles),
         )
         for (label, values, setter), scalar in zip(self.sweep_axes(), axis_scalars):
             setter(copy, scalar)
@@ -80,7 +88,8 @@ class WorkflowInputs:
         """Build the map from a VOCS variable name to a `(bucket, setter)`.
 
         Each declared variable is registered under its fully-qualified label
-        (``cubit:name`` / ``ace3p:Section.Leaf`` / ``geant4:name``) — always
+        (``cubit:name`` / ``ace3p:Section.Leaf`` / ``geant4:name`` /
+        ``particles:name``) — always
         unambiguous — and, when the *bare* name is unique across all buckets,
         under that bare name too. A bare name declared in more than one bucket
         is recorded in `ambiguous` and left out of the bare routes, so a bare
@@ -104,6 +113,8 @@ class WorkflowInputs:
             add(bare, label, _make_ace3p_setter(path))
         for name in self.macro:
             add(name, f'geant4:{name}', _make_macro_setter(name))
+        for name in self.particles:
+            add(name, f'particles:{name}', _make_particles_setter(name))
 
         routes = dict(qualified)
         ambiguous = {}
@@ -116,19 +127,20 @@ class WorkflowInputs:
 
     def apply_overrides(self, overrides):
         """Return a copy with each `{name: value}` override applied to the bucket
-        where `name` is declared. Used by the optimize modes, whose Xopt variable
-        names route to the cubit / ace3p / macro buckets.
+        where `name` is declared. Used by the optimize / DOE modes, whose variable
+        names route to the cubit / ace3p / macro / particles buckets.
 
         `name` may be a bare variable name (allowed only when unique across
         buckets) or a fully-qualified label (``cubit:…`` / ``ace3p:…`` /
-        ``geant4:…``). A bare name declared in more than one bucket raises a
-        `ValueError`. A name not declared in any bucket falls back to the cubit
-        bucket (back-compat with configs that declare VOCS variables but no
-        `input_parameters`)."""
+        ``geant4:…`` / ``particles:…``). A bare name declared in more than one
+        bucket raises a `ValueError`. A name not declared in any bucket falls
+        back to the cubit bucket (back-compat with configs that declare VOCS
+        variables but no `input_parameters`)."""
         copy = WorkflowInputs(
             cubit=dict(self.cubit),
             ace3p=_clone_section(self.ace3p),
             macro=dict(self.macro),
+            particles=dict(self.particles),
         )
         routes, ambiguous = self._route_registry()
         for name, value in overrides.items():
@@ -148,7 +160,7 @@ class WorkflowInputs:
 
 # Reserved sub-block names under a nested `input_parameters:` mapping. Each maps
 # to one WorkflowInputs bucket (geant4 -> macro).
-_INPUT_BUCKETS = ('cubit', 'ace3p', 'geant4')
+_INPUT_BUCKETS = ('cubit', 'ace3p', 'geant4', 'particles')
 
 
 def load_yaml(path):
@@ -176,9 +188,9 @@ def load_yaml(path):
 
 def _is_nested_input_parameters(block):
     """True if an `input_parameters:` value uses the nested bucket notation
-    (`{cubit: …, ace3p: …, geant4: …}`) rather than the legacy flat cubit
-    block. A non-empty mapping whose keys are all reserved bucket names is
-    treated as nested."""
+    (`{cubit: …, ace3p: …, geant4: …, particles: …}`) rather than the legacy
+    flat cubit block. A non-empty mapping whose keys are all reserved bucket
+    names is treated as nested."""
     return isinstance(block, dict) and bool(block) and all(
         key in _INPUT_BUCKETS for key in block)
 
@@ -189,21 +201,25 @@ def build_inputs(yaml_data):
     Accepts the standard nested notation ::
 
         input_parameters:
-          cubit:  {…}      # -> cubit bucket
-          ace3p:  {…}      # -> ace3p bucket (duplicate-key aware)
-          geant4: {…}      # -> macro bucket
+          cubit:     {…}   # -> cubit bucket
+          ace3p:     {…}   # -> ace3p bucket (duplicate-key aware)
+          geant4:    {…}   # -> macro bucket
+          particles: {…}   # -> particles bucket (e.g. field-enhancement β)
 
     as well as the deprecated flat aliases (`cubit_input_parameters`,
-    `ace3p_input_parameters`, `geant4_input_parameters`, and a bare
-    `input_parameters` treated as the cubit block).
+    `ace3p_input_parameters`, `geant4_input_parameters`,
+    `particles_input_parameters`, and a bare `input_parameters` treated as the
+    cubit block).
     """
     cubit = {}
     macro = {}
+    particles = {}
 
     input_params = yaml_data.get('input_parameters')
     if _is_nested_input_parameters(input_params):
         _collect_scalar_block(input_params.get('cubit'), cubit)
         _collect_scalar_block(input_params.get('geant4'), macro)
+        _collect_scalar_block(input_params.get('particles'), particles)
         # The nested `ace3p:` sub-block was lifted into `ace3p_input_parameters`
         # by load_yaml (duplicate-key aware), so it is read below.
     else:
@@ -213,10 +229,12 @@ def build_inputs(yaml_data):
     # Deprecated flat aliases (still honored for back-compat).
     _collect_scalar_block(yaml_data.get('cubit_input_parameters'), cubit)
     _collect_scalar_block(yaml_data.get('geant4_input_parameters'), macro)
+    _collect_scalar_block(yaml_data.get('particles_input_parameters'), particles)
 
     ace3p = _build_section(yaml_data.get('ace3p_input_parameters') or [])
 
-    return WorkflowInputs(cubit=cubit, ace3p=ace3p, macro=macro)
+    return WorkflowInputs(cubit=cubit, ace3p=ace3p, macro=macro,
+                          particles=particles)
 
 
 # ---- internal helpers ----------------------------------------------------
@@ -401,6 +419,12 @@ def _make_cubit_setter(name):
 def _make_macro_setter(name):
     def setter(inputs, value):
         inputs.macro[name] = value
+    return setter
+
+
+def _make_particles_setter(name):
+    def setter(inputs, value):
+        inputs.particles[name] = value
     return setter
 
 

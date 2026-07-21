@@ -235,7 +235,7 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
              'output': 'particles.data'},
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4'},
         ]
-        inputs = WorkflowInputs(cubit={'beta': 40.0})
+        inputs = WorkflowInputs(particles={'beta': 40.0})
         wf = Workflow(entries,
                       workflow_params={'workdir': 'lume-ace3p_geant4_workdir',
                                        'workdir_mode': 'auto', 'dry_run': True},

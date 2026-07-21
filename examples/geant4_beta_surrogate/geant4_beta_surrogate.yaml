@@ -75,12 +75,12 @@ mode :
     'beta6' : [40.0, 60.0]
     'beta7' : [40.0, 60.0]
 
-# The 8 beta variables are Cubit knobs (the particles module's 'beta_inputs'
-# reads them); declare them under 'cubit:' so they live in the input space the
-# override dict routes to. Values are placeholders -- the DOE overrides them
-# per sample.
+# The 8 beta variables are field-enhancement knobs of the particles module (its
+# 'beta_inputs' reads them), so they live under the 'particles:' input bucket --
+# NOT 'cubit:' (Cubit is not part of this track3p_source -> particles -> geant4
+# chain). Values are placeholders -- the DOE overrides them per sample.
 input_parameters :
-  cubit :
+  particles :
     'beta0' : 50.0
     'beta1' : 50.0
     'beta2' : 50.0
