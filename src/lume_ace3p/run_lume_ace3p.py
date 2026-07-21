@@ -20,11 +20,12 @@ def _run_declarative(lume_ace3p_data):
     mode_cfg = lume_ace3p_data.get('mode') or {}
     mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode', '')).lower()
     if mode_type not in ('single', 'parameter_sweep', 'collect_training_data',
-                         'scalar_optimize', 'gp_parameter_sweep'):
+                         'train_surrogate', 'scalar_optimize',
+                         'gp_parameter_sweep'):
         raise ValueError(
             f"workflow mode '{mode_type}' is not handled "
             "(single | parameter_sweep | collect_training_data | "
-            "scalar_optimize | gp_parameter_sweep).")
+            "train_surrogate | scalar_optimize | gp_parameter_sweep).")
     return run_mode(mode_cfg, workflow,
                     output_spec=lume_ace3p_data.get('output_parameters'),
                     vocs=lume_ace3p_data.get('vocs_parameters'),

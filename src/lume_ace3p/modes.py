@@ -100,6 +100,8 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         df = parameter_sweep(workflow)
     elif mode_type == 'collect_training_data':
         return collect_training_data(mode_cfg, workflow)
+    elif mode_type == 'train_surrogate':
+        return train_surrogate(mode_cfg, workflow)
     elif mode_type == 'scalar_optimize':
         return scalar_optimize(
             workflow, vocs, xopt,
@@ -113,7 +115,7 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         raise ValueError(
             f"mode '{mode_type}' is not handled by the mode layer "
             "(single | parameter_sweep | collect_training_data | "
-            "scalar_optimize | gp_parameter_sweep).")
+            "train_surrogate | scalar_optimize | gp_parameter_sweep).")
 
     # In the table modes 'sweep_output_file:' is a legacy alias for 'output_file:'
     # (only the Xopt gp_parameter_sweep mode above, which returned early, uses it
@@ -451,6 +453,110 @@ def _mesh_shape(handle):
     if section is None:
         return None
     return [int(len(np.asarray(section['values'])))]
+
+
+# --------------------------------------------------------------------------- #
+# train_surrogate (Phase 3) — fit the PCA-GP forward dose surrogate from a
+# collected training store. A store-consuming mode (like collect_training_data,
+# it does not sweep the workflow); the ``workflow`` argument is accepted for
+# dispatch symmetry but unused (the store already holds the (β, dose) pairs).
+# --------------------------------------------------------------------------- #
+
+
+def train_surrogate(mode_cfg, workflow=None):
+    """Fit and persist the PCA-GP forward dose surrogate (Phase 3).
+
+    Loads the Phase-2 training store named by ``mode_cfg['store']`` via
+    :func:`surrogate_data.load_training_store` (which already enforces the fixed
+    ``bin_edges`` / scoring-mesh invariants, constraints #1 and #3), fits a
+    :class:`lume_ace3p.surrogate.DoseSurrogate` (SVD → top-k POD modes → one
+    GP per coefficient, each with a genuine fitted noise term per constraint #2),
+    optionally reports held-out reconstruction accuracy, and saves the model.
+
+    Mode config keys:
+
+    * ``store`` (required) — the training-store directory.
+    * ``variance`` (default 0.99) — cumulative-energy target for choosing the
+      number of retained POD modes; ignored when ``num_components`` is set.
+    * ``num_components`` — explicit retained-mode count ``k`` (overrides
+      ``variance``).
+    * ``seed`` (default 0) — reproducible GP restart search.
+    * ``model_dir`` (default ``<store>/surrogate``) — where the model is saved.
+    * ``holdout`` — fraction (0<f<1) or integer count of samples to hold out for
+      an accuracy report; when set, the surrogate is refit on the remaining
+      samples for the report, then refit on ALL samples for the saved model.
+
+    Returns the fitted :class:`DoseSurrogate` (the saved model)."""
+    from lume_ace3p.surrogate import DoseSurrogate
+
+    store = mode_cfg.get('store') or mode_cfg.get('output_dir')
+    if not store:
+        raise ValueError(
+            "train_surrogate requires a 'store' (the collect_training_data "
+            "training store to fit the surrogate from).")
+
+    ts = surrogate_data.load_training_store(store)
+    if ts.dose is None:
+        raise ValueError(
+            f"training store '{store}' has no dose grids to fit a surrogate on. "
+            "A dry-run collection produces β rows but no field artifacts — run a "
+            "real (or synthetic) collect_training_data campaign first.")
+
+    variance = float(mode_cfg.get('variance', 0.99))
+    k = mode_cfg.get('num_components')
+    seed = int(mode_cfg.get('seed', 0))
+    model_dir = mode_cfg.get('model_dir') or os.path.join(store, 'surrogate')
+
+    holdout = mode_cfg.get('holdout')
+    if holdout:
+        _report_holdout(ts, variance, k, seed, holdout, store)
+
+    surrogate = DoseSurrogate.fit(ts.beta, ts.dose, variance=variance, k=k,
+                                  seed=seed, beta_names=ts.beta_names)
+    surrogate.save(model_dir)
+    print(f" - trained PCA-GP surrogate: {surrogate.num_components} modes "
+          f"({surrogate.kept_energy:.4f} energy) saved to {model_dir}")
+    return surrogate
+
+
+def _report_holdout(ts, variance, k, seed, holdout, store):
+    """Fit on a train split and report held-out reconstruction accuracy +
+    predicted-variance calibration, writing a small ``train_report.txt`` to the
+    store. This validates the forward map (Phase-3 bar) before the model saved
+    for downstream use is fit on all samples."""
+    from lume_ace3p.surrogate import DoseSurrogate
+
+    n = len(ts)
+    if isinstance(holdout, float) and 0.0 < holdout < 1.0:
+        n_hold = max(1, int(round(holdout * n)))
+    else:
+        n_hold = int(holdout)
+    n_hold = min(n_hold, n - 2)     # keep >=2 training samples
+    if n_hold < 1:
+        return
+
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n)
+    hold_idx, train_idx = perm[:n_hold], perm[n_hold:]
+
+    model = DoseSurrogate.fit(ts.beta[train_idx], ts.dose[train_idx],
+                              variance=variance, k=k, seed=seed,
+                              beta_names=ts.beta_names)
+    pred_mean, pred_var = model.predict_dose(ts.beta[hold_idx])
+    truth = ts.dose[hold_idx]
+    # Per-sample relative L2 error.
+    num = np.linalg.norm(pred_mean - truth, axis=1)
+    den = np.linalg.norm(truth, axis=1)
+    rel_l2 = num / np.where(den == 0.0, 1.0, den)
+    mean_pred_std = float(np.mean(np.sqrt(np.maximum(pred_var, 0.0))))
+
+    report = pd.DataFrame({
+        'holdout_index': hold_idx,
+        'relative_l2': rel_l2,
+    })
+    write_table(report, os.path.join(store, 'train_report.txt'))
+    print(f" - held-out relative-L2: mean={rel_l2.mean():.4f} "
+          f"max={rel_l2.max():.4f}; mean predicted std={mean_pred_std:.4g}")
 
 
 # --------------------------------------------------------------------------- #
