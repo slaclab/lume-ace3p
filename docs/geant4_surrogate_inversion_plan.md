@@ -23,6 +23,11 @@ below for the verification checklist (all bars met).
 mesh is now fingerprinted, validated at collection time (up-front + per-sample),
 recorded in the manifest, and re-checked bin-for-bin at load time. See the Phase 2
 "Follow-up hardening" section.
+**Phase 3 (`train_surrogate`) DELIVERED (2026-07-21)** — PCA-GP forward dose
+surrogate (SVD → top-k POD modes → one sklearn GP per coefficient with a genuine
+fitted noise term) built + validated locally against a synthetic analytic β→dose
+fixture per the synthetic-first strategy. See the Phase 3 section for the
+verification checklist (all bars met).
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
@@ -492,13 +497,69 @@ cheap `predict_dose(β)` and `project(dose)`.
    so the future "profile summaries" input mode can supply an alternate
    `project()` without changing the GPs.
 
-### Verification (Phase 3 done when)
+### Verification (Phase 3 done when) — ALL MET (2026-07-21, synthetic)
 
-- Held-out β points: reconstructed dose matches Geant4 dose within a reported
-  error metric (e.g. relative L2), and predicted variance is calibrated (not
-  ~0 — sanity check against constraint #2).
-- Round-trip: `project(predict_dose(β))` ≈ `c_GP(β)`.
-- Model saves and reloads to identical predictions.
+- [x] Held-out β points: reconstructed dose matches truth within a reported
+  error metric (relative L2), and predicted variance is calibrated (not ~0 —
+  sanity check against constraint #2). → `test_holdout_reconstruction_accuracy`
+  (mean rel-L2 < 0.10 on held-out β) + `test_predicted_variance_is_positive_and_calibrated`
+  (var strictly > 0, predicted std on the order of the injected noise, coverage
+  check). Against the real Geant4 store the numeric threshold is re-tuned to the
+  campaign's signal-to-noise; the machinery is unchanged.
+- [x] Round-trip: `project(predict_dose(β))` ≈ `c_GP(β)`. →
+  `test_roundtrip_project_of_predict` (exact by construction, atol 1e-8).
+- [x] Model saves and reloads to identical predictions. →
+  `test_save_reload_identical_predictions` (allclose atol 1e-10 on predict_dose +
+  project).
+
+### What landed (2026-07-21)
+
+- **`src/lume_ace3p/surrogate.py` — `DoseSurrogate`.** Pure numpy + sklearn, no
+  workflow coupling. `fit(beta, dose, *, variance=0.99|k, seed)` does mean-center
+  → economy SVD → `_choose_k` by cumulative energy (or explicit `k`) → coeffs
+  `C = centered @ Φ^T` → one `GaussianProcessRegressor` per column. Kernel =
+  `ConstantKernel * RBF(ARD) + WhiteKernel` (the WhiteKernel is the genuine
+  fitted noise term, constraint #2 — no low-noise prior). β is min/max-normalized
+  to a unit cube before the GPs. API: `predict_dose(β) → (mean_grid, var_grid)`
+  (var propagated as `Σ Var[c_i]·φ_i²`, strictly > 0), `project(dose) → coeffs`
+  (the single coefficient-space seam Phase 4 inverts against),
+  `predicted_coeffs(β) → (mean, var)` (raw GP outputs, so the round-trip holds by
+  construction), `save(dir)`/`load(dir)`.
+- **Persistence** = three artifacts in the model dir: `basis.npz` (PCA arrays,
+  `allow_pickle=False`), `gps.joblib` (fitted GPs — a *trusted local* artifact,
+  unlike the untrusted field `.npz`), `surrogate.json` (provenance: k, variance
+  target, kept energy, per-GP fitted kernel string — the hyperparameter dump the
+  plan asked for, analogous to `_save_model`'s `gp_parameters.txt`).
+- **`modes.train_surrogate(mode_cfg, workflow=None)`** — store-consuming mode
+  (does not sweep the workflow). Loads via `surrogate_data.load_training_store`
+  (inherits the constraint #1/#3 guarantees), hard-fails on a grid-less dry-run
+  store, fits, optionally reports held-out accuracy (`holdout:` fraction/count →
+  refit-on-train, write `train_report.txt`), then fits on ALL samples and saves.
+  Config: `store` (req), `variance` (0.99) / `num_components` (k), `seed`,
+  `model_dir` (default `<store>/surrogate`), `holdout`. Dispatched in
+  `run_mode` + allowed in `run_lume_ace3p`.
+- **Dependency:** `scikit-learn` added to `pyproject.toml` / `requirements.txt`
+  (was only an optional import in a cost-function branch; Phase 3 hard-requires it).
+- **Example** `examples/geant4_beta_surrogate/geant4_beta_surrogate_train.yaml` —
+  documented `train_surrogate` config pointing at the sibling collection store.
+- **Tests** `tests/test_surrogate.py` (15, all local/fast, no Geant4 env): a
+  synthetic low-rank + noisy analytic β→dose fixture (3 Gaussian-in-z spatial
+  modes × smooth nonlinear β amplitudes + Gaussian noise) driven through the real
+  `collect_training_data` mode via a synthetic-dose fake workflow, then all
+  Phase-3 bars above + shape/dispatch/error-path coverage.
+
+### Deviations / notes
+
+- **`workflow` argument is accepted but unused** by `train_surrogate` (dispatch
+  symmetry). The store already holds the `(β, dose)` pairs; the example's
+  `workflow:` block is carried only for schema symmetry.
+- **sklearn `ConvergenceWarning`s** appear on the tiny synthetic fixture (kernel
+  hyperparameters hitting their bounds) — benign, expected for small-N GP fits;
+  not silenced so real-data fits surface the same signal if it matters.
+- **Real-data swap:** the numeric held-out threshold (0.10 rel-L2) is tuned to the
+  synthetic fixture's SNR; against a real Geant4 store it is re-tuned to the
+  campaign, but the GP/PCA core and API are unchanged (exactly the separation the
+  synthetic-first strategy is designed to preserve).
 
 ---
 
