@@ -44,7 +44,7 @@ Selects how the workflow is driven. One `type` is required.
 | `type`                | Extra sections required | Behavior |
 |-----------------------|-------------------------|----------|
 | `single`              | —                       | Run the workflow once (base inputs must be scalar-valued). Returns a one-row result table (or one-row-per-field-index for a field-indexed solver like S3P). |
-| `parameter_sweep`     | `input_parameters` (any of its `cubit:`/`ace3p:`/`geant4:` sub-blocks) | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
+| `parameter_sweep`     | `input_parameters` (any of its `cubit:`/`ace3p:`/`geant4:`/`particles:` sub-blocks) | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
 | `scalar_optimize`     | `vocs_parameters`, `xopt_parameters` | Drives an Xopt optimization loop. The objective is a name in `output_parameters` referenced from the VOCS. |
 | `gp_parameter_sweep`  | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration sweep — fits a Gaussian Process to the explored objective(s), then samples the GP posterior mean on the `sweep_parameters` tensor grid. |
 
@@ -145,16 +145,21 @@ input_parameters :
     FrequencyScan : {Start: 9.424e9}
   geant4 :                      # Geant4 input-file overrides
     nthreads : 8
+  particles :                   # particles-module knobs (e.g. field-enhancement β)
+    beta : {min: 40.0, max: 60.0, num: 5}
 ```
 
 Each leaf value is a single scalar, a `list`, or a `dict` with `min`, `max`,
 and `num` defined. If any leaf is vector-like (a list, or a `min/max/num`
 range), the workflow can only be run as a parameter sweep — not a single
-evaluation. The three sub-blocks map to the three
+evaluation. The four sub-blocks map to the four
 [`WorkflowInputs`](workflow_inputs.md) buckets (`geant4:` → the *macro*
 bucket); their per-block conventions are detailed in
 [](#ace3p_input_parameters) (duplicate-key aware) and
-[](#geant4_input_parameters).
+[](#geant4_input_parameters). The `particles:` bucket holds the
+field-enhancement variables the `particles` module's `beta_input` / `beta_inputs`
+read (the post-Track3P Fowler-Nordheim weighting step) — see
+[](#particle_parameters).
 
 :::{important}
 `cubit:` keys must **exactly** match the variable names in the Cubit journal
@@ -170,11 +175,11 @@ and `geant4:` — with lists of lengths 10, 12, and 15 run the workflow
 :::{note}
 **Deprecated flat aliases.** The pre-standardization keys
 `cubit_input_parameters`, `ace3p_input_parameters`, `geant4_input_parameters`,
-and a bare `input_parameters` (treated as the cubit block) are still accepted
-so existing configs keep running, but the nested notation above is the
-standard. A cubit knob literally named `cubit`, `ace3p`, or `geant4` (which
-would collide with the reserved sub-block names) must be declared with the flat
-`cubit_input_parameters` key.
+`particles_input_parameters`, and a bare `input_parameters` (treated as the
+cubit block) are still accepted so existing configs keep running, but the nested
+notation above is the standard. A cubit knob literally named `cubit`, `ace3p`,
+`geant4`, or `particles` (which would collide with the reserved sub-block names)
+must be declared with the flat `cubit_input_parameters` key.
 :::
 
 ## `output_parameters`
@@ -310,8 +315,8 @@ on the module's `workflow:` entry, not in a separate top-level block.
 | `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values from the input space. |
 | `num_bins`       | `int`              | `len(beta)`           | Number of axial (`Initial_z`) bins applied to the filtered particles. |
 | `bin_edges`      | `list[float]`      | `None` (auto-spaced)  | Explicit bin edges. If supplied, must have length `num_bins + 1`; otherwise edges are linearly spaced between the min and max `Initial_z` of the filtered particles. |
-| `beta_input`     | `str`              | `None`                | Name of a single input-space variable (declared in `input_parameters`) whose scalar value is broadcast to all `num_bins` bins. Lets a `parameter_sweep` (or Xopt) drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
-| `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables, one per bin — enables independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
+| `beta_input`     | `str`              | `None`                | Name of a single input-space variable (declared under `input_parameters.particles`; a legacy `cubit:` declaration is still honored) whose scalar value is broadcast to all `num_bins` bins. Lets a `parameter_sweep` (or Xopt) drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
+| `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables (declared under `input_parameters.particles`), one per bin — enables independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
 | `output_format`  | `str`              | `'geant4'` (module default) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight` (commented header). `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). The `particles` module defaults this to `'geant4'`; set `'track3p'` explicitly for the weighted-Track3P dump. |
 | `output`         | `str`              | `<input>_modified.txt` | Output filename for the generated particle file (written into the workdir). |
 
@@ -346,16 +351,16 @@ driver.
 
 **Variable routing.** Each Xopt variable is written into the input bucket where
 it is declared in [`input_parameters`](#input_parameters) (cubit / ace3p /
-geant4), so a single optimization can drive parameters across multiple codes at
-once. Resolution rule:
+geant4 / particles), so a single optimization can drive parameters across
+multiple codes at once. Resolution rule:
 
 - A **bare** variable name (`cornercut`) routes to its declaring bucket when
   that name is unique across all buckets.
 - If the same bare name is declared in more than one bucket (e.g. a `cubit:`
   knob and an `ace3p:` leaf both named `start`), a bare reference is a hard
   error; **qualify** it with its bucket label — `cubit:start`,
-  `ace3p:FrequencyScan.Start`, or `geant4:nthreads` (the ACE3P label is the
-  dotted section path, matching the sweep-table column label).
+  `ace3p:FrequencyScan.Start`, `geant4:nthreads`, or `particles:beta0` (the
+  ACE3P label is the dotted section path, matching the sweep-table column label).
 - A variable not declared in any `input_parameters` bucket falls back to the
   cubit bucket (so a config that only lists `vocs_parameters.variables` keeps
   working).
@@ -411,15 +416,17 @@ solver-specific code) are:
 
 ### Input data model
 
-`WorkflowInputs(cubit, ace3p, macro)` is the structured representation the
-workflow consumes internally, built by `inputs.build_inputs` from the YAML. The
-three buckets correspond to the three `input_parameters` sub-blocks:
+`WorkflowInputs(cubit, ace3p, macro, particles)` is the structured
+representation the workflow consumes internally, built by `inputs.build_inputs`
+from the YAML. The four buckets correspond to the four `input_parameters`
+sub-blocks:
 
 | Bucket  | YAML source (nested)          | Deprecated flat alias      | Type                |
 |---------|-------------------------------|----------------------------|---------------------|
 | `cubit` | `input_parameters.cubit`      | `cubit_input_parameters` / bare `input_parameters` | `dict[str, scalar \| ndarray]` |
 | `ace3p` | `input_parameters.ace3p`      | `ace3p_input_parameters`   | ordered tree of `(name, child)` pairs (`Section`) — duplicates preserved |
 | `macro` | `input_parameters.geant4`     | `geant4_input_parameters`  | `dict[str, scalar \| ndarray]` |
+| `particles` | `input_parameters.particles` | `particles_input_parameters` | `dict[str, scalar \| ndarray]` |
 
 Array-valued leaves in any bucket become sweep axes; scalar leaves are
 written through to the matching input file unchanged. During optimization,

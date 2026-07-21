@@ -210,7 +210,7 @@ class Workflow:
                              "'auto'.")
         if sweep_scalars is None:
             parts = []
-            for value in inputs.cubit.values():
+            for value in (*inputs.cubit.values(), *inputs.particles.values()):
                 if isinstance(value, (list, tuple, np.ndarray)):
                     raise ValueError("Workflow cannot run with non-scalar "
                                      "inputs; drive it through a sweep mode.")

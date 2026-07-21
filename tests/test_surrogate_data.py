@@ -155,7 +155,7 @@ def _staged_beta_workflow(tmp_path, particles_overrides=None):
         _particles_entry(**(particles_overrides or {})),
         {'module': 'geant4', 'geant4_input': 'input_7cell.geant4'},
     ]
-    inputs = WorkflowInputs(cubit={n: 50.0 for n in BETA_NAMES})
+    inputs = WorkflowInputs(particles={n: 50.0 for n in BETA_NAMES})
     return Workflow(entries,
                     workflow_params={'workdir': str(tmp_path / 'store'),
                                      'dry_run': True},

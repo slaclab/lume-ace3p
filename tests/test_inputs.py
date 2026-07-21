@@ -55,15 +55,18 @@ input_parameters :
       ReferenceNumber : 8
   geant4 :
     nthreads : 8
+  particles :
+    beta0 : 50.0
 """
 
 
-def test_nested_parses_into_three_buckets(tmp_path):
+def test_nested_parses_into_four_buckets(tmp_path):
     inp = build_inputs(load_yaml(_write(tmp_path, NESTED_YAML)))
     assert set(inp.cubit) == {'cornercut', 'rcorner2'}
     np.testing.assert_allclose(inp.cubit['cornercut'], [12.0, 14.0, 16.0])
     assert inp.cubit['rcorner2'] == 5.0
     assert inp.macro == {'nthreads': 8}
+    assert inp.particles == {'beta0': 50.0}
 
 
 def test_nested_ace3p_preserves_duplicate_keys(tmp_path):
@@ -142,6 +145,8 @@ cubit_input_parameters :
   rcorner2 : 5.0
 geant4_input_parameters :
   nthreads : 8
+particles_input_parameters :
+  beta0 : 50.0
 ace3p_input_parameters :
   FrequencyScan :
     Start : 9.424e9
@@ -154,6 +159,7 @@ ace3p_input_parameters :
     np.testing.assert_allclose(nested.cubit['cornercut'], flat.cubit['cornercut'])
     assert nested.cubit['rcorner2'] == flat.cubit['rcorner2']
     assert nested.macro == flat.macro
+    assert nested.particles == flat.particles
     assert _ace3p_leaves(nested) == _ace3p_leaves(flat)
 
 
@@ -185,7 +191,8 @@ def _mixed_inputs():
     fs.append('start', '9.4e9')
     ace.append('FrequencyScan', fs)
     return WorkflowInputs(cubit={'cornercut': 14.0, 'start': 1.0},
-                          ace3p=ace, macro={'nthreads': 8})
+                          ace3p=ace, macro={'nthreads': 8},
+                          particles={'beta0': 50.0})
 
 
 def test_bare_unique_name_routes_to_declaring_bucket():
@@ -212,6 +219,20 @@ def test_qualified_cubit_label_routes_to_cubit():
     inp = _mixed_inputs()
     out = inp.apply_overrides({'cubit:start': 2.0})
     assert out.cubit['start'] == 2.0
+
+
+def test_bare_particles_name_routes_to_particles():
+    inp = _mixed_inputs()
+    out = inp.apply_overrides({'beta0': 55.0})
+    assert out.particles['beta0'] == 55.0
+    # cubit untouched
+    assert out.cubit['cornercut'] == 14.0
+
+
+def test_qualified_particles_label_routes_to_particles():
+    inp = _mixed_inputs()
+    out = inp.apply_overrides({'particles:beta0': 60.0})
+    assert out.particles['beta0'] == 60.0
 
 
 def test_bare_colliding_name_raises_with_guidance():

@@ -137,12 +137,13 @@ def single(workflow):
     solver, one-row-per-index) result DataFrame.
 
     The base ``inputs`` must already be scalar-valued (no swept axes). Input
-    columns are the scalar cubit knobs; output columns are the extracted
-    ``output_parameters``. When the workflow produces a structured field
-    (Geant4 voxel grids, an S3P spectrum in the wide case), it is persisted and
-    referenced by a field-artifact column."""
-    input_names = list(workflow.inputs.cubit.keys())
-    scalars = [workflow.inputs.cubit[name] for name in input_names]
+    columns are the scalar cubit + particles knobs; output columns are the
+    extracted ``output_parameters``. When the workflow produces a structured
+    field (Geant4 voxel grids, an S3P spectrum in the wide case), it is
+    persisted and referenced by a field-artifact column."""
+    scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
+    input_names = list(scalar_inputs.keys())
+    scalars = [scalar_inputs[name] for name in input_names]
     outputs = workflow.evaluate(None)
     handle = _persist_field(workflow, 0)
     rows = _rows_for_point(workflow, input_names, scalars, outputs, handle)

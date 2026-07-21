@@ -526,7 +526,9 @@ class ParticlesModule(Module):
         """Return the particle params for this run. When ``beta_input``
         (broadcast one input-space variable to all bins) or ``beta_inputs``
         (one variable per bin) is set, build the per-bin beta list from the
-        cubit bucket."""
+        ``particles`` bucket (the field-enhancement scaling belongs to this
+        post-Track3P weighting step, not to Cubit). Falls back to the ``cubit``
+        bucket for back-compat with legacy configs that declared β there."""
         params = self.params
         beta_input = params.get('beta_input')
         beta_inputs = params.get('beta_inputs')
@@ -539,19 +541,22 @@ class ParticlesModule(Module):
             raise ValueError("'num_bins' must be set when using "
                              "'beta_input' or 'beta_inputs'.")
 
-        def cubit_value(name):
-            if name not in inputs.cubit:
-                raise KeyError(f"beta variable '{name}' not found in "
-                               "'input_parameters'.")
-            return float(inputs.cubit[name])
+        def beta_value(name):
+            if name in inputs.particles:
+                return float(inputs.particles[name])
+            if name in inputs.cubit:      # back-compat: legacy β under cubit
+                return float(inputs.cubit[name])
+            raise KeyError(f"beta variable '{name}' not found in "
+                           "'input_parameters' (expected under the "
+                           "'particles:' bucket).")
 
         if beta_input is not None:
-            effective_beta = [cubit_value(beta_input)] * num_bins
+            effective_beta = [beta_value(beta_input)] * num_bins
         else:
             if len(beta_inputs) != num_bins:
                 raise ValueError(f"len(beta_inputs)={len(beta_inputs)} must "
                                  f"equal num_bins={num_bins}.")
-            effective_beta = [cubit_value(n) for n in beta_inputs]
+            effective_beta = [beta_value(n) for n in beta_inputs]
 
         params = dict(params)
         params['beta'] = effective_beta
@@ -664,7 +669,7 @@ class Geant4Module(Module):
                                 f'Geometry files: {geom_files}\n'
                                 f'Output files: {self._output_files()}\n'
                                 f'Threads: {self.geant4_threads}\n'
-                                f'Cubit: {ctx.inputs.cubit}\n'
+                                f'Particles: {ctx.inputs.particles}\n'
                                 f'Input overrides: {macro_inputs}\n')
             if self.geant4_obj is not None:
                 self.geant4_obj.write_input()

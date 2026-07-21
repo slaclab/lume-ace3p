@@ -399,18 +399,32 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
 
 
 def test_particles_module_beta_input_broadcast(tmp_path):
-    """beta_input broadcasts one input-space variable to all bins (the
-    Geant4Workflow._resolve_beta behavior moved into the module)."""
+    """beta_input broadcasts one input-space variable to all bins, read from the
+    particles bucket (the field-enhancement scaling belongs to this step)."""
     dump = tmp_path / 'dump.txt'
     _make_track3p_dump(str(dump))
     wd = str(tmp_path / 'wd')
-    ctx = RunContext(wd, inputs=WorkflowInputs(cubit={'beta': 50.0}),
+    ctx = RunContext(wd, inputs=WorkflowInputs(particles={'beta': 50.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
     module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
                               'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
     assert resolved['beta'] == [50.0] * 8
+
+
+def test_particles_module_beta_falls_back_to_cubit(tmp_path):
+    """Legacy configs that declared β under the cubit bucket still resolve."""
+    dump = tmp_path / 'dump.txt'
+    _make_track3p_dump(str(dump))
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, inputs=WorkflowInputs(cubit={'beta': 42.0}),
+                     artifacts={TRACK3P_PARTICLES: str(dump)})
+    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
+                              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+                              'beta_input': 'beta', 'output': 'particles.data'})
+    resolved = module._resolve_beta(ctx.inputs)
+    assert resolved['beta'] == [42.0] * 8
 
 
 def test_particles_module_requires_track3p(tmp_path):
