@@ -19,6 +19,10 @@ as `parameter_sweep`/`scalar_optimize` do today.
 **Phase 2 (`collect_training_data`) DELIVERED (2026-07-20)** — DOE sampler +
 resumable training store + dry-run pipeline, all local. See the Phase 2 section
 below for the verification checklist (all bars met).
+**Constraint-#3 mesh-pinning hardening DELIVERED (2026-07-21)** — dose scoring
+mesh is now fingerprinted, validated at collection time (up-front + per-sample),
+recorded in the manifest, and re-checked bin-for-bin at load time. See the Phase 2
+"Follow-up hardening" section.
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
@@ -139,6 +143,39 @@ real solver.
    (`use_low_noise_prior`). `modes._build_generator` already leaves it at its
    default (`False`) when `mc_noisy_objective` is set — mirror that in the
    surrogate GPs; default to a fitted noise/likelihood.
+3. **Fix the dose scoring mesh explicitly** — the *output-side* analogue of
+   constraint #1 (added 2026-07-21). PCA/POD stacks every run's dose grid into one
+   matrix `Y (N × M)` and runs SVD in that shared `ℝ^M`. That is only meaningful
+   if **row `i`, column `j` is the same physical voxel for all `i`** — i.e. the
+   scoring mesh (bin counts `nx·ny·nz`, physical extent/origin, and value units)
+   is identical across the whole campaign. A drifting mesh silently misaligns the
+   basis exactly the way drifting `bin_edges` misaligns the input map. The mesh is
+   defined in the Geant4 input file (`mesh_nx/ny/nz`, `mesh_cx/cy/cz`,
+   `mesh_x/y/z`) and is static per input file, so pinning it is a *contract +
+   validation* job, not a computation:
+   - **Record a real mesh fingerprint in the manifest**, not just the flat voxel
+     count. `mesh_shape: [M]` (a single integer count, `modes._mesh_shape`,
+     `modes.py:374`) is too weak — two physically different meshes with equal
+     total voxel count pass it. Capture the full geometry via
+     `plotting/geant4_deposit_common.read_mesh_geometry` (returns `bins`,
+     `center`, `half`, `spacing`, `origin` + units) — it only parses the Geant4
+     input file, so it works even under dry-run (no dose grid needed).
+   - **Validate every sample against that fingerprint at collection time** and
+     hard-fail on drift, mirroring `modes._require_fixed_bin_edges` for the input
+     side. Do not rely on the load-time layout check alone.
+   - **The existing load-time guard is necessary but not sufficient.**
+     `surrogate_data._check_indices` / `_stack_rows` (`surrogate_data.py:225`,
+     `:242`) only compare voxel-index/value **shapes** and only when the store is
+     read back. Strengthen `load_training_store` to also assert the stored voxel
+     `indices` array matches the manifest fingerprint bin-for-bin (identical
+     indices, not merely equal length), so a same-count / different-geometry mesh
+     is caught rather than silently misaligned.
+   - **Heterogeneously-binned runs cannot be stacked directly** — there is no
+     common `ℝ^M`. The only supported way to reuse them is an explicit, opt-in,
+     **lossy** resample onto a fixed reference mesh before stacking (injects
+     interpolation error on top of MC noise; can bias the POD basis). This is a
+     salvage path for data that cannot be regenerated, never the default; if used,
+     `log()`/record that resampling occurred and to which reference mesh.
 
 ## Repository orientation (updated 2026-07-12, re-verified 2026-07-20)
 
@@ -290,10 +327,11 @@ points in the 8-D β space.
    is mostly a thin wrapper over `load_field` + the table, not a new format.
    Must be **resumable** — skip β points whose workdir/dose file already exists
    (workdir naming encodes the swept scalars).
-5. Enforce the two cross-cutting constraints: **explicitly require `bin_edges`**
+5. Enforce the cross-cutting constraints: **explicitly require `bin_edges`**
    in this mode (call `modes._mc_noise_guards` or replicate it — Phase 2 is not
-   an Xopt mode and does not inherit that guard automatically); make fidelity
-   (particle count) an explicit recorded field for later.
+   an Xopt mode and does not inherit that guard automatically); **pin + fingerprint
+   the dose scoring mesh** (constraint #3 — see the hardening note below); make
+   fidelity (particle count) an explicit recorded field for later.
 
 ### Verification (Phase 2 done when) — ALL MET (2026-07-20)
 
@@ -342,6 +380,89 @@ points in the 8-D β space.
   dry-run store carries β + fidelity rows but no `field_artifact` column; the
   field-persistence / resume / loader-alignment paths are exercised with real
   arrays via a synthetic-dose fake workflow in the tests.
+
+### Follow-up hardening — pin & fingerprint the dose mesh (constraint #3, 2026-07-21) — DELIVERED
+
+Phase 2 pinned the **input-side** binning (`_require_fixed_bin_edges`) but left the
+**output-side** mesh under-protected. This hardening pass closed that gap
+(2026-07-21); the delivered DOE/store/resume work was not reopened. What landed
+is described below, followed by the original gap analysis for the record.
+
+- **Gap.** The manifest records only a flat voxel count
+  (`mesh_shape: [M]` via `modes._mesh_shape`, `modes.py:374`), and the sole
+  cross-run check is `surrogate_data._check_indices` / `_stack_rows`
+  (`surrogate_data.py:225` / `:242`) — shape-only, and only at load time. Two
+  physically different meshes with the same total voxel count pass every current
+  check, silently misaligning the PCA basis. Nothing validates the mesh at
+  *collection* time.
+- **Fix (collection side, `modes.collect_training_data`).**
+  1. Add `_require_fixed_mesh(workflow)` mirroring `_require_fixed_bin_edges`:
+     resolve the `geant4` module's input file and read the scoring-mesh geometry
+     with `geant4_deposit_common.read_mesh_geometry` (`bins`, `center`, `half`,
+     `spacing`, `origin`, units). Hard-fail if the mesh keys are absent. This
+     parses the input file only, so it runs under dry-run too.
+  2. Compute a canonical **mesh fingerprint** (e.g. a dict/hash of
+     `bins + center + half + units`) once, write it into `manifest.json` as
+     `mesh` (replacing / augmenting the weak `mesh_shape`), and — defensively —
+     re-read it per sample and assert it is unchanged, so a mid-campaign edit to
+     the Geant4 input file is caught immediately rather than at train time.
+- **Fix (load side, `surrogate_data.load_training_store`).** After stacking,
+  assert the shared voxel `indices` array matches the manifest fingerprint
+  bin-for-bin (identical indices, not just equal length). Keep `_check_indices`
+  as the cheap first line of defense.
+- **Explicitly out of scope here (documented, not built):** resampling
+  heterogeneously-binned runs onto a common reference mesh. Direct stacking of
+  differently-shaped grids stays a hard error; the lossy resample salvage path
+  (constraint #3) is deferred until a real need for un-regenerable off-mesh data
+  appears, and must announce itself via `log()` when added.
+
+### What landed (2026-07-21)
+
+- **`surrogate_data.read_mesh_fingerprint(geant4_input_path)`** — self-contained
+  `key = value` parse (no dependency on the non-importable `plotting/` scripts)
+  returning `{'bins': [nx,ny,nz], 'center': [...], 'half': [...]}`, or `None` if
+  the file is missing/unreadable or any of the nine `mesh_*` keys is absent /
+  non-numeric / non-positive. Works under dry-run (input-file only).
+  **`surrogate_data.mesh_fingerprints_match(a, b)`** — exact bin-count compare +
+  `atol=1e-9` on center/half so a `60` vs `60.0` reformat is not read as drift.
+- **`modes._require_fixed_mesh(workflow)`** — mirrors `_require_fixed_bin_edges`:
+  resolves the (single) `geant4` module's input file, hard-fails with a
+  `constraint #3` message if `geant4_input` is unset or the fingerprint is
+  unreadable, and returns the fingerprint. Returns `None` when the workflow has
+  no `geant4` module (synthetic test doubles that emit grids directly) — the
+  load-side checks are the backstop there. `collect_training_data` calls it up
+  front **and** re-reads per fresh sample, hard-failing if the mesh changed
+  mid-campaign.
+- **Manifest** now carries the full `mesh` fingerprint alongside the (retained,
+  back-compat) flat `mesh_shape`.
+- **`load_training_store` hardening:** `_check_indices` now compares voxel
+  `(ix,iy,iz)` arrays **bin-for-bin** (`np.array_equal`), not just by shape, so a
+  same-count / different-layout mesh is caught; `_check_indices_against_manifest`
+  additionally asserts the stacked voxel count equals `prod(manifest['mesh']['bins'])`.
+- **Tests** (`tests/test_surrogate_data.py`, all local, no Geant4 env; 20 pass):
+  fingerprint read from the shipped example + missing/incomplete/non-positive
+  cases; `mesh_fingerprints_match` equal/changed-bins/changed-extent/`None`
+  cases; collection-time guard on an unreadable mesh; manifest records the full
+  fingerprint; load-time detection of same-count/different-layout drift
+  (`_DriftingMeshWorkflow`); and load-time rejection of a manifest whose
+  fingerprint bin-product disagrees with the stored voxel count.
+
+### Verification (hardening pass done when) — ALL MET (2026-07-21)
+
+- [x] A sample whose Geant4 input file lacks / changes the scoring-mesh keys
+  hard-fails at collection time with a constraint-#3 message — not silently, and
+  not only at load time. → `test_guard_rejects_unreadable_mesh`; per-sample
+  re-check in `collect_training_data`.
+- [x] The manifest carries the full mesh fingerprint (`bins`, extent), and
+  `load_training_store` rejects a store whose stored voxel indices disagree with
+  it, even when the flat voxel count matches. →
+  `test_manifest_records_mesh_fingerprint`,
+  `test_load_detects_same_count_different_layout`,
+  `test_load_rejects_manifest_mesh_count_mismatch`.
+- [x] Both checks are exercised by local tests using the synthetic-dose fake
+  workflow (no Geant4 env), consistent with the synthetic-first strategy.
+
+### Original gap analysis (for the record)
 
 ---
 

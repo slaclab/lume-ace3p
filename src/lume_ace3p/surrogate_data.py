@@ -43,6 +43,90 @@ FIDELITY_COLUMN = 'fidelity'
 
 
 # --------------------------------------------------------------------------- #
+# Dose scoring-mesh fingerprint (correctness constraint #3).
+#
+# PCA/POD stacks every run's dose grid into one (N, M) matrix and runs SVD in
+# that shared R^M. That is only meaningful if row i, column j is the SAME
+# physical voxel for all i — i.e. the scoring mesh (per-axis bin counts, physical
+# extent, center) is identical across the whole campaign. A drifting mesh
+# misaligns the POD basis exactly the way drifting bin_edges misaligns the input
+# map. The mesh is defined by `mesh_nx/ny/nz` (bin counts), `mesh_cx/cy/cz`
+# (center, mm) and `mesh_x/y/z` (half-sizes, mm) in the Geant4 input file, so a
+# fingerprint is a cheap parse — no dose grid required, so it works under dry-run.
+# --------------------------------------------------------------------------- #
+
+# The nine scoring-mesh keys, grouped into the fingerprint fields they populate.
+_MESH_BIN_KEYS = ('mesh_nx', 'mesh_ny', 'mesh_nz')
+_MESH_CENTER_KEYS = ('mesh_cx', 'mesh_cy', 'mesh_cz')
+_MESH_HALF_KEYS = ('mesh_x', 'mesh_y', 'mesh_z')
+
+
+def _parse_key_value_file(path):
+    """Parse a Geant4 ``key = value`` input file into a dict.
+
+    Blank lines and ``#`` comments are skipped; only the first ``=`` splits a
+    line. Self-contained (no dependency on the ``plotting/`` scripts, which are
+    not an importable package) and tolerant of the same file format
+    :class:`lume_ace3p.geant4.Geant4` reads."""
+    kv = {}
+    with open(path) as f:
+        for line in f:
+            text = line.strip()
+            if not text or text.startswith('#') or '=' not in text:
+                continue
+            key, value = text.split('=', 1)
+            key = key.strip()
+            if key:
+                kv[key] = value.strip()
+    return kv
+
+
+def read_mesh_fingerprint(geant4_input_path):
+    """Return a canonical dose-mesh fingerprint from a Geant4 input file.
+
+    The fingerprint is a plain dict::
+
+        {'bins': [nx, ny, nz], 'center': [cx, cy, cz], 'half': [hx, hy, hz]}
+
+    which fully determines the voxel geometry (extent = 2·half, per-axis voxel
+    size = 2·half / bins). Returns ``None`` if the path is missing/unreadable or
+    any of the nine ``mesh_*`` keys is absent or non-numeric — the caller decides
+    whether that is fatal (it is, for a real Geant4 run; see
+    :func:`lume_ace3p.modes._require_fixed_mesh`). This only reads the input
+    file, so it is available under dry-run."""
+    if not geant4_input_path or not os.path.isfile(geant4_input_path):
+        return None
+    kv = _parse_key_value_file(geant4_input_path)
+    try:
+        bins = [int(float(kv[k])) for k in _MESH_BIN_KEYS]
+        center = [float(kv[k]) for k in _MESH_CENTER_KEYS]
+        half = [float(kv[k]) for k in _MESH_HALF_KEYS]
+    except (KeyError, ValueError, TypeError):
+        return None
+    if any(n <= 0 for n in bins):
+        return None
+    return {'bins': bins, 'center': center, 'half': half}
+
+
+def mesh_fingerprints_match(a, b):
+    """True iff two mesh fingerprints describe the same voxel geometry.
+
+    ``None`` matches only ``None``. Bin counts compare exactly; the physical
+    center/half compare with a tiny tolerance so a reformatted ``60`` vs
+    ``60.0`` does not read as drift."""
+    if a is None or b is None:
+        return a is None and b is None
+    if list(a.get('bins', [])) != list(b.get('bins', [])):
+        return False
+    for field in ('center', 'half'):
+        av = np.asarray(a.get(field, []), dtype=float)
+        bv = np.asarray(b.get(field, []), dtype=float)
+        if av.shape != bv.shape or not np.allclose(av, bv, rtol=0.0, atol=1e-9):
+            return False
+    return True
+
+
+# --------------------------------------------------------------------------- #
 # Design-of-experiments sampler over the β space.
 # --------------------------------------------------------------------------- #
 
@@ -203,6 +287,8 @@ def load_training_store(store_path):
 
     dose = _stack_rows(dose_rows) if have_any_field else None
     edep = _stack_rows(edep_rows) if have_any_field else None
+    if indices is not None:
+        _check_indices_against_manifest(indices, manifest)
     return TrainingStore(beta, list(beta_names), dose, edep, indices, fidelity,
                          table, manifest)
 
@@ -224,19 +310,54 @@ def _values(field, section):
 
 def _check_indices(indices, field):
     """Return the shared voxel index array, verifying every sample's grid uses
-    the same voxel layout (a moving layout would break the PCA basis)."""
+    the same voxel layout (a moving layout would break the PCA basis).
+
+    Compares the voxel ``(ix, iy, iz)`` index arrays **bin-for-bin**, not merely
+    by shape: two physically different meshes can share a voxel count yet map
+    column j to different voxels, which would silently misalign the POD basis
+    (correctness constraint #3)."""
     dose = field.get('dose') or field.get('edep')
     if dose is None:
         return indices
     these = np.asarray(dose['indices'])
     if indices is None:
         return these
-    if these.shape != np.asarray(indices).shape:
+    prev = np.asarray(indices)
+    if these.shape != prev.shape:
         raise ValueError(
             "training grids have inconsistent voxel layouts across samples "
-            f"({these.shape} vs {np.asarray(indices).shape}); the shared "
-            "bin_edges / mesh must be fixed for the whole campaign.")
+            f"({these.shape} vs {prev.shape}); the shared bin_edges / scoring "
+            "mesh must be fixed for the whole campaign (constraint #3).")
+    if not np.array_equal(these, prev):
+        raise ValueError(
+            "training grids share a voxel count but disagree on the voxel "
+            "index layout across samples; the scoring mesh drifted mid-campaign "
+            "(constraint #3) — the PCA basis would be misaligned. Re-collect "
+            "with a fixed mesh, or resample onto a common reference grid.")
     return indices
+
+
+def _check_indices_against_manifest(indices, manifest):
+    """Cross-check the stacked voxel count against the manifest mesh fingerprint.
+
+    The per-sample ``_check_indices`` already guarantees every row shares one
+    voxel layout; this adds the independent check that the layout matches the
+    geometry the manifest claims was pinned (``mesh['bins']`` → nx·ny·nz voxels).
+    A mismatch means the stored grids and the recorded mesh contract disagree —
+    surface it rather than train on a silently wrong basis (constraint #3)."""
+    mesh = manifest.get('mesh') if isinstance(manifest, dict) else None
+    if not mesh:
+        return
+    bins = mesh.get('bins')
+    if not bins:
+        return
+    expected = int(np.prod([int(b) for b in bins]))
+    actual = int(np.asarray(indices).shape[0])
+    if actual != expected:
+        raise ValueError(
+            f"stored dose grids have {actual} voxels but the manifest mesh "
+            f"fingerprint {list(bins)} implies {expected}; the scoring mesh and "
+            "the recorded contract disagree (constraint #3).")
 
 
 def _stack_rows(rows):
