@@ -249,6 +249,56 @@ def _require_fixed_bin_edges(workflow):
     return list(beta_inputs), int(num_bins)
 
 
+def _geant4_input_path(workflow):
+    """The geant4 module's input file path, or ``None`` if the workflow has no
+    geant4 module (e.g. a synthetic test double)."""
+    geant4 = [m for m in workflow.modules if m.type == 'geant4']
+    if not geant4:
+        return None
+    return getattr(geant4[0], 'geant4_input', None)
+
+
+def _require_fixed_mesh(workflow):
+    """Validate correctness constraint #3 on the resolved ``geant4`` module.
+
+    The dose scoring mesh (per-axis bin counts + physical extent) must be pinned
+    for the whole campaign: PCA/POD stacks every run's dose grid into one
+    ``(N, M)`` matrix, which is only meaningful if column *j* is the same
+    physical voxel for every run. A drifting mesh misaligns the POD basis exactly
+    the way drifting ``bin_edges`` misaligns the input map. The mesh lives in the
+    geant4 input file (``mesh_nx/ny/nz``, ``mesh_cx/cy/cz``, ``mesh_x/y/z``), so
+    this is a cheap parse that works under dry-run (no dose grid needed).
+
+    Returns the mesh fingerprint dict (``{'bins', 'center', 'half'}``) when a
+    geant4 module is present, hard-failing if its mesh geometry cannot be read.
+    Returns ``None`` when the workflow has no geant4 module (a synthetic test
+    double that emits dose grids directly) — the load-side index/fingerprint
+    checks remain the backstop in that case."""
+    geant4 = [m for m in workflow.modules if m.type == 'geant4']
+    if not geant4:
+        return None
+    if len(geant4) > 1:
+        raise ValueError(
+            "collect_training_data expects at most one 'geant4' module; "
+            f"found {len(geant4)}.")
+    input_path = getattr(geant4[0], 'geant4_input', None)
+    if not input_path:
+        raise ValueError(
+            "correctness constraint #3: the 'geant4' module must declare "
+            "'geant4_input' so the dose scoring mesh can be pinned for "
+            "training-data collection.")
+    fingerprint = surrogate_data.read_mesh_fingerprint(input_path)
+    if fingerprint is None:
+        raise ValueError(
+            "correctness constraint #3: could not read a dose scoring-mesh "
+            f"fingerprint from the geant4 input file '{input_path}'. It must "
+            "define mesh_nx/ny/nz (bin counts), mesh_cx/cy/cz (center, mm) and "
+            "mesh_x/y/z (half-sizes, mm) so the β→dose voxel grid is identical "
+            "across the whole campaign — a drifting mesh misaligns the PCA "
+            "basis. Fix the mesh keys in the input file.")
+    return fingerprint
+
+
 def _doe_bounds(mode_cfg, beta_names):
     """Resolve the per-bin β bounds for the DOE from the mode config.
 
@@ -291,13 +341,16 @@ def collect_training_data(mode_cfg, workflow):
     grid is captured with :meth:`Workflow.field` and persisted per sample with
     :func:`results.save_field`; the β row + fidelity + field handle go into the
     shared result table. A ``manifest.json`` records the fixed ``bin_edges`` /
-    ``num_bins``, β order, mesh shape, and DOE provenance.
+    ``num_bins``, β order, the dose scoring-mesh fingerprint (constraint #3), and
+    DOE provenance. The mesh is validated up front and re-checked per sample so a
+    mid-campaign mesh edit hard-fails rather than misaligning the PCA basis.
 
     **Resumable:** each sample runs in its own ``<store>/sample_NNNNN`` workdir;
     a sample whose dose grid was already persisted is skipped on re-run.
 
     Returns the training-store result :class:`pandas.DataFrame`."""
     beta_names, num_bins = _require_fixed_bin_edges(workflow)
+    mesh_fingerprint = _require_fixed_mesh(workflow)
     bounds = _doe_bounds(mode_cfg, beta_names)
 
     store = mode_cfg.get('store') or mode_cfg.get('output_dir') or 'training_store'
@@ -330,6 +383,21 @@ def collect_training_data(mode_cfg, workflow):
                 # Resume: the dose grid for this β was already persisted.
                 handle = field_path
             else:
+                # Constraint #3: defend against a mid-campaign edit to the
+                # geant4 input file's scoring mesh. Re-read the fingerprint
+                # before each fresh evaluation and hard-fail on drift, so a
+                # partway mesh change is caught here rather than silently
+                # misaligning the PCA basis at train time.
+                if mesh_fingerprint is not None:
+                    current = surrogate_data.read_mesh_fingerprint(
+                        _geant4_input_path(workflow))
+                    if not surrogate_data.mesh_fingerprints_match(
+                            current, mesh_fingerprint):
+                        raise ValueError(
+                            f"dose scoring mesh changed at sample {i} "
+                            f"(was {mesh_fingerprint}, now {current}); the mesh "
+                            "must stay fixed for the whole campaign "
+                            "(constraint #3).")
                 workflow.baseworkdir = sample_dir
                 workflow.evaluate(overrides)
                 handle = save_field(workflow.field(), field_path)
@@ -362,6 +430,7 @@ def collect_training_data(mode_cfg, workflow):
         'bounds': [list(b) for b in bounds],
         'fidelity': fidelity,
         'mesh_shape': mesh_shape,
+        'mesh': mesh_fingerprint,
         'dry_run': bool(workflow.dry_run),
     })
     return df

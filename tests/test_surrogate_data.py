@@ -77,6 +77,57 @@ def test_sampler_rejects_bad_bounds_and_name():
 
 
 # --------------------------------------------------------------------------- #
+# Dose scoring-mesh fingerprint (correctness constraint #3)
+# --------------------------------------------------------------------------- #
+
+
+def _write_geant4_input(path, nx=12, ny=12, nz=40, hx=60.0, hy=60.0, hz=200.0,
+                        cx=0.0, cy=0.0, cz=0.0):
+    path.write_text(
+        "# scoring mesh\n"
+        f"mesh_x = {hx}\nmesh_y = {hy}\nmesh_z = {hz}\n"
+        f"mesh_cx = {cx}\nmesh_cy = {cy}\nmesh_cz = {cz}\n"
+        f"mesh_nx = {nx}\nmesh_ny = {ny}\nmesh_nz = {nz}\n"
+        "output_dose = doseDeposit.txt\n")
+    return str(path)
+
+
+def test_read_mesh_fingerprint_from_example():
+    example = os.path.join(os.path.dirname(__file__), '..', 'examples',
+                           'geant4_beta_surrogate', 'input_7cell.geant4')
+    fp = surrogate_data.read_mesh_fingerprint(example)
+    assert fp is not None
+    assert fp['bins'] == [12, 12, 40]
+    assert fp['half'] == [60.0, 60.0, 200.0]
+    assert fp['center'] == [0.0, 0.0, 0.0]
+
+
+def test_read_mesh_fingerprint_missing_or_incomplete(tmp_path):
+    assert surrogate_data.read_mesh_fingerprint(None) is None
+    assert surrogate_data.read_mesh_fingerprint(
+        str(tmp_path / 'nope.geant4')) is None
+    partial = tmp_path / 'partial.geant4'
+    partial.write_text("mesh_nx = 12\nmesh_ny = 12\n")   # missing keys
+    assert surrogate_data.read_mesh_fingerprint(str(partial)) is None
+    bad = tmp_path / 'bad.geant4'
+    _write_geant4_input(bad, nx=0)                        # non-positive bins
+    assert surrogate_data.read_mesh_fingerprint(str(bad)) is None
+
+
+def test_mesh_fingerprints_match():
+    a = {'bins': [12, 12, 40], 'center': [0.0, 0.0, 0.0],
+         'half': [60.0, 60.0, 200.0]}
+    # Reformatted-but-equal geometry matches; changed bins / extent do not.
+    assert surrogate_data.mesh_fingerprints_match(a, dict(a))
+    assert surrogate_data.mesh_fingerprints_match(a, None) is False
+    assert surrogate_data.mesh_fingerprints_match(None, None) is True
+    b = dict(a, bins=[12, 12, 41])
+    assert surrogate_data.mesh_fingerprints_match(a, b) is False
+    c = dict(a, half=[60.0, 60.0, 199.0])
+    assert surrogate_data.mesh_fingerprints_match(a, c) is False
+
+
+# --------------------------------------------------------------------------- #
 # bin_edges / beta_inputs guard (correctness constraint #1)
 # --------------------------------------------------------------------------- #
 
@@ -163,6 +214,43 @@ def test_guard_missing_variable_bound(tmp_path):
         del cfg['variables']['beta3']
         with pytest.raises(ValueError, match="beta3"):
             collect_training_data(cfg, wf)
+    finally:
+        os.chdir(cwd)
+
+
+# --------------------------------------------------------------------------- #
+# Fixed-mesh guard + manifest fingerprint (correctness constraint #3)
+# --------------------------------------------------------------------------- #
+
+
+def test_guard_rejects_unreadable_mesh(tmp_path):
+    """A geant4 input file with no scoring-mesh keys hard-fails at collection
+    time (constraint #3), not silently at train time."""
+    cwd = os.getcwd()
+    try:
+        wf = _staged_beta_workflow(tmp_path)
+        os.chdir(tmp_path)
+        # Overwrite the (symlinked) input file with one lacking mesh keys.
+        os.remove(tmp_path / 'input_7cell.geant4')
+        (tmp_path / 'input_7cell.geant4').write_text(
+            "output_dose = doseDeposit.txt\n")
+        with pytest.raises(ValueError, match='constraint #3'):
+            collect_training_data(_mode_cfg(tmp_path), wf)
+    finally:
+        os.chdir(cwd)
+
+
+def test_manifest_records_mesh_fingerprint(tmp_path):
+    """A dry-run store records the full mesh fingerprint (bins + extent), not
+    just a flat voxel count."""
+    cwd = os.getcwd()
+    try:
+        wf = _staged_beta_workflow(tmp_path)
+        os.chdir(tmp_path)
+        collect_training_data(_mode_cfg(tmp_path, num_samples=2), wf)
+        loaded = surrogate_data.load_training_store(str(tmp_path / 'store'))
+        assert loaded.manifest['mesh']['bins'] == [12, 12, 40]
+        assert loaded.manifest['mesh']['half'] == [60.0, 60.0, 200.0]
     finally:
         os.chdir(cwd)
 
@@ -306,6 +394,57 @@ def test_resume_reproduces_same_design(tmp_path):
     second = collect_training_data(cfg, _FakeWorkflow())
     assert np.allclose(first[BETA_NAMES].to_numpy(),
                        second[BETA_NAMES].to_numpy())
+
+
+# --------------------------------------------------------------------------- #
+# Load-side mesh drift detection (constraint #3): same voxel count, different
+# voxel layout must be caught bin-for-bin; a manifest whose fingerprint disagrees
+# with the stored voxel count must be rejected.
+# --------------------------------------------------------------------------- #
+
+
+class _DriftingMeshWorkflow(_FakeWorkflow):
+    """Like _FakeWorkflow but the voxel *index layout* changes after the first
+    sample while the voxel *count* stays 4 — the exact same-count/different-mesh
+    case that a shape-only check would miss."""
+
+    def field(self):
+        s = float(self._last_beta.sum())
+        n = len(self.eval_calls)
+        if n <= 1:
+            indices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        else:
+            # Same 4 voxels, different (drifted) index coordinates.
+            indices = np.array([[0, 0, 0], [2, 0, 0], [0, 2, 0], [0, 0, 2]])
+        values = np.array([s, s + 1.0, s + 2.0, s + 3.0])
+        return {'dose': {'indices': indices, 'values': values}}
+
+
+def test_load_detects_same_count_different_layout(tmp_path):
+    store = str(tmp_path / 'store')
+    collect_training_data(_mode_cfg(tmp_path, store=store, num_samples=4),
+                          _DriftingMeshWorkflow())
+    with pytest.raises(ValueError, match='voxel index layout'):
+        surrogate_data.load_training_store(store)
+
+
+def test_load_rejects_manifest_mesh_count_mismatch(tmp_path):
+    """If the manifest fingerprint's bin product disagrees with the stored voxel
+    count, loading fails rather than training on a mismatched basis."""
+    store = str(tmp_path / 'store')
+    collect_training_data(_mode_cfg(tmp_path, store=store, num_samples=3),
+                          _FakeWorkflow())    # 4-voxel grids, no geant4 module
+    # Inject a mesh fingerprint implying 8 voxels (2*2*2), not the stored 4.
+    import json
+    manifest_path = os.path.join(store, surrogate_data.MANIFEST_FILENAME)
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+    manifest['mesh'] = {'bins': [2, 2, 2], 'center': [0.0, 0.0, 0.0],
+                        'half': [1.0, 1.0, 1.0]}
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f)
+    with pytest.raises(ValueError, match='constraint #3'):
+        surrogate_data.load_training_store(store)
 
 
 if __name__ == '__main__':
