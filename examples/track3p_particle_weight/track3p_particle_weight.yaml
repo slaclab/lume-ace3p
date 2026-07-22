@@ -13,7 +13,7 @@ workflow_parameters :
 
 workflow :
   - module : track3p_source
-    file : 'sample_track3p_particles.txt'
+    file : '../assets/sample_track3p_particles.txt'
   - module : particles
     impact_order : 1
     impact_face_id : 4

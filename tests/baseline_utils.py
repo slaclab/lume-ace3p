@@ -111,13 +111,28 @@ _FLOAT_RE = re.compile(r'[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?')
 
 def _stage_example(example_dir):
     """Copy an example's input files into a fresh temp dir and return its path.
-    Only regular files are copied (no nested example subdirs exist today)."""
+
+    Examples reference large shared inputs by relative path into a sibling
+    ``examples/assets/`` (e.g. ``file: '../assets/foo.txt'``), so the example is
+    staged as ``<root>/<example_dir>/`` with ``examples/assets/`` copied to
+    ``<root>/assets/`` — preserving the ``../assets/`` relationship the YAMLs
+    rely on. Only regular files are copied (examples have no other subdirs)."""
     src = os.path.join(EXAMPLES_DIR, example_dir)
-    tmp = tempfile.mkdtemp(prefix='baseline_')
+    root = tempfile.mkdtemp(prefix='baseline_')
+    tmp = os.path.join(root, os.path.basename(example_dir))
+    os.mkdir(tmp)
     for name in os.listdir(src):
         path = os.path.join(src, name)
         if os.path.isfile(path):
             shutil.copy(path, tmp)
+    assets_src = os.path.join(EXAMPLES_DIR, 'assets')
+    if os.path.isdir(assets_src):
+        assets_dst = os.path.join(root, 'assets')
+        os.mkdir(assets_dst)
+        for name in os.listdir(assets_src):
+            path = os.path.join(assets_src, name)
+            if os.path.isfile(path):
+                shutil.copy(path, assets_dst)
     return tmp
 
 

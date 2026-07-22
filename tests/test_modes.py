@@ -159,12 +159,12 @@ def test_geant4_beta_broadcast_sweep(tmp_path):
                                  'geant4_track3p_beta.yaml')
         entries = [
             {'module': 'track3p_source',
-             'file': 'sample_track3p_particles.txt'},
+             'file': '../assets/sample_track3p_particles.txt'},
             {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
-            {'module': 'geant4', 'geant4_input': 'input_7cell.geant4'},
+            {'module': 'geant4', 'geant4_input': '../assets/input_7cell.geant4'},
         ]
         # beta sweeps 40 -> 60 in 5 steps (the example's input_parameters).
         inputs = WorkflowInputs(particles={'beta': np.linspace(40.0, 60.0, 5)})

@@ -94,7 +94,7 @@ def _write_geant4_input(path, nx=12, ny=12, nz=40, hx=60.0, hy=60.0, hz=200.0,
 
 def test_read_mesh_fingerprint_from_example():
     example = os.path.join(os.path.dirname(__file__), '..', 'examples',
-                           'geant4_beta_surrogate', 'input_7cell.geant4')
+                           'assets', 'input_7cell.geant4')
     fp = surrogate_data.read_mesh_fingerprint(example)
     assert fp is not None
     assert fp['bins'] == [12, 12, 40]
@@ -143,12 +143,11 @@ def _particles_entry(**overrides):
 
 def _staged_beta_workflow(tmp_path, particles_overrides=None):
     """A dry-run track3p_source -> particles -> geant4 Workflow staged in
-    tmp_path with the shared example files symlinked in."""
-    example = os.path.join(os.path.dirname(__file__), '..', 'examples',
-                           'geant4_track3p_beta')
+    tmp_path with the shared example assets symlinked in."""
+    assets = os.path.join(os.path.dirname(__file__), '..', 'examples', 'assets')
     for name in ('sample_track3p_particles.txt', 'input_7cell.geant4',
                  '7cell_solid_whole.stl', '7cell_cavity_whole.stl'):
-        os.symlink(os.path.abspath(os.path.join(example, name)),
+        os.symlink(os.path.abspath(os.path.join(assets, name)),
                    str(tmp_path / name))
     entries = [
         {'module': 'track3p_source', 'file': 'sample_track3p_particles.txt'},
