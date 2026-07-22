@@ -41,10 +41,6 @@ mesh_nx = 12
 mesh_ny = 12
 mesh_nz = 40
 
-# --- Run control ---
-# Number of events (particles) to simulate
-beam_on = 1019
-
 # --- Output files ---
 output_dose = doseDeposit.txt
 output_edep = energyDeposit.txt

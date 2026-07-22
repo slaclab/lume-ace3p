@@ -121,7 +121,7 @@ Used on a `geant4` `workflow:` entry.
 | `geant4_input`            | `str`  | `None`                 | Path to the Geant4 input file (plain `key = value` text, `#` comments) used as the simulation input. |
 | `geant4_threads`          | `int`  | `None`                 | If set, overrides the `nthreads` key in the input file. When unset (the default) the input file's own `nthreads` value is left untouched. |
 | `geant4_opts`             | `str`  | `''`                   | Additional `mpirun`/`srun` arguments when launching the Geant4 application. |
-| `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename (the module also writes the matching `beam_on` particle count). |
+| `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename (the executable auto-derives the event count from the particle file). |
 | `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, *in addition to* the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
 | `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read for the `dose` output section. Defaults to the `output_dose` value in the input file. (`geant4_scoring_output` is accepted as a back-compat alias.) |
 | `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section. Defaults to the `output_edep` value in the input file. |

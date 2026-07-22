@@ -375,10 +375,10 @@ file (`key = value` lines, `#` comments) that names its own geometry STL files,
 scoring mesh, thread count, and output files. The particle source is supplied by
 an upstream module in the chain — either a `particles` weighting step (fed by a
 `track3p_source`) or a `particle_source` module naming a prebuilt Geant4-format
-file directly. The `geant4` module writes the source filename and the matching
-`beam_on` particle count into the input file, copies the STL files it names into
-each working directory, and reads the dose / energy-deposit output files after
-the run.
+file directly. The `geant4` module writes the source filename into the input
+file (the executable auto-derives the event count from the particle file),
+copies the STL files it names into each working directory, and reads the
+dose / energy-deposit output files after the run.
 
 The full runnable chain (`track3p_source → particles → geant4`) is shipped as
 [`examples/geant4_track3p_beta`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_track3p_beta/geant4_track3p_beta.yaml)
