@@ -20,13 +20,17 @@ class Geant4(CommandWrapper):
         if not os.path.exists(self.workdir):
             os.mkdir(self.workdir)
         assert self.input_file is not None, 'Error: Geant4 object requires input file'
+        # The source file may be given with directory components (e.g. a shared
+        # '../assets/input.geant4'); it is copied into the workdir and thereafter
+        # referenced by basename, so every 'workdir/input_file' join resolves.
         self.original_input_file = self.input_file
+        self.input_file = os.path.basename(self.input_file)
         if not os.path.isfile(os.path.join(self.workdir, self.input_file)):
-            shutil.copy(self.input_file, self.workdir)
+            shutil.copy(self.original_input_file, self.workdir)
         self.input_parser()
 
     def input_parser(self):    #Read in Geant4 'key = value' input file
-        with open(self.input_file) as file:
+        with open(os.path.join(self.workdir, self.input_file)) as file:
             self.lines = file.readlines()
         numrows = len(self.lines)
         self.ncflag = [0] * numrows

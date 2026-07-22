@@ -21,7 +21,7 @@ workflow_parameters :
 workflow :
   # External Track3P particle dump (produced outside the pipeline).
   - module : track3p_source
-    file : 'sample_track3p_particles.txt'
+    file : '../assets/sample_track3p_particles.txt'
 
   # Field-emission weighting -> Geant4-format source file (particles.data).
   # 'beta_input' broadcasts the swept 'beta' variable to all num_bins bins
@@ -42,7 +42,7 @@ workflow :
   # cavity_stl) are copied into each workdir automatically. Add extra aux files
   # with 'geant4_geometry_files'; override thread count with 'geant4_threads'.
   - module : geant4
-    geant4_input : 'input_7cell.geant4'
+    geant4_input : '../assets/input_7cell.geant4'
 
 mode :
   type : parameter_sweep

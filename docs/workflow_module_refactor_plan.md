@@ -11,7 +11,7 @@ family (`s3p_sweep`, `s3p_sweep_no_s3p_file`, `omega3p_sweep`,
 `omega3p_ace3p_param_sweep`, `s3p_optimization`, `s3p_bayesian_sweep`,
 `track3p_particle_weight`, `geant4_track3p_beta`) plus a new runnable multi-step
 chain example `geant4_dose_single` (`track3p_source→particles→geant4`, `single`
-mode; large assets symlinked from `geant4_track3p_beta`). `s3p_mf_optimization`
+mode; large assets shared from `examples/assets/`). `s3p_mf_optimization`
 is now on the current schema too; `MOBO`/`UCB` are non-runnable legacy
 references relocated to `examples/incomplete/` (missing geometry files — see
 that folder's README).

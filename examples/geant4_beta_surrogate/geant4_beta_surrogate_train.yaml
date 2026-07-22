@@ -28,7 +28,7 @@ workflow_parameters :
 
 workflow :
   - module : track3p_source
-    file : 'sample_track3p_particles.txt'
+    file : '../assets/sample_track3p_particles.txt'
 
   - module : particles
     impact_order : 1
@@ -44,7 +44,7 @@ workflow :
                  0.031335, 0.062638, 0.093941, 0.1252434]
 
   - module : geant4
-    geant4_input : 'input_7cell.geant4'
+    geant4_input : '../assets/input_7cell.geant4'
 
 mode :
   type : train_surrogate

@@ -16,8 +16,8 @@
 #   * The mode samples a DOE (Sobol / Latin-Hypercube) over the per-bin bounds
 #     given under 'variables:', NOT a tensor grid.
 #
-# Large geometry / particle files are shared with the sibling example via
-# symlinks so this example carries no multi-MB duplicates.
+# Large geometry / particle files live in ../assets/ and are referenced by
+# relative path, so this example carries no multi-MB duplicates.
 
 workflow_parameters :
   'workdir' : 'geant4_beta_surrogate_store'    # base; per-sample subdirs nest here
@@ -31,7 +31,7 @@ workflow_parameters :
 workflow :
   # External Track3P particle dump (produced outside the pipeline).
   - module : track3p_source
-    file : 'sample_track3p_particles.txt'
+    file : '../assets/sample_track3p_particles.txt'
 
   # Field-emission weighting -> Geant4-format source file (particles.data).
   # 'beta_inputs' maps one input variable per bin (beta0->bin0, ...). The DOE
@@ -53,7 +53,7 @@ workflow :
   # Geant4 dose/edep run. STL files named in the input file are copied into each
   # sample workdir automatically.
   - module : geant4
-    geant4_input : 'input_7cell.geant4'
+    geant4_input : '../assets/input_7cell.geant4'
 
 mode :
   type : collect_training_data
