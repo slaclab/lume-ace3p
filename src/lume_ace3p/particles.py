@@ -101,7 +101,10 @@ class Particles:
         columns = ['Impact_x', 'Impact_y', 'Impact_z', 'ImpactPhaseinRFcycle',
                    'ImpactEnergy', 'ParticleWeight', 'momentum_x', 'momentum_y',
                    'momentum_z', 'ImpactFaceID']
-        np.savetxt(output_path, self.filtered[columns].values,
+        # Drop rows whose rescaled weight rounded to zero electrons: they would
+        # emit no primaries but still be counted as rows for /run/beamOn.
+        nonzero = self.filtered[self.filtered['ParticleWeight'] != 0]
+        np.savetxt(output_path, nonzero[columns].values,
                    fmt=['%.6e', '%.6e', '%.6e', '%.6e', '%.6e',
                         '%d', '%.6e', '%.6e', '%.6e', '%d'])
 
