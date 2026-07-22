@@ -90,18 +90,14 @@ class Geant4(CommandWrapper):
         return values
 
     def set_particle_file(self, path, macro_value=None, particle_cmd='particles'):
-        # `path` is the on-disk file used to count rows.
+        # `path` is the on-disk particle file.
         # `macro_value` is what gets written into the input file (defaults to `path`).
         # When the file lives in workdir, pass macro_value=os.path.basename(path).
-        n = 0
-        with open(path) as f:
-            for line in f:
-                s = line.strip()
-                if s and not s.startswith('#'):
-                    n += 1
+        # The Geant4 executable auto-derives the event count from the particle
+        # file, so no 'beam_on' is written here.
         if macro_value is None:
             macro_value = path
-        self.set_value({particle_cmd: macro_value, 'beam_on': n})
+        self.set_value({particle_cmd: macro_value})
 
     def write_input(self, *args):
         if args:
