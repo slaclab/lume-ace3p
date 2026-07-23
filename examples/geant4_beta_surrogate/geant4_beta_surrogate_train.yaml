@@ -44,7 +44,10 @@ workflow :
                  0.031335, 0.062638, 0.093941, 0.1252434]
 
   - module : geant4
-    geant4_input : '../assets/input_7cell.geant4'
+    geant4_input : 'input_7cell.geant4'
+    geant4_geometry_files :
+      - '../assets/7cell_solid_whole.stl'
+      - '../assets/7cell_cavity_whole.stl'
 
 mode :
   type : train_surrogate

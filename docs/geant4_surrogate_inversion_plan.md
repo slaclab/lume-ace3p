@@ -359,9 +359,10 @@ points in the 8-D β space.
 
 - Example `examples/geant4_beta_surrogate/geant4_beta_surrogate.yaml` —
   `beta0..beta7` bounds (mode `variables:`), explicit fixed `bin_edges`, DOE
-  size/sampler/seed, store path. Large geometry/particle files live in
-  `examples/assets/` and are referenced by relative path (`../assets/...`), so
-  the example carries no multi-MB duplicates.
+  size/sampler/seed, store path. Large shared geometry/particle files (STLs +
+  Track3P dump) live in `examples/assets/` and are referenced by relative path
+  (`../assets/...`), so the example carries no multi-MB duplicates; the Geant4
+  input file itself lives with the example.
 - Loader utility `src/lume_ace3p/surrogate_data.py` — DOE sampler
   (`sample_beta_doe`, scipy `qmc` Sobol/LHS) + `load_training_store`, a thin
   wrapper over `results.load_field` + the result table (+ a `manifest.json`

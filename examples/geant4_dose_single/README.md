@@ -21,16 +21,17 @@ externally and the dump is supplied to the `track3p_source` module. Unlike
 
 ## Assets
 
-The large shared inputs live in [`../assets/`](../assets) and are referenced by
-relative path from this example's YAML:
+The large *shared* inputs live in [`../assets/`](../assets) and are referenced
+by relative path from this example's YAML:
 
 - `sample_track3p_particles.txt` — the external Track3P dump
-- `input_7cell.geant4` — the Geant4 `key = value` input file
 - `7cell_solid_whole.stl`, `7cell_cavity_whole.stl` — geometry
 
-The `.geant4` input names its STL geometry by bare filename, so the geant4
-module resolves them relative to the input file's directory (`../assets/`) and
-stages them into the workdir automatically. Run from this directory so the
+The Geant4 input file `input_7cell.geant4` is *not* shared — it lives in this
+example directory (each Geant4 example carries its own). It names its STL
+geometry by bare filename; because those STLs live in `../assets/` rather than
+alongside the input, the YAML lists them under `geant4_geometry_files` so the
+module stages them into the workdir. Run from this directory so the
 `../assets/` paths resolve.
 
 ## Running
