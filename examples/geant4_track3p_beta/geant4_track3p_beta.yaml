@@ -38,11 +38,15 @@ workflow :
     output : 'particles.data'
     # 'bin_edges' : [...]      # optional: explicit edges, length num_bins + 1 (9)
 
-  # Geant4 dose/edep run. STL files named in the input file (solid_stl /
-  # cavity_stl) are copied into each workdir automatically. Add extra aux files
-  # with 'geant4_geometry_files'; override thread count with 'geant4_threads'.
+  # Geant4 dose/edep run. The input file names its STL geometry by bare
+  # filename (solid_stl / cavity_stl); since those shared STLs live in
+  # ../assets/, list them under 'geant4_geometry_files' so they are staged into
+  # each workdir. Override thread count with 'geant4_threads'.
   - module : geant4
-    geant4_input : '../assets/input_7cell.geant4'
+    geant4_input : 'input_7cell.geant4'
+    geant4_geometry_files :
+      - '../assets/7cell_solid_whole.stl'
+      - '../assets/7cell_cavity_whole.stl'
 
 mode :
   type : parameter_sweep

@@ -53,7 +53,10 @@ workflow :
   # Geant4 dose/edep run. STL files named in the input file are copied into each
   # sample workdir automatically.
   - module : geant4
-    geant4_input : '../assets/input_7cell.geant4'
+    geant4_input : 'input_7cell.geant4'
+    geant4_geometry_files :
+      - '../assets/7cell_solid_whole.stl'
+      - '../assets/7cell_cavity_whole.stl'
 
 mode :
   type : collect_training_data

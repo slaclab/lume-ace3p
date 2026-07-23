@@ -164,7 +164,9 @@ def test_geant4_beta_broadcast_sweep(tmp_path):
              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
-            {'module': 'geant4', 'geant4_input': '../assets/input_7cell.geant4'},
+            {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',
+             'geant4_geometry_files': ['../assets/7cell_solid_whole.stl',
+                                       '../assets/7cell_cavity_whole.stl']},
         ]
         # beta sweeps 40 -> 60 in 5 steps (the example's input_parameters).
         inputs = WorkflowInputs(particles={'beta': np.linspace(40.0, 60.0, 5)})

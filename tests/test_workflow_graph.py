@@ -233,7 +233,9 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
-            {'module': 'geant4', 'geant4_input': '../assets/input_7cell.geant4'},
+            {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',
+             'geant4_geometry_files': ['../assets/7cell_solid_whole.stl',
+                                       '../assets/7cell_cavity_whole.stl']},
         ]
         inputs = WorkflowInputs(particles={'beta': 40.0})
         wf = Workflow(entries,

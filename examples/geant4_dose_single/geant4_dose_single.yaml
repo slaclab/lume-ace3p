@@ -35,7 +35,10 @@ workflow :
     output_format : 'geant4'
     output : 'particles.data'
   - module : geant4
-    geant4_input : '../assets/input_7cell.geant4'
+    geant4_input : 'input_7cell.geant4'
+    geant4_geometry_files :
+      - '../assets/7cell_solid_whole.stl'
+      - '../assets/7cell_cavity_whole.stl'
 
 mode :
   type : single
