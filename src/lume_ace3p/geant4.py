@@ -115,8 +115,7 @@ class Geant4(CommandWrapper):
     def run(self):
         self.write_input()
         exe = os.path.join(self.GEANT4_APP_PATH, self.GEANT4_APP_EXE)
-        cmd = (self.MPI_CALLER + ' '
-               + '--cpus-per-task=' + str(self.geant4_threads) + ' '
+        cmd = (self.MPI_CALLER + ' -n ' + str(self.geant4_threads) + ' '
                + self.geant4_opts + ' '
                + exe + ' ' + self.input_file)
         subprocess.run(cmd, shell=True, cwd=self.workdir)
