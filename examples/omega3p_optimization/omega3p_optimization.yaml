@@ -1,0 +1,66 @@
+# Omega3P scalar optimization (Nelder-Mead) on the declarative module/mode schema:
+#   workflow:           cubit -> omega3p -> acdtool   (ordered by artifact deps)
+#   mode:               scalar_optimize  (how it is driven -- an Xopt loop)
+#   output_parameters:  what scalar the objective pulls out of which module
+# This is the optimization counterpart of the 'omega3p_sweep' /
+# 'omega3p_ace3p_param_sweep' examples: same cubit -> omega3p -> acdtool pipeline
+# and the same pillbox-rtop.* inputs, but instead of walking a grid it drives an
+# Xopt loop that maximizes R/Q. The VOCS objective name ('R/Q') is an
+# output_parameters name, so the Xopt driver never parses acdtool output itself
+# -- extraction stays a workflow concern.
+
+workflow_parameters :
+    'workdir' : 'lume-ace3p_omega3p_xopt_workdir'
+
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 16
+    cores : 8
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
+
+mode :
+    type : scalar_optimize
+
+# Declare the optimization knobs and where they live. Both are Cubit journal
+# variables, so they go under 'cubit:'. This gives each VOCS variable an
+# explicit home: an Xopt variable routes to the bucket where it is declared, so
+# an optimization can drive Cubit, ACE3P, and Geant4 parameters at once. The
+# scalar values are nominal starting points (Xopt overrides them each step).
+#
+# Declaring input_parameters is not merely cosmetic here. Without it every VOCS
+# variable name misses the routing table and silently falls back to the cubit
+# bucket -- fine for a pure-Cubit problem, but it masks typos (a misspelled VOCS
+# name becomes a junk Cubit variable that no-ops) and would mis-route any
+# non-Cubit knob. Declaring the bucket makes the intent explicit and the routing
+# checked.
+input_parameters :
+    cubit :
+        'cav_radius' : 100.0
+        'ellipticity' : 0.5
+
+# The objective and any tracked observables are pulled from the acdtool
+# postprocess results. Each entry is a [section, ...] address into the acdtool
+# output; the workflow routes it to the acdtool module automatically (the module
+# that provides rf_post).
+output_parameters :
+    'R/Q'       : ['RoverQ', '0', 'RoQ']
+    'mode_freq' : ['RoverQ', '0', 'Frequency']
+
+vocs_parameters :
+    'variables' :          # bounds only; names route via input_parameters above
+        'cav_radius' : [95, 105]
+        'ellipticity' : [0.5, 1.2]
+    'objectives' :
+        'R/Q' : 'MAXIMIZE'
+    'observables' :        # tracked by Xopt but not optimized
+        - 'mode_freq'
+
+xopt_parameters :
+    'generator' : 'NelderMeadGenerator'
+    'num_random' : 0
+    'num_step' : 25

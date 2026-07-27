@@ -212,8 +212,12 @@ a different module's output. No custom `sim` function or workflow subclass is
 needed (the pre-refactor `Omega3PWorkflow` / `S3PWorkflow` classes and the
 hand-rolled Xopt loop no longer exist).
 
-For an **Omega3P R/Q optimization**, the objective is an acdtool bare-form spec
-routed to the `acdtool` module:
+For an **Omega3P R/Q optimization** (shipped as
+[`examples/omega3p_optimization`](https://github.com/slaclab/lume-ace3p/blob/main/examples/omega3p_optimization/omega3p_optimization.yaml)),
+the objective is an acdtool bare-form spec routed to the `acdtool` module. This
+is the optimization counterpart of the `omega3p_sweep` example — same
+`cubit → omega3p → acdtool` pipeline and the same `pillbox-rtop.*` inputs, with
+`mode: scalar_optimize` in place of the sweep:
 
 ```yaml
 workflow :
@@ -228,6 +232,11 @@ workflow :
 
 mode :
     type : scalar_optimize
+
+input_parameters :
+    cubit :
+        'cav_radius' : 100.0
+        'ellipticity' : 0.5
 
 output_parameters :
     'R/Q'       : ['RoverQ', '0', 'RoQ']
@@ -250,6 +259,22 @@ constraints on any declared output. Compute a derived constraint such as a
 target-frequency error by declaring the underlying quantity (`mode_freq`) as an
 observable and adding a constraint on it, rather than by writing a `sim`
 function.
+
+The `input_parameters` block gives each VOCS variable an explicit home. A VOCS
+`variables` entry declares only a **name and bounds** — it is `input_parameters`
+that routes that name to a bucket (`cubit` / `ace3p` / `geant4` / `particles`)
+and, for Cubit, to the matching `name = …` line in the journal file. As with the
+S3P example, the scalar values here are nominal starting points that Xopt
+overrides each step.
+
+:::{note}
+If `input_parameters` is omitted, every VOCS variable name misses the routing
+table and **silently falls back to the cubit bucket**. That happens to work when
+all variables are Cubit journal variables (as above), but it masks typos — a
+misspelled VOCS name becomes a junk Cubit variable that no-ops — and mis-routes
+any non-Cubit knob. Declare `input_parameters` so the routing is explicit and
+checked.
+:::
 
 ## Viewing S3P optimization output
 

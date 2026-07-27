@@ -49,6 +49,8 @@ file via the `ace3p:` sub-block of `input_parameters`.
   [](parameter_sweep.md).
 - Configuring inputs? See [](workflow_inputs.md) and the full
   [](yaml_reference.md).
+- Not sure which blocks a given mode needs? See
+  [](configuration_by_mode.md) for the required-vs-optional checklist.
 - Running optimization? See [](optimization.md).
 - Visualizing output? See [](plotting.md).
 - Hit a snag? Check [](troubleshooting.md).
@@ -64,6 +66,7 @@ installation
 workflow_inputs
 parameter_sweep
 optimization
+configuration_by_mode
 yaml_reference
 plotting
 testing
