@@ -187,16 +187,43 @@ must be declared with the flat `cubit_input_parameters` key.
 Each `output_parameters` entry maps a user-chosen name (used as a result-table
 column header or a VOCS objective name) to an extraction spec. The workflow
 routes each spec to the module that can satisfy it and calls that module's
-`extract`. A spec may name its module explicitly, or use a terse bare form whose
-shape identifies the target module:
+`extract`.
 
-- **Explicit form** — a mapping with a `module` key, e.g.
-  `{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}`. Required for
-  S3P scalar objectives (a specific S-parameter at a specific frequency).
-- **Bare form** — a list `['section', string1, string2, ...]`. The head string
-  routes it: `RoverQ`/`kickFactor`/`maxFieldsOnSurface` → `acdtool`,
-  `dose`/`edep`/`scoring` → `geant4`, `count`/`total_weight` → `particles`, and
-  a bare S-parameter string or mapping → `s3p`.
+### Two spec syntaxes
+
+There are two ways to write a spec. They are **both fully supported** and differ
+only in how the target module is identified — pick whichever reads best for the
+quantity you are extracting:
+
+- **Explicit form** — a mapping with a `module` key naming the target module,
+  e.g. `{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}`. The
+  `module` key is stripped and the rest of the mapping is handed to that module's
+  `extract`. This form is **required** for S3P scalar objectives, because an
+  S-parameter needs a keyed lookup (`quantity` + `at: {frequency}`) that no
+  positional list can express.
+- **Bare form** — a positional list `['section', string1, string2, ...]` (or a
+  bare S-parameter string). No `module` key: the *shape* of the spec identifies
+  the module. The head string routes it — `RoverQ`/`kickFactor`/
+  `maxFieldsOnSurface` → `acdtool`, `dose`/`edep`/`scoring` → `geant4`,
+  `count`/`total_weight` → `particles`, and a bare S-parameter string or mapping
+  → `s3p`. This form mirrors the nested structure of the acdtool/Geant4 result
+  and is the convention used throughout the Omega3P and Geant4 examples.
+
+:::{note}
+**Why the S3P and Omega3P examples look different.** The two syntaxes model
+genuinely different extraction shapes. An S3P objective is a *keyed lookup* — a
+named S-parameter at a specific frequency — which is why it uses the explicit
+`{module, quantity, at}` mapping. An acdtool objective is a *positional index
+path* into the postprocess result dict (`['RoverQ', '0', 'RoQ']`), so it uses the
+bare list. The difference is deliberate, not an inconsistency; each form is the
+natural fit for its module.
+
+The two forms are **not interchangeable per module**: the `acdtool`, `geant4`,
+and `particles` modules index their spec positionally (`spec[0]`, `spec[1]`, …),
+so they require the bare list; only `s3p` consumes a mapping. In practice, use
+the explicit mapping for S3P quantities and the bare list for everything else —
+which is exactly what the examples do.
+:::
 
 The acdtool bare-form values are:
 
