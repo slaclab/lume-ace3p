@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# LUME-ACE3P Geant4 dose example -- S3DF (SLAC) batch script.
+#
+# The 'geant4' module launches its solver as a nested step:
+#     srun -n 1 -c <geant4_threads> <geant4-app> <input>
+# with geant4_threads = 120 in geant4_dose_single.yaml, so the allocation below
+# reserves 120 CPUs for that single task (--cpus-per-task=120) -- a full milano
+# node. This MUST be >= geant4_threads or the nested srun cannot allocate its
+# cores.
+#
+# REVIEW before first use: --partition/--account (milano / rfar:regular),
+# --mem, and --cpus-per-task if you change geant4_threads in the YAML.
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+#SBATCH --job-name=lume-ace3p_geant4_dose_single
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=120
+#SBATCH --mem=480gb
+#SBATCH --time=0-00:30:00
+
+run-lume-ace3p geant4_dose_single.yaml

@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# LUME-ACE3P Geant4 beta sweep -- S3DF (SLAC) batch script.
+#
+# mode: parameter_sweep -- one Geant4 run per swept beta value, each launched as
+#     srun -n 1 -c <geant4_threads> <geant4-app> <input>
+# with geant4_threads = 120 in geant4_track3p_beta.yaml. The sweep runs the
+# points sequentially in this single allocation, so 120 CPUs (one task) -- a
+# full milano node -- serves each run in turn; --cpus-per-task=120 MUST be
+# >= geant4_threads.
+#
+# REVIEW before first use: --partition/--account (milano / rfar:regular),
+# --mem, and --time for the full sweep.
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+#SBATCH --job-name=lume-ace3p_geant4_track3p_beta
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=120
+#SBATCH --mem=480gb
+#SBATCH --time=0-01:00:00
+
+run-lume-ace3p geant4_track3p_beta.yaml

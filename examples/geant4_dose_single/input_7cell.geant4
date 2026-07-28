@@ -17,7 +17,7 @@ cavity_stl = 7cell_cavity_whole.stl
 scale_factor = 1.0
 
 # --- Number of threads (0 = auto-detect all available cores) ---
-nthreads = 64
+nthreads = 120
 
 # --- World volume half-dimensions in mm ---
 # Must be large enough to fully enclose the STL geometry.
