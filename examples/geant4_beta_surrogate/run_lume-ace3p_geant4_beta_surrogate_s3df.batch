@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# LUME-ACE3P Geant4 surrogate training-data COLLECTION -- S3DF (SLAC).
+#
+# mode: collect_training_data -- scatters a 16-point DOE over the 8-D beta
+# vector and runs the track3p_source -> particles -> geant4 chain once per
+# sample, each Geant4 step launched as
+#     srun -n 1 -c <geant4_threads> <geant4-app> <input>
+# with geant4_threads = 120. The 16 samples run sequentially in this single
+# allocation, so 120 CPUs (one task) -- a full milano node -- serves each
+# sample in turn; --cpus-per-task=120 MUST be >= geant4_threads. The store is
+# resumable, so a timed-out job can be resubmitted to finish the remaining
+# samples.
+#
+# After collection completes, fit the surrogate (CPU-only, no Geant4, seconds):
+#     run-lume-ace3p geant4_beta_surrogate_train.yaml
+#
+# REVIEW before first use: --partition/--account (milano / rfar:regular),
+# --mem, and --time (16 sequential Geant4 runs).
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+#SBATCH --job-name=lume-ace3p_geant4_beta_surrogate
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=120
+#SBATCH --mem=480gb
+#SBATCH --time=0-04:00:00
+
+run-lume-ace3p geant4_beta_surrogate.yaml

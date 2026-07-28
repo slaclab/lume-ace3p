@@ -36,6 +36,8 @@ workflow :
     output : 'particles.data'
   - module : geant4
     geant4_input : 'input_7cell.geant4'
+    geant4_threads : 120                          # reserves srun '-c 120' and sets the
+                                                  # input file's 'nthreads' to match
     geant4_geometry_files :
       - '../assets/7cell_solid_whole.stl'
       - '../assets/7cell_cavity_whole.stl'

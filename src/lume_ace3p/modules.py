@@ -648,6 +648,29 @@ class Geant4Module(Module):
             # Threads default is owned by the input file; only override when set.
             if self.geant4_threads is not None:
                 self.geant4_obj.set_value({'nthreads': self.geant4_threads})
+            else:
+                # 'geant4_threads' drives the srun '-c' (CPUs reserved for the
+                # step); when it is unset srun reserves only 1 CPU, but Geant4
+                # still spawns the input file's 'nthreads' threads. If those
+                # threads exceed the reserved CPU they contend for one core and
+                # the run is slow. Warn when the two disagree.
+                file_nthreads = self.geant4_obj.get_value('nthreads')
+                try:
+                    file_nthreads = int(file_nthreads)
+                except (TypeError, ValueError):
+                    file_nthreads = None
+                # nthreads = 0 means Geant4 auto-detects all available cores,
+                # which also disagrees with the single reserved CPU.
+                if file_nthreads is not None and file_nthreads != 1:
+                    detail = ('auto-detects all available cores'
+                              if file_nthreads == 0
+                              else f'spawns {file_nthreads} threads')
+                    print("Warning: 'geant4_threads' is not set, so srun "
+                          "reserves only 1 CPU for the Geant4 step, but the "
+                          f"input file's 'nthreads = {file_nthreads}' "
+                          f"{detail}. These threads will contend for a single "
+                          "CPU. Set 'geant4_threads' in the geant4 module to "
+                          "match 'nthreads'.")
             if particle_file_path is not None:
                 self.geant4_obj.set_particle_file(
                     particle_file_path,
