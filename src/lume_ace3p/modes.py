@@ -486,6 +486,16 @@ def train_surrogate(mode_cfg, workflow=None):
     * ``holdout`` — fraction (0<f<1) or integer count of samples to hold out for
       an accuracy report; when set, the surrogate is refit on the remaining
       samples for the report, then refit on ALL samples for the saved model.
+    * ``dose_transform`` (default ``'linear'``) — space the PCA-GP is fit in:
+      ``'linear'`` or ``'log10'``. ``'log10'`` fits ``log10(dose + floor)`` to
+      handle the Fowler-Nordheim exponential-in-β dynamic range (a linear fit is
+      dominated by the peak voxels and barely learns the dose shape); the holdout
+      report's relative-L2 is then measured in that same log space.
+    * ``floor`` — optional positive offset for the ``'log10'`` transform (defaults
+      to the smallest positive training dose).
+    * ``n_jobs`` (default 1) — parallelize the per-coefficient GP fits over CPU
+      cores via joblib (``1`` = serial, ``-1`` = all cores). Result-invariant: the
+      saved model is identical regardless of ``n_jobs``.
 
     Returns the fitted :class:`DoseSurrogate` (the saved model)."""
     from lume_ace3p.surrogate import DoseSurrogate
@@ -507,24 +517,39 @@ def train_surrogate(mode_cfg, workflow=None):
     k = mode_cfg.get('num_components')
     seed = int(mode_cfg.get('seed', 0))
     model_dir = mode_cfg.get('model_dir') or os.path.join(store, 'surrogate')
+    dose_transform = mode_cfg.get('dose_transform', 'linear')
+    floor = mode_cfg.get('floor')
+    n_jobs = int(mode_cfg.get('n_jobs', 1))
 
     holdout = mode_cfg.get('holdout')
     if holdout:
-        _report_holdout(ts, variance, k, seed, holdout, store)
+        _report_holdout(ts, variance, k, seed, holdout, store,
+                        dose_transform=dose_transform, floor=floor,
+                        n_jobs=n_jobs)
 
     surrogate = DoseSurrogate.fit(ts.beta, ts.dose, variance=variance, k=k,
-                                  seed=seed, beta_names=ts.beta_names)
+                                  seed=seed, beta_names=ts.beta_names,
+                                  dose_transform=dose_transform, floor=floor,
+                                  n_jobs=n_jobs)
     surrogate.save(model_dir)
     print(f" - trained PCA-GP surrogate: {surrogate.num_components} modes "
-          f"({surrogate.kept_energy:.4f} energy) saved to {model_dir}")
+          f"({surrogate.kept_energy:.4f} energy, dose_transform="
+          f"{surrogate.dose_transform}) saved to {model_dir}")
     return surrogate
 
 
-def _report_holdout(ts, variance, k, seed, holdout, store):
+def _report_holdout(ts, variance, k, seed, holdout, store,
+                    dose_transform='linear', floor=None, n_jobs=1):
     """Fit on a train split and report held-out reconstruction accuracy +
     predicted-variance calibration, writing a small ``train_report.txt`` to the
     store. This validates the forward map (Phase-3 bar) before the model saved
-    for downstream use is fit on all samples."""
+    for downstream use is fit on all samples.
+
+    The relative-L2 is measured **in the model's fit space** (``dose_transform``):
+    for a ``'log10'`` model that is log space, which is the meaningful metric —
+    inverting a log fit back to linear amplifies the ~9-order tail error and would
+    report a misleadingly huge number. The report's ``space`` column records which
+    space each error is in."""
     from lume_ace3p.surrogate import DoseSurrogate
 
     n = len(ts)
@@ -542,10 +567,15 @@ def _report_holdout(ts, variance, k, seed, holdout, store):
 
     model = DoseSurrogate.fit(ts.beta[train_idx], ts.dose[train_idx],
                               variance=variance, k=k, seed=seed,
-                              beta_names=ts.beta_names)
-    pred_mean, pred_var = model.predict_dose(ts.beta[hold_idx])
-    truth = ts.dose[hold_idx]
-    # Per-sample relative L2 error.
+                              beta_names=ts.beta_names,
+                              dose_transform=dose_transform, floor=floor,
+                              n_jobs=n_jobs)
+    # Compare in the fit space: prediction is fit-space, so transform the truth
+    # with the model's own transform + fitted floor to match.
+    from lume_ace3p.surrogate import _apply_transform
+    pred_mean, pred_var = model.predict_dose(ts.beta[hold_idx], space='fit')
+    truth = _apply_transform(ts.dose[hold_idx], model.dose_transform, model.floor)
+    # Per-sample relative L2 error (in fit space).
     num = np.linalg.norm(pred_mean - truth, axis=1)
     den = np.linalg.norm(truth, axis=1)
     rel_l2 = num / np.where(den == 0.0, 1.0, den)
@@ -554,10 +584,12 @@ def _report_holdout(ts, variance, k, seed, holdout, store):
     report = pd.DataFrame({
         'holdout_index': hold_idx,
         'relative_l2': rel_l2,
+        'space': model.dose_transform,
     })
     write_table(report, os.path.join(store, 'train_report.txt'))
-    print(f" - held-out relative-L2: mean={rel_l2.mean():.4f} "
-          f"max={rel_l2.max():.4f}; mean predicted std={mean_pred_std:.4g}")
+    print(f" - held-out relative-L2 ({model.dose_transform} space): "
+          f"mean={rel_l2.mean():.4f} max={rel_l2.max():.4f}; "
+          f"mean predicted std={mean_pred_std:.4g}")
 
 
 # --------------------------------------------------------------------------- #

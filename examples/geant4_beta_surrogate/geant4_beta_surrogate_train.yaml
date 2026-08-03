@@ -60,6 +60,28 @@ mode :
   model_dir : 'geant4_beta_surrogate_store/surrogate'   # where the model is saved
   holdout : 0.2                           # hold out 20% for an accuracy report
                                           # (relative-L2 + mean predicted std)
+  # dose_transform : 'log10'              # fit log10(dose+floor) instead of raw
+                                          # dose. Dose is exponential in beta
+                                          # (Fowler-Nordheim) and spans ~9 orders
+                                          # of magnitude across voxels, so a linear
+                                          # fit is dominated by the peak voxels and
+                                          # barely learns the dose SHAPE; log space
+                                          # fits far better (holdout relative-L2
+                                          # ~0.2 vs ~2 linear). The holdout report
+                                          # is then measured in log space. NOTE:
+                                          # inverting a log prediction back to
+                                          # linear amplifies tail error, so treat
+                                          # the log-space model as a shape model.
+  # floor : 1.0e-6                        # positive offset for log10 (default: the
+                                          # smallest positive training dose)
+  # n_jobs : -1                           # parallelize the per-mode GP fits over
+                                          # CPU cores (1 = serial default, -1 = all
+                                          # cores). The GPs are independent, so this
+                                          # is result-invariant (~7x faster on the
+                                          # 64-sample log10 fit). More samples ->
+                                          # more modes -> better scaling on a big
+                                          # node; this CPU-only step never needs one
+                                          # otherwise.
 
 # The 8 beta variables are field-enhancement knobs of the particles module
 # (the post-Track3P Fowler-Nordheim weighting step), so they live under the

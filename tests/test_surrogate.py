@@ -270,6 +270,135 @@ def test_fit_rejects_misaligned_or_tiny(tmp_path):
         DoseSurrogate.fit(np.zeros((1, 8)), np.zeros((1, 40)))   # too few
 
 
+def test_parallel_fit_matches_serial(tmp_path):
+    """n_jobs only parallelizes the independent per-mode GP fits — it must not
+    change the result. A parallel fit gives bit-identical predictions to the
+    serial fit for the same seed."""
+    store = _collect_store(tmp_path, num_samples=24)
+    ts = surrogate_data.load_training_store(store)
+    serial = DoseSurrogate.fit(ts.beta, ts.dose, variance=0.99, seed=0,
+                               beta_names=ts.beta_names, n_jobs=1)
+    parallel = DoseSurrogate.fit(ts.beta, ts.dose, variance=0.99, seed=0,
+                                 beta_names=ts.beta_names, n_jobs=2)
+    assert parallel.num_components == serial.num_components
+    m0, v0 = serial.predict_dose(ts.beta[:6])
+    m1, v1 = parallel.predict_dose(ts.beta[:6])
+    assert np.allclose(m0, m1, atol=1e-12)
+    assert np.allclose(v0, v1, atol=1e-12)
+
+
+# --------------------------------------------------------------------------- #
+# Log-space (dose_transform='log10') fit — the Fowler-Nordheim option.
+# --------------------------------------------------------------------------- #
+
+
+def test_log_transform_records_transform_and_positive_floor(tmp_path):
+    store = _collect_store(tmp_path, num_samples=24)
+    surrogate, ts = _fit_from_store(store, seed=0, dose_transform='log10')
+    assert surrogate.dose_transform == 'log10'
+    # Default floor is the smallest positive training dose (> 0).
+    assert surrogate.floor > 0.0
+    assert np.isclose(surrogate.floor, ts.dose[ts.dose > 0.0].min())
+
+
+def test_log_transform_roundtrip_project_of_predict(tmp_path):
+    """Round-trip still holds in the log model's fit space:
+    project(predict_dose(β, 'fit')) ≈ predicted_coeffs(β)."""
+    store = _collect_store(tmp_path, num_samples=24)
+    surrogate, ts = _fit_from_store(store, seed=0, dose_transform='log10')
+    beta = ts.beta[:5]
+    mean_fit, _ = surrogate.predict_dose(beta, space='fit')
+    projected = surrogate.project(mean_fit, space='fit')
+    coeff_mean, _ = surrogate.predicted_coeffs(beta)
+    assert np.allclose(projected, coeff_mean, atol=1e-8)
+
+
+def test_log_transform_predict_linear_inverts_fit_space(tmp_path):
+    """predict_dose(space='linear') maps the log-space mean back to linear dose
+    with 10**mean - floor (mean only, no variance)."""
+    store = _collect_store(tmp_path, num_samples=24)
+    surrogate, ts = _fit_from_store(store, seed=0, dose_transform='log10')
+    beta = ts.beta[:4]
+    mean_fit, _ = surrogate.predict_dose(beta, space='fit')
+    mean_lin = surrogate.predict_dose(beta, space='linear')
+    expected = np.power(10.0, mean_fit) - surrogate.floor
+    assert np.allclose(mean_lin, expected, atol=1e-10)
+
+
+def test_log_transform_holdout_accuracy_in_log_space(tmp_path):
+    """Held-out β: the log-space reconstruction matches the noiseless log truth
+    within a small relative-L2 (the meaningful metric for a log model)."""
+    store = _collect_store(tmp_path, num_samples=40, noise=0.02)
+    ts = surrogate_data.load_training_store(store)
+    n_hold = 10
+    rng = np.random.default_rng(0)
+    perm = rng.permutation(len(ts))
+    hold, train = perm[:n_hold], perm[n_hold:]
+
+    surrogate = DoseSurrogate.fit(ts.beta[train], ts.dose[train],
+                                  variance=0.999, seed=0,
+                                  beta_names=ts.beta_names,
+                                  dose_transform='log10')
+    pred_fit, _ = surrogate.predict_dose(ts.beta[hold], space='fit')
+    truth_lin = dose_of_beta(ts.beta[hold], noise=0.0)          # noiseless
+    truth_fit = np.log10(truth_lin + surrogate.floor)
+    rel_l2 = (np.linalg.norm(pred_fit - truth_fit, axis=1)
+              / np.linalg.norm(truth_fit, axis=1))
+    assert rel_l2.mean() < 0.10
+
+
+def test_log_transform_save_reload_identical(tmp_path):
+    store = _collect_store(tmp_path, num_samples=24)
+    surrogate, ts = _fit_from_store(store, seed=0, dose_transform='log10')
+    model_dir = str(tmp_path / 'log_surrogate')
+    surrogate.save(model_dir)
+
+    reloaded = DoseSurrogate.load(model_dir)
+    assert reloaded.dose_transform == 'log10'
+    assert np.isclose(reloaded.floor, surrogate.floor)
+    beta = ts.beta[:6]
+    m0, v0 = surrogate.predict_dose(beta, space='fit')
+    m1, v1 = reloaded.predict_dose(beta, space='fit')
+    assert np.allclose(m0, m1, atol=1e-10)
+    assert np.allclose(v0, v1, atol=1e-10)
+    # The persisted provenance records the transform + floor.
+    import json
+    with open(os.path.join(model_dir, 'surrogate.json')) as f:
+        prov = json.load(f)
+    assert prov['dose_transform'] == 'log10'
+    assert prov['floor'] > 0.0
+
+
+def test_load_backcompat_defaults_to_linear(tmp_path):
+    """A model artifact saved before the dose-transform feature (no
+    dose_transform / floor keys) loads as a linear model."""
+    store = _collect_store(tmp_path, num_samples=16)
+    surrogate, _ = _fit_from_store(store, seed=0)   # linear
+    model_dir = str(tmp_path / 'legacy')
+    surrogate.save(model_dir)
+
+    # Rewrite basis.npz WITHOUT the transform keys, and strip them from the JSON,
+    # simulating an artifact written by the pre-feature save().
+    import json
+    from lume_ace3p.surrogate import BASIS_FILENAME, PROVENANCE_FILENAME
+    with np.load(os.path.join(model_dir, BASIS_FILENAME),
+                 allow_pickle=False) as npz:
+        kept = {k: npz[k] for k in npz.files
+                if k not in ('dose_transform', 'floor')}
+    np.savez(os.path.join(model_dir, BASIS_FILENAME), **kept)
+    prov_path = os.path.join(model_dir, PROVENANCE_FILENAME)
+    with open(prov_path) as f:
+        prov = json.load(f)
+    prov.pop('dose_transform', None)
+    prov.pop('floor', None)
+    with open(prov_path, 'w') as f:
+        json.dump(prov, f)
+
+    reloaded = DoseSurrogate.load(model_dir)
+    assert reloaded.dose_transform == 'linear'
+    assert reloaded.floor == 0.0
+
+
 # --------------------------------------------------------------------------- #
 # train_surrogate mode + dispatch.
 # --------------------------------------------------------------------------- #
@@ -303,6 +432,21 @@ def test_train_surrogate_holdout_report(tmp_path):
     df = pd.read_csv(report, sep='\t')
     assert 'relative_l2' in df.columns
     assert len(df) == 10          # 25% of 40
+
+
+def test_train_surrogate_log_transform_flows_through(tmp_path):
+    """The mode passes dose_transform to the fit and the saved model + holdout
+    report record the log space."""
+    store = _collect_store(tmp_path, num_samples=40)
+    model_dir = str(tmp_path / 'log_model')
+    cfg = {'type': 'train_surrogate', 'store': store, 'variance': 0.999,
+           'holdout': 0.25, 'seed': 0, 'model_dir': model_dir,
+           'dose_transform': 'log10'}
+    surrogate = train_surrogate(cfg)
+    assert surrogate.dose_transform == 'log10'
+    import pandas as pd
+    df = pd.read_csv(os.path.join(store, 'train_report.txt'), sep='\t')
+    assert (df['space'] == 'log10').all()
 
 
 def test_run_mode_dispatches_train_surrogate(tmp_path):
