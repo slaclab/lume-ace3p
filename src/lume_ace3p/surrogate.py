@@ -52,6 +52,42 @@ GPS_FILENAME = 'gps.joblib'           # fitted sklearn GPs (trusted local artifa
 PROVENANCE_FILENAME = 'surrogate.json'  # k / variance target / kept energy / kernels
 
 
+# Supported dose transforms. The whole PCA-GP is fit in the transformed space;
+# `'log10'` addresses the Fowler-Nordheim exponential-in-β dynamic range (dose
+# spans ~9 orders of magnitude across voxels, and the per-sample total varies far
+# less in log than in linear), where the linear fit barely captures the dose
+# *shape*. See :meth:`DoseSurrogate.fit`.
+DOSE_TRANSFORMS = ('linear', 'log10')
+
+
+def _apply_transform(dose, dose_transform, floor):
+    """Map a raw dose array into the fit space (``'linear'`` is the identity;
+    ``'log10'`` returns ``log10(dose + floor)``). ``floor`` is a strictly positive
+    offset that keeps zero voxels finite; it is ignored for ``'linear'``."""
+    if dose_transform == 'linear':
+        return np.asarray(dose, dtype=float)
+    if dose_transform == 'log10':
+        return np.log10(np.asarray(dose, dtype=float) + float(floor))
+    raise ValueError(
+        f"unknown dose_transform '{dose_transform}'; use one of {DOSE_TRANSFORMS}.")
+
+
+def _invert_transform(fit_values, dose_transform, floor):
+    """Map fit-space values back to linear dose. For ``'log10'`` this is
+    ``10**fit - floor``.
+
+    WARNING: for a log fit this amplifies error in the ~9-order tail — a small
+    log-space error can become an enormous linear-space one (measured >100x
+    relative-L2 on the real store). The trustworthy accuracy metric for a log model
+    is therefore computed *in the fit space*, not after inverting to linear."""
+    if dose_transform == 'linear':
+        return np.asarray(fit_values, dtype=float)
+    if dose_transform == 'log10':
+        return np.power(10.0, np.asarray(fit_values, dtype=float)) - float(floor)
+    raise ValueError(
+        f"unknown dose_transform '{dose_transform}'; use one of {DOSE_TRANSFORMS}.")
+
+
 def _build_gp(input_dim, seed):
     """Construct one per-coefficient :class:`GaussianProcessRegressor`.
 
@@ -103,10 +139,15 @@ class DoseSurrogate:
       into a unit cube before the GPs see them.
     * ``beta_names`` — ordered β column names (provenance).
     * ``kept_energy`` — fraction of total variance retained by the ``k`` modes.
+    * ``dose_transform`` — ``'linear'`` or ``'log10'``; the space the PCA-GP was
+      fit in (``mean`` / ``basis`` / ``gps`` all live in this space).
+    * ``floor`` — strictly positive offset used by the ``'log10'`` transform to
+      keep zero voxels finite (``0.0`` for a linear fit).
     """
 
     def __init__(self, mean, basis, singular_values, gps, beta_lo, beta_hi,
-                 beta_names, kept_energy, variance_target=None):
+                 beta_names, kept_energy, variance_target=None,
+                 dose_transform='linear', floor=0.0):
         self.mean = np.asarray(mean, dtype=float)
         self.basis = np.asarray(basis, dtype=float)
         self.singular_values = np.asarray(singular_values, dtype=float)
@@ -116,18 +157,41 @@ class DoseSurrogate:
         self.beta_names = list(beta_names)
         self.kept_energy = float(kept_energy)
         self.variance_target = variance_target
+        if dose_transform not in DOSE_TRANSFORMS:
+            raise ValueError(
+                f"unknown dose_transform '{dose_transform}'; use one of "
+                f"{DOSE_TRANSFORMS}.")
+        self.dose_transform = dose_transform
+        self.floor = float(floor)
 
     # ---- construction -------------------------------------------------- #
 
     @classmethod
     def fit(cls, beta, dose, *, variance=0.99, k=None, seed=0,
-            beta_names=None):
+            beta_names=None, dose_transform='linear', floor=None, n_jobs=1):
         """Fit the surrogate from aligned ``β (N, D)`` and ``dose (N, M)``.
 
         ``variance`` is the cumulative-energy target for choosing the number of
         retained POD modes (ignored when an explicit ``k`` is given). ``seed``
         makes each GP's restart search reproducible. ``beta_names`` is recorded
-        for provenance / inversion-time column alignment."""
+        for provenance / inversion-time column alignment.
+
+        ``dose_transform`` selects the space the whole PCA-GP is fit in:
+        ``'linear'`` (default, fit raw dose) or ``'log10'`` (fit
+        ``log10(dose + floor)``). The ``'log10'`` transform addresses the
+        Fowler-Nordheim exponential-in-β dynamic range — dose spans ~9 orders of
+        magnitude across voxels, so a linear fit is dominated by the peak voxels
+        and barely learns the dose *shape*. ``floor`` is the strictly positive
+        offset that keeps zero voxels finite; it defaults to the smallest positive
+        dose value in the training set (ignored for ``'linear'``).
+
+        ``n_jobs`` parallelizes the per-coefficient GP fits over CPU cores via
+        joblib (``1`` = serial, the default; ``-1`` = all cores). The GPs are
+        independent (one per POD coefficient), so this is an embarrassingly
+        parallel loop and does **not** change the result — same ``seed`` gives
+        bit-identical GPs regardless of ``n_jobs``. Each GP's own solver may also
+        use BLAS threads, so on a busy machine keep ``n_jobs`` at or below the
+        core count to avoid oversubscription."""
         beta = np.asarray(beta, dtype=float)
         dose = np.asarray(dose, dtype=float)
         if beta.ndim != 2 or dose.ndim != 2:
@@ -140,6 +204,24 @@ class DoseSurrogate:
         if n_samples < 2:
             raise ValueError(
                 "need at least 2 training samples to fit the surrogate.")
+
+        if dose_transform not in DOSE_TRANSFORMS:
+            raise ValueError(
+                f"unknown dose_transform '{dose_transform}'; use one of "
+                f"{DOSE_TRANSFORMS}.")
+        if dose_transform == 'log10':
+            positive = dose[dose > 0.0]
+            if floor is None:
+                # Smallest positive dose is the natural noise floor; fall back to
+                # 1.0 only if every value is zero (degenerate, no signal).
+                floor = float(positive.min()) if positive.size else 1.0
+            floor = float(floor)
+            if floor <= 0.0:
+                raise ValueError("log10 dose_transform needs a positive floor.")
+        else:
+            floor = 0.0
+        # Everything below (mean, SVD, GPs) is computed in the fit space.
+        dose = _apply_transform(dose, dose_transform, floor)
 
         mean = dose.mean(axis=0)
         centered = dose - mean
@@ -158,16 +240,26 @@ class DoseSurrogate:
         beta_hi = beta.max(axis=0)
         beta_unit = cls._to_unit(beta, beta_lo, beta_hi)
 
-        gps = []
-        for j in range(n_modes):
+        # One independent GP per retained coefficient. The fits share no state,
+        # so joblib parallelizes them cleanly; a fixed seed keeps each GP's
+        # restart search reproducible regardless of n_jobs (result-invariant).
+        def _fit_one(j):
             gp = _build_gp(beta.shape[1], seed)
             gp.fit(beta_unit, coeffs[:, j])
-            gps.append(gp)
+            return gp
+
+        if n_jobs == 1:
+            gps = [_fit_one(j) for j in range(n_modes)]
+        else:
+            from joblib import Parallel, delayed
+            gps = Parallel(n_jobs=n_jobs)(
+                delayed(_fit_one)(j) for j in range(n_modes))
 
         if beta_names is None:
             beta_names = [f'beta{i}' for i in range(beta.shape[1])]
         return cls(mean, basis, singular_values, gps, beta_lo, beta_hi,
-                   beta_names, kept_energy, variance_target=variance)
+                   beta_names, kept_energy, variance_target=variance,
+                   dose_transform=dose_transform, floor=floor)
 
     # ---- normalization helpers ---------------------------------------- #
 
@@ -203,33 +295,63 @@ class DoseSurrogate:
             variances[:, j] = std ** 2
         return means, variances
 
-    def predict_dose(self, beta):
+    def predict_dose(self, beta, space='fit'):
         """Predict the full dose grid for ``β``.
 
-        Returns ``(mean_grid, var_grid)`` reconstructed from the coefficient GPs:
+        Reconstructs from the coefficient GPs in the *fit* space:
         ``mean_grid = mean + Σ_i c_i(β)·φ_i`` and, treating the modes as
-        independent, ``var_grid = Σ_i Var[c_i(β)]·φ_i²``. The variance is
-        strictly positive (fitted noise term, constraint #2). A single-β input
-        returns 1-D grids; a batch returns ``(B, M)``."""
+        independent, ``var_grid = Σ_i Var[c_i(β)]·φ_i²`` (strictly positive —
+        fitted noise term, constraint #2). A single-β input returns 1-D grids; a
+        batch returns ``(B, M)``.
+
+        ``space`` selects the output space:
+
+        * ``'fit'`` (default) — the space the model was trained in. For a linear
+          model this is dose; for a ``'log10'`` model this is ``log10(dose+floor)``.
+          Returns ``(mean_grid, var_grid)``. This is the space accuracy should be
+          judged in and the space :meth:`project` / :meth:`predicted_coeffs` speak.
+        * ``'linear'`` — always raw dose. For a linear model identical to ``'fit'``.
+          For a ``'log10'`` model the mean is mapped back with ``10**mean - floor``;
+          **this amplifies tail error dramatically** (a small log error → a huge
+          linear one), so only the mean is returned and no variance (a delta-method
+          variance would blow up and mislead). Returns just ``mean_grid``.
+        """
         beta_arr = np.atleast_2d(np.asarray(beta, dtype=float))
         single = np.asarray(beta).ndim == 1
         cmean, cvar = self.predicted_coeffs(beta_arr)
-        mean_grid = self.mean + cmean @ self.basis          # (B, M)
-        var_grid = cvar @ (self.basis ** 2)                 # (B, M)
+        mean_grid = self.mean + cmean @ self.basis          # (B, M), fit space
+        var_grid = cvar @ (self.basis ** 2)                 # (B, M), fit space
+        if space == 'linear':
+            linear_mean = _invert_transform(mean_grid, self.dose_transform,
+                                             self.floor)
+            return linear_mean[0] if single else linear_mean
+        if space != 'fit':
+            raise ValueError(f"unknown space '{space}'; use 'fit' or 'linear'.")
         if single:
             return mean_grid[0], var_grid[0]
         return mean_grid, var_grid
 
-    def project(self, dose_grid):
+    def project(self, dose_grid, space='linear'):
         """Project a dose grid into retained-basis coefficient space.
 
-        ``coeffs = (dose - mean) @ Φ^T``. This is the single coefficient-space
-        seam the inversion phase talks to (a target dose is projected here, then
-        matched against ``predicted_coeffs``). Accepts a single grid ``(M,)`` or
-        a batch ``(B, M)``; returns ``(k,)`` or ``(B, k)`` accordingly."""
+        ``coeffs = (transform(dose) - mean) @ Φ^T``. This is the single
+        coefficient-space seam the inversion phase talks to (a target dose is
+        projected here, then matched against ``predicted_coeffs``). The input is
+        mapped into the model's fit space first, so for a ``'log10'`` model a raw
+        linear dose is log-transformed before centering — keeping the round-trip
+        ``project(predict_dose(β, 'fit')) ≈ predicted_coeffs(β)`` exact.
+
+        ``space`` describes the space of ``dose_grid``: ``'linear'`` (default, raw
+        dose — it is transformed here) or ``'fit'`` (already in the model's fit
+        space — projected as-is). Accepts a single grid ``(M,)`` or a batch
+        ``(B, M)``; returns ``(k,)`` or ``(B, k)`` accordingly."""
         dose_grid = np.asarray(dose_grid, dtype=float)
         single = dose_grid.ndim == 1
         grids = np.atleast_2d(dose_grid)
+        if space == 'linear':
+            grids = _apply_transform(grids, self.dose_transform, self.floor)
+        elif space != 'fit':
+            raise ValueError(f"unknown space '{space}'; use 'linear' or 'fit'.")
         coeffs = (grids - self.mean) @ self.basis.T
         return coeffs[0] if single else coeffs
 
@@ -252,7 +374,9 @@ class DoseSurrogate:
             mean=self.mean, basis=self.basis,
             singular_values=self.singular_values,
             beta_lo=self.beta_lo, beta_hi=self.beta_hi,
-            beta_names=np.array(self.beta_names, dtype=object).astype('U'))
+            beta_names=np.array(self.beta_names, dtype=object).astype('U'),
+            dose_transform=np.array(self.dose_transform),
+            floor=np.array(self.floor, dtype=float))
         joblib.dump(self.gps, os.path.join(model_dir, GPS_FILENAME))
 
         provenance = {
@@ -260,6 +384,8 @@ class DoseSurrogate:
             'variance_target': self.variance_target,
             'kept_energy': self.kept_energy,
             'beta_names': self.beta_names,
+            'dose_transform': self.dose_transform,
+            'floor': self.floor,
             'singular_values': self.singular_values.tolist(),
             'kernels': [str(gp.kernel_) for gp in self.gps],
         }
@@ -282,6 +408,11 @@ class DoseSurrogate:
             beta_lo = npz['beta_lo']
             beta_hi = npz['beta_hi']
             beta_names = [str(x) for x in npz['beta_names']]
+            # Back-compat: models saved before the dose-transform feature have
+            # neither key — they were fit in linear space.
+            dose_transform = (str(npz['dose_transform'])
+                              if 'dose_transform' in npz.files else 'linear')
+            floor = (float(npz['floor']) if 'floor' in npz.files else 0.0)
         gps = joblib.load(os.path.join(model_dir, GPS_FILENAME))
 
         kept_energy = 1.0
@@ -293,4 +424,5 @@ class DoseSurrogate:
             kept_energy = prov.get('kept_energy', 1.0)
             variance_target = prov.get('variance_target')
         return cls(mean, basis, singular_values, gps, beta_lo, beta_hi,
-                   beta_names, kept_energy, variance_target=variance_target)
+                   beta_names, kept_energy, variance_target=variance_target,
+                   dose_transform=dose_transform, floor=floor)

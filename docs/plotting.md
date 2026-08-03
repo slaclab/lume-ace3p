@@ -95,6 +95,48 @@ python plotting/geant4_deposit_volume.py [doseDeposit.txt]
 If PyVista is not installed, the script prints an install hint and exits; use
 the 3D scatter or 2D slice viewers instead.
 
+## Surrogate fit viewer
+
+`plotting/surrogate_fit_plot.py` explores how well the PCA-GP dose surrogate (the
+model saved by the `train_surrogate` mode) reproduces the collected Geant4 dose. It
+is launched on a **training-store directory** — the folder holding
+`training_table.txt`, `manifest.json`, and a `surrogate/` subfolder — produced by
+the `geant4_beta_surrogate` example:
+
+```bash
+python plotting/surrogate_fit_plot.py [store_dir]
+```
+
+If no directory is given, a directory dialog is opened. The tool loads the store's
+`(beta, dose)` training pairs and the fitted surrogate and offers:
+
+- **8 (D) beta sliders** — the per-bin field-enhancement knobs. Sliding any of them
+  updates the surrogate's predicted dose live.
+- a **sample selector** that steps through the stored training samples. Selecting a
+  sample snaps the beta sliders onto that real DOE point and overlays the sample's
+  **true Geant4 dose** against the prediction, so the fit quality is visible
+  directly. Nudging any beta slider off the snapped value drops the truth overlay —
+  there is no Geant4 truth away from the training points — leaving the prediction
+  and its ±2σ uncertainty band.
+- a **log10 / linear** vertical-scale toggle,
+- a **2D view** (a slice normal to a chosen axis, or a sum-projection over it) of the
+  dose grid, with a predicted / truth / difference selector.
+
+Two panels are shown: the 2D dose grid and the 1-D dose profile projected onto the
+beam axis Z (summing every voxel over x, y per z). When a sample is selected, the
+1-D panel's title reports the per-sample relative-L2 error **in the displayed scale**.
+
+The default scale is **log10**, and the profile band is drawn accordingly, because
+dose is exponential in beta (Fowler–Nordheim) and spans many orders of magnitude
+across voxels — a linear fit is dominated by the peak voxels and barely captures the
+dose *shape*. This is why a good fit reads ~0.2 relative-L2 in log but a misleading
+~2 in linear. To actually train the surrogate in log space, set
+`dose_transform: 'log10'` under `mode:` in the training YAML (see
+`examples/geant4_beta_surrogate/geant4_beta_surrogate_train.yaml`); the holdout
+report's relative-L2 is then measured in log space too. Note that a log-space model
+is a *shape* model — inverting its prediction back to linear dose amplifies the tail
+error, so treat linear-space reconstruction from a log fit with care.
+
 ## S3P optimization viewers
 
 Three plotting tools are included for visualizing optimization output:
