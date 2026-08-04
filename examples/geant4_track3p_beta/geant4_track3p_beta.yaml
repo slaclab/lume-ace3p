@@ -15,7 +15,7 @@ workflow_parameters :
                                                 # STL geometry) into each workdir instead of
                                                 # copying. copy (default) | symlink | hardlink
   'paths' :                                     # override executable paths
-    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-oneinputfile'
+    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-npass'
     'geant4_app_exe' : 'sim'
 
 workflow :
