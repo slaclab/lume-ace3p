@@ -6,7 +6,7 @@ from tkinter import filedialog
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
-from matplotlib.widgets import Slider, RadioButtons
+from matplotlib.widgets import Slider, RadioButtons, RangeSlider
 
 # Interactive accuracy viewer for the PCA-GP dose surrogate (the model saved by
 # the `train_surrogate` mode). It is launched on a *training-store directory* --
@@ -32,15 +32,28 @@ from matplotlib.widgets import Slider, RadioButtons
 # axis, or a sum-projection over it) and the 1D dose profile projected onto the
 # beam axis Z (summing every voxel over x, y per z) -- the profile the accuracy
 # is easiest to read on. Beam axis Z is drawn horizontal, matching the Geant4
-# deposit viewers.
+# deposit viewers. All spatial axes are labelled in PHYSICAL mm, derived from the
+# manifest's scoring-mesh center / half-sizes / bin counts.
 #
-# Usage:  python plotting/surrogate_fit_plot.py [store_dir]
-# If no directory is given, a directory dialog is opened.
+# Both dose scales are LOCKED log ranges rather than autoscaled per frame, so
+# stepping samples or sliding beta shows a genuine change in dose instead of a
+# rescaled axis. Each panel has its own vertical range slider (two handles, in
+# log10 decades): 'voxel dose' for the 2D color scale and 'profile dose' for the
+# 1D y-axis. They are separate because the 1D panel sums each z-slice over x and
+# y, landing ~7 decades above per-voxel dose -- one shared range would squash the
+# profile against the top of its axis. Empty (zero) voxels are clamped to the
+# bottom of the 2D range so they read as the lowest color: on a log scale zero is
+# -inf, and pinning it to a very small number is the right call for visualization.
+#
+# Usage:  python plotting/surrogate_fit_plot.py [store_dir] [--clamp LO HI]
+# If no directory is given, a directory dialog is opened. --clamp takes the log10
+# decade bounds for the color scale, e.g. `--clamp -9 -1`.
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Jet colormap for the dose, matching the Geant4 deposit viewers; zero / masked
-# voxels render as the (white) background so nonzero voxels stand out.
+# Jet colormap for the dose, matching the Geant4 deposit viewers. Zero voxels are
+# clamped to the bottom of the locked log range rather than masked, so they take
+# the lowest color; set_bad only catches genuine NaN/inf now.
 VALUE_CMAP = mpl.colormaps['jet'].copy()
 VALUE_CMAP.set_bad('white')
 
@@ -84,12 +97,27 @@ def _load_store_and_model(store_dir):
     return ts, model, store_name
 
 
+# --- Arguments -------------------------------------------------------------
+# Parse `--clamp LO HI` out first, so the remaining positional argument (if any)
+# is the store directory.
+_clamp_arg = None
+_argv = list(sys.argv[1:])
+if '--clamp' in _argv:
+    _i = _argv.index('--clamp')
+    try:
+        _clamp_arg = (float(_argv[_i + 1]), float(_argv[_i + 2]))
+        del _argv[_i:_i + 3]
+    except (IndexError, ValueError):
+        print('Warning: --clamp needs two numbers (log10 decades), e.g. '
+              '--clamp -9 -1; using the data-derived range.')
+        del _argv[_i:_i + 1]
+
 # --- Load ------------------------------------------------------------------
 root = tk.Tk()
 root.withdraw()
 
-if len(sys.argv) == 2:
-    store_dir = sys.argv[1]
+if _argv:
+    store_dir = _argv[0]
 else:
     store_dir = filedialog.askdirectory(
         title='Choose a surrogate training-store directory')
@@ -109,6 +137,8 @@ indices = ts.indices                 # (M, 3) voxel (ix, iy, iz)
 beta_names = list(ts.beta_names)
 N, D = beta.shape
 
+AXES = ['X', 'Y', 'Z']
+
 mesh = (ts.manifest or {}).get('mesh') or {}
 bins = mesh.get('bins')
 if bins and len(bins) == 3:
@@ -118,6 +148,35 @@ else:
     NX = int(indices[:, 0].max()) + 1
     NY = int(indices[:, 1].max()) + 1
     NZ = int(indices[:, 2].max()) + 1
+
+# --- Physical scoring-mesh geometry (mm) ----------------------------------
+# The manifest records the mesh half-sizes and center in mm, so voxel index i
+# along an axis spans [origin + i*spacing, origin + (i+1)*spacing]. Axes are
+# labelled and ticked in mm rather than voxel index; VOXEL_MM is the per-axis
+# voxel size and ORIGIN_MM the low corner. Falls back to unit spacing centred on
+# zero if the manifest lacks the geometry (labels then read as index-like mm).
+_half = mesh.get('half')
+_center = mesh.get('center')
+if _half and _center and len(_half) == 3 and len(_center) == 3:
+    VOXEL_MM = [2.0 * float(_half[i]) / (NX, NY, NZ)[i] for i in range(3)]
+    ORIGIN_MM = [float(_center[i]) - float(_half[i]) for i in range(3)]
+else:
+    VOXEL_MM = [1.0, 1.0, 1.0]
+    ORIGIN_MM = [0.0, 0.0, 0.0]
+
+
+def axis_extent_mm(axis):
+    """(low, high) physical edge of `axis` ('X'|'Y'|'Z') in mm."""
+    i = AXES.index(axis)
+    n = (NX, NY, NZ)[i]
+    return ORIGIN_MM[i], ORIGIN_MM[i] + n * VOXEL_MM[i]
+
+
+def axis_centers_mm(axis):
+    """Voxel-center coordinates along `axis` in mm (length = that axis' bins)."""
+    i = AXES.index(axis)
+    n = (NX, NY, NZ)[i]
+    return ORIGIN_MM[i] + (np.arange(n) + 0.5) * VOXEL_MM[i]
 
 # Per-beta slider bounds from the manifest DOE bounds, falling back to the
 # observed training range.
@@ -130,6 +189,43 @@ if not bounds or len(bounds) != D:
 # smallest positive dose over the whole store, so every frame is comparable.
 _positive = dose[dose > 0.0]
 DISP_FLOOR = float(_positive.min()) if _positive.size else 1.0
+
+# --- Fixed log color range (clamp) ----------------------------------------
+# The 2D dose color scale is LOCKED across frames rather than autoscaled per
+# frame, so stepping samples / sliding beta shows a real change in dose instead
+# of a rescaled colorbar. Autoscaling also let a single hot voxel wash out the
+# rest, and let the ~1e-16 Monte-Carlo noise tail stretch the low end.
+#
+# The range is taken from a robust percentile of the store's positive doses
+# (not the raw min/max) so the noise tail is excluded, then snapped out to whole
+# decades. Override on the command line with --clamp LO HI (decades, e.g.
+# `--clamp -9 -1`), or set CLAMP_DECADES below to pin it permanently.
+CLAMP_DECADES = None        # e.g. (-9.0, -1.0) to hard-pin the range
+
+def _default_clamp():
+    if not _positive.size:
+        return -9.0, -1.0
+    lo = float(np.floor(np.log10(np.percentile(_positive, 5.0))))
+    hi = float(np.ceil(np.log10(_positive.max())))
+    return lo, hi
+
+
+# Precedence: --clamp on the command line, then a pinned CLAMP_DECADES, then the
+# robust data-derived range.
+if _clamp_arg is not None:
+    LOG_LO, LOG_HI = _clamp_arg
+elif CLAMP_DECADES is not None:
+    LOG_LO, LOG_HI = CLAMP_DECADES
+else:
+    LOG_LO, LOG_HI = _default_clamp()
+
+if LOG_HI <= LOG_LO:
+    LOG_HI = LOG_LO + 1.0
+# Linear-dose clamp bounds. CLAMP_FLOOR doubles as the value empty (zero) voxels
+# are shown at: on a log scale zero is -inf, so clamping it to the bottom of the
+# range renders no-data cells as the lowest color instead of masking them out.
+CLAMP_FLOOR = 10.0 ** LOG_LO
+CLAMP_CEIL = 10.0 ** LOG_HI
 
 IX, IY, IZ = indices[:, 0].astype(int), indices[:, 1].astype(int), \
     indices[:, 2].astype(int)
@@ -228,17 +324,87 @@ content_ax.set_title('2D content', fontdict={'size': 11})
 beta_sliders = []
 for j in range(D):
     y = 0.90 - j * 0.052
-    sax = fig.add_axes([0.80, y, 0.16, 0.02])
+    sax = fig.add_axes([0.83, y, 0.13, 0.02])
     lo, hi = float(bounds[j][0]), float(bounds[j][1])
-    s = Slider(sax, beta_names[j], lo, hi, valinit=float(beta[0, j]))
+    # initcolor='none' suppresses matplotlib's red "initial value" tick. It marks
+    # valinit (sample 0's beta), which is meaningless once another sample is
+    # selected or beta is moved freely.
+    s = Slider(sax, beta_names[j], lo, hi, valinit=float(beta[0, j]),
+               initcolor='none')
     beta_sliders.append(s)
 
-sample_ax = fig.add_axes([0.80, 0.90 - D * 0.052 - 0.02, 0.16, 0.02])
-sample_slider = Slider(sample_ax, 'sample', 0, N - 1, valinit=0, valstep=1)
+sample_ax = fig.add_axes([0.83, 0.90 - D * 0.052 - 0.02, 0.13, 0.02])
+sample_slider = Slider(sample_ax, 'sample', 0, N - 1, valinit=0, valstep=1,
+                       initcolor='none')
 
 slice_ax = fig.add_axes([0.30, 0.02, 0.37, 0.02])
-slice_slider = Slider(slice_ax, 'slice index', 0, NX - 1, valinit=NX // 2,
-                      valstep=1)
+slice_slider = Slider(slice_ax, 'slice [mm]', 0, NX - 1, valinit=NX // 2,
+                      valstep=1, initcolor='none')
+
+# Two independent log10-decade range sliders (one vertical bar with two handles
+# each), because the panels live on genuinely different scales: the 2D panel shows
+# per-voxel dose, while the 1D panel SUMS each z-slice over x and y, which lands
+# ~7 decades higher. One shared range would leave the profile squashed against
+# the top with most of the axis empty, so each panel gets its own.
+#
+# Both are LOCKED (not autoscaled per frame) so stepping samples or sliding beta
+# shows a real change in dose rather than a rescaled axis.
+_slider_lo = float(np.floor(np.log10(DISP_FLOOR))) - 1.0
+_slider_hi = float(np.ceil(np.log10(dose.max()))) + 1.0 if dose.max() > 0 else 1.0
+
+crange_ax = fig.add_axes([0.715, 0.58, 0.013, 0.32])
+crange_slider = RangeSlider(crange_ax, 'voxel\ndose\n$10^{x}$',
+                            _slider_lo, _slider_hi,
+                            valinit=(LOG_LO, LOG_HI), orientation='vertical')
+
+
+# The 1D panel's own range, defaulted from the actual z-projected profile spread
+# (robust p5 -> max over the store, snapped to whole decades) rather than the
+# per-voxel range.
+def _profile_decades():
+    prof = np.stack([dose[:, IZ == z].sum(axis=1) for z in range(NZ)], axis=1)
+    pos = prof[prof > 0]
+    if not pos.size:
+        return -4.0, 0.0
+    return (float(np.floor(np.log10(np.percentile(pos, 5.0)))),
+            float(np.ceil(np.log10(pos.max()))))
+
+
+PROF_LO, PROF_HI = _profile_decades()
+_prof_slider_lo = min(_slider_lo, PROF_LO - 1.0)
+_prof_slider_hi = max(_slider_hi, PROF_HI + 1.0)
+prange_ax = fig.add_axes([0.715, 0.11, 0.013, 0.28])
+prange_slider = RangeSlider(prange_ax, 'profile\ndose\n$10^{x}$',
+                            _prof_slider_lo, _prof_slider_hi,
+                            valinit=(PROF_LO, PROF_HI), orientation='vertical')
+
+
+def _span(slider):
+    """(lo, hi) log10 decades from a RangeSlider, guaranteeing at least one decade
+    of span so a fully-collapsed pair still renders instead of producing a
+    degenerate norm / y-axis."""
+    lo, hi = (float(v) for v in slider.val)
+    if hi <= lo:
+        hi = lo + 1.0
+    return lo, hi
+
+
+def log_limits():
+    """(lo, hi) per-voxel dose range in log10 decades (2D panel)."""
+    return _span(crange_slider)
+
+
+def color_limits():
+    """(vmin, vmax) linear per-voxel dose bounds for the 2D color scale. The floor
+    doubles as the value empty (zero) voxels are displayed at."""
+    lo, hi = log_limits()
+    return 10.0 ** lo, 10.0 ** hi
+
+
+def profile_limits():
+    """(ymin, ymax) linear bounds for the 1D z-projected profile's y-axis."""
+    lo, hi = _span(prange_slider)
+    return 10.0 ** lo, 10.0 ** hi
 
 
 # --- 2D panel helpers (mirror geant4_deposit_plot orientation) -------------
@@ -260,16 +426,37 @@ def project_2d(grid, axis):
     return _orient(axis, grid.sum(axis=AXES.index(axis)))
 
 
-def plane_labels(axis):
+def plane_axes(axis):
+    """(horizontal, vertical) axis names for the plane normal to `axis`. Beam
+    axis Z is horizontal whenever it lies in the plane (accelerator convention);
+    the Z-normal plane puts X horizontal, Y vertical."""
     if axis == 'X':
-        return 'iZ', 'iY'
+        return 'Z', 'Y'
     if axis == 'Y':
-        return 'iZ', 'iX'
-    return 'iX', 'iY'
+        return 'Z', 'X'
+    return 'X', 'Y'
+
+
+def plane_labels(axis):
+    """Axis labels for the 2D panel, in physical mm."""
+    haxis, vaxis = plane_axes(axis)
+    return '%s [mm]' % haxis, '%s [mm]' % vaxis
 
 
 def axis_size(axis):
     return {'X': NX, 'Y': NY, 'Z': NZ}[axis]
+
+
+# --- Persistent 2D image + colorbar ---------------------------------------
+# Created ONCE here and updated in place by redraw(). matplotlib's fig.colorbar()
+# carves space out of its target axes each time it is called, so calling it per
+# redraw made the bar shrink progressively; a single long-lived Colorbar avoids
+# that entirely (and is faster).
+_vmin0, _vmax0 = color_limits()
+im = ax2d.imshow(np.full((NX, NZ), _vmin0), origin='lower', aspect='auto',
+                 norm=LogNorm(vmin=_vmin0, vmax=_vmax0), cmap=VALUE_CMAP,
+                 extent=(*axis_extent_mm('Z'), *axis_extent_mm('X')))
+cbar = fig.colorbar(im, cax=cax, extend='both')
 
 
 # --- Redraw ----------------------------------------------------------------
@@ -302,45 +489,61 @@ def redraw():
         grid2d = np.abs(mean_grid - truth_grid)
         clabel = '|true - predicted|'
 
+    slice_idx = min(int(slice_slider.val), axis_size(axis) - 1)
     if project:
         img = project_2d(grid2d, axis)
     else:
-        idx = min(int(slice_slider.val), axis_size(axis) - 1)
-        img = slice_2d(grid2d, axis, idx)
+        img = slice_2d(grid2d, axis, slice_idx)
     xlab, ylab = plane_labels(axis)
 
-    ax2d.clear()
-    cax.clear()
-    pos = img[img > 0]
-    if logscale and pos.size:
-        vmin = pos.min()
-        vmax = img.max()
-        if vmax <= vmin:
-            vmax = vmin * 10.0
+    # Physical extent (mm) of the displayed plane, so the image is drawn in mm
+    # rather than voxel index. imshow extent is (left, right, bottom, top).
+    haxis, vaxis = plane_axes(axis)
+    hlo, hhi = axis_extent_mm(haxis)
+    vlo, vhi = axis_extent_mm(vaxis)
+
+    if logscale:
+        # Locked log range from the range slider. Empty (zero) voxels are clamped
+        # up to the floor so they render as the lowest color instead of being
+        # masked to white -- on a log scale zero is -inf, and showing it at the
+        # bottom of the range reads correctly as "no dose here".
+        vmin, vmax = color_limits()
+        shown = np.clip(img, vmin, vmax)
         norm = LogNorm(vmin=vmin, vmax=vmax)
-        masked = np.ma.masked_less_equal(img, 0.0)
     else:
+        shown = img
         norm = Normalize(vmin=0.0, vmax=(img.max() if img.max() > 0 else 1.0))
-        masked = img
-    im = ax2d.imshow(masked, origin='lower', aspect='auto', norm=norm,
-                     cmap=VALUE_CMAP)
-    cbar = fig.colorbar(im, cax=cax)
+
+    # Update the persistent image + colorbar in place. Creating either one per
+    # redraw would re-steal space from `cax` on every frame, which is what made
+    # the colorbar shrink a little more with each slider move.
+    im.set_data(shown)
+    im.set_norm(norm)
+    im.set_extent((hlo, hhi, vlo, vhi))
+    cbar.update_normal(im)
     cbar.set_label(clabel, fontdict={'size': 11})
+    ax2d.set_xlim(hlo, hhi)
+    ax2d.set_ylim(vlo, vhi)
     ax2d.set_xlabel(xlab, fontdict=fdict)
     ax2d.set_ylabel(ylab, fontdict=fdict)
-    mode = 'sum over %s' % axis if project else '%s = %d' % (axis, int(slice_slider.val))
+    if project:
+        mode = 'sum over %s' % axis
+    else:
+        mode = '%s = %.1f mm' % (axis, axis_centers_mm(axis)[slice_idx])
     ax2d.set_title('dose grid  |  %s  |  %s' % (content, mode),
                    fontdict={'size': 12})
 
     # ---- 1D z-profile panel ----
     ax1d.clear()
-    zs = np.arange(NZ)
+    zs = axis_centers_mm('Z')          # voxel centers along the beam axis, mm
     prof_pred = z_profile(mean_grid)
     prof_lo = z_profile(lower_grid)
     prof_hi = z_profile(upper_grid)
     ax1d.plot(zs, prof_pred, '-', color='C0', lw=2, label='surrogate')
-    ax1d.fill_between(zs, np.clip(prof_lo, 0.0 if not logscale else DISP_FLOOR,
-                                  None),
+    # Clip the lower band edge to the panel's own floor so a band reaching zero
+    # stays drawable on the log axis.
+    _band_floor = profile_limits()[0] if logscale else 0.0
+    ax1d.fill_between(zs, np.clip(prof_lo, _band_floor, None),
                       prof_hi, color='C0', alpha=0.2,
                       label=r'$\pm 2\sigma$')
     title = 'z-projected dose profile'
@@ -354,8 +557,13 @@ def redraw():
     else:
         title += '   |   off-sample (prediction only)'
     if logscale:
+        # The profile has its OWN locked range (see prange_slider): summing each
+        # z-slice over x, y puts it ~7 decades above per-voxel dose, so sharing the
+        # 2D panel's range would squash it against the top of the axis.
         ax1d.set_yscale('log')
-    ax1d.set_xlabel('iZ (beam axis)', fontdict=fdict)
+        ax1d.set_ylim(*profile_limits())
+    ax1d.set_xlim(*axis_extent_mm('Z'))
+    ax1d.set_xlabel('Z [mm] (beam axis)', fontdict=fdict)
     ax1d.set_ylabel('dose (sum over x, y)', fontdict=fdict)
     ax1d.set_title(title, fontdict={'size': 12})
     ax1d.legend(fontsize=10, loc='best')
@@ -414,6 +622,11 @@ def on_axis(label):
 
 
 def on_slice(val):
+    # The slider steps voxel indices; show the corresponding physical mm
+    # coordinate so the readout matches the axis units.
+    idx = min(int(val), axis_size(state['axis']) - 1)
+    slice_slider.valtext.set_text(
+        '%.1f' % axis_centers_mm(state['axis'])[idx])
     if state['view'] == 'slice':
         redraw()
 
@@ -423,19 +636,36 @@ def on_content(label):
     redraw()
 
 
+def on_range(val):
+    # Either dose-range slider (2D color scale / 1D y-axis). Both only apply on
+    # the log scale (linear mode autoscales).
+    if state['logscale']:
+        redraw()
+
+
 sample_slider.on_changed(on_sample_change)
 for s in beta_sliders:
     s.on_changed(on_beta)
 scale_radio.on_clicked(on_scale)
 view_radio.on_clicked(on_view)
 axis_radio.on_clicked(on_axis)
-slice_radio_visible = slice_slider.on_changed(on_slice)
+slice_slider.on_changed(on_slice)
 content_radio.on_clicked(on_content)
+crange_slider.on_changed(on_range)
+prange_slider.on_changed(on_range)
 
 # Initial state: snapped to sample 0, projection view (slice slider hidden).
 snap_to_sample(0)
 slice_slider.ax.set_visible(state['view'] == 'slice')
 print('Loaded store "%s": %d samples, %d-D beta, %dx%dx%d mesh, '
       'dose_transform=%s' % (store_name, N, D, NX, NY, NZ, model.dose_transform))
+print('  voxel size %.3g x %.3g x %.3g mm, extent X%s Y%s Z%s mm'
+      % (VOXEL_MM[0], VOXEL_MM[1], VOXEL_MM[2],
+         axis_extent_mm('X'), axis_extent_mm('Y'), axis_extent_mm('Z')))
+print('  voxel-dose color scale locked to 1e%g .. 1e%g (empty voxels shown at '
+      'the floor); --clamp LO HI sets this' % (LOG_LO, LOG_HI))
+print('  profile y-axis locked to 1e%g .. 1e%g (summed over x, y -- its own '
+      'scale)' % (PROF_LO, PROF_HI))
+print('  drag either range slider\'s handles to retune')
 redraw()
 plt.show()
