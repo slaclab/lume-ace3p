@@ -7,14 +7,21 @@ deterministic, input-dependent S-parameter response, so the generator selection,
 random/step loops, and result logging are exercised without an ACE3P env.
 
 The botorch-backed GP-fitting tests (ExpectedImprovement / MOBO / MultiFidelity /
-UCB constructing + stepping a real model, and the GP-sweep) are slow (~minutes)
-and one (MOBO/EHVI) is a known nondeterministic flake; they carry
-`@pytest.mark.slow` and are excluded from the default run. The NelderMead paths
-and the mode-config guards stay fast. See docs/testing.md.
+UCB constructing + stepping a real model, and the BayesianExploration GP sweep)
+were **removed** in 2026-08. They asserted almost nothing about this repo — mostly
+`len(X.data) == 3` after a generator stepped — while taking hours: a single run of
+the MultiFidelity test did not finish in 2h at ~1000% CPU, because its
+`cost_budget` loop terminates on *measured runtimes* rather than an iteration
+count. They exercised xopt/botorch internals we do not edit, and their cost meant
+they were never actually run, so they provided no real gate. Generator *selection*
+(the part that is ours) is covered by `test_mc_noise_guard_skips_low_noise_prior`,
+which asserts on `modes._build_generator` directly in well under a second.
 
-Run (fast default):  python -m pytest tests/test_run_xopt_compat.py
-Include slow:         python -m pytest -m slow tests/test_run_xopt_compat.py
-or standalone:        python tests/test_run_xopt_compat.py
+What remains here is fast and all of it tests our own code: the NelderMead
+trajectory match against the frozen baseline, a Geant4 chain as the objective, and
+the MC-noise mode-config guards.
+
+Run:  python -m pytest tests/test_run_xopt_compat.py
 """
 import os
 import numpy as np
@@ -36,11 +43,11 @@ def _run_in_tmp(tmp_path, fn):
 # the `Workflow.evaluate(input_dict)` + declarative `output_parameters` seam,
 # with NO S-parameter/frequency parsing in the driver. Two things are checked:
 #
-#   * NUMERIC EQUIVALENCE — the S3P optimization + GP-sweep trajectories
-#     reproduce the Phase-0.5 baselines exactly when driven generically with a
-#     synthetic workflow (the same synthetic solver the baseline was frozen with).
-#   * GENERICITY — all six generators construct + step under the generic driver,
-#     and a Geant4 workflow can be the objective with no S3P-specific code.
+#   * NUMERIC EQUIVALENCE — the S3P optimization trajectory reproduces the
+#     Phase-0.5 baseline exactly when driven generically with a synthetic workflow
+#     (the same synthetic solver the baseline was frozen with).
+#   * GENERICITY — the generic driver steps a generator, and a Geant4 workflow can
+#     be the objective with no S3P-specific code.
 # =========================================================================== #
 
 import pytest
@@ -110,36 +117,7 @@ def test_generic_s3p_optimization_matches_baseline(tmp_path):
     assert ok, msg
 
 
-@pytest.mark.slow
-def test_generic_gp_sweep_matches_baseline(tmp_path):
-    """gp_parameter_sweep / BayesianExploration driven generically reproduces
-    both the frozen exploration trajectory (sim_output.txt) and the 10x10 GP
-    posterior-mean sweep (sweep_output.txt) numerically."""
-    objname = 'S(1,1)_12.0e+09'
-    wf = SynthWorkflow({objname: ('S(1,1)', 12.0e9)})
-    sweep = {'cornercut': {'min': 12.5, 'max': 13.5, 'num': 10},
-             'wgwidth': {'min': 21, 'max': 22, 'num': 10}}
-    vocs = {'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
-            'objectives': {objname: 'explore'}}
-    xopt = {'num_step': 3}
-
-    def run():
-        bu.seed_all()
-        modes.gp_parameter_sweep(wf, sweep, vocs, xopt,
-                                 log_file='sim_output.txt',
-                                 sweep_file='sweep_output.txt')
-    _run_in_tmp(tmp_path, run)
-
-    base_dir = os.path.join(bu.BASELINE_DIR, 's3p_bayesian_sweep')
-    ok, msg = bu.compare_tables(os.path.join(base_dir, 'sweep_output.txt'),
-                                str(tmp_path / 'sweep_output.txt'))
-    assert ok, f'sweep_output: {msg}'
-    ok, msg = bu.compare_tables(os.path.join(base_dir, 'sim_output.txt'),
-                                str(tmp_path / 'sim_output.txt'))
-    assert ok, f'sim_output: {msg}'
-
-
-# ---- all six generators construct + step under the generic driver -------- #
+# ---- the gradient-free generator constructs + steps under the driver ----- #
 
 
 def test_generic_neldermead(tmp_path):
@@ -151,71 +129,6 @@ def test_generic_neldermead(tmp_path):
              'num_step': 3}, log_file='sim_output.txt')
     X = _run_in_tmp(tmp_path, run)
     assert 'obj' in X.data.columns and len(X.data) >= 3
-    assert (tmp_path / 'sim_output.txt').exists()
-
-
-@pytest.mark.slow
-def test_generic_expected_improvement(tmp_path):
-    def run():
-        bu.seed_all()
-        return modes.scalar_optimize(
-            _single_obj_workflow(), _SINGLE_VOCS,
-            {'generator': 'ExpectedImprovementGenerator', 'num_random': 2,
-             'num_step': 1}, log_file='sim_output.txt')
-    X = _run_in_tmp(tmp_path, run)
-    assert 'obj' in X.data.columns and len(X.data) == 3
-
-
-@pytest.mark.slow
-def test_generic_ucb_single_objective(tmp_path):
-    def run():
-        bu.seed_all()
-        return modes.scalar_optimize(
-            _single_obj_workflow(), _SINGLE_VOCS,
-            {'generator': 'UpperConfidenceBoundGenerator',
-             'generator_options': {'beta': 10.0}, 'num_random': 2,
-             'num_step': 1}, log_file='sim_output.txt')
-    X = _run_in_tmp(tmp_path, run)
-    assert len(X.data) == 3
-
-
-@pytest.mark.slow
-def test_generic_mobo(tmp_path):
-    freqs = [11.324e9, 12.0e9]
-    spec = {'S(0,0)_' + str(freqs[0]): ('S(0,0)', freqs[0]),
-            'S(1,1)_' + str(freqs[1]): ('S(1,1)', freqs[1])}
-    wf = SynthWorkflow(spec)
-    vocs = {'variables': {'R1': [31, 34], 'L1': [12, 15]},
-            'objectives': {k: 'MINIMIZE' for k in spec}}
-    ref = {k: 1.0 for k in spec}
-    xopt = {'generator': 'ExpectedHypervolumeImprovementGenerator',
-            'generator_options': {'reference_point': ref},
-            'num_random': 2, 'num_step': 1}
-
-    def run():
-        bu.seed_all()
-        return modes.scalar_optimize(wf, vocs, xopt, log_file='sim_output.txt')
-    X = _run_in_tmp(tmp_path, run)
-    assert len(X.data) == 3
-    assert (tmp_path / 'sim_output.txt').exists()
-
-
-@pytest.mark.slow
-def test_generic_multifidelity(tmp_path):
-    """MultiFidelityGenerator via the generic cost-budget path (fidelity-variable
-    rename + exponential cost function preserved)."""
-    wf = SynthWorkflow({'obj': ('S(1,1)', 12.0e9)})
-    vocs = {'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
-            'objectives': {'obj': 'MINIMIZE'}, 'constants': {}}
-    xopt = {'generator': 'MultiFidelityGenerator',
-            'fidelity_variable': 'mesh_fidelity',
-            'cost_function': 'exponential', 'cost_budget': 5.0, 'num_random': 3}
-
-    def run():
-        bu.seed_all()
-        return modes.scalar_optimize(wf, vocs, xopt, log_file='sim_output.txt')
-    X = _run_in_tmp(tmp_path, run)
-    assert 's' in X.data.columns  # fidelity axis present
     assert (tmp_path / 'sim_output.txt').exists()
 
 
@@ -276,23 +189,27 @@ def test_mc_noise_guard_requires_bin_edges():
              'mc_noisy_objective': True})
 
 
-@pytest.mark.slow
-def test_mc_noise_guard_skips_low_noise_prior(tmp_path):
+def test_mc_noise_guard_skips_low_noise_prior():
     """For an MC-noisy objective the MultiFidelity path must NOT force
-    use_low_noise_prior (that prior is wrong for genuine MC noise)."""
-    def run():
-        bu.seed_all()
-        return modes.scalar_optimize(
-            SynthWorkflow({'obj': ('S(1,1)', 12.0e9)}),
-            {'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
-             'objectives': {'obj': 'MINIMIZE'}},
-            {'generator': 'MultiFidelityGenerator',
-             'fidelity_variable': 'mesh_fidelity',
-             'cost_function': 'exponential', 'cost_budget': 5.0,
-             'num_random': 3, 'mc_noisy_objective': True, 'bin_edges': [0, 1]},
-            log_file='sim_output.txt')
-    X = _run_in_tmp(tmp_path, run)
-    assert X.generator.gp_constructor.use_low_noise_prior is False
+    use_low_noise_prior (that prior is wrong for genuine MC noise); for a smooth
+    objective it still must.
+
+    This asserts on :func:`modes._build_generator` — *our* constraint-#2 logic —
+    rather than driving a full optimization loop. Same coverage, ~0.5s instead of
+    minutes, and it no longer depends on botorch actually fitting a model."""
+    from xopt.vocs import VOCS
+
+    vocs_dict = {'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
+                 'objectives': {'obj': 'MINIMIZE'}}
+    vocs = VOCS(variables=vocs_dict['variables'],
+                objectives=vocs_dict['objectives'])
+    xopt_dict = {'generator': 'MultiFidelityGenerator',
+                 'fidelity_variable': 'mesh_fidelity'}
+
+    noisy = modes._build_generator(vocs, vocs_dict, xopt_dict, mc_noisy=True)
+    assert noisy.gp_constructor.use_low_noise_prior is False
+    smooth = modes._build_generator(vocs, vocs_dict, xopt_dict, mc_noisy=False)
+    assert smooth.gp_constructor.use_low_noise_prior is True
 
 
 if __name__ == '__main__':

@@ -440,50 +440,6 @@ EXAMPLES = {
                       'trajectory (cornercut, rcorner1, objective). '
                       'Seed-reproducible and cluster-independent.'),
     },
-    's3p_bayesian_sweep': {
-        'kind': 'xopt_gp_sweep',
-        'yaml': 's3p_bayesian_sweep.yaml',
-        'files': {
-            'sweep_output.txt': ('sweep_output.txt', 'table'),
-            'sim_output.txt': ('sim_output.txt', 'table'),
-        },
-        'digests': {},
-        'synth': {
-            'objectives': ['S(1,1)_12.0e+09'],
-            'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
-            'sweep': {'cornercut': {'min': 12.5, 'max': 13.5, 'num': 10},
-                      'wgwidth': {'min': 21, 'max': 22, 'num': 10}},
-            'xopt': {'num_step': 3},
-        },
-        'checkable': ('NUMERIC (synthetic workflow, seeded): the 10x10 GP '
-                      'posterior-mean sweep table and the exploration '
-                      'trajectory. Seed-reproducible.'),
-    },
-    'MOBO_ExpectedHypervolume_Example': {
-        'kind': 'xopt_scalar',
-        'yaml': 'MOBO_ExpectedHypervolume_Example.yaml',
-        # The shipped YAML is a legacy-schema, non-runnable reference kept under
-        # examples/incomplete/ (see its README); the numeric baseline is driven
-        # by the synthetic workflow below, not by the YAML itself.
-        'stage_dir': os.path.join('incomplete'),
-        'files': {
-            'sim_output.txt': ('sim_output.txt', 'table'),
-        },
-        'digests': {},
-        'synth': {
-            'objectives': ['S(0,0)_11.324e+09', 'S(0,0)_11.424e+09',
-                           'S(0,0)_11.524e+09'],
-            'variables': {'R1': [31, 34], 'L1': [12, 15], 'r10': [14, 16]},
-            'xopt': {'generator': 'ExpectedHypervolumeImprovementGenerator',
-                     'generator_options': {'reference_point': {
-                         'S(0,0)_11.324e+09': 0.0, 'S(0,0)_11.424e+09': 0.0,
-                         'S(0,0)_11.524e+09': 0.0}},
-                     'num_random': 2, 'num_step': 5, 'save_model': True},
-        },
-        'checkable': ('NUMERIC (synthetic workflow, seeded): the MOBO/EHVI '
-                      'trajectory (R1, L1, r10, three S(0,0) objectives). '
-                      'Seed-reproducible.'),
-    },
 }
 
 
@@ -493,15 +449,28 @@ NOT_FROZEN = {
     's3p_mf_optimization': (
         'MultiFidelity cost-budget path divides by wall-clock xopt_runtime and '
         'loops on alotted_time, so the trajectory length and values are '
-        'timing-dependent: reachability-only, not numerically checkable. Its '
-        'generator construction/stepping is smoke-tested in '
-        'tests/test_run_xopt_compat.py::test_generic_multifidelity. The example '
-        'YAML is on the current workflow:/mode: schema (nested input_parameters).'),
+        'timing-dependent: reachability-only, not numerically checkable. The '
+        'example YAML is on the current workflow:/mode: schema (nested '
+        'input_parameters).'),
     'UCB_Example': (
         'Non-runnable legacy reference now kept under examples/incomplete/ (see '
         'its README): missing load.jou/load.s3p geometry, legacy schema, and it '
         'declares three objectives while xopt 3.0.0\'s UpperConfidenceBound '
         'generator rejects multi-objective VOCS. Not frozen as a baseline.'),
+    's3p_bayesian_sweep': (
+        'DE-REGISTERED 2026-08. Was a numeric baseline (10x10 GP posterior-mean '
+        'sweep + exploration trajectory) but it drives a real botorch '
+        'BayesianExploration fit, so it took minutes-to-hours and was therefore '
+        'never actually run — it gated nothing. The generic gp_parameter_sweep '
+        'plumbing (tensor grid, VOCS build, shared table writer) is covered by '
+        'the fast tests; what is no longer checked is that botorch\'s GP '
+        'posterior-mean numerics still match the frozen fixture, which is an '
+        'upstream concern, not ours.'),
+    'MOBO_ExpectedHypervolume_Example': (
+        'DE-REGISTERED 2026-08. Botorch MOBO/EHVI fit: slow (minutes+) AND a '
+        'known nondeterministic flake, so it was both unrunnable in practice and '
+        'unreliable when run. The shipped YAML is itself a non-runnable legacy '
+        'reference under examples/incomplete/.'),
 }
 
 

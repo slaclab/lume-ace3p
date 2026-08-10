@@ -9,6 +9,10 @@ Verification (Phase 5 done when):
   builds its sweep as a DataFrame written through it. Here we assert every mode
   routes through the single ``results.write_table`` seam (patched to observe the
   calls), with no S3P-specific hand-rolled writer left in the path.
+  (A numeric-equivalence check of the GP posterior-mean sweep against the frozen
+  ``s3p_bayesian_sweep`` fixture used to live here too; it was removed in 2026-08
+  along with the rest of the botorch tier — it fitted real GPs, cost minutes, and
+  tested upstream numerics. See docs/testing.md.)
 * **Field artifacts for a given row load back to the same arrays.**
   ``results.save_field`` / ``load_field`` round-trip both an S3P spectrum
   (frequency + S-parameter arrays + nested IndexMap) and a Geant4 voxel grid
@@ -209,46 +213,6 @@ def test_log_xopt_uses_shared_writer(tmp_path, monkeypatch):
     assert calls[0][1] == out
     ok = pd.read_csv(out, sep=r'\s+')
     assert list(ok.columns) == ['a', 'obj']
-
-
-def test_gp_sweep_frame_matches_baseline(tmp_path):
-    """The GP posterior-mean sweep, now built as a DataFrame and written through
-    the shared writer, still reproduces the Phase-0.5 s3p_bayesian_sweep
-    baseline numerically (single-target, 10x10 grid)."""
-    # This is the same check as test_run_xopt_compat's generic GP-sweep test but
-    # asserts the *shared-path* output; it fits GPs so it is a slower test.
-    objname = 'S(1,1)_12.0e+09'
-
-    class SynthWorkflow:
-        output_spec = {objname: ('S(1,1)', 12.0e9)}
-
-        def evaluate(self, input_dict):
-            x = float(sum(float(v) for v in input_dict.values()))
-            base = 0.01 * (1.0 + np.cos(bu.SYNTH_FREQS / 1e9 - x))
-            data = {'Frequency': bu.SYNTH_FREQS, 'S(1,1)': base * 0.9}
-            idx = list(bu.SYNTH_FREQS).index(12.0e9)
-            return {objname: data['S(1,1)'][idx]}
-
-    sweep = {'cornercut': {'min': 12.5, 'max': 13.5, 'num': 10},
-             'wgwidth': {'min': 21, 'max': 22, 'num': 10}}
-    vocs = {'variables': {'cornercut': [12.5, 13.5], 'wgwidth': [21, 22]},
-            'objectives': {objname: 'explore'}}
-    xopt = {'num_step': 3}
-
-    cwd = os.getcwd()
-    os.chdir(str(tmp_path))
-    try:
-        bu.seed_all()
-        modes.gp_parameter_sweep(SynthWorkflow(), sweep, vocs, xopt,
-                                 log_file='sim_output.txt',
-                                 sweep_file='sweep_output.txt')
-    finally:
-        os.chdir(cwd)
-
-    base_dir = os.path.join(bu.BASELINE_DIR, 's3p_bayesian_sweep')
-    ok, msg = bu.compare_tables(os.path.join(base_dir, 'sweep_output.txt'),
-                                str(tmp_path / 'sweep_output.txt'))
-    assert ok, f'sweep_output: {msg}'
 
 
 # --------------------------------------------------------------------------- #

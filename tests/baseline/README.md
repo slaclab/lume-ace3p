@@ -61,18 +61,23 @@ intentionally *not* frozen as numeric baselines, with the reason.
 | `track3p_particle_weight` | **real** `Particles` compute | field-emission `ParticleWeight` + all track columns (digest) | — |
 | `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest); swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
 | `s3p_optimization` | scalar_optimize, synthetic solver (seeded) | full NelderMead trajectory (cornercut, rcorner1, objective) | — |
-| `s3p_bayesian_sweep` | gp_parameter_sweep, synthetic solver (seeded) | 10×10 GP posterior-mean sweep + exploration trajectory | — |
-| `MOBO_ExpectedHypervolume_Example` | scalar_optimize (MOBO/EHVI), synthetic solver (seeded); YAML staged from `examples/incomplete/` | MOBO trajectory (R1, L1, r10, three S(0,0) objectives) | — |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 
 - **`s3p_mf_optimization`** (MultiFidelity) — the cost-budget path divides by
   wall-clock `xopt_runtime` and loops on `alotted_time`, so trajectory length
   and values are timing-dependent: reachability-only, not numerically
-  checkable. Generator construction/stepping is smoke-tested in
-  `../test_run_xopt_compat.py::test_generic_multifidelity`. (The example YAML is
-  on the current `workflow:`/`mode:` schema.)
+  checkable. (The example YAML is on the current `workflow:`/`mode:` schema.)
 - **`UCB_Example`** — non-runnable legacy reference now under
   `examples/incomplete/` (missing `load.jou`/`load.s3p`, legacy schema, and a
   3-objective config that xopt 3.0.0's `UpperConfidenceBoundGenerator` rejects).
   Not a numeric baseline.
+- **`s3p_bayesian_sweep`** — *de-registered 2026-08.* Was a numeric baseline
+  (10×10 GP posterior-mean sweep + exploration trajectory), but it drives a real
+  botorch `BayesianExploration` fit and so cost minutes-to-hours; it was never
+  actually run and gated nothing. What is no longer checked is whether botorch's
+  GP posterior-mean numerics still match the frozen fixture — an upstream
+  concern. The generic `gp_parameter_sweep` plumbing is covered by fast tests.
+- **`MOBO_ExpectedHypervolume_Example`** — *de-registered 2026-08.* Botorch
+  MOBO/EHVI fit: slow **and** a known nondeterministic flake, so it was both
+  unrunnable in practice and unreliable when run.
