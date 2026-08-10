@@ -1,6 +1,6 @@
 # Geant4 dose-surrogate TRAINING (Phase 3 of the surrogate + inversion project).
 #
-# This consumes the training store produced by the sibling collection example
+# Consumes the training store produced by the sibling collection example
 # (geant4_beta_surrogate.yaml, mode: collect_training_data) and fits the
 # reduced-basis PCA-GP forward surrogate: beta in R^8 -> full dose profile.
 #
@@ -13,43 +13,15 @@
 #      MC-noisy, so NO low-noise / interpolating prior).
 #
 # The saved model exposes predict_dose(beta) and project(dose), the single
-# coefficient-space seam the Phase-4 inversion modes will talk to.
+# coefficient-space seam the inversion mode talks to.
 #
-# train_surrogate is a STORE-CONSUMING mode: it does not run the Geant4 chain, it
-# reads the already-collected (beta, dose) pairs. The 'workflow:' block below is
-# therefore only carried for schema symmetry with the collection example (the
-# store already enforces the fixed bin_edges / scoring-mesh invariants).
-
-workflow_parameters :
-  'workdir' : 'geant4_beta_surrogate_store'
-  'paths' :
-    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-npass'
-    'geant4_app_exe' : 'sim'
-
-workflow :
-  - module : track3p_source
-    file : '../assets/sample_track3p_particles.txt'
-
-  - module : particles
-    impact_order : 1
-    impact_face_id : 6
-    work_function : 4.5
-    dt : 1.0e-10
-    num_bins : 8
-    beta_inputs : ['beta0', 'beta1', 'beta2', 'beta3',
-                   'beta4', 'beta5', 'beta6', 'beta7']
-    output_format : 'geant4'
-    output : 'particles.data'
-    bin_edges : [-0.1251788, -0.093876, -0.062573, -0.03127, 0.000032,
-                 0.031335, 0.062638, 0.093941, 0.1252434]
-
-  - module : geant4
-    geant4_input : 'input_7cell.geant4'
-    geant4_threads : 120                          # reserves srun '-c 120' and sets the
-                                                  # input file's 'nthreads' to match
-    geant4_geometry_files :
-      - '../assets/7cell_solid_whole.stl'
-      - '../assets/7cell_cavity_whole.stl'
+# NOTE there is deliberately NO 'workflow:' block. train_surrogate is a
+# STORE-CONSUMING mode: it does not run the Geant4 chain, it reads the
+# already-collected (beta, dose) pairs, and the store's manifest already carries
+# the pinned bin_edges / scoring-mesh invariants. So this config declares only
+# what the mode actually reads. (The same applies to invert_optimize; every other
+# mode does require a 'workflow:' list.) This step is CPU-only -- no Geant4
+# environment, no ACE3P paths.
 
 mode :
   type : train_surrogate
@@ -82,20 +54,3 @@ mode :
                                           # more modes -> better scaling on a big
                                           # node; this CPU-only step never needs one
                                           # otherwise.
-
-# The 8 beta variables are field-enhancement knobs of the particles module
-# (the post-Track3P Fowler-Nordheim weighting step), so they live under the
-# 'particles:' input bucket -- NOT 'cubit:' (Cubit is not part of this
-# track3p_source -> particles -> geant4 chain). Values are placeholders; the
-# store already holds the collected betas, so this block is carried only for
-# schema symmetry with the collection example.
-input_parameters :
-  particles :
-    'beta0' : 50.0
-    'beta1' : 50.0
-    'beta2' : 50.0
-    'beta3' : 50.0
-    'beta4' : 50.0
-    'beta5' : 50.0
-    'beta6' : 50.0
-    'beta7' : 50.0

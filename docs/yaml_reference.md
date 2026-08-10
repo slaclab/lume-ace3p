@@ -47,6 +47,21 @@ Selects how the workflow is driven. One `type` is required.
 | `parameter_sweep`     | `input_parameters` (any of its `cubit:`/`ace3p:`/`geant4:`/`particles:` sub-blocks) | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
 | `scalar_optimize`     | `vocs_parameters`, `xopt_parameters` | Drives an Xopt optimization loop. The objective is a name in `output_parameters` referenced from the VOCS. |
 | `gp_parameter_sweep`  | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration sweep — fits a Gaussian Process to the explored objective(s), then samples the GP posterior mean on the `sweep_parameters` tensor grid. |
+| `collect_training_data` | mode `variables:` | Scatters a design-of-experiments (Sobol/LHS) over the per-bin field-enhancement vector and persists a `(beta, dose_grid)` training pair per sample into a resumable store. Drives the full chain — requires a `workflow:`. See [](#surrogate-modes). |
+| `train_surrogate`     | *(none — reads a store)* | Fits the reduced-basis PCA-GP forward surrogate `beta -> dose profile` from a collected store. **Store-consuming: needs no `workflow:`.** |
+| `invert_optimize`     | *(none — reads a store/model)* | Inverts a target dose profile to estimate the beta that produced it, against the cheap saved surrogate. **Store-consuming: needs no `workflow:`.** |
+| `invert_bayesian`     | *(none — reads a store/model)* | Same inversion, returning a **posterior** over beta (NUTS) instead of a point estimate — the mode that answers the non-uniqueness rather than reporting it. **Store-consuming: needs no `workflow:`.** |
+
+### Store-consuming modes
+
+`train_surrogate`, `invert_optimize` and `invert_bayesian` read an on-disk store
+or saved model and
+never drive the module chain, so a config for one of them **omits the
+`workflow:` block entirely** — it declares only what the mode actually reads.
+(`workflow_parameters` and `input_parameters` are likewise unnecessary: the
+store's `manifest.json` already carries the pinned `bin_edges` and scoring-mesh
+invariants.) Every other mode, including `collect_training_data`, does require a
+`workflow:` list. See `examples/geant4_beta_surrogate/` for both shapes.
 
 Additional `mode:` keys:
 
@@ -417,6 +432,126 @@ Controls the Xopt driver used by the `scalar_optimize` and
 | `fidelity_variable`     | `str`   | `'s'`           | Multi-fidelity only. Name of the input variable interpreted as the fidelity coordinate; the column is renamed from `'s'` in the input dict. |
 | `mc_noisy_objective`    | `bool`  | `False`         | Declare the objective Monte-Carlo-noisy (e.g. a Geant4 dose). Suppresses the low-noise GP prior on the MultiFidelity path and requires an explicit `bin_edges` to be set. |
 | `save_model`            | `bool`  | `False`         | If `True`, save the trained generator's GP model state to `Binary_gp_model.pt` and a human-readable summary to `gp_parameters.txt`. |
+
+(surrogate-modes)=
+## Surrogate modes
+
+Three modes build and use a cheap reduced-basis surrogate of a Geant4 dose
+profile as a function of the per-bin field-enhancement vector
+`beta = (beta0 … betaN)`. All keys below live in the `mode:` block.
+
+### `collect_training_data`
+
+Drives the full `track3p_source -> particles -> geant4` chain once per
+design-of-experiments sample, persisting a `(beta, dose_grid)` pair each time.
+Requires a `workflow:` list.
+
+| Keyword       | Type   | Default | Description |
+|---------------|--------|---------|-------------|
+| `store`       | `str`  | `'training_store'` | Store directory (result table + per-sample field artifacts + `manifest.json`). |
+| `num_samples` | `int`  | `8`     | DOE size. A power of two is ideal for Sobol. |
+| `sampler`     | `str`  | `'sobol'` | `'sobol'` or `'lhs'`. Not a tensor grid — a full 8-D grid is infeasible. |
+| `seed`        | `int`  | `0`     | Reproducible design; also what makes a resumed run reproduce the same points. |
+| `fidelity`    | `float`| `None`  | Recorded Geant4 primary count per sample, for later multi-fidelity work. |
+| `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
+
+The mode enforces two correctness constraints and hard-fails otherwise: the
+`particles` module must fix `bin_edges` explicitly (length `num_bins + 1`) and
+declare per-bin `beta_inputs`, and the `geant4` input file's scoring mesh must be
+readable and unchanged for the whole campaign (it is fingerprinted into the
+manifest and re-checked per sample). It is **resumable** — a sample whose dose
+grid is already stored is skipped.
+
+### `train_surrogate`
+
+Fits the PCA-GP forward model from a store: stack the dose grids, subtract the
+mean, SVD to the leading POD modes, then fit one Gaussian Process per retained
+coefficient (each with a genuine fitted noise term, since MC dose is noisy).
+Store-consuming — **no `workflow:` needed**.
+
+| Keyword          | Type    | Default | Description |
+|------------------|---------|---------|-------------|
+| `store`          | `str`   | *required* | The `collect_training_data` store to fit. |
+| `variance`       | `float` | `0.99`  | Cumulative POD energy to retain; picks the mode count `k`. |
+| `num_components` | `int`   | `None`  | Pin `k` explicitly (overrides `variance`). |
+| `seed`           | `int`   | `0`     | Reproducible GP restart search. |
+| `model_dir`      | `str`   | `<store>/surrogate` | Where the model is saved (`basis.npz`, `gps.joblib`, `surrogate.json`). |
+| `holdout`        | `float` / `int` | `None` | Hold out a fraction (0<f<1) or count of samples for an accuracy report written to `train_report.txt`. |
+| `dose_transform` | `str`   | `'linear'` | `'linear'` or `'log10'`. Dose is exponential in beta and spans ~9 orders of magnitude, so a linear fit is dominated by the peak voxels; `'log10'` fits the *shape* far better. Accuracy is then reported in log space. |
+| `floor`          | `float` | smallest positive training dose | Positive offset for `'log10'`, keeping zero voxels finite. |
+| `n_jobs`         | `int`   | `1`     | Parallelize the per-coefficient GP fits over cores (`-1` = all). Result-invariant. |
+
+### `invert_optimize`
+
+Given a target dose profile, estimates the beta that produced it — by projecting
+the target into the surrogate's coefficient space and minimizing
+`‖project(target) − c_GP(beta)‖²` over beta with bounded multi-start L-BFGS-B.
+Runs against the cheap surrogate, not Geant4. Store-consuming — **no `workflow:`
+needed**.
+
+| Keyword                | Type    | Default | Description |
+|------------------------|---------|---------|-------------|
+| `target`               | `str`   | *required* | The dose profile to invert: a stored field `.npz` (e.g. a held-out sample's `field.npz`) or a raw Geant4 dose file. Row order does not matter — the target is reordered onto the training voxel order before projection. |
+| `model_dir`            | `str`   | `<store>/surrogate` | The saved surrogate to invert. |
+| `store`                | `str`   | `None`  | The store the model was fit from. Supplies the voxel order for models saved before it was recorded, and the default output location. |
+| `num_starts`           | `int`   | `32`    | Multi-start count. Each start costs microseconds, so more starts simply give a more thorough non-uniqueness report. |
+| `seed`                 | `int`   | `0`     | Reproducible start scatter → identical `beta*`. |
+| `bounds`               | `dict`  | model's training range | Optional per-beta `[lo, hi]` search box. Outside the training range the GP extrapolates, so only *narrow* it. |
+| `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains and write `identifiability.txt`. Costs `2·D` GP evaluations. |
+| `identifiability_file` | `str`   | `identifiability.txt` beside the result table | Override that path. |
+| `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2`, then the betas. |
+
+**On non-uniqueness.** The surrogate reaches beta only through its `k` retained
+POD coefficients, so the dose can constrain **at most `k` combinations of beta**.
+When `k < D` the inverse problem is rank-deficient *by construction*: some beta
+directions are invisible to the dose, and many different beta reproduce it exactly
+as well. The multi-start search reports every distinct minimum, but when their
+misfits are all numerically zero that list is **not a ranking by evidence** — the
+minima are samples from one continuous degenerate surface, and the `rank` column
+reflects solver convergence, not preference. `identifiability.txt` reports how
+many directions are actually pinned down and which combinations are flat. To get a
+unique answer you must add information: narrow `bounds` on physical grounds,
+regularize, or use `invert_bayesian` below.
+
+### `invert_bayesian`
+
+The same inversion, returning a **posterior over beta** rather than a point
+estimate — the mode that *answers* the non-uniqueness above instead of reporting
+it. NUTS (gradient-based MCMC via numpyro) samples a Gaussian likelihood in the
+surrogate's coefficient space (the GP's own predictive variance plus an assumed
+`dose_sigma`) under a uniform prior on the training box. Gradients come from a JAX
+re-expression of the fitted GP's *prediction* (fitting stays scikit-learn).
+Store-consuming — **no `workflow:` needed**.
+
+| Keyword           | Type    | Default | Description |
+|-------------------|---------|---------|-------------|
+| `target`          | `str`   | *required* | Dose profile to invert (stored `.npz` or a raw Geant4 dose file), reordered onto the training voxel order automatically. |
+| `model_dir` / `store` | `str` | — | As for `invert_optimize`. |
+| `num_warmup`      | `int`   | `1000`  | Warmup draws per chain. |
+| `num_samples`     | `int`   | `2000`  | Kept draws per chain (total = `num_samples × num_chains`). |
+| `num_chains`      | `int`   | `4`     | **Do not lower casually** — see the warning below. Chains run in parallel across CPU devices. |
+| `seed`            | `int`   | `0`     | Reproducible draws. |
+| `dose_sigma`      | `float` | model's predictive std at the box center | Assumed target-noise scale in coefficient space. Raise to loosen the likelihood, lower to pull harder toward exact agreement. |
+| `bounds`          | `dict`  | model's training range | The uniform **prior**. Along the flat directions the posterior equals it, so this is part of the answer. |
+| `identifiability` | `bool`  | `True`  | Compute the constrained/flat split so the summary reports posterior width per direction. |
+| `output_file`     | `str`   | `<store>/posterior_samples.txt` | Raw draws, one row per sample. |
+| `summary_file`    | `str`   | `posterior_summary.txt` beside it | Per-beta mean/median/credible interval + `r_hat`/`n_eff`, plus the per-direction width table. |
+
+**How to read the result.** The posterior comes out tight along the beta
+combinations the dose constrains and **as wide as the prior along the flat ones**
+(measured ~0.01–0.08× vs ~1.1–1.25× prior width on the synthetic fixture). A
+prior-wide flat direction is the **correct** result, not a sampling failure — it
+means the data says nothing about that combination, so its value comes from
+`bounds`. The summary reports the ratio per direction.
+
+```{warning}
+**Always check `r_hat`** in `posterior_summary.txt`; values above ~1.05 mean the
+chains did not mix and the credible intervals are not trustworthy. This matters
+more than usual here: a stuck chain explores only a slice of the degenerate
+manifold and so reports the flat directions as *narrow*, which reads as "the dose
+constrains beta" when it does not. Measured with one chain: `r_hat = 1.61` and flat
+widths ~0.04–0.10× prior (wrong); with four: `r_hat ≈ 1.01` and ~1.1× (right).
+```
 
 ## The Workflow object
 

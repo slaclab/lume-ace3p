@@ -3,7 +3,7 @@ import sys
 from lume_ace3p import __version__
 from lume_ace3p.inputs import load_yaml
 from lume_ace3p.workflow_graph import Workflow
-from lume_ace3p.modes import run_mode
+from lume_ace3p.modes import run_mode, is_store_consuming, mode_type_of
 
 
 def _run_declarative(lume_ace3p_data):
@@ -15,17 +15,25 @@ def _run_declarative(lume_ace3p_data):
     driven — ``single`` / ``parameter_sweep`` / ``scalar_optimize`` /
     ``gp_parameter_sweep``. Output extraction is declared per-module in
     ``output_parameters`` and performed inside :meth:`Workflow.evaluate`, so no
-    solver-specific parsing lives in the driver."""
-    workflow = Workflow.from_config(lume_ace3p_data)
+    solver-specific parsing lives in the driver.
+
+    **Store-consuming modes** (``train_surrogate`` / ``invert_optimize``, see
+    :data:`lume_ace3p.modes.STORE_CONSUMING_MODES`) read an on-disk store or saved
+    model and never drive the module chain, so no ``workflow:`` block is built (or
+    required) for them — their config declares only what they actually read."""
     mode_cfg = lume_ace3p_data.get('mode') or {}
-    mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode', '')).lower()
+    mode_type = mode_type_of(mode_cfg)
     if mode_type not in ('single', 'parameter_sweep', 'collect_training_data',
-                         'train_surrogate', 'scalar_optimize',
+                         'train_surrogate', 'invert_optimize',
+                         'invert_bayesian', 'scalar_optimize',
                          'gp_parameter_sweep'):
         raise ValueError(
             f"workflow mode '{mode_type}' is not handled "
             "(single | parameter_sweep | collect_training_data | "
-            "train_surrogate | scalar_optimize | gp_parameter_sweep).")
+            "train_surrogate | invert_optimize | invert_bayesian | "
+            "scalar_optimize | gp_parameter_sweep).")
+    workflow = (None if is_store_consuming(mode_cfg)
+                else Workflow.from_config(lume_ace3p_data))
     return run_mode(mode_cfg, workflow,
                     output_spec=lume_ace3p_data.get('output_parameters'),
                     vocs=lume_ace3p_data.get('vocs_parameters'),
@@ -81,13 +89,20 @@ def main():
         print(exc)
         sys.exit(1)
 
-    if lume_ace3p_data.get('workflow') is None:
+    # A store-consuming mode (train_surrogate / invert_optimize) reads an on-disk
+    # store or saved model and never drives the module chain, so it legitimately
+    # carries no 'workflow:' block. Every other mode needs one.
+    if (lume_ace3p_data.get('workflow') is None
+            and not is_store_consuming(lume_ace3p_data.get('mode'))):
         if _is_legacy_format(lume_ace3p_data):
             print(_legacy_removal_notice())
         else:
             print("Error: the YAML has no top-level 'workflow:' list. LUME-ACE3P "
                   "uses the declarative module/mode schema — declare an ordered "
-                  "'workflow:' list of modules plus a 'mode:' block. See the "
+                  "'workflow:' list of modules plus a 'mode:' block. (Only the "
+                  "store-consuming modes — train_surrogate, invert_optimize, "
+                  "invert_bayesian — may omit 'workflow:', since they read a "
+                  "saved store/model instead of running the chain.) See the "
                   "examples/ directory and docs/yaml_reference.md.")
         sys.exit(1)
 

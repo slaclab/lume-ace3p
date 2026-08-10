@@ -1,0 +1,82 @@
+# Geant4 dose-surrogate INVERSION (Phase 4 of the surrogate + inversion project).
+#
+# The inverse problem: given a dose profile on the scoring grid, estimate the
+# 8-D field-enhancement vector beta = (beta0 .. beta7) that produced it --
+# "given dosage data, predict the field enhancement profile."
+#
+# How it works (and what it deliberately is NOT):
+#   * It runs entirely against the CHEAP saved surrogate, not Geant4. Each trial
+#     beta costs microseconds, so a dense multi-start search is essentially free.
+#   * It is NOT a direct dose -> beta regressor. That map is too ill-posed to fit.
+#     Instead the target dose is projected into the surrogate's retained POD
+#     coefficient space and beta is searched for the coefficients the GPs predict
+#     closest to it:  minimize || project(target) - c_GP(beta) ||^2 .
+#   * The misfit is measured in the MODEL'S OWN FIT SPACE. For a 'log10' surrogate
+#     that is log space -- the meaningful space for dose spanning ~9 orders of
+#     magnitude (a linear-space residual is dominated by a handful of peak voxels
+#     and barely sees the profile shape).
+#
+# NON-UNIQUENESS -- read the identifiability report, not just beta*:
+# The surrogate reaches beta only through its k retained POD coefficients, so the
+# dose can constrain AT MOST k combinations of beta. With k < 8 (k=3 is typical)
+# the inverse problem is rank-deficient BY CONSTRUCTION: several beta directions
+# are completely invisible to the dose, and many different beta reproduce it
+# EXACTLY as well. The multi-start search reports every distinct minimum it finds,
+# but when their misfits are all numerically zero that list is NOT a ranking by
+# evidence -- they are samples from one continuous degenerate surface. The mode
+# writes 'identifiability.txt' saying how many beta directions the dose actually
+# pins down and which combinations are flat. To get a unique answer you must add
+# information: narrow 'bounds' on physical grounds, regularize, or use the planned
+# 'invert_bayesian' mode for a full posterior over beta.
+#
+# NOTE there is deliberately NO 'workflow:' block -- invert_optimize is a
+# STORE/MODEL-CONSUMING mode that never runs the Geant4 chain, so this config
+# declares only what it actually reads. CPU-only; no Geant4 environment needed.
+
+mode :
+  type : invert_optimize
+
+  # The trained surrogate to invert. 'store' also supplies the training-store
+  # voxel order when the model predates that being saved, and is the default
+  # location for the output tables.
+  store : 'geant4_beta_surrogate_store'
+  # model_dir : 'geant4_beta_surrogate_store/surrogate'   # default: <store>/surrogate
+
+  # The dose profile to invert. Either:
+  #   * a stored field artifact written by the collection mode -- e.g. a held-out
+  #     training sample, which makes this a self-contained recovery check:
+  target : 'geant4_beta_surrogate_store/sample_00000/field.npz'
+  #   * or a raw Geant4 dose file from any run (row order does not matter -- the
+  #     target is reordered onto the training voxel order before projection):
+  # target : 'measured_run/doseDeposit.txt'
+
+  num_starts : 32        # multi-start count. Each start is microseconds, so a
+                         # larger number simply gives a more thorough
+                         # non-uniqueness report. 32 is a good default.
+  seed : 0               # reproducible start scatter -> identical beta*
+
+  # identifiability : true       # (default) analyse which beta directions the dose
+                                 # constrains and write identifiability.txt. Costs
+                                 # 2*D GP evaluations -- negligible. This is what
+                                 # makes a multi-minimum result interpretable.
+  # identifiability_file : 'geant4_beta_surrogate_store/identifiability.txt'
+
+  # Optional search box, per beta. DEFAULTS to the surrogate's own training range,
+  # which is the honest choice: a GP has no information outside the range it was
+  # trained on, so a beta* found outside it is extrapolation, not an estimate.
+  # Narrowing it is also the simplest way to break the degeneracy above, IF you
+  # have physical grounds for the narrower range.
+  # bounds :
+  #   'beta0' : [45.0, 55.0]
+  #   'beta1' : [45.0, 55.0]
+  #   'beta2' : [45.0, 55.0]
+  #   'beta3' : [45.0, 55.0]
+  #   'beta4' : [45.0, 55.0]
+  #   'beta5' : [45.0, 55.0]
+  #   'beta6' : [45.0, 55.0]
+  #   'beta7' : [45.0, 55.0]
+
+  # One row per distinct minimum: rank, misfit, fit-space dose relative-L2, and
+  # the beta vector. 'rank' is a stable ordering by misfit, NOT an evidence
+  # ranking (see the non-uniqueness note above).
+  # output_file : 'geant4_beta_surrogate_store/inversion_result.txt'

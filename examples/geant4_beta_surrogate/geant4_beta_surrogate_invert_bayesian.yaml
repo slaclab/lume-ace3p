@@ -1,0 +1,88 @@
+# Geant4 dose-surrogate BAYESIAN INVERSION (Phase 4b).
+#
+# Same question as geant4_beta_surrogate_invert.yaml -- given a dose profile,
+# what beta produced it? -- but returning a POSTERIOR over beta instead of a
+# point estimate. This is the mode that actually ANSWERS the non-uniqueness the
+# optimize mode can only report.
+#
+# Why a posterior is the right object here:
+#   The surrogate reaches beta only through its k retained POD coefficients, so
+#   the dose constrains AT MOST k combinations of beta. With k < 8 (k=3 is
+#   typical) the remaining directions are invisible to the dose, and many
+#   different beta reproduce the target EXACTLY as well. invert_optimize finds
+#   those as a list of equally-good minima that cannot be ranked -- their misfits
+#   are all numerically zero. The posterior expresses the same fact honestly:
+#
+#     * TIGHT along the beta combinations the dose constrains
+#       (measured ~0.01-0.08x the prior width on the synthetic fixture)
+#     * PRIOR-WIDE along the flat combinations (~1.1-1.25x)
+#
+#   A prior-wide flat direction is the CORRECT result, not a sampling failure.
+#   It means the data says nothing about that beta combination, so its value is
+#   set by 'bounds' below rather than by the dose. posterior_summary.txt reports
+#   the ratio per direction so you can read this off directly.
+#
+# Method: NUTS (gradient-based Hamiltonian MCMC, via numpyro) over a Gaussian
+# likelihood in the surrogate's coefficient space -- the GP's own predictive
+# variance plus an assumed 'dose_sigma' -- under a uniform prior on the training
+# box. Gradients come from a JAX re-expression of the fitted GP's prediction
+# (fitting stays scikit-learn). Gradient-based sampling matters here: the
+# degenerate set is a CURVED manifold that ensemble samplers explore poorly.
+#
+# NOTE there is deliberately NO 'workflow:' block -- invert_bayesian is a
+# STORE/MODEL-CONSUMING mode that never runs the Geant4 chain. CPU-only.
+
+mode :
+  type : invert_bayesian
+
+  store : 'geant4_beta_surrogate_store'
+  # model_dir : 'geant4_beta_surrogate_store/surrogate'   # default: <store>/surrogate
+
+  # The dose profile to invert: a stored field artifact from the collection run,
+  # or any raw Geant4 dose file (row order does not matter -- the target is
+  # reordered onto the training voxel order before projection).
+  target : 'geant4_beta_surrogate_store/sample_00000/field.npz'
+
+  num_warmup : 1000      # per chain
+  num_samples : 2000     # per chain (total draws = num_samples * num_chains)
+  num_chains : 4         # DO NOT lower this casually. A single chain can get
+                         # stuck in one slice of the degenerate manifold and then
+                         # reports the flat directions as NARROW -- which reads as
+                         # "the dose constrains beta" when it does not. Measured:
+                         # 1 chain gave r_hat=1.61 and flat widths ~0.04-0.10x
+                         # prior (wrong); 4 chains gave r_hat~1.01 and ~1.1x
+                         # (right). Chains run in parallel across CPU devices.
+  seed : 0               # reproducible draws
+
+  # Assumed target-noise scale, in the surrogate's COEFFICIENT space (the model's
+  # fit space). Defaults to the model's own predictive std at the box center, so
+  # it is set by the fit rather than guessed. Raise it to loosen the likelihood
+  # (wider posterior), lower it to pull harder toward exact agreement.
+  # dose_sigma : 0.05
+
+  # The uniform PRIOR over beta -- and along the flat directions the posterior IS
+  # this prior, so it is part of the answer, not an incidental setting. Defaults
+  # to the surrogate's training box (outside it the GP only extrapolates).
+  # Narrowing it on physical grounds is the most direct way to break the
+  # degeneracy.
+  # bounds :
+  #   'beta0' : [45.0, 55.0]
+  #   'beta1' : [45.0, 55.0]
+  #   'beta2' : [45.0, 55.0]
+  #   'beta3' : [45.0, 55.0]
+  #   'beta4' : [45.0, 55.0]
+  #   'beta5' : [45.0, 55.0]
+  #   'beta6' : [45.0, 55.0]
+  #   'beta7' : [45.0, 55.0]
+
+  # Raw draws (one row per sample, one column per beta).
+  # output_file : 'geant4_beta_surrogate_store/posterior_samples.txt'
+
+  # Per-beta mean/median/credible interval + convergence diagnostics (r_hat,
+  # n_eff), PLUS the posterior-vs-prior width per identifiable/flat direction.
+  # ALWAYS check r_hat: values above ~1.05 mean the chains did not mix and the
+  # credible intervals are not trustworthy.
+  # summary_file : 'geant4_beta_surrogate_store/posterior_summary.txt'
+
+  # identifiability : true   # (default) compute the constrained/flat split so the
+                             # summary can report width per direction.

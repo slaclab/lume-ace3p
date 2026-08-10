@@ -143,11 +143,16 @@ class DoseSurrogate:
       fit in (``mean`` / ``basis`` / ``gps`` all live in this space).
     * ``floor`` — strictly positive offset used by the ``'log10'`` transform to
       keep zero voxels finite (``0.0`` for a linear fit).
+    * ``voxel_indices`` — ``(M, 3)`` voxel ``(ix, iy, iz)`` order the basis
+      columns correspond to, or ``None`` for a model saved before this was
+      recorded. Inversion needs it to reorder a target dose onto the basis
+      (correctness constraint #3); see
+      :func:`lume_ace3p.surrogate_data.align_to_indices`.
     """
 
     def __init__(self, mean, basis, singular_values, gps, beta_lo, beta_hi,
                  beta_names, kept_energy, variance_target=None,
-                 dose_transform='linear', floor=0.0):
+                 dose_transform='linear', floor=0.0, voxel_indices=None):
         self.mean = np.asarray(mean, dtype=float)
         self.basis = np.asarray(basis, dtype=float)
         self.singular_values = np.asarray(singular_values, dtype=float)
@@ -163,12 +168,15 @@ class DoseSurrogate:
                 f"{DOSE_TRANSFORMS}.")
         self.dose_transform = dose_transform
         self.floor = float(floor)
+        self.voxel_indices = (None if voxel_indices is None
+                              else np.asarray(voxel_indices, dtype=int))
 
     # ---- construction -------------------------------------------------- #
 
     @classmethod
     def fit(cls, beta, dose, *, variance=0.99, k=None, seed=0,
-            beta_names=None, dose_transform='linear', floor=None, n_jobs=1):
+            beta_names=None, dose_transform='linear', floor=None, n_jobs=1,
+            voxel_indices=None):
         """Fit the surrogate from aligned ``β (N, D)`` and ``dose (N, M)``.
 
         ``variance`` is the cumulative-energy target for choosing the number of
@@ -191,7 +199,12 @@ class DoseSurrogate:
         parallel loop and does **not** change the result — same ``seed`` gives
         bit-identical GPs regardless of ``n_jobs``. Each GP's own solver may also
         use BLAS threads, so on a busy machine keep ``n_jobs`` at or below the
-        core count to avoid oversubscription."""
+        core count to avoid oversubscription.
+
+        ``voxel_indices`` is the ``(M, 3)`` voxel order the ``dose`` columns are
+        in (a training store's ``indices``). Recording it lets the inversion phase
+        reorder an arbitrary target dose onto this basis; without it, inversion
+        must be told the order some other way (constraint #3 — it never guesses)."""
         beta = np.asarray(beta, dtype=float)
         dose = np.asarray(dose, dtype=float)
         if beta.ndim != 2 or dose.ndim != 2:
@@ -259,7 +272,8 @@ class DoseSurrogate:
             beta_names = [f'beta{i}' for i in range(beta.shape[1])]
         return cls(mean, basis, singular_values, gps, beta_lo, beta_hi,
                    beta_names, kept_energy, variance_target=variance,
-                   dose_transform=dose_transform, floor=floor)
+                   dose_transform=dose_transform, floor=floor,
+                   voxel_indices=voxel_indices)
 
     # ---- normalization helpers ---------------------------------------- #
 
@@ -355,6 +369,231 @@ class DoseSurrogate:
         coeffs = (grids - self.mean) @ self.basis.T
         return coeffs[0] if single else coeffs
 
+    # ---- inversion (Phase 4) ------------------------------------------- #
+
+    def coeff_misfit(self, beta, target_coeffs):
+        """Coefficient-space misfit ``‖c_GP(β) − c_target‖²``.
+
+        This is the inversion objective: the surrogate's *coefficient space* is
+        the single seam inversion talks to, so the misfit is measured on the
+        retained POD coefficients rather than on raw voxels. Because the
+        coefficients live in the model's **fit space**, a ``'log10'`` model is
+        automatically scored in log space — which is the meaningful space for
+        Fowler-Nordheim dose (a linear-space residual is dominated by a handful of
+        peak voxels and barely sees the profile shape).
+
+        ``beta`` may be a single ``(D,)`` vector or a batch ``(B, D)``; returns a
+        float or ``(B,)`` array."""
+        target = np.asarray(target_coeffs, dtype=float).ravel()
+        if target.shape[0] != self.num_components:
+            raise ValueError(
+                f"target has {target.shape[0]} coefficients but the model "
+                f"retains {self.num_components}; project the target with this "
+                "model's project().")
+        single = np.asarray(beta).ndim == 1
+        cmean, _ = self.predicted_coeffs(np.atleast_2d(beta))
+        residual = cmean - target
+        misfit = np.sum(residual ** 2, axis=1)
+        return float(misfit[0]) if single else misfit
+
+    def identifiability(self, beta, *, step=1e-5):
+        """Analyse which β directions the dose actually constrains at ``beta``.
+
+        This is the honest answer to "how do I rank the non-unique solutions?":
+        usually you cannot, because the degeneracy is not a set of competing
+        hypotheses but a *continuous surface* of exactly-equivalent β. This method
+        measures the dimension of that surface.
+
+        The surrogate maps β through only ``k`` retained POD coefficients, so the
+        dose can constrain **at most ``k`` combinations of β**. When ``k < D``
+        the inverse problem is rank-deficient *by construction* and ``D − rank``
+        directions in β are invisible to the dose — moving along them changes the
+        predicted dose not at all.
+
+        Method: finite-difference the GP coefficient mean w.r.t. β in **unit-box
+        coordinates** (``u = (β − beta_lo)/span``), so the singular values are
+        dimensionless and comparable across β with different physical ranges, then
+        take the SVD of the resulting Jacobian ``J (k, D)``. The right singular
+        vectors split into the combinations the dose constrains (``identifiable``,
+        most-constrained first) and those it cannot see (``null_space``).
+
+        Returns an :class:`Identifiability`. Cost is ``2·D`` GP evaluations —
+        microseconds."""
+        beta = np.asarray(beta, dtype=float).ravel()
+        span = self.beta_hi - self.beta_lo
+        span = np.where(span == 0.0, 1.0, span)
+        dim = beta.shape[0]
+
+        def coeff_mean_at_unit(unit):
+            return self.predicted_coeffs(self.beta_lo + unit * span)[0][0]
+
+        unit0 = (beta - self.beta_lo) / span
+        jacobian = np.empty((self.num_components, dim))
+        for q in range(dim):
+            up, down = unit0.copy(), unit0.copy()
+            up[q] += step
+            down[q] -= step
+            jacobian[:, q] = (coeff_mean_at_unit(up)
+                              - coeff_mean_at_unit(down)) / (2.0 * step)
+
+        _u, singular_values, vt = np.linalg.svd(jacobian, full_matrices=True)
+        # Standard numpy-style rank tolerance.
+        tolerance = (singular_values.max() * max(jacobian.shape)
+                     * np.finfo(float).eps if singular_values.size else 0.0)
+        rank = int(np.sum(singular_values > tolerance))
+        return Identifiability(
+            beta=beta, rank=rank, singular_values=singular_values,
+            identifiable=vt[:rank], null_space=vt[rank:],
+            sensitivity=np.linalg.norm(jacobian, axis=0),
+            beta_names=list(self.beta_names),
+            num_components=self.num_components)
+
+    def invert(self, target_coeffs, *, bounds=None, num_starts=32, seed=0,
+               cluster_tol=0.02):
+        """Estimate β from target coefficients by bounded multi-start descent.
+
+        Minimizes :meth:`coeff_misfit` over β with L-BFGS-B from ``num_starts``
+        scattered starting points (a reproducible Sobol design over the box via
+        :func:`lume_ace3p.surrogate_data.sample_beta_doe`, plus the box center).
+        The surrogate costs microseconds per evaluation, so a dense multi-start is
+        essentially free — and it is what exposes **non-uniqueness**: several
+        distinct β can explain one dose, and the returned
+        :class:`InversionResult` reports every distinct minimum found, not just
+        the best one.
+
+        ``bounds`` defaults to the model's own training box
+        ``[beta_lo, beta_hi]``. Do not widen it casually: a GP has no information
+        outside the range it was trained on, so a β\\* found there is
+        extrapolation, not an estimate.
+
+        ``cluster_tol`` is the dedupe radius for "distinct" minima, as a fraction
+        of each dimension's box span (default 2%)."""
+        from scipy.optimize import minimize
+        from lume_ace3p.surrogate_data import sample_beta_doe
+
+        target = np.asarray(target_coeffs, dtype=float).ravel()
+        if bounds is None:
+            bounds = list(zip(self.beta_lo, self.beta_hi))
+        bounds = [(float(lo), float(hi)) for lo, hi in bounds]
+        if len(bounds) != self.beta_lo.shape[0]:
+            raise ValueError(
+                f"got {len(bounds)} bounds for a {self.beta_lo.shape[0]}-D β.")
+        lo = np.array([b[0] for b in bounds], dtype=float)
+        hi = np.array([b[1] for b in bounds], dtype=float)
+        span = np.where(hi - lo == 0.0, 1.0, hi - lo)
+
+        def objective(x):
+            return self.coeff_misfit(np.asarray(x, dtype=float), target)
+
+        # Scattered starts + the box center (a sensible deterministic anchor).
+        starts = [0.5 * (lo + hi)]
+        if num_starts > 1:
+            starts.extend(sample_beta_doe(bounds, num_starts - 1,
+                                          sampler='sobol', seed=seed))
+
+        solutions = []
+        for x0 in starts:
+            try:
+                res = minimize(objective, np.asarray(x0, dtype=float),
+                               method='L-BFGS-B', bounds=bounds)
+            except Exception:
+                continue
+            if res.x is None or not np.all(np.isfinite(res.x)):
+                continue
+            solutions.append((float(res.fun), np.asarray(res.x, dtype=float)))
+
+        if not solutions:
+            raise RuntimeError(
+                "inversion failed: no starting point converged. Check that the "
+                "target coefficients came from this model's project().")
+
+        solutions.sort(key=lambda item: item[0])
+        # Cluster into distinct minima: keep a solution only if it is farther than
+        # cluster_tol (relative to the box span) from every better one already
+        # kept. This is the non-uniqueness report.
+        minima = []
+        for misfit, x in solutions:
+            if all(np.any(np.abs(x - kept) / span > cluster_tol)
+                   for _kept_misfit, kept in minima):
+                minima.append((misfit, x))
+
+        best_misfit, best_beta = minima[0]
+        return InversionResult(
+            beta=best_beta, misfit=best_misfit,
+            minima=[(m, b) for m, b in minima],
+            num_starts=len(starts), target_coeffs=target,
+            beta_names=list(self.beta_names), bounds=bounds)
+
+    def sample_posterior(self, target_coeffs, *, bounds=None, dose_sigma=None,
+                         num_warmup=1000, num_samples=2000, num_chains=4,
+                         seed=0):
+        """Sample a posterior over β for a target dose (Bayesian inversion).
+
+        Where :meth:`invert` returns a point estimate — and, on a degenerate
+        problem, an unrankable list of equally-good minima — this returns the
+        *distribution* over β consistent with the target. That is the right object
+        for this problem: with ``k`` retained POD modes the dose constrains at most
+        ``k`` combinations of β, so the posterior comes out **tight along those
+        directions and prior-wide along the rest**. Compare it against
+        :meth:`identifiability` to read which is which.
+
+        The likelihood is Gaussian in the model's retained-coefficient space, using
+        the GP's own predictive variance plus ``dose_sigma`` (an assumed
+        target-noise term, in the same coefficient space). ``dose_sigma`` defaults
+        to the mean GP predictive std at the bounds' center — a scale set by the
+        model itself rather than a magic constant; raise it to loosen the fit,
+        lower it to pull harder toward exact agreement.
+
+        ``bounds`` defaults to the model's training box, which also serves as the
+        uniform prior. Along the flat directions the posterior *is* that prior, so
+        the bounds are part of the answer, not an incidental setting.
+
+        Sampling is NUTS (gradient-based, via a JAX re-expression of the GP
+        prediction in :mod:`lume_ace3p.surrogate_jax`) because the degenerate set
+        is a curved manifold that ensemble samplers explore poorly.
+
+        ``num_chains`` defaults to **4, and lowering it is not advisable.** A
+        curved degenerate manifold is exactly the geometry where one chain gets
+        stuck in a slice of the flat directions: measured on the synthetic fixture,
+        a single short chain gave ``r_hat = 1.61`` and reported the flat directions
+        as ~0.04–0.10× the prior width — i.e. it looked as though the dose
+        constrained β when it does not, which is a *wrong scientific conclusion*
+        rather than merely a noisy one. Four chains gave ``r_hat = 1.006`` and the
+        correct ~1.1× prior width. Always check
+        :meth:`PosteriorResult.max_r_hat`.
+
+        Returns a :class:`PosteriorResult`."""
+        from lume_ace3p.surrogate_jax import sample_posterior_nuts
+
+        target = np.asarray(target_coeffs, dtype=float).ravel()
+        if target.shape[0] != self.num_components:
+            raise ValueError(
+                f"target has {target.shape[0]} coefficients but the model "
+                f"retains {self.num_components}; project the target with this "
+                "model's project().")
+        if bounds is None:
+            bounds = list(zip(self.beta_lo, self.beta_hi))
+        bounds = [(float(lo), float(hi)) for lo, hi in bounds]
+        if len(bounds) != self.beta_lo.shape[0]:
+            raise ValueError(
+                f"got {len(bounds)} bounds for a {self.beta_lo.shape[0]}-D β.")
+
+        if dose_sigma is None:
+            center = np.array([0.5 * (lo + hi) for lo, hi in bounds])
+            _mean, var = self.predicted_coeffs(center)
+            dose_sigma = float(np.mean(np.sqrt(np.maximum(var[0], 0.0))))
+            # Guard a degenerate (near-zero) scale so the likelihood stays proper.
+            dose_sigma = max(dose_sigma, 1e-12)
+
+        samples, diagnostics = sample_posterior_nuts(
+            self, target, bounds=bounds, dose_sigma=dose_sigma,
+            num_warmup=num_warmup, num_samples=num_samples,
+            num_chains=num_chains, seed=seed)
+        return PosteriorResult(
+            samples=samples, beta_names=list(self.beta_names), bounds=bounds,
+            dose_sigma=float(dose_sigma), diagnostics=diagnostics,
+            target_coeffs=target)
+
     # ---- persistence --------------------------------------------------- #
 
     def save(self, model_dir):
@@ -369,14 +608,18 @@ class DoseSurrogate:
         import joblib
 
         os.makedirs(model_dir, exist_ok=True)
-        np.savez(
-            os.path.join(model_dir, BASIS_FILENAME),
+        arrays = dict(
             mean=self.mean, basis=self.basis,
             singular_values=self.singular_values,
             beta_lo=self.beta_lo, beta_hi=self.beta_hi,
             beta_names=np.array(self.beta_names, dtype=object).astype('U'),
             dose_transform=np.array(self.dose_transform),
             floor=np.array(self.floor, dtype=float))
+        if self.voxel_indices is not None:
+            # The voxel order the basis columns correspond to, so inversion can
+            # align an arbitrary target dose onto it (constraint #3).
+            arrays['voxel_indices'] = self.voxel_indices
+        np.savez(os.path.join(model_dir, BASIS_FILENAME), **arrays)
         joblib.dump(self.gps, os.path.join(model_dir, GPS_FILENAME))
 
         provenance = {
@@ -413,6 +656,9 @@ class DoseSurrogate:
             dose_transform = (str(npz['dose_transform'])
                               if 'dose_transform' in npz.files else 'linear')
             floor = (float(npz['floor']) if 'floor' in npz.files else 0.0)
+            # Absent for models saved before the voxel order was recorded.
+            voxel_indices = (npz['voxel_indices']
+                             if 'voxel_indices' in npz.files else None)
         gps = joblib.load(os.path.join(model_dir, GPS_FILENAME))
 
         kept_energy = 1.0
@@ -425,4 +671,241 @@ class DoseSurrogate:
             variance_target = prov.get('variance_target')
         return cls(mean, basis, singular_values, gps, beta_lo, beta_hi,
                    beta_names, kept_energy, variance_target=variance_target,
-                   dose_transform=dose_transform, floor=floor)
+                   dose_transform=dose_transform, floor=floor,
+                   voxel_indices=voxel_indices)
+
+
+class Identifiability:
+    """Which β directions a dose constrains, from :meth:`DoseSurrogate.identifiability`.
+
+    Attributes:
+
+    * ``beta`` — the β the analysis was performed at.
+    * ``rank`` — how many independent combinations of β the dose constrains.
+      Bounded above by ``num_components`` (the retained POD mode count): the dose
+      reaches β only through those coefficients.
+    * ``num_flat`` — ``D − rank``, the number of β directions the dose cannot see
+      at all. Non-zero means the inverse problem is genuinely degenerate and no
+      amount of optimizing will pin those directions down.
+    * ``singular_values`` — ``(min(k,D),)`` Jacobian singular values in unit-box
+      coordinates, descending. The gap between the last "large" one and the
+      machine-zero tail is what sets the rank.
+    * ``identifiable`` — ``(rank, D)`` β combinations the dose does constrain,
+      most-constrained first.
+    * ``null_space`` — ``(num_flat, D)`` β combinations it cannot. Moving β along
+      any of these leaves the predicted dose unchanged.
+    * ``sensitivity`` — ``(D,)`` per-β Jacobian column norm: how much the
+      predicted coefficients move per unit-box move of that β.
+    * ``beta_names`` / ``num_components`` — labels + the cause of a rank cap.
+    """
+
+    def __init__(self, beta, rank, singular_values, identifiable, null_space,
+                 sensitivity, beta_names, num_components):
+        self.beta = np.asarray(beta, dtype=float)
+        self.rank = int(rank)
+        self.singular_values = np.asarray(singular_values, dtype=float)
+        self.identifiable = np.asarray(identifiable, dtype=float)
+        self.null_space = np.asarray(null_space, dtype=float)
+        self.sensitivity = np.asarray(sensitivity, dtype=float)
+        self.beta_names = list(beta_names)
+        self.num_components = int(num_components)
+
+    @property
+    def num_beta(self):
+        return int(self.beta.shape[0])
+
+    @property
+    def num_flat(self):
+        return self.num_beta - self.rank
+
+    @property
+    def is_degenerate(self):
+        """True when the dose leaves at least one β direction unconstrained."""
+        return self.num_flat > 0
+
+    def summary(self):
+        """One-or-two-line human summary, naming the cause of any rank cap."""
+        text = (f"{self.rank} of {self.num_beta} β directions are constrained by "
+                f"this dose; {self.num_flat} are flat (invisible to it)")
+        if self.rank >= self.num_components and self.num_components < self.num_beta:
+            text += (f". The rank is capped by the surrogate's "
+                     f"{self.num_components} retained POD mode(s) — the dose "
+                     f"reaches β only through those coefficients")
+        return text + '.'
+
+    def describe_direction(self, row, threshold=0.25):
+        """Name the β dominating one direction, e.g. ``'beta3 - beta5'``-ish.
+
+        Returns a compact ``+beta3 +beta4 -beta5`` style string of the components
+        whose absolute weight exceeds ``threshold``, for a readable report."""
+        row = np.asarray(row, dtype=float)
+        parts = []
+        for name, weight in zip(self.beta_names, row):
+            if abs(weight) >= threshold:
+                parts.append(f"{'+' if weight >= 0 else '-'}{name}")
+        return ' '.join(parts) if parts else '(diffuse)'
+
+
+class InversionResult:
+    """The outcome of a :meth:`DoseSurrogate.invert` run.
+
+    Attributes:
+
+    * ``beta`` — ``(D,)`` best-misfit β estimate (β\\*).
+    * ``misfit`` — its coefficient-space misfit.
+    * ``minima`` — every **distinct** local minimum found, as ``(misfit, β)``
+      pairs sorted best-first (``minima[0]`` is ``(misfit, beta)``). More than one
+      entry means several β explain the target comparably well — the
+      non-uniqueness the Bayesian phase will characterize properly.
+    * ``num_starts`` — how many starting points were run.
+    * ``target_coeffs`` — the projected target the misfit was measured against.
+    * ``beta_names`` — ordered β names, for labelling.
+    * ``bounds`` — the box the search was confined to (the model's training range
+      unless overridden); β\\* is only trustworthy inside it.
+    * ``identifiability`` — an :class:`Identifiability` for β\\*, set by
+      ``modes.invert_optimize`` (``None`` if the analysis was skipped).
+
+    **On ranking the minima:** ``minima`` is ordered by misfit, but that ordering
+    is *not* an evidence ranking. When the misfits are all numerically ~0 (see
+    :meth:`minima_are_distinguishable`) they are equally good explanations lying
+    on one degenerate surface, and the ordering reflects solver convergence noise.
+    Use ``identifiability`` to see how many β directions are actually pinned, and
+    a posterior (``invert_bayesian``) to characterize the surface.
+    """
+
+    def __init__(self, beta, misfit, minima, num_starts, target_coeffs,
+                 beta_names, bounds, identifiability=None):
+        self.beta = np.asarray(beta, dtype=float)
+        self.misfit = float(misfit)
+        self.minima = list(minima)
+        self.num_starts = int(num_starts)
+        self.target_coeffs = np.asarray(target_coeffs, dtype=float)
+        self.beta_names = list(beta_names)
+        self.bounds = list(bounds)
+        self.identifiability = identifiability
+
+    def minima_are_distinguishable(self, floor=1e-8):
+        """Whether the reported minima differ by enough misfit to be *ranked*.
+
+        ``False`` when every minimum's misfit is below ``floor`` — they all
+        explain the target equally well, so ordering them by misfit is sorting
+        numerical noise, not evidence. Only when some minima are genuinely worse
+        does the ranking carry information."""
+        if len(self.minima) < 2:
+            return False
+        worst = max(m for m, _b in self.minima)
+        return bool(worst > floor)
+
+    @property
+    def num_distinct(self):
+        """Number of distinct local minima found (>1 signals non-uniqueness)."""
+        return len(self.minima)
+
+    def beta_dict(self):
+        """β\\* as a ``{name: value}`` mapping."""
+        return dict(zip(self.beta_names, self.beta.tolist()))
+
+    def relative_l2(self, surrogate, target_dose, space='fit'):
+        """Reconstruction error of β\\*'s predicted dose against ``target_dose``.
+
+        ``target_dose`` is the aligned raw (linear) dose vector the inversion
+        targeted. The comparison is done in ``space`` — default ``'fit'``, the
+        model's own space, which for a ``'log10'`` model is log space. That is the
+        honest metric: inverting a log prediction back to linear amplifies the
+        ~9-order tail error and would report a misleadingly huge number."""
+        target_dose = np.asarray(target_dose, dtype=float).ravel()
+        predicted = surrogate.predict_dose(self.beta, space=space)
+        if space == 'fit':
+            predicted = predicted[0]        # (mean, var) -> mean
+            truth = _apply_transform(target_dose, surrogate.dose_transform,
+                                     surrogate.floor)
+        else:
+            truth = target_dose
+        denominator = np.linalg.norm(truth)
+        return float(np.linalg.norm(predicted - truth)
+                     / (denominator if denominator else 1.0))
+
+
+class PosteriorResult:
+    """Posterior over β from :meth:`DoseSurrogate.sample_posterior`.
+
+    Attributes:
+
+    * ``samples`` — ``(S, D)`` posterior draws.
+    * ``beta_names`` — ordered β names (columns of ``samples``).
+    * ``bounds`` — the box used as the uniform prior. Along the β directions the
+      dose cannot constrain, the posterior *is* this prior — so the bounds are part
+      of the answer, not an incidental setting.
+    * ``dose_sigma`` — assumed target-noise scale in coefficient space.
+    * ``diagnostics`` — ``{'r_hat': (D,), 'n_eff': (D,)}`` from numpyro.
+    * ``target_coeffs`` — the projected target that was conditioned on.
+    """
+
+    def __init__(self, samples, beta_names, bounds, dose_sigma, diagnostics,
+                 target_coeffs):
+        self.samples = np.asarray(samples, dtype=float)
+        self.beta_names = list(beta_names)
+        self.bounds = list(bounds)
+        self.dose_sigma = float(dose_sigma)
+        self.diagnostics = dict(diagnostics or {})
+        self.target_coeffs = np.asarray(target_coeffs, dtype=float)
+
+    def __len__(self):
+        return int(self.samples.shape[0])
+
+    def mean(self):
+        return self.samples.mean(axis=0)
+
+    def median(self):
+        return np.median(self.samples, axis=0)
+
+    def std(self):
+        return self.samples.std(axis=0)
+
+    def credible_interval(self, level=0.9):
+        """Equal-tailed credible interval per β as ``(lo (D,), hi (D,))``."""
+        tail = 0.5 * (1.0 - float(level))
+        return (np.quantile(self.samples, tail, axis=0),
+                np.quantile(self.samples, 1.0 - tail, axis=0))
+
+    @property
+    def prior_std(self):
+        """Std of the uniform prior per β (a uniform box has width/√12)."""
+        widths = np.array([hi - lo for lo, hi in self.bounds], dtype=float)
+        return widths / np.sqrt(12.0)
+
+    def max_r_hat(self):
+        """Worst per-β ``r_hat``, or ``nan`` when unavailable. Values much above
+        1.0 (say >1.05) mean the chains did not mix and the posterior should not be
+        trusted as-is."""
+        r_hat = self.diagnostics.get('r_hat')
+        if r_hat is None or not np.size(r_hat):
+            return float('nan')
+        return float(np.nanmax(r_hat))
+
+    def direction_widths(self, identifiability):
+        """Posterior width along each identifiable / flat direction.
+
+        Returns a list of ``(label, posterior_std, prior_std, ratio)``, projecting
+        the draws onto the directions from
+        :meth:`DoseSurrogate.identifiability`. This is the payoff table: the
+        constrained directions should come out with a ratio far below 1 (the data
+        pinned them down) while the flat ones sit near 1 (the data said nothing, so
+        the posterior is the prior). A near-1 ratio on a flat direction is the
+        **correct** result, not a sampling failure."""
+        rows = []
+        prior = self.prior_std
+        groups = (('constrained', identifiability.identifiable),
+                  ('flat', identifiability.null_space))
+        for label, directions in groups:
+            for i, row in enumerate(np.atleast_2d(directions)):
+                if not row.size:
+                    continue
+                projected = self.samples @ row
+                # Prior std along a unit direction, from independent uniforms.
+                prior_along = float(np.sqrt(np.sum((row * prior) ** 2)))
+                posterior_along = float(projected.std())
+                ratio = (posterior_along / prior_along
+                         if prior_along else float('nan'))
+                rows.append((f'{label}_{i}', posterior_along, prior_along, ratio))
+        return rows

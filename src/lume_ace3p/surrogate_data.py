@@ -174,6 +174,161 @@ def sample_beta_doe(bounds, num_samples, sampler='sobol', seed=0):
 
 
 # --------------------------------------------------------------------------- #
+# Target-dose loading + voxel alignment (the inversion input seam, Phase 4).
+#
+# Inverting a dose profile means projecting it onto the PCA basis, which is a
+# plain ``(dose - mean) @ Φ^T``: it assumes column j of the input is the SAME
+# physical voxel as column j of the training grids. A raw Geant4 dose file lists
+# voxels in whatever order it likes, so a target MUST be reordered onto the
+# training voxel order before projection — otherwise the whole inversion is
+# silently misaligned. This is the output-side analogue of the collection-time
+# mesh pinning (correctness constraint #3).
+#
+# ``read_dose_file`` is the ONE canonical dose parser: it produces the
+# ``{'indices', 'values'}`` shape that :func:`lume_ace3p.results.save_field`
+# persists and the PCA basis is therefore built on.
+# :meth:`lume_ace3p.modules.Geant4Module._read_scoring_output` delegates to it.
+# (``plotting/geant4_deposit_common.parse_deposit_file`` returns a *different*
+# shape — reshaped grids + mesh/units metadata — and stays for header metadata
+# only; it is not the vector fed to ``project()``.)
+# --------------------------------------------------------------------------- #
+
+
+def read_dose_file(path):
+    """Parse a Geant4 dose/edep scoring file into ``{'indices', 'values'}``.
+
+    Reads the whitespace-or-comma ``ix iy iz value [...]`` voxel format, skipping
+    blank lines, ``#`` comments and short rows — so it handles both the plain
+    scoring dump and the comma-separated
+    ``iX, iY, iZ, total(value), total(val^2), entry`` variant (extra columns are
+    ignored). Returns ``{'indices': (M,3) int array, 'values': (M,) float array}``,
+    or ``None`` if the file is missing or holds no data rows.
+
+    This is the canonical parser for training and inversion: the returned shape is
+    exactly what ``save_field`` persists, so a target parsed here lines up with the
+    stored training grids (after :func:`align_to_indices`)."""
+    if not path or not os.path.isfile(path):
+        return None
+    indices = []
+    values = []
+    with open(path) as f:
+        for line in f:
+            text = line.strip()
+            if not text or text.startswith('#'):
+                continue
+            parts = text.replace(',', ' ').split()
+            if len(parts) < 4:
+                continue
+            try:
+                ix, iy, iz = int(parts[0]), int(parts[1]), int(parts[2])
+                value = float(parts[3])
+            except ValueError:
+                continue
+            indices.append((ix, iy, iz))
+            values.append(value)
+    if not values:
+        return None
+    return {'indices': np.asarray(indices, dtype=int),
+            'values': np.asarray(values, dtype=float)}
+
+
+def load_target_dose(target):
+    """Load a target dose profile for inversion.
+
+    ``target`` is either a stored field artifact (a ``.npz`` written by
+    :func:`lume_ace3p.results.save_field` — e.g. a held-out training sample's
+    ``field.npz``, which makes the recovery test trivial) or a raw Geant4 dose
+    file. Returns ``(values (M,), indices (M,3))`` in the file's own order — call
+    :func:`align_to_indices` to put it on the training voxel order before
+    projecting.
+
+    Raises ``FileNotFoundError`` if the path does not exist and ``ValueError`` if
+    it carries no usable dose grid."""
+    if not target:
+        raise ValueError(
+            "invert_optimize requires a 'target' dose (a stored field .npz or a "
+            "raw Geant4 dose file).")
+    if not os.path.isfile(target):
+        raise FileNotFoundError(f"target dose file not found: {target}")
+
+    if target.endswith('.npz'):
+        from lume_ace3p.results import load_field
+        field = load_field(target)
+        section = (field or {}).get('dose') or (field or {}).get('edep')
+        if section is None:
+            raise ValueError(
+                f"stored field artifact '{target}' has no dose/edep grid.")
+        return (np.asarray(section['values'], dtype=float),
+                np.asarray(section['indices'], dtype=int))
+
+    grid = read_dose_file(target)
+    if grid is None:
+        raise ValueError(
+            f"no dose data rows found in target file '{target}'. Expected a "
+            "Geant4 scoring dump with 'ix iy iz value' rows.")
+    return grid['values'], grid['indices']
+
+
+def align_to_indices(values, indices, reference_indices):
+    """Reorder a target dose onto the training grid's voxel order.
+
+    ``values``/``indices`` are the target as loaded; ``reference_indices`` is the
+    ``(M,3)`` voxel order the PCA basis was built on (the training store's
+    ``indices``). Returns a ``(M,)`` value array whose column *j* is the voxel
+    ``reference_indices[j]`` — exactly what ``project()`` expects.
+
+    Hard-fails if the target does not cover the reference voxel set exactly: a
+    missing or extra voxel means the target is on a different scoring mesh, and
+    projecting it would silently misalign the basis (correctness constraint #3).
+    Reordering is by ``(ix, iy, iz)`` key, so the target's own row order is
+    irrelevant."""
+    values = np.asarray(values, dtype=float).ravel()
+    indices = np.asarray(indices, dtype=int)
+    reference = np.asarray(reference_indices, dtype=int)
+    if indices.ndim != 2 or indices.shape[1] != 3:
+        raise ValueError(
+            f"target voxel indices must be (M,3); got {indices.shape}.")
+    if reference.ndim != 2 or reference.shape[1] != 3:
+        raise ValueError(
+            f"reference voxel indices must be (M,3); got {reference.shape}.")
+    if values.shape[0] != indices.shape[0]:
+        raise ValueError(
+            f"target has {values.shape[0]} values but {indices.shape[0]} voxel "
+            "indices.")
+
+    lookup = {tuple(int(c) for c in row): j for j, row in enumerate(indices)}
+    if len(lookup) != indices.shape[0]:
+        raise ValueError(
+            "target dose lists the same voxel more than once; cannot align it "
+            "to the training grid unambiguously.")
+
+    missing = []
+    order = np.empty(reference.shape[0], dtype=int)
+    for j, row in enumerate(reference):
+        key = tuple(int(c) for c in row)
+        pos = lookup.get(key)
+        if pos is None:
+            missing.append(key)
+            if len(missing) > 5:
+                break
+        else:
+            order[j] = pos
+    if missing:
+        raise ValueError(
+            f"target dose is missing {len(missing)}+ voxel(s) present in the "
+            f"training grid (e.g. {missing[:5]}); it is on a different scoring "
+            "mesh than the surrogate was trained on. The PCA basis would be "
+            "misaligned (constraint #3) — re-score the target on the training "
+            "mesh.")
+    if indices.shape[0] != reference.shape[0]:
+        raise ValueError(
+            f"target dose has {indices.shape[0]} voxels but the training grid "
+            f"has {reference.shape[0]}; it covers a different scoring mesh "
+            "(constraint #3).")
+    return values[order]
+
+
+# --------------------------------------------------------------------------- #
 # Manifest.
 # --------------------------------------------------------------------------- #
 
