@@ -3,3 +3,4 @@ xopt>=3.0.0
 ruamel.yaml
 scipy
 scikit-learn
+numpyro

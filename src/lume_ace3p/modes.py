@@ -59,6 +59,28 @@ from lume_ace3p.results import (
 from lume_ace3p import surrogate_data
 
 
+# Modes that consume an on-disk store / saved model rather than driving the
+# module chain. They never call ``workflow.evaluate``, so a config for one of
+# them does not need a ``workflow:`` block at all — the store already holds the
+# collected data. Every other mode requires a workflow to drive.
+STORE_CONSUMING_MODES = frozenset({'train_surrogate', 'invert_optimize',
+                                   'invert_bayesian'})
+
+
+def mode_type_of(mode_cfg):
+    """The normalized ``type`` of a mode config (honoring the legacy ``mode``
+    alias), or ``''`` when absent. Shared by the CLI so the workflow-optional
+    decision is made from one place."""
+    if not mode_cfg:
+        return ''
+    return str(mode_cfg.get('type') or mode_cfg.get('mode') or '').lower()
+
+
+def is_store_consuming(mode_cfg):
+    """Whether ``mode_cfg`` selects a mode that needs no ``workflow:`` block."""
+    return mode_type_of(mode_cfg) in STORE_CONSUMING_MODES
+
+
 def _deprecation_warning(message):
     """Emit a clearly-labeled deprecation notice to stderr.
 
@@ -102,6 +124,10 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         return collect_training_data(mode_cfg, workflow)
     elif mode_type == 'train_surrogate':
         return train_surrogate(mode_cfg, workflow)
+    elif mode_type == 'invert_optimize':
+        return invert_optimize(mode_cfg, workflow)
+    elif mode_type == 'invert_bayesian':
+        return invert_bayesian(mode_cfg, workflow)
     elif mode_type == 'scalar_optimize':
         return scalar_optimize(
             workflow, vocs, xopt,
@@ -115,7 +141,8 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         raise ValueError(
             f"mode '{mode_type}' is not handled by the mode layer "
             "(single | parameter_sweep | collect_training_data | "
-            "train_surrogate | scalar_optimize | gp_parameter_sweep).")
+            "train_surrogate | invert_optimize | invert_bayesian | "
+            "scalar_optimize | gp_parameter_sweep).")
 
     # In the table modes 'sweep_output_file:' is a legacy alias for 'output_file:'
     # (only the Xopt gp_parameter_sweep mode above, which returned early, uses it
@@ -527,10 +554,13 @@ def train_surrogate(mode_cfg, workflow=None):
                         dose_transform=dose_transform, floor=floor,
                         n_jobs=n_jobs)
 
+    # ts.indices is the voxel order the basis columns correspond to; recording it
+    # in the model lets invert_optimize align an arbitrary target dose onto the
+    # basis rather than assuming a row order (constraint #3).
     surrogate = DoseSurrogate.fit(ts.beta, ts.dose, variance=variance, k=k,
                                   seed=seed, beta_names=ts.beta_names,
                                   dose_transform=dose_transform, floor=floor,
-                                  n_jobs=n_jobs)
+                                  n_jobs=n_jobs, voxel_indices=ts.indices)
     surrogate.save(model_dir)
     print(f" - trained PCA-GP surrogate: {surrogate.num_components} modes "
           f"({surrogate.kept_energy:.4f} energy, dose_transform="
@@ -590,6 +620,431 @@ def _report_holdout(ts, variance, k, seed, holdout, store,
     print(f" - held-out relative-L2 ({model.dose_transform} space): "
           f"mean={rel_l2.mean():.4f} max={rel_l2.max():.4f}; "
           f"mean predicted std={mean_pred_std:.4g}")
+
+
+# --------------------------------------------------------------------------- #
+# invert_optimize (Phase 4) — given a target dose profile, estimate the β that
+# produced it. Runs entirely against the cheap saved surrogate (NOT Geant4) and
+# is deliberately NOT a direct dose→β regressor (too ill-posed): the target is
+# projected into the surrogate's retained coefficient space and β is searched for
+# the coefficients the GPs predict closest to it.
+# --------------------------------------------------------------------------- #
+
+
+def _reference_indices(surrogate, mode_cfg, store):
+    """Resolve the voxel order the PCA basis columns correspond to.
+
+    A target dose must be reordered onto this order before projection or the
+    inversion is silently misaligned (constraint #3). Prefer the order recorded in
+    the model; fall back to the training store's ``indices``; otherwise hard-fail
+    with a fix. Never guess an order."""
+    if surrogate.voxel_indices is not None:
+        return surrogate.voxel_indices
+    if store:
+        ts = surrogate_data.load_training_store(store)
+        if ts.indices is not None:
+            return np.asarray(ts.indices, dtype=int)
+    raise ValueError(
+        "this surrogate does not record the voxel order its PCA basis was built "
+        "on (it predates that being saved), so a target dose cannot be aligned "
+        "to it — projecting an unaligned target would silently misalign the "
+        "basis (constraint #3). Either re-run train_surrogate to save a model "
+        "carrying 'voxel_indices', or give this mode a 'store:' pointing at the "
+        "training store the model was fit from.")
+
+
+def _load_inversion_target(mode_cfg, mode_name):
+    """Shared setup for both inversion modes.
+
+    Loads the saved surrogate, resolves the voxel order its basis was built on,
+    loads + **aligns** the target dose onto that order, projects it into
+    coefficient space, and resolves any bounds override. Factored out so
+    ``invert_optimize`` and ``invert_bayesian`` cannot drift apart on the part that
+    must be identical — the target seam, where a misalignment would silently
+    invalidate the projection (constraint #3).
+
+    Returns ``(surrogate, aligned_dose, target_coeffs, bounds_or_None,
+    model_dir)``."""
+    from lume_ace3p.surrogate import DoseSurrogate
+
+    store = mode_cfg.get('store')
+    model_dir = mode_cfg.get('model_dir') or (
+        os.path.join(store, 'surrogate') if store else None)
+    if not model_dir:
+        raise ValueError(
+            f"{mode_name} requires a 'model_dir' (a surrogate saved by "
+            "train_surrogate) or a 'store' whose 'surrogate/' subdir holds one.")
+    if not os.path.isdir(model_dir):
+        raise ValueError(
+            f"no saved surrogate at '{model_dir}'; run train_surrogate first.")
+    surrogate = DoseSurrogate.load(model_dir)
+
+    values, indices = surrogate_data.load_target_dose(mode_cfg.get('target'))
+    reference = _reference_indices(surrogate, mode_cfg, store)
+    aligned = surrogate_data.align_to_indices(values, indices, reference)
+
+    # project() maps the raw linear dose into the model's fit space itself, so a
+    # log10 model needs no special-casing here.
+    target_coeffs = surrogate.project(aligned, space='linear')
+
+    bounds = None
+    if mode_cfg.get('bounds'):
+        bounds = _doe_bounds({'variables': mode_cfg['bounds']},
+                             surrogate.beta_names)
+    return surrogate, aligned, target_coeffs, bounds, model_dir
+
+
+def invert_optimize(mode_cfg, workflow=None):
+    """Estimate β from a target dose profile (Phase 4, point estimate).
+
+    Loads the saved surrogate, loads and voxel-aligns the target dose, projects it
+    into coefficient space, and minimizes ``‖project(target) − c_GP(β)‖²`` over β
+    by bounded multi-start L-BFGS-B (:meth:`DoseSurrogate.invert`). The search runs
+    against the microsecond-cheap surrogate, so it is dense by default; the
+    multi-start also surfaces **non-uniqueness** — several β profiles can explain
+    one dose, and every distinct minimum found is reported.
+
+    The misfit is measured in the model's own **fit space**, so a ``'log10'``
+    surrogate is inverted in log space (the meaningful space for dose that spans
+    ~9 orders of magnitude — a linear residual is dominated by a few peak voxels).
+
+    Mode config keys:
+
+    * ``target`` (required) — the dose profile to invert: a stored field ``.npz``
+      (e.g. a held-out sample's ``field.npz``) or a raw Geant4 dose file.
+    * ``model_dir`` — the saved surrogate directory. Defaults to
+      ``<store>/surrogate`` when ``store`` is given.
+    * ``store`` — the training store the model was fit from. Optional; used for the
+      voxel order when the model does not carry one, and as the default location
+      for ``model_dir`` / the output table.
+    * ``num_starts`` (default 32) — multi-start count. More starts = more thorough
+      non-uniqueness reporting; each is microseconds.
+    * ``seed`` (default 0) — reproducible start scatter (identical β\\*).
+    * ``bounds`` — optional per-β ``[lo, hi]`` (or ``{min, max}``) search box,
+      keyed by β name. Defaults to the model's training range; outside it the GP
+      is extrapolating and β\\* is not trustworthy.
+    * ``output_file`` — where the result table goes (default
+      ``<store or '.'>/inversion_result.txt``).
+    * ``identifiability`` (default ``True``) — also analyse which β directions the
+      dose actually constrains (:meth:`DoseSurrogate.identifiability`) and write
+      the detail to ``identifiability.txt``. This is what makes a multi-minimum
+      result interpretable: with ``k`` retained POD modes the dose can constrain
+      at most ``k`` combinations of β, so when ``k < D`` some directions are
+      invisible and the "extra" minima are samples of one degenerate surface
+      rather than competing answers. Costs ``2·D`` GP evaluations.
+    * ``identifiability_file`` — override that path.
+
+    Returns the :class:`lume_ace3p.surrogate.InversionResult`."""
+    surrogate, aligned, target_coeffs, bounds, model_dir = (
+        _load_inversion_target(mode_cfg, 'invert_optimize'))
+    target = mode_cfg.get('target')
+    store = mode_cfg.get('store')
+
+    result = surrogate.invert(target_coeffs, bounds=bounds,
+                              num_starts=int(mode_cfg.get('num_starts', 32)),
+                              seed=int(mode_cfg.get('seed', 0)))
+
+    # One row per distinct minimum. NOTE 'rank' is a stable ordering by misfit,
+    # NOT an evidence ranking — see the non-uniqueness reporting below.
+    rows = []
+    for rank, (misfit, beta_vec) in enumerate(result.minima):
+        row = {'rank': rank, 'misfit': misfit,
+               'relative_l2': _beta_relative_l2(surrogate, beta_vec, aligned)}
+        row.update(dict(zip(surrogate.beta_names, beta_vec.tolist())))
+        rows.append(row)
+    columns = ['rank', 'misfit', 'relative_l2'] + list(surrogate.beta_names)
+    df = pd.DataFrame(rows, columns=columns)
+    output_file = mode_cfg.get('output_file') or os.path.join(
+        store or '.', 'inversion_result.txt')
+    write_table(df, output_file)
+
+    best = ', '.join(f'{n}={v:.4g}' for n, v in result.beta_dict().items())
+    print(f" - inverted target '{target}' against {model_dir}")
+    print(f" - β* ({best})")
+    print(f" - coefficient misfit={result.misfit:.4g}; dose relative-L2 "
+          f"({surrogate.dose_transform} space)="
+          f"{result.relative_l2(surrogate, aligned):.4f}")
+
+    # Identifiability: how many β directions this dose actually pins down. This
+    # is what makes a multi-minimum result interpretable — see _write_identifiability.
+    if mode_cfg.get('identifiability', True):
+        ident = surrogate.identifiability(result.beta)
+        result.identifiability = ident
+        print(f" - identifiability: {ident.summary()}")
+        ident_file = mode_cfg.get('identifiability_file') or os.path.join(
+            os.path.dirname(output_file) or '.', 'identifiability.txt')
+        _write_identifiability(ident, ident_file)
+        print(f" - identifiability detail written to {ident_file}")
+
+    _report_non_uniqueness(result, output_file)
+    return result
+
+
+def _report_non_uniqueness(result, output_file):
+    """Explain a multi-minimum result honestly.
+
+    The key distinction: when every minimum's misfit is numerically ~0 they are
+    *equally good* explanations lying on one connected degenerate surface, so
+    ordering them by misfit is sorting solver noise, not evidence. Saying
+    "N solutions ranked by misfit" in that case would imply a preference the data
+    does not support."""
+    if result.num_distinct <= 1:
+        return
+    ident = result.identifiability
+    flat = f"; {ident.num_flat} β direction(s) are flat" if ident else ""
+    if result.minima_are_distinguishable():
+        print(f" - NOTE: {result.num_distinct} distinct β minima explain this "
+              f"target with genuinely different misfits{flat}; they are ranked "
+              f"by misfit in {output_file}.")
+    else:
+        print(f" - NOTE: {result.num_distinct} distinct β vectors explain this "
+              "target EQUALLY well (all misfits are numerically zero), so they "
+              "are NOT ranked by evidence — the ordering in "
+              f"{output_file} reflects solver convergence, not preference"
+              f"{flat}. They are samples from one continuous degenerate surface. "
+              "Run invert_bayesian for a posterior over β, or add "
+              "regularization / narrow 'bounds' to select among them on physical "
+              "grounds.")
+
+
+def _write_identifiability(ident, path):
+    """Write the identifiability detail table with a short how-to-read preamble.
+
+    One row per β: its sensitivity, then its weight in each identifiable and flat
+    direction. Rows are β so the file reads naturally alongside the β columns of
+    ``inversion_result.txt``."""
+    rows = []
+    for j, name in enumerate(ident.beta_names):
+        row = {'beta': name, 'sensitivity': float(ident.sensitivity[j])}
+        for i in range(ident.identifiable.shape[0]):
+            row[f'constrained_{i}'] = float(ident.identifiable[i, j])
+        for i in range(ident.null_space.shape[0]):
+            row[f'flat_{i}'] = float(ident.null_space[i, j])
+        rows.append(row)
+    df = pd.DataFrame(rows)
+
+    singular = ' '.join(f'{s:.6g}' for s in ident.singular_values)
+    preamble = [
+        '# Identifiability of the inverted dose (at the reported beta*).',
+        '#',
+        f'# {ident.summary()}',
+        '#',
+        f'# Jacobian singular values (unit-box coords, descending): {singular}',
+        f'# Retained POD modes (k): {ident.num_components}  '
+        f'-> the dose constrains at most k combinations of beta.',
+        '#',
+        '# How to read this table:',
+        '#   sensitivity     how much the predicted dose coefficients move per',
+        '#                   unit-box move of that beta (bigger = more visible).',
+        '#   constrained_i   weight of each beta in the i-th direction the dose',
+        '#                   DOES constrain (i=0 is the best-constrained).',
+        '#   flat_i          weight of each beta in the i-th direction the dose',
+        '#                   CANNOT see: moving beta along it leaves the predicted',
+        '#                   dose unchanged, so inversion cannot determine it.',
+        '#',
+    ]
+    for i, row in enumerate(ident.identifiable):
+        preamble.append(f'# constrained_{i}: {ident.describe_direction(row)}')
+    for i, row in enumerate(ident.null_space):
+        preamble.append(f'# flat_{i}: {ident.describe_direction(row)}')
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    with open(path, 'w') as f:
+        f.write('\n'.join(preamble) + '\n')
+    # Append the table through the shared writer's formatting conventions.
+    with open(path, 'a') as f:
+        df.to_csv(f, sep='\t', index=False, na_rep='nan')
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# invert_bayesian (Phase 4b) — a POSTERIOR over β rather than a point estimate.
+#
+# This is the mode that actually *answers* the non-uniqueness invert_optimize
+# reports. The dose constrains at most k combinations of β (k = retained POD
+# modes), so with k < D the correct answer is not one β, nor a ranking of the
+# equally-good minima, but a distribution: tight along the constrained directions
+# and prior-wide along the flat ones.
+# --------------------------------------------------------------------------- #
+
+
+def invert_bayesian(mode_cfg, workflow=None):
+    """Sample a posterior over β for a target dose profile (Phase 4b).
+
+    Same target seam as :func:`invert_optimize` (shared via
+    ``_load_inversion_target``), but instead of minimizing the coefficient misfit
+    it samples ``P(β | target)`` with NUTS over the cheap surrogate — a Gaussian
+    likelihood in the model's retained-coefficient space (GP predictive variance +
+    an assumed ``dose_sigma``) under a uniform prior on the training box.
+
+    **Why this and not a ranking of the minima.** ``invert_optimize`` typically
+    finds many β that explain a target *equally* well (all misfits ~0), so they
+    cannot be ordered by evidence. The reason is structural: the surrogate reaches
+    β only through ``k`` coefficients, leaving ``D − k`` directions invisible to the
+    dose. The posterior expresses that honestly — narrow where the data informs,
+    as wide as the prior where it does not.
+
+    Mode config keys:
+
+    * ``target`` (required) — dose profile to invert (stored ``.npz`` or a raw
+      Geant4 dose file). Reordered onto the training voxel order automatically.
+    * ``model_dir`` / ``store`` — as for :func:`invert_optimize`.
+    * ``num_warmup`` (1000), ``num_samples`` (2000) — per chain.
+    * ``num_chains`` (4) — **do not lower this casually.** One chain can get stuck
+      in a slice of the degenerate manifold and then reports the flat directions as
+      narrow, which reads as "the dose constrains β" when it does not. Chains run
+      in parallel across CPU devices.
+    * ``seed`` (0) — reproducible draws.
+    * ``dose_sigma`` — assumed target-noise scale in coefficient space; defaults to
+      the model's own predictive std at the box center.
+    * ``bounds`` — per-β ``[lo, hi]``; this is the **prior**, and along the flat
+      directions the posterior equals it. Defaults to the training box.
+    * ``output_file`` — posterior draws (default ``<store>/posterior_samples.txt``).
+    * ``summary_file`` — per-β summary + direction widths (default
+      ``posterior_summary.txt`` beside it).
+    * ``identifiability`` (default ``True``) — compute the constrained/flat split
+      so the summary can report posterior width per direction.
+
+    Returns the :class:`lume_ace3p.surrogate.PosteriorResult`."""
+    surrogate, aligned, target_coeffs, bounds, model_dir = (
+        _load_inversion_target(mode_cfg, 'invert_bayesian'))
+    store = mode_cfg.get('store')
+
+    posterior = surrogate.sample_posterior(
+        target_coeffs, bounds=bounds,
+        dose_sigma=mode_cfg.get('dose_sigma'),
+        num_warmup=int(mode_cfg.get('num_warmup', 1000)),
+        num_samples=int(mode_cfg.get('num_samples', 2000)),
+        num_chains=int(mode_cfg.get('num_chains', 4)),
+        seed=int(mode_cfg.get('seed', 0)))
+
+    output_file = mode_cfg.get('output_file') or os.path.join(
+        store or '.', 'posterior_samples.txt')
+    write_table(pd.DataFrame(posterior.samples, columns=surrogate.beta_names),
+                output_file)
+
+    ident = None
+    if mode_cfg.get('identifiability', True):
+        # At the posterior mean — a representative point on the manifold.
+        ident = surrogate.identifiability(posterior.mean())
+
+    summary_file = mode_cfg.get('summary_file') or os.path.join(
+        os.path.dirname(output_file) or '.', 'posterior_summary.txt')
+    _write_posterior_summary(posterior, ident, summary_file)
+
+    lo, hi = posterior.credible_interval(0.9)
+    print(f" - inverted target '{mode_cfg.get('target')}' against {model_dir}")
+    print(f" - sampled posterior over β: {len(posterior)} draws "
+          f"({mode_cfg.get('num_chains', 4)} chains), "
+          f"dose_sigma={posterior.dose_sigma:.4g}")
+    for j, name in enumerate(posterior.beta_names):
+        print(f"     {name}: {posterior.mean()[j]:8.4g}  "
+              f"90% CI [{lo[j]:.4g}, {hi[j]:.4g}]")
+    print(f" - draws -> {output_file}; summary -> {summary_file}")
+
+    if ident is not None:
+        print(f" - identifiability: {ident.summary()}")
+        widths = posterior.direction_widths(ident)
+        flat = [r for label, _p, _pr, r in widths if label.startswith('flat')]
+        if flat:
+            print(f" - flat directions have posterior width "
+                  f"{min(flat):.2f}-{max(flat):.2f}x the prior — the data does NOT "
+                  "constrain them, so those β combinations are set by 'bounds', "
+                  "not by the dose. This is the correct result for a "
+                  "rank-deficient inverse, not a sampling failure.")
+
+    r_hat = posterior.max_r_hat()
+    if not np.isnan(r_hat) and r_hat > 1.05:
+        print(f" - WARNING: max r_hat={r_hat:.3f} > 1.05 — the chains did not mix, "
+              "so these credible intervals are NOT trustworthy (a stuck chain "
+              "under-reports the width of the flat directions). Increase "
+              "'num_warmup'/'num_samples', or 'num_chains'.")
+    return posterior
+
+
+def _write_posterior_summary(posterior, ident, path):
+    """Write the per-β posterior summary plus the per-direction width table.
+
+    The direction table is the interpretive payoff: it says which β combinations
+    the dose pinned down and which it left at the prior. The preamble states
+    explicitly that a prior-wide flat direction is the *correct* outcome, so the
+    reader does not mistake it for a convergence problem."""
+    lo, hi = posterior.credible_interval(0.9)
+    rows = []
+    for j, name in enumerate(posterior.beta_names):
+        row = {'beta': name,
+               'mean': float(posterior.mean()[j]),
+               'median': float(posterior.median()[j]),
+               'std': float(posterior.std()[j]),
+               'ci5': float(lo[j]), 'ci95': float(hi[j]),
+               'prior_std': float(posterior.prior_std[j])}
+        for key in ('r_hat', 'n_eff'):
+            values = posterior.diagnostics.get(key)
+            if values is not None and j < len(np.atleast_1d(values)):
+                row[key] = float(np.atleast_1d(values)[j])
+        rows.append(row)
+    df = pd.DataFrame(rows)
+
+    r_hat = posterior.max_r_hat()
+    preamble = [
+        '# Posterior over beta for the inverted dose (invert_bayesian).',
+        '#',
+        f'# draws: {len(posterior)}    dose_sigma: {posterior.dose_sigma:.6g}'
+        f'    max r_hat: {r_hat:.4f}',
+        '#',
+        '# Columns: mean/median/std and the 5-95% credible interval per beta, with',
+        '# prior_std (the uniform-prior std) for scale, plus per-beta convergence',
+        '# diagnostics r_hat (want ~1.0; >1.05 means the chains did not mix) and',
+        '# n_eff (effective sample size).',
+        '#',
+    ]
+    if ident is not None:
+        preamble += [
+            '# ---- Posterior width per direction ----',
+            f'# {ident.summary()}',
+            '#',
+            '# ratio = posterior std / prior std along each direction.',
+            '#   constrained_i: ratio << 1 means the dose pinned this beta',
+            '#                  combination down.',
+            '#   flat_i:        ratio ~ 1 means the dose says NOTHING about this',
+            '#                  combination, so the posterior is just the prior.',
+            '#                  That is the CORRECT result for a rank-deficient',
+            '#                  inverse -- not a sampling failure. To constrain',
+            '#                  these you must add information (narrower bounds on',
+            '#                  physical grounds, regularization, or more POD modes',
+            '#                  if the data supports them).',
+            '#',
+        ]
+        for label, post_std, prior_std, ratio in posterior.direction_widths(ident):
+            index = int(label.rsplit('_', 1)[1])
+            row = (ident.identifiable[index] if label.startswith('constrained')
+                   else ident.null_space[index])
+            preamble.append(
+                f'# {label}: ratio={ratio:.4f} '
+                f'(posterior {post_std:.4g} vs prior {prior_std:.4g})  '
+                f'{ident.describe_direction(row)}')
+        preamble.append('#')
+
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    with open(path, 'w') as f:
+        f.write('\n'.join(preamble) + '\n')
+    with open(path, 'a') as f:
+        df.to_csv(f, sep='\t', index=False, na_rep='nan')
+    return path
+
+
+def _beta_relative_l2(surrogate, beta_vec, aligned_target):
+    """Fit-space relative-L2 between a β's predicted dose and the target."""
+    from lume_ace3p.surrogate import _apply_transform
+    predicted, _var = surrogate.predict_dose(beta_vec, space='fit')
+    truth = _apply_transform(aligned_target, surrogate.dose_transform,
+                             surrogate.floor)
+    denominator = np.linalg.norm(truth)
+    return float(np.linalg.norm(predicted - truth)
+                 / (denominator if denominator else 1.0))
 
 
 # --------------------------------------------------------------------------- #

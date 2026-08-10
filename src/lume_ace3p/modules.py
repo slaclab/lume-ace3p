@@ -747,32 +747,16 @@ class Geant4Module(Module):
 
     def _read_scoring_output(self, ctx, filename):
         """Parse a whitespace ix iy iz value scoring file into
-        ``{'indices': [...], 'values': ndarray}`` (workdir sourced from ctx)."""
+        ``{'indices': (M,3) array, 'values': (M,) array}`` (workdir from ctx).
+
+        Delegates to :func:`lume_ace3p.surrogate_data.read_dose_file`, the single
+        canonical dose parser — the surrogate/inversion path reads target dose
+        files through the same code, so a target lines up bin-for-bin with the
+        stored training grids."""
         if not filename:
             return None
-        path = os.path.join(ctx.workdir, filename)
-        if not os.path.isfile(path):
-            return None
-        indices = []
-        values = []
-        with open(path) as f:
-            for line in f:
-                s = line.strip()
-                if not s or s.startswith('#'):
-                    continue
-                parts = s.replace(',', ' ').split()
-                if len(parts) < 4:
-                    continue
-                try:
-                    ix, iy, iz = int(parts[0]), int(parts[1]), int(parts[2])
-                    val = float(parts[3])
-                except ValueError:
-                    continue
-                indices.append((ix, iy, iz))
-                values.append(val)
-        if not values:
-            return None
-        return {'indices': indices, 'values': np.array(values)}
+        from lume_ace3p.surrogate_data import read_dose_file
+        return read_dose_file(os.path.join(ctx.workdir, filename))
 
     def extract(self, ctx, spec):
         """Extract a scalar from the Geant4 dose/edep scoring output.
@@ -816,9 +800,9 @@ class Geant4Module(Module):
         for section in ('dose', 'edep'):
             grid = self._read_scoring_output(ctx, files[section])
             if grid is not None:
-                # 'indices' is a list of (ix,iy,iz) tuples; store as a 2-D array
-                # so the field artifact round-trips without pickling.
-                grids[section] = {'indices': np.asarray(grid['indices']),
+                # 'indices' is already a 2-D (M,3) array, so the field artifact
+                # round-trips without pickling.
+                grids[section] = {'indices': grid['indices'],
                                   'values': grid['values']}
         return grids or None
 

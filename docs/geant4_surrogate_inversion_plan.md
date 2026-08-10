@@ -28,6 +28,27 @@ surrogate (SVD → top-k POD modes → one sklearn GP per coefficient with a gen
 fitted noise term) built + validated locally against a synthetic analytic β→dose
 fixture per the synthetic-first strategy. See the Phase 3 section for the
 verification checklist (all bars met).
+**Phase 4a (`invert_optimize`) DELIVERED (2026-08-06)** — dose → β point estimate
+by bounded multi-start L-BFGS-B on the coefficient-space misfit, with the dose
+parser unified, target voxel-alignment enforced (constraint #3, inversion side),
+and non-uniqueness reported as all distinct minima. `invert_bayesian` is Phase 4b.
+See the Phase 4a section.
+**Identifiability reporting + YAML cleanup DELIVERED (2026-08-10)** — the inverse
+is rank-deficient **by construction** (`rank ≤ k` retained POD modes, so `k < D`
+leaves `D−k` β directions invisible to the dose); the multiple minima are samples
+of one *continuous degenerate surface*, not rival hypotheses, and are **not**
+rankable by evidence. `invert_optimize` now reports which β directions are
+constrained vs. flat. Separately, the store-consuming modes no longer require a
+`workflow:` block, shrinking their YAMLs to ~7 lines. See the Phase 4a
+"Follow-up" section.
+**Phase 4b (`invert_bayesian`) DELIVERED (2026-08-10)** — posterior over β via
+NUTS (numpyro, over a JAX re-expression of the fitted GP's prediction). It
+quantifies the degeneracy: tight along the constrained β combinations
+(~0.01–0.08× prior width), prior-wide along the flat ones (~1.1–1.25×). Two
+empirical findings became hard defaults — `num_chains=4` and `dense_mass=True`
+(one chain / diagonal mass silently *under-report* the flat directions, which
+reads as a false constraint). **Phases 2–4 are now complete; only Phase 5
+(multi-fidelity) and the real-Geant4 validation remain.**
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
@@ -605,6 +626,260 @@ fed to `project()`. Pick one canonical parser and factor it into a shared helper
 
 - Example YAMLs for both inversion modes pointing at a saved surrogate + a
   target dose file.
+
+## Phase 4a — `invert_optimize` DELIVERED (2026-08-06, synthetic)
+
+Split from `invert_bayesian` per the one-phase-per-session rule; the Bayesian mode
+is Phase 4b and reuses everything below (target seam, coefficient misfit, bounds).
+The MCMC library is still undecided and **none is installed** — deliberately not
+forced by this pass.
+
+### Decisions taken
+
+- **Optimizer = scipy multi-start L-BFGS-B** (bounded), not the Xopt driver. The
+  surrogate costs microseconds per evaluation, so thousands are free, whereas
+  Xopt's Bayesian generators are built to be *frugal with expensive* objectives —
+  the wrong tradeoff, plus a workflow-shim would be awkward. Multi-start also
+  directly surfaces non-uniqueness. No new dependency (scipy already required).
+- **Misfit space = the model's own fit space.** The target is projected through
+  the surrogate's transform, so a `log10` model inverts in log space — consistent
+  with the Phase-3 finding that log space is where the fit is meaningful (a linear
+  residual is dominated by a few peak voxels).
+- **Target sources:** a raw Geant4 dose file *and* a stored `field.npz`.
+- **Output:** β\* **plus every distinct local minimum**, plus diagnostics.
+
+### What landed
+
+- **Canonical dose parser unified** (the plan's "pick one canonical parser and
+  factor it into a shared helper"). `surrogate_data.read_dose_file(path)` is now
+  the single parser producing the `{'indices' (M,3), 'values' (M,)}` shape that
+  `save_field` persists and the PCA basis is built on;
+  `Geant4Module._read_scoring_output` **delegates to it** (keeping its
+  `ctx.workdir` join). `plotting/geant4_deposit_common.parse_deposit_file` stays
+  for header metadata only. Note `indices` is now a `(M,3)` array rather than a
+  list of tuples — `extract(['dose','peak_index'])` still returns a comparable
+  tuple, and `field()` no longer needs its own `np.asarray`.
+- **Voxel alignment (constraint #3, inversion side).** `project()` is a plain
+  `(dose - mean) @ Φᵀ`, so column *j* of the input must be the same physical voxel
+  as column *j* of the training grids. Added
+  `surrogate_data.align_to_indices(values, indices, reference_indices)` which
+  reorders a target by `(ix,iy,iz)` key and **hard-fails** if the target does not
+  cover the reference voxel set exactly (missing/extra/duplicate voxels ⇒ a
+  different mesh). `load_target_dose(spec)` dispatches `.npz` → `results.load_field`
+  vs. raw file → `read_dose_file`.
+- **`DoseSurrogate` now persists `voxel_indices`** — the `(M,3)` order its basis
+  columns correspond to (`fit(..., voxel_indices=)`, written into `basis.npz`,
+  read back by `load`, `None` for older models). `train_surrogate` passes
+  `ts.indices`. The mode resolves the order model → store → **hard-fail with a
+  fix**; it never guesses.
+- **Inversion core on `DoseSurrogate`:** `coeff_misfit(β, target_coeffs)` (the
+  coefficient-space objective, automatically in fit space) and
+  `invert(target_coeffs, *, bounds, num_starts, seed, cluster_tol)` — bounded
+  multi-start L-BFGS-B from a reproducible Sobol scatter (reusing
+  `sample_beta_doe`) plus the box center, then **clustering** converged solutions
+  into distinct minima (dedupe radius `cluster_tol`, default 2% of box span).
+  Default bounds = the model's own training box (outside it a GP extrapolates and
+  β\* is not trustworthy). Returns `InversionResult` (`beta`, `misfit`, `minima`,
+  `num_distinct`, `beta_dict()`, `relative_l2(surrogate, target, space='fit')`).
+- **`modes.invert_optimize(mode_cfg, workflow=None)`** — store/model-consuming
+  mode (`workflow` unused, dispatch symmetry). Config: `target` (req),
+  `model_dir` / `store`, `num_starts` (32), `seed`, `bounds` (reuses `_doe_bounds`),
+  `output_file`. Writes `inversion_result.txt` with one row per distinct minimum
+  (`rank, misfit, relative_l2, beta0..betaN`) and prints a non-uniqueness note
+  pointing at `invert_bayesian` when >1 minimum is found. Dispatched in `run_mode`
+  + allowed in `run_lume_ace3p`.
+- **Example** `examples/geant4_beta_surrogate/geant4_beta_surrogate_invert.yaml`.
+
+### Verification (Phase 4a) — ALL MET (2026-08-06, synthetic)
+
+`tests/test_inversion.py`, 21 tests, all local (no Geant4 env), reusing the
+Phase-3 synthetic β→dose fixture.
+
+- [x] **Recovery:** a dose from a known β inverts to β\* reproducing it
+  (fit-space rel-L2 < 0.05) and recovers the *identifiable* combinations of β. →
+  `test_recovery_of_known_beta`. **Important:** the fixture's amplitudes depend on
+  β only through group means, so individual components inside a group are
+  genuinely non-identifiable — the honest bar is dose-space recovery + recovery of
+  the identifiable combinations, *not* naive per-component β equality. That is the
+  real physics too, not a test weakness.
+- [x] Perfect-target sanity: noiseless target ⇒ misfit < 1e-6. →
+  `test_perfect_target_drives_misfit_to_zero`.
+- [x] Alignment: a row-shuffled target file gives a bit-identical β\*; a
+  different-mesh / duplicate-voxel target hard-fails. →
+  `test_align_reorders_shuffled_target`, `test_align_rejects_different_mesh`,
+  `test_align_rejects_duplicate_voxels`,
+  `test_mode_inverts_raw_dose_file_identically`.
+- [x] Both target sources agree. → `test_mode_inverts_npz_target` +
+  `test_mode_inverts_raw_dose_file_identically`.
+- [x] `log10` model inverts correctly in log space. → `test_log10_model_inverts`.
+- [x] Non-uniqueness reported: >1 distinct minimum, one table row each, all
+  explaining the target. → `test_reports_multiple_distinct_minima`,
+  `test_mode_inverts_npz_target` (row count + misfit ordering).
+- [x] Mode + `run_mode` dispatch + fixed-seed reproducibility + bounds respected.
+  → `test_run_mode_dispatches_invert_optimize`,
+  `test_invert_is_reproducible_and_bounded`, `test_invert_respects_custom_bounds`,
+  `test_mode_custom_bounds_and_output_file`.
+- [x] Back-compat: a model without `voxel_indices` loads; inversion uses a
+  store-supplied order or fails clearly. → `test_legacy_model_without_voxel_order`,
+  `test_trained_model_records_voxel_order`.
+
+**Still cluster-gated (unchanged from the plan):** reading a *real* Geant4 dose
+file end-to-end and science-level recovery against real data. The parser, the
+alignment guard, and the mode all run on real files by construction — what is
+untested locally is real data, not the plumbing.
+
+### Follow-up: identifiability reporting + YAML cleanup (2026-08-10) — DELIVERED
+
+Prompted by "can the non-unique solutions be ranked probabilistically?" The
+measured answer is **usually no**, and the reason is structural:
+
+- **The degeneracy is a continuous surface, not competing hypotheses.** The
+  Jacobian `∂c_GP/∂β` at β\* has **rank 3 on D=8** (unit-β coords: singular values
+  `1.8e2, 2.9e1, 1.2e1`, then 5 at machine zero). Since the surrogate reaches β
+  only through its `k` retained POD coefficients, **rank ≤ k**, so `k < D` makes
+  the inverse rank-deficient *by construction* — `D − k` β directions are
+  invisible to the dose. The real trained model also uses ~3 modes.
+- **The minima are all equally good.** A χ² (GP-variance-weighted) likelihood
+  gives the worst-vs-best minimum relative weight `1.0000`; every misfit is ~1e-10.
+  So ranking them sorts solver convergence noise, and presenting it as an evidence
+  ranking would imply a preference the data does not support.
+- The zero-set is **curved**: the straight line between the two most distant
+  minima shows a misfit hump (2.3e+01), but re-descending from that midpoint
+  restores ~8.5e-11 after moving only `‖Δβ‖=0.51`. Straight-line interpolation
+  simply leaves the manifold. (Worth recording — the hump initially *looks* like a
+  barrier separating genuine modes.)
+
+**What landed.** `DoseSurrogate.identifiability(beta)` finite-differences the GP
+coefficient mean in **unit-box coordinates** (dimensionless, so singular values are
+comparable across β with different physical ranges), SVDs the `(k, D)` Jacobian,
+and splits the right singular vectors at the numpy rank tolerance into the β
+combinations the dose constrains vs. cannot see. Returns an `Identifiability`
+(`rank`, `num_flat`, `singular_values`, `identifiable`, `null_space`,
+`sensitivity`, `summary()`, `describe_direction()`). On the synthetic fixture it
+correctly recovers the group *sums* as identifiable and the within-group
+*differences* as flat — from the GP alone.
+`InversionResult.minima_are_distinguishable()` gates the reporting language, and
+`invert_optimize` prints the headline, writes `identifiability.txt` (with a
+how-to-read preamble), and no longer claims equal-misfit minima are "ranked".
+Keys: `identifiability` (default true), `identifiability_file`.
+
+**YAML cleanup (a real fix, not cosmetic).** `train_surrogate` / `invert_optimize`
+reference `workflow` only in their signature, yet a `workflow:` block was
+*structurally required*: `_resolve_order` rejects an empty list and `main()` exited
+on a missing key. Added `modes.STORE_CONSUMING_MODES` (+ `mode_type_of` /
+`is_store_consuming`); `_run_declarative` now skips `Workflow.from_config` for
+those modes and `main()`'s gate is conditional. The two example YAMLs dropped
+their `workflow:` / `workflow_parameters:` / `input_parameters:` blocks — from
+~100 lines to **6–7 lines of actual config** each. `collect_training_data` is
+deliberately *not* store-consuming (it drives the chain). Both shipped examples
+verified end-to-end through the real CLI. Also documented all three surrogate
+modes in `docs/yaml_reference.md` (previously absent there) and corrected the
+example README, which described the `workflow:` block as "carried for schema
+symmetry".
+
+**Tests:** `tests/test_inversion.py` now 30 (was 21). New bars: rank/flat counts;
+**null space is genuinely flat** (stepping along it keeps misfit < 1e-3 while the
+same step along the best-constrained direction is >100× larger — the assertion
+that proves the basis is meaningful); `rank ≤ k` via a pinned `k=1` model;
+report artifacts + skip flag; minimal-YAML end-to-end with no `workflow:` key;
+shipped examples carry none; and a regression that chain-driving modes still
+require one. Full suite **175 passed** / 8 deselected.
+
+---
+
+# Phase 4b — `invert_bayesian` — DELIVERED (2026-08-10, synthetic)
+
+A posterior over β, which is the *correct* object for this problem: the
+identifiability finding showed the target is not a set of separated modes but a
+**curved, `D−k`-dimensional flat manifold** (5-D on the synthetic fixture). The
+posterior therefore comes out tight along the `rank` constrained directions and
+prior-wide along the flat ones — the honest answer to "how should these be
+ranked".
+
+### Decisions taken
+
+- **numpyro / NUTS as a core dependency** (user's call; `jax` + `jaxlib` come
+  transitively). Gradient-based sampling is the point: an ensemble sampler
+  explores a curved degenerate manifold poorly.
+- **Differentiable GP = a JAX re-expression of PREDICTION only.** Fitting stays
+  scikit-learn. A fitted GP's predictive mean/variance is closed form, so the
+  re-expression is elementwise RBF + one triangular solve, reading `X_train_`,
+  `alpha_`, `L_` and the fitted kernel hyperparameters.
+
+### What landed
+
+- **`src/lume_ace3p/surrogate_jax.py`** — all JAX isolated here, so
+  `surrogate.py` stays numpy/sklearn-only and the import cost is paid only by the
+  Bayesian path. `gp_params_from_sklearn` (with a **kernel-structure guard** —
+  reading `ConstantKernel * RBF + WhiteKernel` positionally would otherwise
+  silently mis-read a differently-fitted model into a wrong posterior),
+  `coeff_mean_var_fn` (jitted `β → (mean, var)`), `enable_x64`,
+  `sample_posterior_nuts`.
+- **`DoseSurrogate.sample_posterior(...)` + `PosteriorResult`** — model:
+  `β ~ Uniform(training box)`, `c_target ~ Normal(μ_GP(β), sqrt(Var_GP(β) + dose_sigma²))`
+  in the model's fit space. `dose_sigma` defaults to the model's own predictive std
+  at the box center (a scale set by the fit, not a magic constant).
+  `PosteriorResult` exposes `mean/median/std`, `credible_interval`, `prior_std`,
+  `max_r_hat`, and **`direction_widths(identifiability)`** — the payoff table of
+  posterior-vs-prior width per constrained/flat direction.
+- **`modes.invert_bayesian`** — store-consuming; shares the entire target seam
+  with `invert_optimize` via a new `_load_inversion_target` helper (so the two
+  cannot drift apart on the alignment-critical part). Writes
+  `posterior_samples.txt` + `posterior_summary.txt` (per-β summary, `r_hat`/`n_eff`,
+  and the direction-width table with a preamble stating that a prior-wide flat
+  direction is the *correct* outcome). Warns loudly when `max r_hat > 1.05`.
+- **Example** `geant4_beta_surrogate_invert_bayesian.yaml` (minimal, `mode:` only),
+  plus `docs/yaml_reference.md` and the example README.
+
+### Two empirical findings that became defaults
+
+1. **`num_chains` defaults to 4, and lowering it is dangerous.** One short chain
+   gave `r_hat = 1.61` and reported the flat directions at **~0.04–0.10× prior
+   width** — i.e. it looked as though the dose constrained β when it does not.
+   That is a *wrong scientific conclusion*, not merely a noisy one. Four chains:
+   `r_hat = 1.006`, flat widths ~1.1× (correct). `enable_x64(num_host_devices=)`
+   requests CPU devices so chains run in parallel (~31s vs ~112s).
+2. **`dense_mass=True` on the NUTS kernel is essential, not a tuning nicety.** The
+   flat directions are *correlated* combinations of β; a diagonal mass matrix
+   cannot represent that geometry, and more warmup does not fix it (`r_hat` stayed
+   1.1–1.4 at 2000 warmup, `n_eff` ≈ 4). Dense: `r_hat = 1.002`, `n_eff` ≈ 2060,
+   and faster.
+
+### Verification (Phase 4b) — ALL MET (2026-08-10, synthetic)
+
+`tests/test_bayesian.py`, 17 tests (9 algebraic + 8 real 4-chain NUTS runs, ~3 min
+total; all run in the default gate).
+
+- [x] **JAX ≡ sklearn** to `atol=1e-8` (measured 1.6e-9 mean / 1.3e-10 var) on a
+  β batch — the load-bearing guard on the re-expression, and it will catch a
+  future change in scikit-learn's internals. → `test_jax_prediction_matches_sklearn`.
+- [x] Gradients finite, non-zero, right shape. → `test_gradients_flow_through_the_jax_gp`.
+- [x] Unexpected / unfitted kernel raises clearly. →
+  `test_unexpected_kernel_is_rejected`, `test_unfitted_gp_is_rejected`.
+- [x] **Posterior recovers the identifiability split** — constrained directions
+  < 0.2× prior (measured 0.013–0.078), flat directions > 0.8× (measured
+  1.11–1.25). → `test_posterior_recovers_identifiability_split`.
+- [x] Truth's *identifiable combinations* inside the 90% CI (all 3). Deliberately
+  not per-component β — the flat directions are unconstrained by construction, so
+  a per-component bar would be testing the prior. →
+  `test_truth_identifiable_combinations_are_covered`.
+- [x] Convergence reported and healthy (`r_hat < 1.05`, `n_eff > 50`). →
+  `test_posterior_converges_and_reports_diagnostics`.
+- [x] Fixed-seed reproducible, prior box respected, custom bounds narrow the
+  posterior. → three tests.
+- [x] Mode + dispatch + both artifacts + minimal YAML with no `workflow:`. →
+  four tests. Shipped example also verified end-to-end through the real CLI.
+
+### Phase 4 overall verification — status
+
+- [x] **Recovery test** (both modes) — see 4a and 4b bars above.
+- [x] **Bayesian mode produces sensible uncertainty** that reflects what the data
+  constrains; `test_custom_bounds_narrow_the_posterior` shows it responds to prior
+  width. *(The original "widens with fewer training points" phrasing is subsumed
+  by the sharper, structural statement: width tracks identifiability.)*
+- [ ] **Both modes read a real Geant4 dose file end-to-end** — still cluster-gated.
+  The parser, alignment guard and both modes run on real files by construction;
+  what is untested locally is real data, not the plumbing.
 
 ---
 
