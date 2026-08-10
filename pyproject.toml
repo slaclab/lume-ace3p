@@ -25,10 +25,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Slow, botorch-backed GP-fitting tests (real model construction + stepping) are
-# excluded by default so the routine suite stays fast. Opt in for a full run
-# before a master merge:  pytest -m slow   (or  pytest -m ""  for everything).
-addopts = "-m 'not slow'"
-markers = [
-    "slow: botorch GP-fitting tests (~minutes each); excluded by default, run with -m slow",
-]
+# There is deliberately NO excluded-by-default test tier. The old 'slow' marker
+# held botorch GP-fitting tests that cost minutes-to-hours each (one did not
+# finish in 2h), so in practice they were never run and gated nothing; they were
+# removed in 2026-08 (see tests/test_run_xopt_compat.py and
+# baseline_utils.NOT_FROZEN). `pytest` now means the whole suite.
