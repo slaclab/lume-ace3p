@@ -18,8 +18,11 @@ Design notes
   and "every requirement has a producer". The per-module ``requires``/``provides``
   sets in :mod:`lume_ace3p.modules` carry the rest (solver needs ``mesh``,
   ``acdtool`` needs ``em_solution``, ``particles`` needs ``track3p_particles``,
-  ``geant4`` needs ``particle_source``). A future runnable Track3P/T3P solver
-  that ``provides {track3p_particles}`` slots in with no rule change: it simply
+  ``geant4`` needs ``particle_source``). ``t3p`` was added this way — it provides
+  ``td_solution``, distinct from ``em_solution``, so listing ``acdtool`` after a
+  T3P solver is a validation error rather than RF postprocessing pointed at
+  time-domain output. A future runnable Track3P solver that ``provides
+  {track3p_particles}`` slots in the same way, with no rule change: it simply
   becomes the producer that satisfies ``particles``.
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
   input point and returns the structured output dict. Sweep / Xopt loops (the
@@ -30,7 +33,9 @@ import os
 
 import numpy as np
 
-from lume_ace3p.modules import RunContext, build_module, STAGE_MODES
+from lume_ace3p.modules import (
+    RunContext, build_module, STAGE_MODES, T3PModule,
+)
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 
@@ -40,10 +45,10 @@ class WorkflowValidationError(ValueError):
     runnable DAG (duplicate producer, unmet requirement, cycle, empty list)."""
 
 
-# Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/acdtool)
-# vs. the Geant4 binary — used only to auto-enable dry-run when the matching
-# environment is absent, mirroring the legacy per-workflow behavior.
-_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 'acdtool'})
+# Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/t3p/
+# acdtool) vs. the Geant4 binary — used only to auto-enable dry-run when the
+# matching environment is absent, mirroring the legacy per-workflow behavior.
+_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
 
 
@@ -69,12 +74,23 @@ def _infer_output_module(spec):
         -> ``s3p``,
       * ``['RoverQ'|'kickFactor'|'maxFieldsOnSurface', ...]`` -> ``acdtool``,
       * ``['dose'|'edep'|'scoring', ...]`` -> ``geant4``,
-      * ``'count'``/``'total_weight'`` -> ``particles``.
+      * ``'count'``/``'total_weight'`` -> ``particles``,
+      * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
+        naming one / keyed ``at: {s: ...}`` -> ``t3p``.
+
+    Note ``acdtool``'s ``kickFactor`` section and T3P's ``kick_factor`` quantity
+    are distinct spellings on purpose, so the two never collide here.
     """
     if isinstance(spec, dict):
+        quantity = spec.get('quantity')
+        at = spec.get('at') or {}
+        if quantity in T3PModule.QUANTITIES or 's' in at:
+            return 't3p'
         return 's3p'
     if isinstance(spec, str):
-        return 'particles' if spec in ('count', 'total_weight') else 's3p'
+        if spec in ('count', 'total_weight'):
+            return 'particles'
+        return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
         if head in ('RoverQ', 'kickFactor', 'maxFieldsOnSurface'):
@@ -83,7 +99,7 @@ def _infer_output_module(spec):
             return 'geant4'
         if head in ('count', 'total_weight'):
             return 'particles'
-        return 's3p'
+        return 't3p' if head in T3PModule.QUANTITIES else 's3p'
     raise WorkflowValidationError(f"cannot route output spec {spec!r}.")
 
 

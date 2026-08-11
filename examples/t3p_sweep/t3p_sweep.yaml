@@ -1,0 +1,62 @@
+# T3P wakefield parameter sweep on the declarative module/mode schema:
+#   workflow:  cubit -> t3p
+#   mode:      parameter_sweep  (tensor product over the swept input axes)
+#
+# T3P is the ACE3P time-domain code. This sweeps two pillbox-cavity geometry
+# knobs and reports the longitudinal loss factor of each geometry, plus the
+# wake potential W(s).
+#
+# T3P exposes an 's' field index (the wake coordinate, in metres), so the result
+# table is emitted long-format — one row per (cell_radius, iris_radius, s) —
+# exactly as an S3P sweep goes long over Frequency. 'loss_factor' is a per-run
+# scalar, so it repeats down each run's block of rows.
+#
+# NOTE on disk: the .t3p file declares a Volume monitor writing a field dump
+# every 0.2 ns, ~60 MB per grid point. A 3x3 sweep is therefore ~0.5 GB. See the
+# README before scaling this up.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_t3p_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'pillboxwg.jou'
+  - module : t3p
+    input : 'pillboxwg-closed.t3p'
+    tasks : 16
+    cores : 16
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 't3p_sweep_output.txt'
+
+input_parameters :
+  cubit :
+    'cell_radius' :
+      'min' : 0.045
+      'max' : 0.055
+      'num' : 3
+    'iris_radius' :
+      'min' : 0.020
+      'max' : 0.030
+      'num' : 3
+
+output_parameters :
+  # Per-run scalar: the longitudinal loss factor from the WakeField monitor
+  # header, in V/pC. Use 'kick_factor' instead for a transverse-wake model.
+  'loss_factor' :
+    module : t3p
+    quantity : 'loss_factor'
+  # s-indexed array: the wake potential, one value per row of the long table.
+  'W' :
+    module : t3p
+    quantity : 'W'
+  # A scalar sampled at one wake position (nearest s on the solver's grid) —
+  # this is the shape an Xopt objective takes.
+  'W_at_10cm' :
+    module : t3p
+    quantity : 'W'
+    at :
+      s : 0.10

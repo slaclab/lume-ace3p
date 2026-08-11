@@ -1,0 +1,62 @@
+ModelInfo:
+{
+  File: ./pillboxwg.ncdf
+  BoundaryCondition:
+  {
+    Exterior: 6 5
+    Absorbing: 3 4
+    Magnetic: 1 2
+  }
+}
+
+FiniteElement:
+{
+  Order: 2
+  CurvedSurfaces: on
+}
+
+LoadingInfo:
+{
+  Bunch:
+  {
+    Type: Gaussian
+    Sigma: 0.01
+    Number of sigmas: 5
+    Charge: 1.e-12
+  }
+  SymmetryFactor: 4 //matches bc
+  StartPoint: 0.0, 0.0, -0.075
+  Direction: 0.0, 0.0, 1.0
+  BoundaryID: 3
+}
+
+TimeStepping:
+{
+  MaximumTime: 5e-9  
+  DT: 2e-12
+}
+
+Monitor:
+{
+  Type: Volume
+  Name: mymon
+  TimeStart: 0e-9
+  TimeEnd:   5e-9
+  TimeStep:  0.2e-9
+}
+
+Monitor:
+{
+  Type: WakeField
+  Name: wakefield
+  StartContour: -0.075
+  EndContour:  0.075
+  Smax: 1.4
+}
+
+LinearSolver: 
+{
+  Solver:              MUMPS            
+}
+
+//END

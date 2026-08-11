@@ -99,6 +99,34 @@ pairs, so duplicates are preserved end-to-end; matching overrides from
 the `ace3p:` sub-block of `input_parameters` are merged positionally back
 into the file.
 
+Both brace placements are accepted — on the key's line (`ModelInfo : {`, the
+usual Omega3P/S3P style) or on its own line below it, which is how the T3P
+tutorial examples are written:
+
+```
+ModelInfo:
+{
+  File: ./my_mesh_file.ncdf
+}
+```
+
+:::{important}
+Some ACE3P keys contain spaces — T3P's `Number of sigmas`, `Curved Surfaces`
+and `Start contour`, for instance. The parser preserves them verbatim, and the
+solver strips whitespace from keys internally (`t3p.out` echoes the parsed input,
+where it appears as `Numberofsigmas`). An override key in the `ace3p:` block must
+therefore be spelled **exactly as it appears in your input file**, spaces
+included:
+
+```yaml
+input_parameters :
+  ace3p :
+    'LoadingInfo' :
+      'Bunch' :
+        'Number of sigmas' : 6
+```
+:::
+
 When you provide an ACE3P input file via the solver module's `input:` key
 and the `ace3p:` overrides do not change or sweep any value inside
 it, the file is copied to each working directory verbatim — no parse /
