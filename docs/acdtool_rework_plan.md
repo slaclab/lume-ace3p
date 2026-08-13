@@ -1,7 +1,13 @@
 # Acdtool Rework + Output-Spec Migration — Implementation Plan
 
-**Status: NOT STARTED.** Planned 2026-08-13 from a cross-reference of the CW23
-ACE3P tutorial archive against the current module layer. No code written yet.
+**Status: PHASE 0 COMPLETE** (2026-08-13). Phases 1–6 not started. Planned
+2026-08-13 from a cross-reference of the CW23 ACE3P tutorial archive against the
+current module layer, then **revised 2026-08-13 against the acdtool user guide**
+(see below), which corrected several assumptions — read
+"Revision: the acdtool user guide" before starting any phase. Phase 0 made no
+`src/` changes; all four originally confirmed defects were reproduced against
+real files and are now pinned by characterization tests in
+`tests/test_acdtool_fixtures.py`.
 
 This plan reworks how `acdtool` is invoked and parsed, and migrates
 `output_parameters` off the positional `['section', 'mode_id', 'column']` list
@@ -9,28 +15,178 @@ form onto the explicit mapping form already used by S3P/T3P objectives.
 
 ---
 
+## Revision: the ACE3P command references
+
+**Primary references: `references/*-commands.pdf`** — eight SLAC ACD documents
+covering `acdtool` (32 pp), `omega3p` (15), `s3p` (13), `t3p` (25), `track3p`
+(16), `pic3p` (16), `gun3p` (17) and `TEM3P` (24). **Committed to the repo
+2026-08-13** (publicly available material); see `references/README.md` for
+provenance and the text-extraction recipe. None were available when this plan was
+first written — the original Motivation was reverse-engineered from CW23 batch
+scripts and input files alone, which is why the corrections below exist.
+
+**The whole document set validates this rework's premise.** Every solver
+reference ends with the same line: *"Note: Refer to acdtool command syntax for
+postprocessing capabilities."* — omega3p, s3p, t3p, track3p, pic3p and TEM3P all
+say it, and none of them document their own output formats. acdtool is *the*
+postprocessing layer for all of ACE3P, so it is more central than this plan
+claimed, not less. **No phase is invalidated and none needs restructuring.**
+
+### What the acdtool guide changes, in order of consequence
+
+1. **The command surface is 19 commands, not 6** — see the table below. CW23
+   itself uses **9**, two of which (`postprocess pic3pconvert`,
+   `postprocess pic3pstats`) this plan missed entirely.
+2. **`postprocess track3p`'s second argument was misread.** It is `<jobname>`,
+   not a field level. See defect 6.
+3. **`transwake` overwrites the artifact T3P already provides**, and
+   `parse_wakefield` already reads the result. See defect 7 — this makes the
+   transwake work *smaller* than planned, but reorders it.
+4. **The `.rfpost` format has 24 blocks, not 19**, in five shapes rather than
+   four, and several output filenames are not what this plan assumed. See "The
+   `.rfpost` format" below.
+5. **Only `postprocess rf` and `postprocess volmontomode` run in parallel;** the
+   other 17 are serial. This is the authoritative answer to defect 4.
+6. **The guide documents inputs, not outputs.** It gives the complete input
+   schema for every block — so Phase 2/3 need no longer guess at input keys — but
+   shows almost no output samples. **The Phase 0 blocking note therefore still
+   stands unchanged:** the guide does *not* tell us what `kickFactor` or
+   `maxFieldsOnSurface` print, which remains Phase 3's largest risk.
+
+### What the solver guides change
+
+7. **`JobName` is undocumented for every solver this plan touches** — the
+   highest-consequence finding of the second pass. See "JobName is not an input
+   key" below. It affects Phase 1 and Phase 2.
+8. **Defect 7 is confirmed from the T3P side**, and extends to `wake_new` /
+   `wake_direct`: the T3P reference says the acdtool wake commands write
+   `t3p_results/OUTPUT/wakefield.out`, "where the file name 'wakefield' has been
+   specified in Monitor". The overwrite is by design.
+9. **`postprocess track3p` largely duplicates Track3P's own `Postprocess`
+   container**, which has the same `EnhancementCounter` with the same keys. Only
+   the `Trajectory` block (explicit `ParticleID` selection) and `OutputFile` are
+   unique to the acdtool route. This *shrinks* Phase 2 — see the scope table.
+10. **`mesh deform` duplicates TEM3P's `MeshDump`**, which has `MeshDeformScale`
+    and writes the deformed vacuum mesh straight into `EMMeshInputDir`. The
+    acdtool guide itself calls `mesh deform` a visualization convenience for small
+    deformations. Reinforces design decision 3 and gives a cleaner route if the
+    TEM3P chain is ever attempted.
+11. **S3P's reference documents no output files at all** — no `Reflection.out`,
+    `SParameter.out` or `PortRef<n>_<m>.out`. Phase 5 rests entirely on the
+    Phase-0 fixtures. Not a blocker, but they are the only source.
+12. **PIC3P and Gun3P are now fully specified but remain OUT OF SCOPE**
+    (user decision, 2026-08-13: record as future work only, no phase committed).
+    PIC3P is structurally close to T3P (`ModelInfo`, `FiniteElement`, `PRegion`,
+    `Loading`, `TimeStepping`, `Monitor`, `LinearSolver`, `CheckPoint`), so a PIC3P
+    module would be a small lift and would give `pic3pstats` / `pic3pconvert`
+    somewhere to live — the natural next module after this plan. Gun3P is
+    structurally different (`DCGunProblem`, `ElectrostaticProblem`,
+    `MagnetostaticProblem`, `Tracker`, `Gun3pOutputConverter`) and a larger lift.
+    Note both in `docs/acdtool_reference.md` (Phase 6) so the gap is visible; do
+    not start either here.
+
+### `JobName` is not an input key (affects Phases 1 and 2)
+
+**No solver reference documents a `JobName` container.** The complete top-level
+command lists are:
+
+| Solver | Top-level containers |
+|---|---|
+| Omega3P | `ModelInfo`, `FiniteElement`, `PRegion`, `EigenSolver`, `Port`, `PostProcess` |
+| S3P | `ModelInfo`, `FiniteElement`, `FrequencyScan`, `Port`, `Loading`, `LinearSolver`, `PostProcess` |
+| T3P | `ModelInfo`, `FiniteElement`, `PRegion`, `LoadingInfo`, `Loading`, `TimeStepping`, `Monitor`, `LinearSolver`, `CheckPoint` |
+| Track3P | `TotalTime`, `ParticlesTrajectories`, `FieldScales`, `NormalizedField`, `Emitter`, `Domain`, `Material`, `OutputImpacts`, `SingleParticleTrajectory`, `Postprocess` |
+| PIC3P | `ModelInfo`, `FiniteElement`, `PRegion`, `Loading`, `TimeStepping`, `Monitor`, `LinearSolver`, `CheckPoint` |
+
+`JobName` appears in exactly one reference — **gun3p**, and there it sits *inside*
+the `Tracker` container (`JobName: ./gun3p_results/OUTPUT`) with the note *"Make
+sure it's the same name used in the job submission batch file."* The acdtool guide
+agrees: `ResultDir` is *"the 'Jobname' specified in the batch job submission
+script."*
+
+Corroborating from the data: **no CW23 input file of any type sets `JobName`** —
+verified across every `.omega3p`, `.s3p`, `.t3p` and `.track3p` in `examples/`.
+Every one relies on the per-solver default.
+
+So `T3P.results_dir()`'s `get_leaf('JobName')` lookup at
+`src/lume_ace3p/ace3p.py:424` **has never been exercised by real data.** It works
+because it falls through to `default_job_name = 't3p_results'`. There is one piece
+of counter-evidence — `t3p_results/OUTPUT/postprocess.in`, the KVC echo T3P writes
+of its own resolved input, does contain `JobName : t3p_results` — which suggests
+the solver has an internal JobName a `.t3p` file might be able to set. That is
+inference, not documentation.
+
+**Consequences:**
+
+- Phase 1 should *not* frame Omega3P's `results_dir()` as "resolve `JobName` from
+  the input tree the way T3P does". The **default is the authoritative path**; an
+  input-tree `JobName` is a best-effort override.
+- Phase 2's verification bullet "a `.s3p` fixture with `JobName: custom_results`
+  parses from that directory" would pin behavior that may not match the solver. If
+  s3p ignores an input-file `JobName`, a real run writes to `s3p_results/` while
+  our code looks in `custom_results/` and raises `FileNotFoundError`.
+- **The reliable mechanism is a module-level YAML key** (`results_dir:` or
+  `job_name:`), because that is how the directory is really chosen — in the batch
+  script, outside the input file. Add it alongside the `JobName` lookup rather
+  than instead of it, and keep the lookup as a harmless fallback.
+- Do not "fix" this by deleting the `JobName` lookup; it costs nothing and may be
+  real. Fix the *framing* and the *test*.
+
+---
+
 ## Motivation
 
 The `acdtool` wrapper was built for exactly one command against exactly one
-Omega3P section. CW23 shows the tool is much broader, and three of the gaps are
-live bugs rather than missing features.
+Omega3P section. The tool is far broader, and several of the gaps are live bugs
+rather than missing features.
 
 ### Reference data: what acdtool actually is
 
-CW23 (`/home/dbizzoze/CW23`, `examples/` and `exercises/` — near-duplicate
-trees; ignore the `a3pi/`, `A3PI_config_single`, `workflow_test_single/`
-subtrees, which belong to a defunct ancestor project) uses **six** acdtool
-commands. The wrapper supports one.
+Sources: `acdtool-commands.pdf` for the command surface; CW23
+(`/home/dbizzoze/CW23`, `examples/` and `exercises/` — near-duplicate trees;
+ignore the `a3pi/`, `A3PI_config_single`, `workflow_test_single/` subtrees, which
+belong to a defunct ancestor project) for real call sites and data.
 
-| Command | Input form | Consumes | Supported today |
-|---|---|---|---|
-| `meshconvert <f>.gen` | positional | genesis mesh | yes, but inside `cubit.py`, not `acdtool.py` |
-| `postprocess rf <f>.rfpost` | `.rfpost` file (`=` dialect) | Omega3P **or** S3P results | yes |
-| `postprocess transwake <dir> x1 y1 x2 y2` | positional | T3P results | **no** |
-| `postprocess coaxsignal <dir>` | positional | T3P results | **no** |
-| `postprocess volmontomode <dir>` | positional | T3P results | **no** |
-| `postprocess track3p <f>.acdtool <level>` | `.acdtool` file (`:` dialect) + field level | Track3P results | **no** |
-| `mesh deform <in>.ncdf <out>.ncdf <scale>` | positional | TEM3P deformed mesh | **no** |
+acdtool exposes **19 commands**: three top-level, five `mesh` subtasks and eleven
+`postprocess` subtasks. The wrapper supports one. "CW23" counts invocations
+across every batch script in `examples/` and `exercises/`.
+
+| Command | Input form | Consumes | CW23 | Supported today |
+|---|---|---|---|---|
+| `meshconvert <f>.gen [out.ncdf]` | positional | genesis mesh | 50 | yes, but inside `cubit.py`, not `acdtool.py` |
+| `meshconvertdirect <f>.gen [out.ncdf]` | positional | genesis mesh | — | **no** |
+| `resource <f>.omega3p` | positional | Omega3P input | — | **no** |
+| `mesh stats <f>.ncdf` | positional | mesh | (implicit) | **no** |
+| `mesh check <f>.ncdf` | positional | mesh | (implicit) | **no** |
+| `mesh fix <in>.ncdf <out>.ncdf` | positional | mesh | — | **no** |
+| `mesh deform <in>.ncdf <out>.ncdf <scale>` | positional | TEM3P deformed mesh | 2 | **no** |
+| `mesh warpsurface <warp.in>` | `warp.in` file (**third dialect**) | mesh | — | **no** |
+| `postprocess rf <f>.rfpost` | `.rfpost` file (`=` dialect) | Omega3P **or** S3P results | 16 | yes |
+| `postprocess eigentomode <jobname>` | positional | Omega3P/S3P results | — | **no** |
+| `postprocess volmontomode <jobname>` | positional | T3P/PIC3P results | 2 | **no** |
+| `postprocess wake_new <jobname> <x y>` | positional | T3P results | — | **no** |
+| `postprocess wake_direct <jobname> <x y>` | positional | T3P results | — | **no** |
+| `postprocess transwake <jobname> <x1 y1> <x2 y2>` | positional | T3P results | 2 | **no** |
+| `postprocess coaxsignal <jobname>` | positional | T3P results | 2 | **no** |
+| `postprocess pic3pstats <f>.ncdf <symmetry factor>` | positional | PIC3P particles | 1 | **no** |
+| `postprocess pic3pconvert <f>` | positional | PIC3P particles | 2 | **no** |
+| `postprocess track3p <f>.acdtool <jobname>` | `.acdtool` file (`:` dialect) + jobname | Track3P results | 2 | **no** |
+| `postprocess project <eigenmodes> [displacements]` | positional | TEM3P results | — | **no** |
+
+Notes that matter for dispatch:
+
+- **`<jobname>` is a name, not a path.** Every positional `postprocess` command
+  takes the solver's `JobName` (defaulting per solver: `omega3p_results`,
+  `s3p_results`, `t3p_results`, `pic3p_results`, `track3p_results`). This is the
+  same resolution `T3P.results_dir()` already does, and the reason Phase 2 also
+  gives `S3P` a `results_dir()`.
+- **`mesh stats` and `mesh check` are run internally by `meshconvert`** — CW23
+  never calls them directly, but their output appears in `meshconvert` logs.
+- **`mesh warpsurface` introduces a third input dialect**: flat `Key: value`
+  lines with no braces (`File:` / `ExteriorBoundary:` / `WarpFile:`), distinct
+  from both `.rfpost` (`=`) and KVC (`:` with braces). Recommend scoping it out.
+- **`resource` and `project` write to stdout / `acdtool.log`**, not to a
+  structured output file.
 
 Call sites, for a fresh session that wants to see the real scripts:
 
@@ -39,33 +195,114 @@ Call sites, for a fresh session that wants to see the real scripts:
 - `postprocess coaxsignal` — `examples/t3p/BPM/run-t3p.batch`
 - `postprocess volmontomode` — `examples/t3p/SIBC/run-t3p.batch`
 - `postprocess track3p` — `examples/track3p/Pillbox/run-acdtool.batch` + `Pillbox.acdtool`
+- `postprocess pic3pconvert`, `postprocess pic3pstats` — `examples/pic3p/LCLSGun/run-post.sl`
 - `mesh deform` — `examples/tem3p/RfGun-Coupler/run-scale-deformed-mesh.sh`
 
-### The `.rfpost` format has 19 blocks; the parser implements 3
+### Serial vs parallel
 
-Every Omega3P `.rfpost` in CW23 is the same 19-block template gated by `ionoff`
-flags. `acdtool.py::output_parser` implements `RoverQ`, `kickFactor`,
-`maxFieldsOnSurface`; the other 16 print `"parsing not implemented"`.
+The guide states: *"acdtool submodules run serially with the exception of acdtool
+postprocess volmontomode and acdtool postprocess rf."* CW23's own invocations
+match — `srun -n 1 -c 1` for `rf`, `srun -n 1 -c 256` for `transwake`, `srun -n
+1` for `volmontomode` and `track3p`. So the launcher is always one rank in
+practice, and only `rf`/`volmontomode` could ever use more. Phase 2's defect-4
+fix should therefore emit one rank for every command and treat `rf` /
+`volmontomode` as the only candidates for a configurable rank count.
 
-The 19 blocks collapse into **four shapes**, which is what makes the parser
-rework tractable:
+### The `.rfpost` format has 24 blocks; the parser implements 3
+
+`acdtool.py::output_parser` implements `RoverQ`, `kickFactor`,
+`maxFieldsOnSurface`; every other block prints `"parsing not implemented"`.
+
+**Two block sets, and they disagree.** The CW23 `.rfpost` template has 19
+sections (`RFField` + 18 postprocess blocks). The guide lists 20 functionalities
+and documents a 21st (`RoverQRoverQT`) in its body without listing it. Neither is
+a superset:
+
+- In CW23 but **absent from the guide**: `Track`, `TrackScan`, `coaxPort`.
+- In the guide but **absent from CW23's template**: `pointRoverQ`, `dFSlater`,
+  `RoverQRoverQT`, `IMPACTMap`, `OpenPMD_IMPACT`.
+
+The union is **24 blocks** (`RFField` + 23 postprocess). CW23's template is from
+an older acdtool build than the guide, and CW23 shipped blocks the guide dropped.
+**Consequence for Phase 2: the input parser must tolerate unknown blocks rather
+than enumerate a fixed list**, in both directions — a newer template will carry
+blocks we have never seen, and an older one carries blocks the guide forgot.
+
+`acdtool postprocess rf` with **no arguments** writes a `sample.rfpost` template
+for the installed build. That is the correct source for
+`make_default_input` — see Phase 6 item 3.
+
+The 24 blocks collapse into **five shapes**:
 
 | Shape | Index axis | Blocks | Written to |
 |---|---|---|---|
-| Mode-indexed table | `ModeID` | `RoverQ`, `RoverQT`, `kickFactor`, `VFFT`, `ALLFieldAtPoint`, `coaxPort` | `rfpost.out` |
+| Mode-indexed table | `ModeID` | `RoverQ`, `RoverQT`, `RoverQRoverQT`, `kickFactor`, `pointRoverQ`, `dFSlater`, `VFFT`, `ALLFieldAtPoint`, `coaxPort` | `rfpost.out` |
 | Surface-indexed scalars | `surfaceID` | `maxFieldsOnSurface`, `powerThroughSurface` | `rfpost.out` |
+| Single-mode scalars | — (uses `RFField`'s `ModeID`) | `FieldAtPoint` | `rfpost.out` |
 | Column curve files | position / phase | `FieldOnLine`, `ALLFieldOnLine`, `Multipole`, `GBZFFT`, `Track`, `TrackScan` | **separate files** |
-| Grid / mesh | — | `FieldMap`, `fieldOnSurface`, `fieldOn2DBoundary` | separate files |
+| Grid / mesh | — | `FieldMap`, `IMPACTMap`, `OpenPMD_IMPACT`, `fieldOnSurface`, `fieldOn2DBoundary` | separate files |
 | Run-level scalars | — | `[scaling]` (always emitted, never declared) | `rfpost.out` |
 
-The six **curve** blocks are the easy ones despite looking hardest: a block with
-a `filename` key writes plain `#`-commented column tables with a header row, one
-file set per mode. See `examples/s3p/window/` → `field1_0`, `field1_0.ec`,
-`field1_0.bc` (`.ec`/`.bc` carry complex E/B with amplitude+phase columns). This
-is the same shape `ace3p.py::parse_wakefield` already handles, so one
-header-driven column reader covers all six.
+`FieldAtPoint` is its own shape: it is a valid container, but unlike
+`ALLFieldAtPoint` it has no `modeID1`/`modeID2` and evaluates only the single
+mode named in `RFField`. It has no index axis at all, so it resolves to scalars
+directly — the same treatment design decision 2 gives surface-indexed sections,
+but without needing an `at:`.
+
+Blocks with **`modeID1`/`modeID2`** are the mode-indexed ones, and the guide
+pins the semantics this plan's `at:` design depends on: `modeID1 = -1` means mode
+0, `modeID2 = -1` means *all modes the solver produced*. So the CW23 default
+`-1 / -1` already means "every mode" — which is exactly the case the mapping form
+without `at:` is for, and confirms the plan's read that the middle element of
+`['RoverQ', '0', 'RoQ']` is an index axis rather than a selector.
+
+**Curve/grid output filenames are not uniform.** The plan originally assumed
+"a block with a `filename` key writes `<filename>` per mode". Per the guide:
+
+| Block | Writes |
+|---|---|
+| `FieldOnLine` | `<filename>.e` and `<filename>.b` (real fields at `rfphase`), `<filename>.ec` / `<filename>.bc` (complex) |
+| `ALLFieldOnLine` | `<filename>_<modeID>` (E **and** B together, plus `Sz`), `<filename>_<modeID>.ec` / `.bc` |
+| `FieldMap` | **fixed** names `Efield-map.dat` / `Bfield-map.dat` — no `filename` key at all |
+| `IMPACTMap` | `EBfield-map-<filename>.dat`, IMPACT format |
+| `OpenPMD_IMPACT` | `E_Real.h5`, `E_Imag.h5`, `B_Real.h5`, `B_Imag.h5` — **HDF5**, not text |
+
+So `FieldOnLine` and `ALLFieldOnLine` use *different* naming schemes and
+different column sets: the Phase-0 fixture `curves/field1_0` is the
+ALLFieldOnLine form (10 columns, `x y z Ex Ey Ez Bx By Bz Sz` — no separate
+`.e`/`.b`), while `FieldOnLine` splits E and B into two files. Phase 3 needs both
+and cannot infer one from the other.
+
+They also differ in **scaling**, which matters for interpreting the numbers:
+`FieldOnLine` fields are scaled to `RFField`'s `gradient`; `ALLFieldOnLine`
+fields come straight from the eigenmode, normalized to total stored energy. That
+is the same distinction `[scaling]`'s `m_factor` records.
+
+The curve blocks remain the easy ones — a `#`-commented column table with a
+header row, the shape `ace3p.py::parse_wakefield` already handles — but one
+reader covers all six only if it is driven by the header row rather than by an
+assumed filename pattern.
 
 The genuinely fiddly parsing is confined to `rfpost.out`.
+
+### Other input semantics the guide pins down
+
+- **`z1`/`z2`/`gz1`/`gz2` above `1e6` are sentinels**, not coordinates: they mean
+  "use the minimum/maximum z of the computational domain". This is why CW23
+  writes `z1 = 100000000.00000` — it is not a 100 m integration path. Anything
+  that validates, sweeps or rescales these values must not treat them as lengths.
+- **`powerThroughSurface` output is complex** (unit W), real part being the
+  average power flow from the complex Poynting vector. The target design's
+  `'P_out': {..., quantity: Power, at: {surface: 6}}` therefore needs the same
+  real/imag treatment as Omega3P's `Frequency`, not a plain scalar.
+- **`VFFT` has a `printGroup` key** (`nterm` | `ModeID`) that changes how its
+  results are *grouped in the output* — by multipole component or by mode. A
+  mode-indexed reader for `VFFT` must handle both groupings or reject the one it
+  does not implement, naming `printGroup`.
+- **`gradient = -1` means "no scaling"**, which is what selects the point-scaled
+  `[scaling]` variant seen in the `s3p/window` fixture.
+- **`ModeID` in `RFField` means different things per solver**: eigenmode index for
+  Omega3P, port-mode (excitation) index for S3P, ordered by port then mode.
 
 ### Confirmed defects (all reproduced against real CW23 files)
 
@@ -73,7 +310,12 @@ The genuinely fiddly parsing is confined to `rfpost.out`.
    designed to hold lists (`portID`, `porta`, `portb`). CW23 ships them empty
    (`portID = {  }`), which round-trips. Filled in the natural multi-line way,
    `input_parser` stores `portID = '{'`, discards the contents, and the stray `}`
-   closes the block early — no error raised.
+   closes the block early — no error raised. **The write side is broken too:**
+   `write_input` emits the truncated `portID = {` verbatim, producing a file with
+   unbalanced braces that acdtool cannot read. Both halves are pinned by
+   `test_defect1_multiline_brace_value_is_truncated` and
+   `test_defect1_roundtrip_writes_unbalanced_braces`; Phase 2 must fix the writer
+   so it always emits a structurally valid file, not only the reader.
 
 2. **`.acdtool` files use a different dialect and parse to nothing.**
    `.rfpost` is `key = value`; `.acdtool` (for `postprocess track3p`) is KVC
@@ -81,6 +323,16 @@ The genuinely fiddly parsing is confined to `rfpost.out`.
    `=`, so `Pillbox.acdtool` parses to
    `{'EnhancementCounter:': {}, 'Trajectory:': {}}` — two empty blocks, silently.
    `ace3p.py::parse_ace3p` reads the same file correctly.
+
+   **Revised treatment (2026-08-13):** with `postprocess track3p` demoted to
+   table-row-only, Phase 2 does **not** route the KVC dialect. The fix becomes
+   *"fail loudly instead of silently"* — detect a `.acdtool` input and raise a
+   clear error naming the unsupported command, rather than parsing to two empty
+   blocks and proceeding. The silent-empty-parse behavior is the actual defect;
+   the dialect support is a feature that can land when
+   `Trajectory`/`ParticleID` extraction is wanted. `parse_ace3p` is ready when it
+   is. The Phase-0 characterization test stays a characterization test — do not
+   invert it; add a new test for the raised error.
 
 3. **`[scaling]` ships unclosed in the S3P case.** In
    `examples/s3p/window/rfpost.out` the `[scaling]` block has no closing `}`,
@@ -90,6 +342,10 @@ The genuinely fiddly parsing is confined to `rfpost.out`.
 4. **`--nodes=1 --ntasks=1` is srun-only.** `acdtool.py` hardcodes it. `ace3p.py`
    guards `--cpu-bind` against non-srun callers; `Acdtool` has no equivalent, so a
    non-srun `MPI_CALLER` breaks the step. CW23 itself uses `srun -n 1 -c 1`.
+   Worse for the unsupported commands: `run()` with a `.acdtool` input launches no
+   subprocess **and never sets `self.output_file`**, so a later `load_output()`
+   raises `AttributeError` rather than reporting a missing output
+   (`test_run_rejects_unknown_extension`).
 
 5. **Two of the three implemented parsers are unvalidated.** Grepping every
    `.out` in CW23 for section headers yields only `[scaling]` (15×) and
@@ -97,6 +353,76 @@ The genuinely fiddly parsing is confined to `rfpost.out`.
    `maxFieldsOnSurface`. Current tests use hand-written fixtures
    (`tests/test_modules.py::RFPOST_OUTPUT`). `examples/omega3p_sweep` depends on
    `maxFieldsOnSurface` for `E_max`, so that path rests on assumed format.
+   **The user guide does not close this gap** — it specifies inputs, not output
+   formats. Phase 3's blocking note stands.
+
+### Defects found in this plan itself (from the user guide, 2026-08-13)
+
+6. **`postprocess track3p`'s second argument is `<jobname>`, not a field level.**
+   This plan's command table read `postprocess track3p <f>.acdtool <level>` and
+   glossed it as "`.acdtool` file + field level". The guide gives
+   `acdtool postprocess track3p <inputfile.acdtool> <jobname>`, and CW23's call
+   site settles it: `acdtool postprocess track3p Pillbox.acdtool 2.3MV`, where
+   `2.3MV` is a **directory** — `examples/track3p/Pillbox/2.3MV/` holds
+   `ImpactsInfo_2.3e+07`, `InputParameters`, `OUTPUT/`, `PARTICLES/` and `en`
+   (the `EnhancementCounter` output, which the guide says is "dumped under
+   `./jobname/`"). The example simply names its jobname after the field level it
+   was run at, which is what made the misreading plausible.
+
+   Had Phase 2 been implemented from the old table it would have added an `args`
+   entry for a field level that does not exist, and passed the results directory
+   nowhere. Instead `track3p` takes the same injected-jobname treatment as the
+   other positional commands.
+
+7. **`transwake` overwrites the artifact T3P already provides, and
+   `parse_wakefield` already reads it.** This plan claimed `T3PModule` "reads
+   `wakefield.out` directly, which covers the built-in monitor but not this path".
+   That is wrong. `transwake` writes its result *to the same file*
+   (`<jobname>/OUTPUT/wakefield.out`) with a transverse header
+   (`# Kick factor = ...`, columns `s`, `W_trans(s)[V/pC]`, `I_bunch(s)[C/m]`),
+   and `ace3p.py::_FACTOR_KEYS` already handles `'kick factor'` — verified against
+   `examples/t3p/cavity-half/`, which yields
+   `{KickFactor, WakeType: 'transverse', TransversePoints, Offset, s, W, I_bunch}`.
+
+   Two consequences, both making the work smaller but reordering it:
+
+   - **`AcdtoolModule` needs to parse nothing at all for `transwake`.** It runs
+     the command; `T3PModule` reads the result. The same likely holds for
+     `wake_new` / `wake_direct`, which the guide says also write
+     `<jobname>/OUTPUT/wakefield.out` with a loss factor.
+   - **But T3P's `output_parser` must then run *after* acdtool**, which inverts
+     the normal producer→consumer order: the consumer mutates the producer's
+     output in place. A `[cubit, t3p, acdtool(transwake)]` chain resolved in DAG
+     order will have T3P parse `wakefield.out` *before* transwake overwrites it,
+     and silently return the longitudinal result. **Phase 2 must decide this
+     explicitly** — either re-parse the producer after a mutating consumer, or
+     have `AcdtoolModule` own the post-transwake parse and provide it as a
+     distinct artifact. Do not leave it to ordering luck. Note `coaxsignal`
+     is *not* affected: it writes a new file (`<jobname>/OUTPUT/signal.out`,
+     columns `t V I`, **no header row**).
+
+   The T3P reference confirms this independently and extends it to `wake_new` /
+   `wake_direct`, which write the same path. One inconsistency to leave alone:
+   the T3P reference gives the wakefield monitor's columns as `W(s)` in **V/C**
+   and `I(s)` in **A/m**, while the real file header says `V/pC` and `C/m`. The
+   file header is authoritative and `parse_wakefield` reads it, so no code change
+   — but do not "correct" the units to match the document.
+
+8. **`postprocess track3p` mostly duplicates Track3P's own `Postprocess`
+   container.** The Track3P reference documents
+   `Postprocess: {Toggle, ResonantParticles: {...}, EnhancementCounter: {...}}`
+   with the same `EnhancementCounter` keys (`Token`, `SEYFileName1/2`,
+   `BoundarySurfaceID1/2`, `SolidVolID`, `MinimumEC`) that the `.acdtool` file
+   carries. CW23's Pillbox example declares it **both ways** — in
+   `Pillbox2.3MV.track3p` *and* in `Pillbox.acdtool` — so `2.3MV/en` could have
+   been produced by either path.
+
+   Unique to the acdtool route: `OutputFile` (naming the output) and the
+   `Trajectory` block's explicit `ParticleID` list. The solver's own
+   `SingleParticleTrajectory: on` dumps *every* trajectory to per-ID files, with no
+   way to select. So selected-particle trajectory extraction is the only capability
+   `postprocess track3p` genuinely adds. Weigh that against the cost of a second
+   input dialect before committing it to the implement tier.
 
 ### `acdtool` requiring `em_solution` blocks the standard T3P workflow
 
@@ -107,8 +433,12 @@ time-domain postprocessors. The rule is too coarse: it is really
 "`postprocess rf` needs a frequency-domain solution," not "acdtool does."
 
 `transwake` matters specifically because it is how CW23 gets the transverse wake
-out of a half/quarter model. `T3PModule` reads `wakefield.out` directly, which
-covers the built-in monitor but not this path.
+out of a half/quarter model. ~~`T3PModule` reads `wakefield.out` directly, which
+covers the built-in monitor but not this path.~~ **Corrected (defect 7):**
+`T3PModule` already parses the transwake result correctly, because transwake
+overwrites the same `wakefield.out` and `parse_wakefield` handles the transverse
+header. The blocker is purely that the DAG will not let acdtool run after t3p —
+plus the ordering hazard in defect 7.
 
 **Verified: this needs no framework change.** `_resolve_order` reads
 `requires`/`provides` off *instances*, and modules are instantiated before
@@ -160,12 +490,31 @@ workflow :
   - module : acdtool
     name    : 'transwake'
     command : 'postprocess transwake'
-    args    : [0.0, 0.0, 0.0, 0.0125]  # results dir is injected from the artifact
+    args    : [0.0, 0.0, 0.0, 0.0125]  # jobname is injected from the artifact
 ```
 
 `requires` is derived from `command`: `postprocess rf` → `em_solution`;
-`transwake` / `coaxsignal` / `volmontomode` → `td_solution`;
-`postprocess track3p` → `track3p_particles`.
+`transwake` / `coaxsignal` / `volmontomode` / `wake_new` / `wake_direct` →
+`td_solution`; `postprocess track3p` → `track3p_particles`.
+
+**Scope the 19 commands explicitly** rather than implementing dispatch for all of
+them. With the surface tripled, a hand-written `if`/`elif` ladder in `run()` is
+the wrong shape; use one declarative table keyed on command name, carrying: the
+argument form (input file / positional / input file + jobname), whether a jobname
+is injected, the required artifact, and whether the command is parallel. Then
+"unknown command" and "wrong argument count" are one check each, and adding a
+command later is a table row. Recommended split:
+
+| Tier | Commands | Rationale |
+|---|---|---|
+| **Implement in Phase 2** | `postprocess rf`, `transwake`, `coaxsignal`, `volmontomode` | CW23-exercised and mapping to existing artifacts. |
+| **Table row, no dialect support** | `postprocess track3p` | **Demoted 2026-08-13** (user decision). Track3P's own `Postprocess: {EnhancementCounter}` already covers the duplicated capability, so the acdtool route buys only selected-particle `Trajectory` extraction — not worth a second input dialect yet. See defect 2's revised treatment: raise a clear error on a `.acdtool` input rather than routing it. |
+| **Table row, no module wiring** | `mesh deform`, `meshconvert`, `meshconvertdirect`, `mesh stats`, `mesh check`, `mesh fix` | Invocable, but producing a mesh violates one-producer-per-artifact (design decision 3). `meshconvert` also already lives in `cubit.py` — do not duplicate it. `mesh deform` additionally duplicates TEM3P's own `MeshDump: {MeshDeformScale, EMMeshInputDir}`, which writes the deformed vacuum mesh directly — prefer that route if the TEM3P chain is ever attempted. |
+| **Out of scope, recorded** | `wake_new`, `wake_direct`, `eigentomode`, `pic3pstats`, `pic3pconvert`, `project`, `resource`, `mesh warpsurface` | No PIC3P or TEM3P module exists to hang them on (both stay out of scope — decision 12); `warpsurface` needs a third input dialect; `resource`/`project` write only to stdout. Write these down in `docs/acdtool_reference.md` so the gap is visible rather than forgotten. |
+
+`wake_new` / `wake_direct` are the most likely next additions — they are the
+longitudinal counterparts of `transwake` and share its output file and its
+defect-7 ordering hazard.
 
 ### Output spec: mapping form, with the index as an axis
 
@@ -308,13 +657,58 @@ same assumptions would bake the assumption in deeper.
 
 ### Verification (Phase 0 done when)
 
-- [ ] `tests/fixtures/acdtool/` holds the files above with provenance in `SOURCES.md`.
-- [ ] Characterization tests pass against unmodified `src/`.
-- [ ] `COVERAGE.md` names every block with no real-output fixture.
-- [ ] `python -m pytest tests/` still green.
-- [ ] `SOURCES.md` records which curve files were truncated and their original
+- [x] `tests/fixtures/acdtool/` holds the files above with provenance in `SOURCES.md`.
+- [x] Characterization tests pass against unmodified `src/`.
+- [x] `COVERAGE.md` names every block with no real-output fixture.
+- [x] `python -m pytest tests/` still green — 264 passed (38 new).
+- [x] `SOURCES.md` records which curve files were truncated and their original
   row counts.
-- [ ] `du -sh tests/fixtures/` is under ~50 KB.
+- [x] `du -sh tests/fixtures/` within budget: **131 KB of fixture data
+  (134,697 B)**, 146 KB with `SOURCES.md` + `COVERAGE.md`. The "~50 KB" figure was
+  unreachable as written; budget revised to **100–150 KB** (user, 2026-08-13).
+
+### Deviations found while executing Phase 0
+
+1. **The ~50 KB size gate contradicted the "keep `field1_0.ec` in full"
+   instruction.** That one file is 57,973 B. The plan's other figure ("total
+   should land near 20 KB") counted only the truncated curve files and omitted
+   the 32 KB of solver outputs the same list asks for. Resolution: the
+   substantive instructions were followed (one full-length curve file, real
+   `omega3p.out` banners, complete S-parameter tables) and the budget was raised
+   to **100–150 KB**, which the measured 131 KB sits inside. Breakdown is in
+   `SOURCES.md`. For reference, `tests/baseline/` is 19 KB, so this is the largest
+   fixture set in the repo — all plain numeric/KVC text.
+
+2. **Six `rfpost.out` files were copied rather than the five listed.**
+   `omega3p/dlwg-pbc/rfpost.out` was added (3.2 KB): it is the only fixture with
+   a **negative** `Qext` (`-8.58381e+16`), and Phase 6 plans a `dlwg-pbc` example.
+   Not every CW23 example runs rfpost, so the plan's list was a reasonable
+   selection — this is an addition, not a correction to it.
+
+3. **`FieldAtPoint` was missing from the shape table in the Motivation** — it is
+   a valid acdtool container, distinct from the mode-indexed `ALLFieldAtPoint`.
+   **Fixed 2026-08-13:** the table (now 24 blocks) carries it as its own shape,
+   *single-mode scalars* — no index axis, since it evaluates only the `ModeID`
+   named in `RFField`. Recorded in `COVERAGE.md`.
+
+4. **Defect 1 needed a synthetic fixture.** CW23 only ever ships `coaxPort`
+   lists empty (`portID = {  }`), which round-trips cleanly — that is why the
+   defect went unnoticed. `rfpost_inputs/coaxport-multiline.rfpost` is
+   hand-written (marked SYNTHETIC in both the file header and `SOURCES.md`) and
+   is the minimum fixture that exposes it. It also showed a *second* half of the
+   defect the plan did not name: `write_input` writes the truncated `portID = {`
+   back verbatim, emitting a file with unbalanced braces. Phase 2's round-trip
+   fix must cover that, not just the read side.
+
+5. **Defect 4 is worse than "breaks the step" for non-`rf` commands.** `run()`
+   with a `.acdtool` input launches no subprocess *and never sets
+   `self.output_file`*, so a subsequent `load_output()` raises `AttributeError`
+   rather than reporting a missing output. Pinned by
+   `test_run_rejects_unknown_extension`.
+
+All four confirmed defects reproduced exactly as described, including the
+`{'EnhancementCounter:': {}, 'Trajectory:': {}}` parse of `Pillbox.acdtool` and
+the unclosed `[scaling]` in the S3P output.
 
 **No ACE3P environment needed for this phase** — it is fixture copying plus
 characterization tests against files already on disk, and makes no `src/` changes.
@@ -322,14 +716,33 @@ It runs fully locally.
 
 ### Deliverables
 
-- [ ] `tests/fixtures/acdtool/` + `SOURCES.md` + `COVERAGE.md`.
-- [ ] `tests/test_acdtool_fixtures.py`. No `src/` changes in this phase.
+- [x] `tests/fixtures/acdtool/` + `SOURCES.md` + `COVERAGE.md`.
+- [x] `tests/test_acdtool_fixtures.py` (38 tests). No `src/` changes in this phase.
 
 **Blocking note for Phase 3:** obtain one real acdtool run with `kickFactor` and
 `maxFieldsOnSurface` enabled (any Omega3P example plus those two `ionoff = 1`)
 before rewriting those two parsers. If a cluster run is not available, Phase 3
 must keep the existing parsers byte-compatible and route only the *new* sections
 through the new shape readers — do not "clean up" unvalidated parsers blind.
+**The acdtool user guide does not lift this** — it documents input schemas, not
+output formats. Nothing short of a real run closes it.
+
+### Phase 0 addendum — fixtures the user guide revealed as missing
+
+Phase 0 is complete as specified; these are additional fixtures the guide showed
+to exist and that the phases below now depend on. They are all real files already
+on disk in CW23, so this is copying, not a cluster run. **Do this at the start of
+whichever phase first needs the file**, not as a separate session.
+
+| Fixture | Source | Needed by | Size |
+|---|---|---|---|
+| `wakefield.out` (transwake form) | `examples/t3p/cavity-half/t3p_results/OUTPUT/wakefield.out` | **Phase 2** — the defect-7 ordering hazard cannot be tested without it. Truncate the 2,335 data rows to ~20; the header is the load-bearing part. | 2.3 KB truncated |
+| `signal.out` | `examples/t3p/BPM/t3p_results/OUTPUT/signal.out` | Phase 2/3 — `coaxsignal` output, columns `t V I` with **no header row**, so it needs its own reader rather than the header-driven one. Truncate. | ~2 KB truncated |
+| `en` | `examples/track3p/Pillbox/2.3MV/en` | Phase 2/3 — `EnhancementCounter` output; 7 columns with a header row (`fieldlevel ID enhancement averageEnhancement maxEnhancement maxEnhancementImpactNum totalImpactNum`), 658 rows. Truncate. | ~2 KB truncated |
+| `postprocess.in` | `examples/t3p/cavity-half/t3p_results/OUTPUT/postprocess.in` | Phase 2 — shows acdtool writes a KVC echo of the T3P input into the results dir. Useful for confirming jobname resolution. | 1.5 KB |
+
+Update `SOURCES.md` and `COVERAGE.md` when these land. The revised size budget
+(100–150 KB) accommodates all four truncated.
 
 ---
 
@@ -342,11 +755,16 @@ acdtool and no spec changes.
 
 ### Approach
 
-1. `Omega3P.output_parser()`: parse `<JobName>/omega3p.out` with the existing
+1. `Omega3P.output_parser()`: parse `<results_dir>/omega3p.out` with the existing
    `parse_ace3p`, then walk top-level `Mode` sections into
    `output_data['Modes']` — a list of `{Frequency, QualityFactor, ExternalQ,
-   TotalEnergy, PowerLoss, File}`. Resolve `JobName` from the input tree the way
-   `T3P.results_dir()` does (default `omega3p_results`); do not hardcode.
+   TotalEnergy, PowerLoss, File}`. **`omega3p_results` is the authoritative
+   default, not a fallback** — the Omega3P reference documents no `JobName`
+   container (see "`JobName` is not an input key"), and no CW23 input sets one. Add
+   a module-level `results_dir:` YAML key as the supported override, and keep an
+   input-tree `JobName` lookup as a harmless best-effort fallback the way
+   `T3P.results_dir()` does. Do not hardcode the directory, and do not present the
+   `JobName` path as the documented mechanism.
 2. Handle the lossy/port case: `Frequency` and `TotalEnergy` arrive as
    `"real , imag"` pairs. Split into `Frequency` / `Frequency_imag` (keep
    `Frequency` real-valued so it stays a plottable table column) and set
@@ -387,30 +805,67 @@ output parsing is Phase 3.
 ### Approach
 
 1. `Acdtool.run()`: take the command from an explicit argument instead of
-   inferring from the file extension. Support both input-file forms
-   (`postprocess rf <f>.rfpost`, `postprocess track3p <f>.acdtool <level>`) and
-   the positional forms (`postprocess transwake <dir> x1 y1 x2 y2`,
-   `postprocess coaxsignal <dir>`, `postprocess volmontomode <dir>`,
+   inferring from the file extension, dispatched through **one declarative command
+   table** (see "Command dispatch" in the target design) rather than an `if`/`elif`
+   ladder — the surface is 19 commands, not 6. Each row carries the argument form,
+   whether a jobname is injected, the required artifact, and the parallel flag.
+   Support the input-file form (`postprocess rf <f>.rfpost`) and the positional
+   forms (`postprocess transwake <jobname> x1 y1 x2 y2`,
+   `postprocess coaxsignal <jobname>`, `postprocess volmontomode <jobname>`,
    `mesh deform <in> <out> <scale>`). Keep extension inference as the default
-   when only an input file is given, so existing configs work untouched.
-2. Route the input dialect by extension (**defect 2**): `.rfpost` → the existing
-   `=` parser; `.acdtool` → `parse_ace3p`. Keep them in separate methods; do not
-   try to unify the two dialects.
-3. Fix **defect 1**: multi-line `{ ... }` values. Track brace depth in
-   `input_parser` and accumulate the value across lines. `write_input` must
-   round-trip it. Invert the Phase-0 characterization test.
+   when only an input file is given, so existing configs work untouched. Record
+   `postprocess track3p <f>.acdtool <jobname>` in the table with the **corrected**
+   signature — jobname, not field level (defect 6) — but do not wire it.
+2. **Defect 2, narrowed scope.** `postprocess track3p` is table-row-only, so do
+   **not** route the KVC dialect. Instead detect a non-`.rfpost` input by extension
+   and **raise a clear error naming the unsupported command** — the defect is the
+   silent parse to two empty blocks, not the missing feature. When the dialect is
+   wanted later, `.acdtool` → `parse_ace3p` in a separate method; do not unify the
+   two dialects. `mesh warpsurface`'s flat-colon dialect is out of scope — do not
+   add a third parser.
+3. Fix **defect 1** on **both** sides. Read: track brace depth in `input_parser`
+   and accumulate the value across lines. Write: `write_input` must round-trip it
+   and, more generally, **must always emit a structurally valid file** — balanced
+   braces, no truncated values. It currently writes `portID = {` verbatim and
+   produces a file acdtool cannot read. Invert both Phase-0 characterization tests
+   (`test_defect1_multiline_brace_value_is_truncated`,
+   `test_defect1_roundtrip_writes_unbalanced_braces`); add a brace-balance
+   assertion to the writer's tests so this cannot regress silently.
 4. Fix **defect 4**: drop the hardcoded `--nodes=1 --ntasks=1`; follow the
-   `ace3p.py` pattern (`-n 1 -c 1`, with the same non-srun guard).
+   `ace3p.py` pattern (`-n 1 -c 1`, with the same non-srun guard). Per the user
+   guide, every command except `rf` and `volmontomode` is **serial**, and CW23 runs
+   even those two at one rank — so one rank is the correct default for all 19, and
+   only `rf` / `volmontomode` should ever accept a configurable rank count. Also
+   set `output_file` (or leave it explicitly `None`) on *every* dispatch path so a
+   failed command reports a missing output instead of raising `AttributeError`.
 5. `AcdtoolModule`: add `command` and `args` config. Set `self.requires` in
    `__init__` from the command — `rf` → `EM_SOLUTION`, `transwake` /
-   `coaxsignal` / `volmontomode` → `TD_SOLUTION`, `track3p` →
-   `TRACK3P_PARTICLES`. Inject the results directory for the positional
-   commands from the consumed artifact rather than making the user repeat it.
-   Raise a clear error on an unknown command, listing the known ones.
-6. Fix S3P's hardcoded results dir while in the neighborhood: give `S3P` a
-   `results_dir()` reading `JobName` like `T3P`, and have `output_parser` use it.
-7. Leave `mesh deform` invocable but **not** wired as a mesh producer (design
-   decision 3).
+   `coaxsignal` / `volmontomode` (and later `wake_new` / `wake_direct`) →
+   `TD_SOLUTION` (`track3p` → `TRACK3P_PARTICLES` as a table row, unwired).
+   Inject the **jobname** for the
+   positional commands from the consumed artifact rather than making the user
+   repeat it — resolved from the producing solver's `JobName`, defaulting per
+   solver (`t3p_results`, `track3p_results`, …). Raise a clear error on an unknown
+   command, listing the known ones.
+6. **Settle the defect-7 ordering hazard explicitly.** `transwake` overwrites
+   `<jobname>/OUTPUT/wakefield.out`, which `T3PModule` reads. In resolved DAG
+   order T3P parses that file *before* acdtool rewrites it, so the workflow would
+   silently report the longitudinal wake. Pick one and write down why: (a) re-parse
+   the producer after a mutating consumer, (b) have `AcdtoolModule` own the
+   post-transwake parse and expose it as a distinct artifact, or (c) defer
+   `T3P.output_parser` until all consumers have run. **Do not** ship transwake
+   without resolving this — a wrong-but-plausible number is worse than the current
+   `WorkflowValidationError`. `parse_wakefield` itself needs no change; it already
+   reads both header forms.
+7. Fix S3P's hardcoded results dir while in the neighborhood: give `S3P` a
+   `results_dir()` and have `output_parser` use it. **Not "reading `JobName` like
+   `T3P`"** — the S3P reference documents no `JobName` container, so `s3p_results`
+   is the authoritative default and a module-level `results_dir:` YAML key is the
+   supported override. Keep the input-tree `JobName` lookup as a fallback for
+   symmetry with `T3P`, but do not assert it as solver behavior.
+8. Leave `mesh deform` invocable but **not** wired as a mesh producer (design
+   decision 3). Same for the other `mesh` / `meshconvert*` rows — table entries
+   only.
 
 ### Verification (Phase 2 done when)
 
@@ -418,19 +873,37 @@ output parsing is Phase 3.
   orders as `cubit → t3p → acdtool`.
 - [ ] `[cubit, t3p, acdtool(command: postprocess rf)]` still raises
   `WorkflowValidationError` — the `em_solution` guard must survive for `rf`.
-- [ ] `Pillbox.acdtool` parses to populated `EnhancementCounter` / `Trajectory`
-  blocks (Phase-0 characterization test inverted).
+- [ ] A `[cubit, t3p, acdtool(transwake)]` chain against the Phase-0-addendum
+  transwake `wakefield.out` reports the **transverse** result (`KickFactor`,
+  `WakeType == 'transverse'`), not the longitudinal one. This is the defect-7
+  regression test and the one most likely to pass by accident — assert the wake
+  type, not just that a number came out.
+- [ ] A `.acdtool` input raises a clear error naming the unsupported command,
+  instead of silently parsing to two empty blocks (defect 2, narrowed). The
+  Phase-0 characterization test stays as-is — this is a **new** test, not an
+  inversion.
 - [ ] Multi-line `portID = {\n 7\n 8\n}` parses and round-trips through
-  `write_input` without loss (characterization test inverted).
-- [ ] A `.s3p` fixture with `JobName: custom_results` parses from that directory.
+  `write_input` without loss (characterization test inverted), and every
+  `write_input` output has balanced braces.
+- [ ] An unknown block in a `.rfpost` input round-trips untouched rather than
+  raising — newer acdtool builds ship blocks we have not seen.
+- [ ] An S3P module configured with `results_dir: custom_results` parses from that
+  directory, and one with no such key parses from `s3p_results`. **Do not** make
+  the primary assertion an input-file `JobName: custom_results` — that key is
+  undocumented for S3P and may be ignored by the solver. Test it only as a
+  fallback, with a comment saying it is unverified against a real run.
 - [ ] Existing `postprocess rf` configs run unchanged with no `command` key.
+- [ ] No command line contains `--nodes=` or `--ntasks=`; a non-srun
+  `MPI_CALLER` produces a runnable command.
 - [ ] `python -m pytest tests/` green including baselines.
 
 ### Deliverables
 
-- [ ] Rewritten dispatch + dialect routing + brace fix in `src/lume_ace3p/acdtool.py`.
-- [ ] `command` / `args` / per-command `requires` in `AcdtoolModule`.
+- [ ] Declarative command table + dispatch + dialect routing + brace fix (read
+  **and** write) in `src/lume_ace3p/acdtool.py`.
+- [ ] `command` / `args` / per-command `requires` + jobname injection in `AcdtoolModule`.
 - [ ] `S3P.results_dir()` in `src/lume_ace3p/ace3p.py`.
+- [ ] A written decision on the defect-7 ordering hazard, inline in this plan.
 - [ ] Tests in `tests/test_workflow_graph.py` (DAG cases) + `tests/test_modules.py`.
 
 ---
@@ -448,35 +921,64 @@ reader.
    names from the header, then parse rows into
    `{section: {ModeID: {column: value}}}` plus a `ModeIDs` list. This removes the
    hand-indexed `modeline[3]` positional access, which is what makes the current
-   code fragile. Covers `RoverQ`, `RoverQT`, `kickFactor`, `VFFT`,
-   `ALLFieldAtPoint`. Respect the Phase-0 blocking note: if no real fixture for a
-   section exists, keep its current behavior rather than guessing its header.
+   code fragile. Covers `RoverQ`, `RoverQT`, `RoverQRoverQT`, `kickFactor`,
+   `pointRoverQ`, `dFSlater`, `VFFT`, `ALLFieldAtPoint`, `coaxPort` — the blocks
+   carrying `modeID1`/`modeID2`. Respect the Phase-0 blocking note: if no real
+   fixture for a section exists, keep its current behavior rather than guessing its
+   header. **`VFFT` needs care**: its `printGroup` key (`nterm` | `ModeID`) changes
+   the output grouping, so either handle both or reject the unimplemented one by
+   name.
 2. **Surface-indexed reader** for `maxFieldsOnSurface` and
-   `powerThroughSurface`. Same blocking note applies.
-3. **Curve-file reader.** A header-driven column reader for the `filename` blocks
+   `powerThroughSurface`. Same blocking note applies. **`powerThroughSurface`
+   returns a complex power** (unit W, real part = average flow from the complex
+   Poynting vector) — give it the same real/imag split Phase 1 gives Omega3P's
+   `Frequency`, not a plain float.
+3. **Single-mode scalar reader** for `FieldAtPoint` — no index axis at all, since
+   it evaluates only `RFField`'s `ModeID`. Distinct from `ALLFieldAtPoint`.
+4. **Curve-file reader.** A header-driven column reader for the `filename` blocks
    — parse the `#`-comment header into column names, then load the numeric block
-   into `{column: array}`. Handle the per-mode suffix (`field1_0`, `field1_1`) and
-   the `.ec` / `.bc` complex variants. Model it on `parse_wakefield`; return these
-   through `Module.field()` as field artifacts, never as table columns.
-4. **`[scaling]` reader.** Always emitted, two variants: gradient-normalized
-   (`V`, `ga`, `E,B m_factor`) and point-scaled when `gradient < 0` (`Ez from O3P`,
-   `Ez scaled to`, `m_factor`). Expose `m_factor` — it is the normalized→physical
-   field conversion, and nothing else provides it.
-5. **Fix defect 3** as part of this: replace `startswith('}')` end-detection with
+   into `{column: array}`. Model it on `parse_wakefield`; return these through
+   `Module.field()` as field artifacts, never as table columns. **The filename
+   schemes are not uniform** (see the table in the Motivation): `ALLFieldOnLine`
+   writes `<filename>_<modeID>` plus `.ec`/`.bc`, but `FieldOnLine` writes
+   `<filename>.e` / `.b` / `.ec` / `.bc` with **no** mode suffix and E/B split
+   across two files. Derive the expected names from the block type, not from a
+   single assumed pattern. The Phase-0 `curves/` fixtures cover only the
+   `ALLFieldOnLine` form.
+5. **`[scaling]` reader.** Always emitted, two variants: gradient-normalized
+   (`V`, `ga`, `E,B m_factor`) and point-scaled when `gradient < 0` — the guide
+   confirms `gradient = -1` means "no scaling" — (`Ez from O3P`, `Ez scaled to`,
+   `m_factor`). Expose `m_factor` — it is the normalized→physical field conversion,
+   and nothing else provides it. It also reconciles the two curve-block scalings:
+   `FieldOnLine` output is gradient-scaled, `ALLFieldOnLine` output is raw
+   eigenmode normalization.
+6. **Fix defect 3** as part of this: replace `startswith('}')` end-detection with
    brace-depth tracking, or bound each section at the next `[section]` header, so
    the unclosed `[scaling]` in the S3P fixture cannot swallow what follows.
-6. Grid blocks (`FieldMap`, `fieldOnSurface`, `fieldOn2DBoundary`) — record the
-   produced filenames as artifacts; **defer** binary/mesh parsing. Note the
-   deferral in the docstring so it does not read as an oversight.
+7. Grid blocks (`FieldMap`, `IMPACTMap`, `OpenPMD_IMPACT`, `fieldOnSurface`,
+   `fieldOn2DBoundary`) — record the produced filenames as artifacts; **defer**
+   binary/mesh parsing. Note the deferral in the docstring so it does not read as
+   an oversight. Filenames are block-specific: `FieldMap` writes **fixed**
+   `Efield-map.dat` / `Bfield-map.dat` and has no `filename` key at all;
+   `IMPACTMap` writes `EBfield-map-<filename>.dat`; `OpenPMD_IMPACT` writes four
+   **HDF5** files (`E_Real.h5`, `E_Imag.h5`, `B_Real.h5`, `B_Imag.h5`) — do not
+   assume text.
+8. **Headerless outputs need their own reader.** `coaxsignal`'s `signal.out` is
+   three columns (`t`, `V`, `I`) with **no header row at all**, so the
+   header-driven reader cannot handle it; the column names come from the user
+   guide. `EnhancementCounter`'s `en` output *does* have a header row and goes
+   through the normal reader.
 
 ### Verification (Phase 3 done when)
 
-- [ ] All five Phase-0 `rfpost.out` fixtures parse; `[RoverQ]` values match the
-  Phase-0 characterization values exactly (this is a refactor of a working
-  parser — the numbers must not move).
+- [ ] All six Phase-0 `rfpost.out` fixtures parse; `[RoverQ]` values match the
+  Phase-0 characterization values in
+  `test_acdtool_fixtures.py::ROVERQ_EXPECTED` exactly (this is a refactor of a
+  working parser — the numbers must not move).
 - [ ] The unclosed-`[scaling]` fixture parses without corrupting the following
   section.
-- [ ] `field1_0` / `.ec` / `.bc` load with correct column names and array lengths.
+- [ ] `field1_0` / `.ec` / `.bc` load with correct column names and array lengths
+  (300 rows for `field1_0.ec`, 20 for the truncated ones — see `SOURCES.md`).
 - [ ] `[scaling]` `m_factor` extracted from both variants.
 - [ ] Sections still genuinely unimplemented raise or warn with the section name,
   never silently return empty.
@@ -548,6 +1050,14 @@ mode axis a real field index, and keep the list form as a deprecated alias.
 **Objective:** Stop discarding S-parameter phase, and read the port mode files.
 Independent of Phases 2–4 except for the `results_dir` fix landed in Phase 2.
 
+**The S3P reference is no help here.** It documents `ModelInfo`, `FiniteElement`,
+`FrequencyScan`, `Port`, `Loading`, `LinearSolver` and `PostProcess` — and **not a
+single output file**. `Reflection.out`, `SParameter.out` and `PortRef<n>_<m>.out`
+are undocumented, so the Phase-0 fixtures from `s3p/90DegreeBend` are the only
+specification of their format. Treat the `abs(S_complex) == S_magnitude`
+cross-check below as the load-bearing test: it is the only way to confirm the two
+files are being read consistently without a documented format to check against.
+
 ### Approach
 
 1. Parse `SParameter.out` (complex `(real, imag)` pairs) alongside
@@ -603,16 +1113,44 @@ workflows the rework unlocks, and document the whole surface.
    The only CW23 case running `postprocess rf` against S3P results
    (`ResultDir = s3p_results`, `FreqScanID = 2`). Exercises the Phase-4 index
    collision on a real workflow. Note the default rfpost template in
-   `acdtool.py::make_default_input` hardcodes `omega3p_results` — fix or
-   parameterize it here.
+   `acdtool.py::make_default_input` hardcodes `omega3p_results` **and is a
+   2-block hand-written subset of a 24-block format**. The guide says
+   `acdtool postprocess rf` with no arguments writes a `sample.rfpost` for the
+   installed build — prefer generating the default from the tool (falling back to
+   the hardcoded template when no binary is present) over maintaining a Python
+   copy of a format that varies by build.
 4. New example — **T3P transwake.** Source: `CW23/examples/t3p/cavity-half`.
    A `[cubit, t3p, acdtool(transwake)]` chain — the workflow Phase 2 unblocks.
+   The figure of merit is `KickFactor`, read by `T3PModule`, not by acdtool
+   (defect 7). The README must say so, or the example will read as though acdtool
+   parses nothing by oversight.
 5. Docs: update `docs/yaml_reference.md` (mapping form, `command`/`args`,
    deprecation), `docs/parameter_sweep.md`, `docs/optimization.md`,
-   `docs/configuration_by_mode.md`. Add an acdtool reference page carrying the
-   command table and the 19-block shape table from this plan's Motivation, so the
-   reference data outlives the plan.
-6. Add a README to each new example, matching the existing example READMEs.
+   `docs/configuration_by_mode.md`.
+6. **`docs/acdtool_reference.md`.** Transcribe the parts of the surface this
+   codebase depends on, from this plan's Motivation and from
+   `references/acdtool-commands.pdf`:
+   - all **19 commands** with their argument forms, which are implemented, which
+     are table-only, and which are out of scope with the reason;
+   - all **24 `.rfpost` blocks** with shape, index axis, output destination and
+     implementation status — including the CW23-only (`Track`, `TrackScan`,
+     `coaxPort`) and guide-only (`pointRoverQ`, `dFSlater`, `RoverQRoverQT`,
+     `IMPACTMap`, `OpenPMD_IMPACT`) sets, and the fact that the two disagree;
+   - the input semantics that are not guessable from the files: the `>1e6`
+     domain-bound sentinel, `gradient = -1`, `modeID2 = -1` meaning all modes,
+     per-solver `ModeID` meaning, complex `powerThroughSurface`, `VFFT`'s
+     `printGroup`;
+   - the curve/grid **filename schemes**, which differ per block;
+   - the serial/parallel split;
+   - which commands are unimplemented and why (PIC3P/Gun3P/TEM3P out of scope).
+
+   **Done 2026-08-13:** all eight `*-commands.pdf` are committed under
+   `references/` with a `README.md` covering provenance, per-file page counts, the
+   inputs-not-outputs caveat, the `JobName` finding and the text-extraction recipe.
+   So `docs/acdtool_reference.md` is now a convenience digest rather than the only
+   surviving copy — but still write it, since it is what a reader of the code will
+   reach for.
+7. Add a README to each new example, matching the existing example READMEs.
 
 ### Verification (Phase 6 done when)
 
@@ -621,8 +1159,9 @@ workflows the rework unlocks, and document the whole surface.
 - [ ] All three new examples run in dry-run mode and are frozen into
   `tests/baseline/`.
 - [ ] Every baseline regeneration is recorded with a reason in its manifest.
-- [ ] Docs contain no stale list-form spec; the acdtool reference page lists all
-  six commands and all 19 blocks with their implementation status.
+- [ ] Docs contain no stale list-form spec; `docs/acdtool_reference.md` lists all
+  **19 commands** and all **24 blocks** with their implementation status, and
+  carries the input semantics listed in approach item 6.
 - [ ] `python -m pytest tests/` green.
 
 ### Deliverables
@@ -651,8 +1190,17 @@ workflows the rework unlocks, and document the whole surface.
   rf` working throughout. Baselines should stay byte-identical until Phase 6,
   which is the only phase permitted to regenerate them.
 - **`/home/dbizzoze/CW23` is outside the repo and not version-controlled.** Copy
-  what you need into `tests/fixtures/` in Phase 0 rather than reading from it at
-  test time. Ignore `a3pi/`, `A3PI_config_single/`, `workflow_test_single/`.
+  what you need into `tests/fixtures/` rather than reading from it at test time
+  (Phase 0 did this; the Phase-0 addendum lists four more files to copy as the
+  phases that need them come up). Ignore `a3pi/`, `A3PI_config_single/`,
+  `workflow_test_single/`.
+- **`references/*-commands.pdf` are the authoritative references for the command
+  surface, every `.rfpost` block, and every solver's input containers** — consult
+  them before inferring anything about an ACE3P interface from CW23 files alone.
+  They corrected several assumptions in the original plan (see "Revision: the
+  ACE3P command references"). They document inputs thoroughly and outputs barely,
+  so output formats still have to come from real runs or frozen fixtures. Fixture
+  budget for `tests/fixtures/` is **100–150 KB**.
 - **Do not attempt TEM3P or named artifacts** (design decision 3). If a phase
   seems to need two producers of the same artifact kind, stop and write down the
   case rather than loosening `_resolve_order`.

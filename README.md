@@ -64,7 +64,8 @@ The documentation covers:
 - `examples/` — runnable Cubit / ACE3P / YAML / batch-script examples.
 - `plotting/` — interactive plotting scripts for sweep and optimization output.
 - `docs/` — Sphinx documentation source.
-- `references/` — external reference material.
+- `references/` — external reference material, including the SLAC ACE3P
+  command-syntax references for every module and `acdtool`.
 
 ## Building the docs locally
 
