@@ -1,0 +1,92 @@
+RFField
+{
+   ResultDir   = omega3p_results  // Jobname 
+   FreqScanID  =      0  // For S3P only: frequency scan index
+   ModeID      =      0
+   xsymmetry   =      magnetic   // [none, electric, magnetic]
+   ysymmetry   =      magnetic   // [none, electric, magnetic]
+   gradient    =  2.00000e+07
+   cavityBeta  =      1.00000     //for R/Q, V integral
+   x0          =      0.00000  // x for gradient calc
+   y0          =      0.00000  // y for gradient calc
+  [z0          =      0.00000]  // set field at this z location when gradient<0
+   gz1         =     -0.03500  // starting z for gradient calc
+   gz2         =      0.03500  // starting z for gradient calc
+   npoint      =    300
+   fmnx        =     10
+   fmny        =     10
+   fmnz        =     50
+}
+
+RFField
+{
+   ResultDir   = omega3p_results  // Jobname 
+   FreqScanID  =      0  // For S3P only: frequency scan index
+   ModeID      =      0
+   xsymmetry   =      magnetic   // [none, electric, magnetic]
+   ysymmetry   =      magnetic   // [none, electric, magnetic]
+   gradient    =  2.00000e+07
+   cavityBeta  =      1.00000     //for R/Q, V integral
+   x0          =      0.00000  // x for gradient calc
+   y0          =      0.00000  // y for gradient calc
+  [z0          =      0.00000]  // set field at this z location when gradient<0
+   gz1         =     -0.03500  // starting z for gradient calc
+   gz2         =      0.03500  // starting z for gradient calc
+   npoint      =    300
+   fmnx        =     10
+   fmny        =     10
+   fmnz        =     50
+}
+
+
+***************************** Omega3P/S3P Mode Summary ************************************
+**
+** Omega3P/S3P Mode Summary:
+**
+**   Total number of modes :      2
+**      ModeID         Frequency(r,i)                       Qext
+**         0           1.16199e+09, 1.20992e+05           4.80192e+03
+**         1           1.17508e+09, 8.79890e+07           6.67743e+00
+**
+**   Model bounding box: ( 0.00000e+00,  0.00000e+00 -1.50000e-01)
+**                       ( 1.00000e-01,  2.50000e-01  1.50000e-01)
+**
+** ------------
+**   Mode used:
+**      ModeID    =      0
+**      Frequency =  1.16199e+09,    1.20992e+05
+**
+***************************************************************************************
+
+[scaling]
+{
+   ModeID:   0
+   Integral:  x0    = 0.0000e+00,   y0  = 0.0000e+00
+              gz1   =-3.5000e-02,   gz2 = 3.5000e-02
+              V     =(-3.0386e+00,  2.0080e+00) (normalized field)
+              ga    = 5.20298e+01   (normalized field)
+   E,B m_factor =( 2.31374e+05,  3.06962e+05)   amplitude/phase_deg( 3.84395e+05  5.29927e+01)
+}
+
+RoverQ
+{
+   ionoff      =      1
+   modeID1     =     -1
+   modeID2     =     -1
+   x1          =      0.00000
+   x2          =      0.00000
+   y1          =      0.00100
+   y2          =      0.00100
+   z1          =     -0.15000
+   z2          =      0.15000
+}
+
+[RoverQ]
+{  // RoverQ=V^2/(omega*U)
+   Integral:  x1  = 0.0000e+00,  y1  = 1.0000e-03,  z1  =-1.5000e-01
+              x2  = 0.0000e+00,  y2  = 1.0000e-03,  z2  = 1.5000e-01
+ ModeID   Frequency       Qext              V_r, V_i              |V|          RoQ(ohm/cavity)
+    0   1.1619875e+09  4.80192e+03   2.5381e+00, -3.3673e+00    4.21668e+00      1.37525e+02
+    1   1.1750809e+09  6.67743e+00  -1.1485e-06,  5.0210e-08    1.14959e-06      1.01078e-11
+}
+

@@ -1,0 +1,34 @@
+// SYNTHETIC fixture -- not a verbatim CW23 file. See SOURCES.md.
+//
+// Derived from the `coaxPort` block of pillbox-rtop+coax.rfpost by filling the
+// three list-valued keys (portID / porta / portb) the natural multi-line way.
+// CW23 only ever ships them empty (`portID = {  }`), which round-trips through
+// the current parser; this variant is what exposes defect 1.
+//
+// maxFieldsOnSurface follows coaxPort so the test can show that the value loss
+// is silent -- the section *count* survives, so nothing signals the damage.
+
+coaxPort
+{
+   ionoff      =      1
+   modeID1     =     -1
+   modeID2     =     -1
+   portID      = {
+      7
+      8
+   }
+   porta       = {
+      0.01000
+      0.01000
+   }
+   portb       = {
+      0.02300
+      0.02300
+   }
+}
+
+maxFieldsOnSurface
+{
+   ionoff      =      1
+   surfaceID   =      6
+}

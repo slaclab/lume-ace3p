@@ -1,0 +1,85 @@
+RFField
+{
+   ResultDir   = s3p_results  // Jobname 
+   FreqScanID  =      2  // For S3P only: frequency scan index
+   ModeID      =      0
+   xsymmetry   =      magnetic   // [none, electric, magnetic]
+   ysymmetry   =      magnetic   // [none, electric, magnetic]
+   gradient    = -1.00000e+00
+   cavityBeta  =      1.00000     //for R/Q, V integral
+   x0          =      0.00000  // x for gradient calc
+   y0          =      0.00000  // y for gradient calc
+  [z0          =      0.00000]  // set field at this z location when gradient<0
+   gz1         =     -0.03500  // starting z for gradient calc
+   gz2         =      0.03500  // starting z for gradient calc
+   npoint      =    300
+   fmnx        =     10
+   fmny        =     10
+   fmnz        =     50
+}
+
+RFField
+{
+   ResultDir   = s3p_results  // Jobname 
+   FreqScanID  =      2  // For S3P only: frequency scan index
+   ModeID      =      0
+   xsymmetry   =      magnetic   // [none, electric, magnetic]
+   ysymmetry   =      magnetic   // [none, electric, magnetic]
+   gradient    = -1.00000e+00
+   cavityBeta  =      1.00000     //for R/Q, V integral
+   x0          =      0.00000  // x for gradient calc
+   y0          =      0.00000  // y for gradient calc
+  [z0          =      0.00000]  // set field at this z location when gradient<0
+   gz1         =     -0.03500  // starting z for gradient calc
+   gz2         =      0.03500  // starting z for gradient calc
+   npoint      =    300
+   fmnx        =     10
+   fmny        =     10
+   fmnz        =     50
+}
+
+
+***************************** Omega3P/S3P Mode Summary ************************************
+**
+** Omega3P/S3P Mode Summary:
+**
+**   Total number of modes :      2
+**      ModeID         Frequency(r,i)                       Qext
+**         0           2.55600e+09, 0.00000e+00           0.00000e+00
+**         1           2.55600e+09, 0.00000e+00           0.00000e+00
+**
+**   Model bounding box: ( 0.00000e+00,  0.00000e+00 -6.00000e-02)
+**                       ( 4.50000e-02,  4.50000e-02  6.00000e-02)
+**
+** ------------
+**   Mode used:
+**      ModeID    =      0
+**      Frequency =  2.55600e+09,    0.00000e+00
+**
+***************************************************************************************
+
+[scaling]
+{
+   ModeID:   0
+   Field scaled at: x0 = 0.0000e+00, y0 = 0.0000e+00, z0 = 0.0000e+00
+   Ez from O3P  =( 0.00000e+00,  0.00000e+00)
+   Ez scaled to =  1.00000e+00
+   E,B m_factor =( 1.00000e+00,  0.00000e+00),  (amplitude/phase_deg( 1.00000e+00,  0.00000e+00))
+
+ALLFieldOnLine
+{
+   ionoff      =      1
+   rot180      =      0  // 1: model ratated 180deg about z
+   modeID1     =     -1
+   modeID2     =     -1
+   npoint      =    300
+   filename    = field1
+   rfphase     =      0.00000
+   x1          =      0.00000
+   x2          =      0.00000
+   y1          =      0.00100
+   y2          =      0.00100
+   z1          =     -0.06000
+   z2          =      0.06000
+}
+
