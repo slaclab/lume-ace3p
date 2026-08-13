@@ -109,12 +109,21 @@ def _tokenize(text):
         key = text[i:j].strip()
         tokens.append(('key', key))
         i = j + 1  # past ':'
-        # Skip whitespace (but not newline yet — we need to peek for '{')
+        # Skip whitespace on this line first
         while i < n and text[i] in ' \t':
             i += 1
-        if i < n and text[i] == '{':
+        # A block's '{' may sit on the same line as the key ('Key: {', the
+        # S3P/Omega3P style) or on its own line below it ('Key:\n{', the T3P
+        # style). Peek across ALL whitespace for it; only commit to the block
+        # form if a brace is what we find, otherwise fall through and read the
+        # value from where this line left off — so 'Key:' with an empty value
+        # followed by another key still parses as an empty leaf.
+        k = i
+        while k < n and text[k].isspace():
+            k += 1
+        if k < n and text[k] == '{':
             tokens.append(('lbrace',))
-            i += 1
+            i = k + 1
             continue
         # Otherwise read value to end of line
         j = i
@@ -369,12 +378,144 @@ class S3P(ACE3P):
 
 
 class T3P(ACE3P):
+    """The ACE3P time-domain solver, used for wakefield calculations.
+
+    Structurally the analogue of :class:`S3P`: a run produces one scalar figure
+    of merit (the loss factor for a longitudinal wake, the kick factor for a
+    transverse one) plus arrays indexed by the wake coordinate ``s``, where S3P
+    produces S-parameters indexed by frequency.
+
+    Unlike S3P, T3P's output locations are not fixed: everything lands under
+    ``<JobName>/OUTPUT`` (``JobName`` defaults to ``t3p_results``), and each
+    monitor's files are named after that monitor's own ``Name``. Both are read
+    back out of the input file rather than hardcoded.
+    """
 
     module_name = 't3p'
+
+    # T3P's default job name — the directory it writes results into when the
+    # input file does not set 'JobName' explicitly.
+    default_job_name = 't3p_results'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 't3p.out'
+
+    def make_default_input(self):
+        self.input_file = 't3p_input_file.t3p'
+        with open(self.input_file, 'w') as f:
+            pass
+
+    # ---- output locations, read from the input file ----------------------- #
+
+    def _input_tree(self):
+        """The parsed input tree, parsed on demand.
+
+        ``set_value`` populates ``_tree`` only when it has overrides to merge, so
+        a run with no swept ACE3P parameters reaches the parser for the first
+        time here."""
+        if self._tree is None:
+            self._tree = parse_ace3p(self.input_data)
+        return self._tree
+
+    def results_dir(self):
+        """The ``<JobName>/OUTPUT`` directory T3P writes results into, relative
+        to the workdir."""
+        job_name = self._input_tree().get_leaf('JobName') or self.default_job_name
+        return os.path.join(job_name, 'OUTPUT')
+
+    def wake_monitor_name(self):
+        """The ``Name`` of the ``WakeField`` monitor, which is what T3P names its
+        wakefield output files after, or ``None`` when the input declares no such
+        monitor (a legitimate configuration — e.g. a pulse-propagation run that
+        only monitors power)."""
+        monitor = self._input_tree().find('Monitor', Type='WakeField')
+        if monitor is None:
+            return None
+        return monitor.get_leaf('Name') or 'wakefield'
+
+    # ---- output parsing --------------------------------------------------- #
+
+    def output_parser(self):
+        """Parse the wakefield monitor's ``.out`` file into ``output_data``.
+
+        Populates ``s`` / ``W`` / ``I_bunch`` arrays plus ``WakeType`` and either
+        ``LossFactor`` (longitudinal) or ``KickFactor`` (transverse); a transverse
+        result also records ``TransversePoints`` and ``Offset`` from the header.
+
+        Leaves ``output_data`` empty — rather than raising, as :class:`S3P` does —
+        when the input declares no WakeField monitor or the file is absent. A T3P
+        run without a wake monitor is a valid run, so this is not an error here;
+        the module layer raises if such a workflow actually *asks* for a wakefield
+        quantity."""
+        self.output_data = {}
+        monitor = self.wake_monitor_name()
+        if monitor is None:
+            return
+        path = os.path.join(self.workdir, self.results_dir(), monitor + '.out')
+        if not os.path.isfile(path):
+            return
+        self.output_data = parse_wakefield(path)
+
+
+# Header forms written by T3P above the (s, W, I_bunch) columns, e.g.
+#   '# Loss factor = -3.88576373282202e-01 V/pC'
+#   '# Kick factor = 9.64058337896157e-02 V/pC'
+_FACTOR_KEYS = {'loss factor': ('LossFactor', 'longitudinal'),
+                'kick factor': ('KickFactor', 'transverse')}
+
+
+def parse_wakefield(path):
+    """Parse a T3P wakefield monitor output file into a dict.
+
+    The file is a ``#``-commented header followed by three whitespace-separated
+    columns: ``s[m]``, the wake potential ``W(s)[V/pC]`` (longitudinal or
+    transverse depending on the run), and the bunch current ``I_bunch(s)[C/m]``.
+    The header carries the run's figure of merit and, for a transverse run, the
+    two transverse sampling points and their offset.
+    """
+    with open(path) as file:
+        lines = file.readlines()
+
+    data = {}
+    points = []
+    for line in lines:
+        if not line.startswith('#'):
+            continue
+        body = line.lstrip('#').strip()
+        lowered = body.lower()
+        for prefix, (key, wake_type) in _FACTOR_KEYS.items():
+            if lowered.startswith(prefix):
+                # '<name> = <value> V/pC' -> the value.
+                value = body.split('=', 1)[1]
+                data[key] = float(value.replace('V/pC', '').strip())
+                data['WakeType'] = wake_type
+        if lowered.startswith('with offset'):
+            data['Offset'] = float(lowered.split('offset', 1)[1]
+                                   .replace('m', '').strip())
+        if body.startswith('('):
+            # Transverse header lists the two sampling points, one per line,
+            # as '(x,y)' (the second continues with a trailing 'and').
+            for chunk in body.split('and'):
+                chunk = chunk.strip().strip(',')
+                if chunk.startswith('(') and chunk.endswith(')'):
+                    coords = chunk[1:-1].split(',')
+                    if len(coords) == 2:
+                        points.append(tuple(float(c) for c in coords))
+    if points:
+        data['TransversePoints'] = points
+
+    columns = []
+    for line in lines:
+        if line.startswith('#') or not line.strip():
+            continue
+        columns.append([float(entry) for entry in line.split()])
+    table = np.array(columns).transpose() if columns else np.zeros((3, 0))
+    labels = ('s', 'W', 'I_bunch')
+    for index, label in enumerate(labels):
+        data[label] = table[index] if index < len(table) else np.array([])
+    data.setdefault('WakeType', 'longitudinal')
+    return data
 
 
 class Track3P(ACE3P):

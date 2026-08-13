@@ -23,6 +23,7 @@ or a module whose requirement nothing provides, is a validation error.
 | `mesh`            | mesh                | —                  | `file:` — a prebuilt mesh file (declarative replacement for the old `skip_cubit` + supplied mesh). |
 | `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`. |
+| `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`. The time-domain (wakefield) solver — see [](#t3p-module). |
 | `acdtool`         | rf_post             | em_solution        | `input:` (`.rfpost`). Owns extraction of the `RoverQ`/`kickFactor`/`maxFieldsOnSurface` scalars. |
 | `track3p_source`  | track3p_particles   | —                  | `file:` — an externally-produced Track3P dump (there is no in-pipeline Track3P solver). |
 | `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys — see [](#particles-module-keys). |
@@ -114,6 +115,66 @@ ACE3P / Geant4 parameter merges, copy and rewrite their own input files
 separately and are unaffected by `stage_mode`). With `'symlink'`, deleting or
 moving a source file after a run leaves dangling links in the workdirs that
 referenced it.
+
+(t3p-module)=
+### `t3p` module
+
+T3P is the ACE3P **time-domain** solver, used for wakefield calculations. It takes
+the same MPI keys as `omega3p`/`s3p` (`input:`, `tasks:`, `cores:`, `opts:`) and
+requires only a `mesh`, so the minimal workflow is `cubit → t3p`. See
+`examples/t3p_sweep`.
+
+**It provides `td_solution`, not `em_solution`.** That is deliberate: `acdtool`
+requires `em_solution`, so listing `acdtool` after a T3P solver is a validation
+error rather than RF postprocessing silently pointed at time-domain output. A
+workflow may list both `s3p` and `t3p` (they provide different artifacts); two
+`t3p` entries is a duplicate-producer error like any other.
+
+**Output locations are read from the input file, not assumed.** T3P writes under
+`<JobName>/OUTPUT` (defaulting to `t3p_results`) and names each monitor's files
+after that monitor's `Name`, so both are resolved from the parsed `.t3p`. Results
+are read from the `WakeField` monitor's `<Name>.out`.
+
+`output_parameters` quantities (use the explicit `{module: t3p, quantity: …}`
+form, or the bare quantity name — both route to `t3p`):
+
+| Quantity | Shape | Meaning |
+|---|---|---|
+| `loss_factor` | scalar | Longitudinal loss factor, V/pC, from the monitor file's header. |
+| `kick_factor` | scalar | Transverse kick factor, V/pC. |
+| `W` | array over `s` | Wake potential, V/pC. |
+| `I_bunch` | array over `s` | Bunch current, C/m. |
+| `s` | array | The wake coordinate itself, m. |
+
+A run reports **either** a loss factor (longitudinal) or a kick factor
+(transverse), depending on the beam offset and the monitor contour. Asking for
+the wrong one raises an error naming what is actually available rather than
+returning `NaN`.
+
+Adding `at: {s: <position>}` to a mapping spec reduces an array quantity to the
+scalar at that wake position — the form an Xopt objective needs, mirroring S3P's
+`at: {frequency: …}`. Unlike an S3P frequency scan, the `s` grid is a consequence
+of the solver's timestep rather than something you specify, so the **nearest**
+sample is taken instead of requiring an exact match.
+
+T3P exposes `s` as its **field index**, so a `parameter_sweep` over a T3P
+workflow emits a long-format table with one row per `(grid point, s)` — exactly
+as an S3P sweep goes long over `Frequency`. Per-run scalars like `loss_factor`
+repeat down each run's block of rows.
+
+:::{note}
+**Volume monitors are written as your input file asks.** A `Volume` monitor
+writes a full field dump per sampled timestep — tens to hundreds of MB per run,
+multiplied by every point in a sweep. LUME-ACE3P does not prune or rewrite your
+monitors; widen the monitor's `TimeStep` or remove the block if you do not need
+the dumps.
+
+**`CheckPoint` is passed through but restarts are not orchestrated.** A
+`CheckPoint` section works like any other input section and T3P will write
+`t3p_results/CHECKPOINT`, but LUME-ACE3P will not detect an existing checkpoint
+or set `Action: restart`. A sweep point that exceeds its wall time restarts from
+scratch on re-run.
+:::
 
 (particles-module-keys)=
 ### `particles` module keys
@@ -217,12 +278,17 @@ quantity you are extracting:
   S-parameter needs a keyed lookup (`quantity` + `at: {frequency}`) that no
   positional list can express.
 - **Bare form** — a positional list `['section', string1, string2, ...]` (or a
-  bare S-parameter string). No `module` key: the *shape* of the spec identifies
+  bare quantity string). No `module` key: the *shape* of the spec identifies
   the module. The head string routes it — `RoverQ`/`kickFactor`/
   `maxFieldsOnSurface` → `acdtool`, `dose`/`edep`/`scoring` → `geant4`,
-  `count`/`total_weight` → `particles`, and a bare S-parameter string or mapping
-  → `s3p`. This form mirrors the nested structure of the acdtool/Geant4 result
-  and is the convention used throughout the Omega3P and Geant4 examples.
+  `count`/`total_weight` → `particles`, a T3P wakefield quantity
+  (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`, and a bare
+  S-parameter string or any other mapping → `s3p`. This form mirrors the nested
+  structure of the acdtool/Geant4 result and is the convention used throughout
+  the Omega3P and Geant4 examples.
+
+  Note acdtool's `kickFactor` section and T3P's `kick_factor` quantity are
+  distinct spellings on purpose, so the two never collide.
 
 :::{note}
 **Why the S3P and Omega3P examples look different.** The two syntaxes model
@@ -235,9 +301,10 @@ natural fit for its module.
 
 The two forms are **not interchangeable per module**: the `acdtool`, `geant4`,
 and `particles` modules index their spec positionally (`spec[0]`, `spec[1]`, …),
-so they require the bare list; only `s3p` consumes a mapping. In practice, use
-the explicit mapping for S3P quantities and the bare list for everything else —
-which is exactly what the examples do.
+so they require the bare list. Only the two solvers with keyed lookups — `s3p`
+(`at: {frequency}`) and `t3p` (`at: {s}`) — consume a mapping. In practice, use
+the explicit mapping for S3P/T3P quantities and the bare list for everything
+else, which is what the examples do.
 :::
 
 The acdtool bare-form values are:

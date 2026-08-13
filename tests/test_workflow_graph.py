@@ -27,7 +27,7 @@ from lume_ace3p.workflow_graph import (
     Workflow, WorkflowValidationError, _resolve_order, _build_entry,
 )
 from lume_ace3p.modules import (
-    build_module, MESH, EM_SOLUTION, RF_POST, TRACK3P_PARTICLES,
+    build_module, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
 )
 from lume_ace3p.inputs import WorkflowInputs
@@ -122,6 +122,44 @@ def test_geant4_no_particle_source():
                  workflow_params={'dry_run': True})
 
 
+def test_order_cubit_t3p():
+    """The T3P chain: declared out of order, must sort to cubit -> t3p."""
+    entries = [{'module': 't3p', 'input': 'x.t3p'},
+               {'module': 'cubit', 'journal': 'x.jou'}]
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['cubit', 't3p']
+
+
+def test_acdtool_after_t3p_is_rejected():
+    """The em_solution / td_solution split doing its job: acdtool does RF
+    postprocessing on a frequency-domain solution, so pointing it at T3P's
+    time-domain output must fail validation rather than silently run."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 't3p', 'input': 'x.t3p'},
+               {'module': 'acdtool', 'input': 'x.rfpost'}]
+    with pytest.raises(WorkflowValidationError, match=f"'{EM_SOLUTION}'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
+def test_t3p_and_s3p_together_is_allowed():
+    """They provide different artifacts, so this is not a duplicate-producer
+    error — a workflow may run both solvers on one mesh."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 's3p', 'input': 'x.s3p'},
+               {'module': 't3p', 'input': 'x.t3p'}]
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert set(_types(wf.modules)) == {'cubit', 's3p', 't3p'}
+
+
+def test_two_t3p_solvers_rejected():
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 't3p', 'input': 'a.t3p'},
+               {'module': 't3p', 'input': 'b.t3p'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=f"'{TD_SOLUTION}'.*more than one"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
 def test_two_mesh_sources():
     # cubit journal XOR mesh file — declaring both is a duplicate producer.
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
@@ -182,6 +220,73 @@ def test_s3p_chain_evaluate(tmp_path):
         assert np.isnan(out['refl']).all()
     finally:
         os.chdir(cwd)
+
+
+def test_t3p_chain_evaluate(tmp_path):
+    """cubit -> t3p, dry-run against the shipped example. Reaches the solver with
+    a mesh present, records a td_solution, and returns the NaN sentinel."""
+    staged = _stage('t3p_sweep')
+    cwd = os.getcwd()
+    os.chdir(staged)
+    try:
+        entries = [
+            {'module': 'cubit', 'journal': 'pillboxwg.jou'},
+            {'module': 't3p', 'input': 'pillboxwg-closed.t3p', 'tasks': 16,
+             'cores': 16, 'opts': '--cpu-bind=cores'},
+        ]
+        inputs = WorkflowInputs(cubit={'cell_radius': 0.05,
+                                       'iris_radius': 0.025})
+        wf = Workflow(entries,
+                      workflow_params={'workdir': 'lume-ace3p_t3p_workdir',
+                                       'workdir_mode': 'auto', 'dry_run': True},
+                      inputs=inputs,
+                      output_spec={'k_loss': {'module': 't3p',
+                                              'quantity': 'loss_factor'}})
+        out = wf.evaluate([0.05, 0.025])
+
+        assert MESH in wf.last_context.artifacts
+        assert TD_SOLUTION in wf.last_context.artifacts
+        # T3P must NOT masquerade as a frequency-domain solution.
+        assert EM_SOLUTION not in wf.last_context.artifacts
+        assert wf.workdir == 'lume-ace3p_t3p_workdir_0.05_0.025'
+        assert np.isnan(out['k_loss']).all()
+        # The wake coordinate is the field index, so a sweep goes long-format.
+        assert wf.field_index()[0] == 's'
+    finally:
+        os.chdir(cwd)
+
+
+def test_t3p_output_specs_route_to_t3p():
+    """Bare T3P quantity names must reach the t3p module rather than falling
+    through to the s3p default, and an 'at: {s: ...}' mapping likewise."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 't3p', 'input': 'x.t3p'}]
+    specs = {
+        'a': 'loss_factor',
+        'b': ['kick_factor'],
+        'c': {'quantity': 'W', 'at': {'s': 0.1}},
+        'd': {'quantity': 'I_bunch'},
+    }
+    wf = Workflow(entries, workflow_params={'dry_run': True},
+                  output_spec=specs)
+    assert {name: m.type for name, m in wf.output_modules().items()} == {
+        'a': 't3p', 'b': 't3p', 'c': 't3p', 'd': 't3p'}
+
+
+def test_s3p_output_specs_still_route_to_s3p():
+    """The router extension must not steal S3P's specs — 'at: {frequency: ...}'
+    and S-parameter names stay with s3p."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 's3p', 'input': 'x.s3p'}]
+    specs = {
+        'a': 'S(0,0)',
+        'b': ['S(1,1)'],
+        'c': {'quantity': 'S(0,0)', 'at': {'frequency': 1.2e10}},
+    }
+    wf = Workflow(entries, workflow_params={'dry_run': True},
+                  output_spec=specs)
+    assert {name: m.type for name, m in wf.output_modules().items()} == {
+        'a': 's3p', 'b': 's3p', 'c': 's3p'}
 
 
 def test_omega3p_chain_evaluate(tmp_path):

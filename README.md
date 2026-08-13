@@ -14,7 +14,7 @@ by Ryan Roussel for optimization.
 
 The user submits a batch script to HPC nodes which calls `run_lume_ace3p.py`
 with a user-defined YAML configuration. The YAML declares a **`workflow:`** — an
-ordered list of pipeline **modules** (`cubit`, `omega3p`/`s3p`, `acdtool`,
+ordered list of pipeline **modules** (`cubit`, `omega3p`/`s3p`/`t3p`, `acdtool`,
 `track3p_source`, `particles`, `geant4`, and mesh/particle source modules) — plus
 a **`mode:`** that says how to drive it (`single`, `parameter_sweep`,
 `scalar_optimize`, `gp_parameter_sweep`). The modules are validated into a

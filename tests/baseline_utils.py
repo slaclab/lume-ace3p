@@ -371,6 +371,20 @@ EXAMPLES = {
                       'ACE3P settings supplied inline. Reachability for the '
                       '(absent) solver step.'),
     },
+    't3p_sweep': {
+        'kind': 'sweep',
+        'yaml': 't3p_sweep.yaml',
+        'files': {
+            't3p_sweep_output.txt': ('t3p_sweep_output.txt', 'table'),
+        },
+        'digests': {},
+        'checkable': ('NUMERIC: swept input grid (cell_radius x iris_radius) '
+                      "and the 's' wake-coordinate column. T3P is a "
+                      'time-domain solver, so the table goes long-format over '
+                      "'s' the way an S3P table goes over Frequency; the "
+                      'wakefield outputs (loss_factor, W) are NaN under dry-run '
+                      '-> reachability-only.'),
+    },
     'omega3p_sweep': {
         'kind': 'sweep',
         'yaml': 'omega3p_sweep.yaml',

@@ -5,13 +5,14 @@ declarative :class:`~lume_ace3p.workflow_graph.Workflow` DAG that orders them,
 and the workflow-agnostic modes in :mod:`lume_ace3p.modes` that drive it.
 
 A ``Module`` is a thin adapter over one of the existing step wrappers
-(``Cubit``, ``Omega3P``/``S3P``, ``Acdtool``, ``Particles``, ``Geant4``). Each
-module declares the *artifact kinds* it ``requires`` (must exist upstream) and
-``provides`` (produces), so a future ``Workflow`` can order a declared list of
-modules into a runnable DAG purely from those edges. The requires/provides
-edges are deliberately additive: a runnable Track3P/T3P solver (a separate
-future effort) will slot in as ``requires {em_solution}`` / ``provides
-{track3p_particles}`` without changing any rule here.
+(``Cubit``, ``Omega3P``/``S3P``/``T3P``, ``Acdtool``, ``Particles``, ``Geant4``).
+Each module declares the *artifact kinds* it ``requires`` (must exist upstream)
+and ``provides`` (produces), so a future ``Workflow`` can order a declared list
+of modules into a runnable DAG purely from those edges. The requires/provides
+edges are deliberately additive — adding :class:`T3PModule` (``requires {mesh}``
+/ ``provides {td_solution}``) needed no rule change, and a runnable Track3P
+solver will likewise slot in as ``requires {em_solution}`` / ``provides
+{track3p_particles}``.
 
 The old skip-flags (``skip_cubit``/``skip_solver``/``skip_acdtool``) and the
 ``geant4_particle_file`` bypass have no place in this layer: in a declarative
@@ -29,7 +30,7 @@ import shutil
 import numpy as np
 
 from lume_ace3p.cubit import Cubit
-from lume_ace3p.ace3p import Omega3P, S3P
+from lume_ace3p.ace3p import Omega3P, S3P, T3P
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles
@@ -43,7 +44,8 @@ from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
 
 JOURNAL = 'journal'                    # Cubit journal file
 MESH = 'mesh'                          # genesis/ncdf mesh (cubit+meshconvert, or provided)
-EM_SOLUTION = 'em_solution'            # Omega3P/S3P solver output dir
+EM_SOLUTION = 'em_solution'            # Omega3P/S3P frequency-domain solution
+TD_SOLUTION = 'td_solution'            # T3P time-domain solution (wakefields)
 RF_POST = 'rf_post'                    # acdtool postprocess results
 TRACK3P_PARTICLES = 'track3p_particles'  # raw Track3P dump (produced EXTERNALLY today)
 PARTICLE_SOURCE = 'particle_source'    # Geant4-format particle file (Particles output)
@@ -51,7 +53,7 @@ DOSE_GRID = 'dose_grid'                # Geant4 dose scoring output
 EDEP_GRID = 'edep_grid'                # Geant4 energy-deposit scoring output
 
 ARTIFACT_KINDS = frozenset({
-    JOURNAL, MESH, EM_SOLUTION, RF_POST, TRACK3P_PARTICLES,
+    JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
 })
 
@@ -312,14 +314,20 @@ class CubitModule(Module):
 
 
 class _SolverModule(Module):
-    """Shared body for the Omega3P/S3P adapters — both require a ``mesh`` and
-    provide an ``em_solution``, differing only in the wrapper they construct
-    and the dry-run label."""
+    """Shared body for the ACE3P solver adapters — all require a ``mesh`` and
+    provide a solution artifact, differing only in the wrapper they construct,
+    the dry-run label, and which artifact kind they produce.
+
+    Omega3P/S3P provide an ``em_solution`` (frequency domain); T3P provides a
+    ``td_solution`` (time domain). The split is deliberate: ``acdtool`` requires
+    ``em_solution``, so a T3P workflow that lists ``acdtool`` fails validation
+    instead of silently running RF postprocessing on time-domain output."""
 
     requires = frozenset({MESH})
     provides = frozenset({EM_SOLUTION})
     _wrapper = None
     _label = ''
+    _artifact = EM_SOLUTION
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -338,7 +346,7 @@ class _SolverModule(Module):
             _append_marker(ctx, f'Dry run mode: {self._label} step skipped.\n'
                                 f'Cubit: {ctx.inputs.cubit}\n'
                                 f'ACE3P: {[(_, v) for _, v in leaves]}\n')
-            ctx.artifacts[EM_SOLUTION] = ctx.workdir
+            ctx.artifacts[self._artifact] = ctx.workdir
             return
         ctx.ensure_workdir()
         solver = self._wrapper(self.input_file,
@@ -351,7 +359,7 @@ class _SolverModule(Module):
         solver.set_value(ctx.inputs.ace3p)
         solver.run()
         self._solver = solver
-        ctx.artifacts[EM_SOLUTION] = ctx.workdir
+        ctx.artifacts[self._artifact] = ctx.workdir
 
 
 class Omega3PModule(_SolverModule):
@@ -430,6 +438,113 @@ class S3PModule(_SolverModule):
         spectrum for a row rather than explode it."""
         solver = self._solver
         if solver is None:
+            return None
+        return dict(solver.output_data)
+
+
+class T3PModule(_SolverModule):
+    """The T3P time-domain solver: requires a ``mesh``, provides a
+    ``td_solution``.
+
+    Exposes the wakefield monitor's results the same way :class:`S3PModule`
+    exposes S-parameters — a scalar figure of merit plus arrays over a shared
+    index — except the index is the wake coordinate ``s`` rather than frequency.
+    """
+
+    type = 't3p'
+    provides = frozenset({TD_SOLUTION})
+    _wrapper = T3P
+    _label = 'T3P'
+    _artifact = TD_SOLUTION
+
+    # Bare quantity names this module answers to, used both by ``extract`` and
+    # by the output-spec router in workflow_graph.
+    QUANTITIES = frozenset({'loss_factor', 'kick_factor', 'W', 'I_bunch', 's'})
+
+    # Extractable scalars -> the key ``parse_wakefield`` stores them under.
+    _SCALARS = {'loss_factor': 'LossFactor', 'kick_factor': 'KickFactor'}
+
+    def extract(self, ctx, spec):
+        """Return a wakefield quantity from the T3P solution.
+
+        ``spec`` may be:
+          * ``'loss_factor'`` / ``'kick_factor'`` — the scalar figure of merit,
+          * ``'W'`` / ``'I_bunch'`` / ``'s'`` — the full ``s``-indexed array,
+          * a single-element list wrapping either of the above,
+          * a mapping ``{'quantity': 'W', 'at': {'s': 0.05}}`` — the value at the
+            wake position nearest ``s`` (the objective form an Xopt run needs).
+        """
+        solver = self._solver
+        if solver is None:
+            # Dry-run / no solver: same NaN sentinel S3PModule returns.
+            return np.array([float('nan')])
+        quantity, position = self._parse_spec(spec)
+        data = solver.output_data
+        if not data:
+            raise ValueError(
+                f"no T3P wakefield results to extract '{quantity}' from. T3P "
+                "writes them only when the input file declares a WakeField "
+                "monitor, e.g.\n"
+                "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
+                f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
+                f"under {ctx.workdir}.")
+
+        if quantity in self._SCALARS:
+            key = self._SCALARS[quantity]
+            if key not in data:
+                # Longitudinal runs report a loss factor, transverse ones a kick
+                # factor. Name the one that IS present rather than return NaN.
+                present = [name for name, k in self._SCALARS.items() if k in data]
+                raise ValueError(
+                    f"this is a {data.get('WakeType', 'unknown')} T3P run, which "
+                    f"reports {present} — not '{quantity}'. The wake type follows "
+                    "from the WakeField monitor's contour and the beam offset in "
+                    "the input file.")
+            return data[key]
+
+        if quantity not in data:
+            raise ValueError("Unknown quantity '" + str(quantity)
+                             + "' in T3P output dict. Known quantities: "
+                             + str(sorted(self.QUANTITIES)) + ".")
+        values = data[quantity]
+        if position is None:
+            return values
+        # Unlike S3P's frequency scan, the s grid is a solver-chosen consequence
+        # of the timestep, so an exact match is not something a user can specify.
+        # Take the nearest sample instead.
+        grid = np.asarray(data['s'])
+        if not grid.size:
+            return float('nan')
+        return values[int(np.argmin(np.abs(grid - float(position))))]
+
+    @staticmethod
+    def _parse_spec(spec):
+        if isinstance(spec, dict):
+            at = spec.get('at') or {}
+            return spec.get('quantity'), at.get('s')
+        if isinstance(spec, list):
+            return spec[0], None
+        return spec, None
+
+    def field_index(self, ctx):
+        """T3P field outputs are indexed by the wake coordinate ``s``. Returns
+        ``('s', array)``; under dry-run (no solver) a single-row ``[0.0]``
+        sentinel, so a swept long-format table still has one row per grid
+        point — mirroring :meth:`S3PModule.field_index`."""
+        solver = self._solver
+        if solver is None:
+            return 's', np.array([0.0])
+        data = solver.output_data
+        if not data:
+            return 's', np.array([0.0])
+        return 's', np.asarray(data['s'])
+
+    def field(self, ctx):
+        """Return the full wakefield result (``{s, W, I_bunch, LossFactor|
+        KickFactor, WakeType, ...}``) for the just-run evaluation, or ``None``
+        under dry-run / when the run declared no WakeField monitor."""
+        solver = self._solver
+        if solver is None or not solver.output_data:
             return None
         return dict(solver.output_data)
 
@@ -816,6 +931,7 @@ MODULE_REGISTRY = {
     MeshSourceModule.type: MeshSourceModule,
     Omega3PModule.type: Omega3PModule,
     S3PModule.type: S3PModule,
+    T3PModule.type: T3PModule,
     AcdtoolModule.type: AcdtoolModule,
     Track3PSourceModule.type: Track3PSourceModule,
     ParticlesModule.type: ParticlesModule,

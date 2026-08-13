@@ -23,13 +23,14 @@ import pytest
 
 from lume_ace3p.modules import (
     RunContext, build_module, MODULE_REGISTRY,
-    CubitModule, MeshSourceModule, Omega3PModule, S3PModule, AcdtoolModule,
+    CubitModule, MeshSourceModule, Omega3PModule, S3PModule, T3PModule,
+    AcdtoolModule,
     Track3PSourceModule, ParticlesModule, ParticleSourceModule, Geant4Module,
-    JOURNAL, MESH, EM_SOLUTION, RF_POST, TRACK3P_PARTICLES, PARTICLE_SOURCE,
-    DOSE_GRID, EDEP_GRID,
+    JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
+    PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
-from lume_ace3p.ace3p import S3P, Section
+from lume_ace3p.ace3p import S3P, T3P, Section
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles, TRACK3P_COLUMNS
@@ -176,6 +177,10 @@ def test_registry_edges_match_plan():
         'mesh': (set(), {MESH}),
         'omega3p': ({MESH}, {EM_SOLUTION}),
         's3p': ({MESH}, {EM_SOLUTION}),
+        # T3P provides a DISTINCT artifact kind: acdtool requires em_solution, so
+        # this is what makes 'cubit -> t3p -> acdtool' a validation error rather
+        # than RF postprocessing pointed at time-domain output.
+        't3p': ({MESH}, {TD_SOLUTION}),
         'acdtool': ({EM_SOLUTION}, {RF_POST}),
         'track3p_source': (set(), {TRACK3P_PARTICLES}),
         'particles': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
@@ -258,23 +263,27 @@ def test_cubit_module_requires_journal(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize('module_cls,label', [(Omega3PModule, 'Omega3P'),
-                                              (S3PModule, 'S3P')])
-def test_solver_module_dry_run(tmp_path, module_cls, label):
+@pytest.mark.parametrize('module_cls,label,artifact', [
+    (Omega3PModule, 'Omega3P', EM_SOLUTION),
+    (S3PModule, 'S3P', EM_SOLUTION),
+    (T3PModule, 'T3P', TD_SOLUTION),
+])
+def test_solver_module_dry_run(tmp_path, module_cls, label, artifact):
     ctx = RunContext(str(tmp_path / 'wd'),
                      inputs=WorkflowInputs(cubit={'x': 1.0}),
                      artifacts={MESH: str(tmp_path / 'wd' / 'm.genesis')},
                      dry_run=True)
     module_cls({'input': 'in.file'}).run(ctx)
-    assert EM_SOLUTION in ctx.artifacts
+    assert artifact in ctx.artifacts
     marker = open(os.path.join(ctx.workdir, 'DRY_RUN.txt')).read()
     assert f'{label} step skipped' in marker
 
 
-def test_solver_module_requires_mesh(tmp_path):
+@pytest.mark.parametrize('module_cls', [S3PModule, T3PModule])
+def test_solver_module_requires_mesh(tmp_path, module_cls):
     ctx = RunContext(str(tmp_path / 'wd'), dry_run=True)
     with pytest.raises(ValueError):
-        S3PModule({'input': 'in.s3p'}).run(ctx)
+        module_cls({'input': 'in.file'}).run(ctx)
 
 
 def test_s3p_extract(tmp_path):
@@ -302,6 +311,160 @@ def test_s3p_extract_dry_run_is_nan(tmp_path):
     module = S3PModule({'input': 'x.s3p'})
     module._solver = None
     assert np.isnan(module.extract(ctx, 'S(0,0)')).all()
+
+
+# --------------------------------------------------------------------------- #
+# T3P (time-domain wakefields)
+# --------------------------------------------------------------------------- #
+
+# Minimal T3P input declaring a WakeField monitor, so the wrapper can resolve
+# where its output lives. Braces on their own line — the T3P tutorial style.
+T3P_INPUT = """\
+ModelInfo:
+{
+  File: ./mesh.ncdf
+}
+
+Monitor:
+{
+  Type: WakeField
+  Name: wakefield
+  Smax: 1.4
+}
+"""
+
+# Longitudinal wakefield.out: 3 s-samples. Values from the ACE3P tutorial's
+# t3p/cavity-quarter run.
+T3P_WAKEFIELD = """\
+# T3P wakefield results at transverse point:
+#(0.00000000000000e+00,0.00000000000000e+00)
+# Loss factor = -3.88576373282202e-01 V/pC
+#          s[m]        W_long(s)[V/pC]     I_bunch(s)[C/m]
+0.00000000000000e+00 -1.00000000000000e-07 0.00000000000000e+00
+1.00000000000000e-01 -2.00000000000000e-07 2.00000000000000e-16
+2.00000000000000e-01 -3.00000000000000e-07 4.00000000000000e-16
+"""
+
+# Transverse variant — reports a kick factor instead of a loss factor.
+T3P_WAKEFIELD_TRANSVERSE = """\
+# T3P transverse wakefield result using transverse points:
+# (0.00000000000000e+00,0.00000000000000e+00) and
+# (0.00000000000000e+00,1.25000000000000e-02)
+# with offset 1.25000000000000e-02 m
+# Kick factor = 9.64058337896157e-02 V/pC
+#          s[m]        W_trans(s)[V/pC]     I_bunch(s)[C/m]
+0.00000000000000e+00 1.00000000000000e-09 0.00000000000000e+00
+1.00000000000000e-01 2.00000000000000e-09 2.00000000000000e-16
+"""
+
+
+def _make_t3p_solver(workdir, wakefield=T3P_WAKEFIELD):
+    """Build a T3P wrapper over a synthetic input + output file and drive its
+    output_parser directly — no binary run. Mirrors _make_s3p_solver."""
+    source = os.path.join(workdir, 'model.t3p')
+    _write(source, T3P_INPUT)
+    t3p = T3P(source, workdir=workdir)
+    results = os.path.join(workdir, 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    if wakefield is not None:
+        _write(os.path.join(results, 'wakefield.out'), wakefield)
+    t3p.output_parser()
+    return t3p
+
+
+def test_t3p_extract(tmp_path):
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = T3PModule({'input': 'model.t3p'})
+    module._solver = _make_t3p_solver(wd)
+    ctx = RunContext(wd, paths=_paths())
+
+    # The per-run scalar figure of merit.
+    assert module.extract(ctx, 'loss_factor') == pytest.approx(-3.88576373282202e-01)
+    assert module.extract(ctx, ['loss_factor']) == pytest.approx(-3.88576373282202e-01)
+
+    # Full s-indexed arrays.
+    assert np.allclose(module.extract(ctx, 'W'), [-1e-07, -2e-07, -3e-07])
+    assert np.allclose(module.extract(ctx, 's'), [0.0, 0.1, 0.2])
+    assert np.allclose(module.extract(ctx, 'I_bunch'), [0.0, 2e-16, 4e-16])
+
+    # Scalar at a wake position (the Xopt objective form). The s grid follows
+    # from the solver's timestep, so the nearest sample is taken — 0.09 -> 0.1.
+    assert module.extract(ctx, {'quantity': 'W', 'at': {'s': 0.1}}) \
+        == pytest.approx(-2e-07)
+    assert module.extract(ctx, {'quantity': 'W', 'at': {'s': 0.09}}) \
+        == pytest.approx(-2e-07)
+
+
+def test_t3p_extract_transverse_reports_kick_factor(tmp_path):
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = T3PModule({'input': 'model.t3p'})
+    module._solver = _make_t3p_solver(wd, wakefield=T3P_WAKEFIELD_TRANSVERSE)
+    ctx = RunContext(wd, paths=_paths())
+
+    assert module.extract(ctx, 'kick_factor') == pytest.approx(9.64058337896157e-02)
+
+    # Asking for the longitudinal scalar on a transverse run names what IS
+    # available rather than silently returning NaN.
+    with pytest.raises(ValueError, match='kick_factor'):
+        module.extract(ctx, 'loss_factor')
+
+
+def test_t3p_extract_unknown_quantity(tmp_path):
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = T3PModule({'input': 'model.t3p'})
+    module._solver = _make_t3p_solver(wd)
+    with pytest.raises(ValueError, match='Unknown quantity'):
+        module.extract(RunContext(wd), 'impedance')
+
+
+def test_t3p_extract_without_wake_monitor_explains_why(tmp_path):
+    """A run with no WakeField monitor parses fine but has nothing to extract;
+    asking for a quantity must say so rather than return a bare NaN."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = T3PModule({'input': 'model.t3p'})
+    module._solver = _make_t3p_solver(wd, wakefield=None)
+    with pytest.raises(ValueError, match='WakeField monitor'):
+        module.extract(RunContext(wd), 'loss_factor')
+
+
+def test_t3p_extract_dry_run_is_nan(tmp_path):
+    ctx = RunContext(str(tmp_path / 'wd'))
+    module = T3PModule({'input': 'x.t3p'})
+    module._solver = None
+    assert np.isnan(module.extract(ctx, 'loss_factor')).all()
+
+
+def test_t3p_field_index_and_field(tmp_path):
+    """T3P is indexed by the wake coordinate s, the way S3P is by Frequency —
+    this is what makes a T3P sweep table go long-format."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = T3PModule({'input': 'model.t3p'})
+    module._solver = _make_t3p_solver(wd)
+    ctx = RunContext(wd)
+
+    label, values = module.field_index(ctx)
+    assert label == 's'
+    assert np.allclose(values, [0.0, 0.1, 0.2])
+
+    field = module.field(ctx)
+    assert field['WakeType'] == 'longitudinal'
+    assert np.allclose(field['W'], [-1e-07, -2e-07, -3e-07])
+
+
+def test_t3p_field_index_dry_run_sentinel(tmp_path):
+    """Under dry-run the index is a single-row sentinel so a swept long-format
+    table still gets one row per grid point (same contract as S3P)."""
+    module = T3PModule({'input': 'x.t3p'})
+    module._solver = None
+    label, values = module.field_index(RunContext(str(tmp_path / 'wd')))
+    assert label == 's'
+    assert np.allclose(values, [0.0])
+    assert module.field(RunContext(str(tmp_path / 'wd'))) is None
 
 
 # --------------------------------------------------------------------------- #
