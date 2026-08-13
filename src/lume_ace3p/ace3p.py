@@ -220,14 +220,22 @@ class ACE3P(CommandWrapper):
 
     module_name = ''
 
+    # The directory each solver writes its results into when nothing overrides
+    # it. This default is the *authoritative* path: no solver reference
+    # documents a 'JobName' input container (it is set by the batch job
+    # submission script, outside the input file), and no shipped tutorial input
+    # of any type sets one. See ``job_name`` for the resolution order.
+    default_job_name = ''
+
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
-                 ace3p_path=None, mpi_caller=None, **kwargs):
+                 ace3p_path=None, mpi_caller=None, results_dir=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.ace3p_tasks = ace3p_tasks
         self.ace3p_cores = ace3p_cores
         self.ace3p_opts = ace3p_opts
+        self._results_dir = results_dir
         self.output_file = None
         self.output_data = {}
         if self.workdir is None:
@@ -292,6 +300,41 @@ class ACE3P(CommandWrapper):
     def make_default_input(self):
         pass
 
+    # ---- output locations ------------------------------------------------- #
+
+    def _input_tree(self):
+        """The parsed input tree, parsed on demand.
+
+        ``set_value`` populates ``_tree`` only when it has overrides to merge, so
+        a run with no swept ACE3P parameters reaches the parser for the first
+        time here."""
+        if self._tree is None:
+            self._tree = parse_ace3p(self.input_data)
+        return self._tree
+
+    def job_name(self):
+        """The solver's results directory name, resolved in this order:
+
+        1. the ``results_dir`` argument (set from a module's ``results_dir:``
+           YAML key) — **the supported override**, because the directory is
+           really chosen by the batch job submission script's job name, outside
+           the input file;
+        2. a top-level ``JobName`` leaf in the input file — a best-effort
+           fallback. Undocumented for every solver and unexercised by any
+           shipped example, so it is not presented as the mechanism; it costs
+           nothing and may be real;
+        3. :attr:`default_job_name`, the authoritative per-solver default.
+        """
+        if self._results_dir:
+            return self._results_dir
+        return self._input_tree().get_leaf('JobName') or self.default_job_name
+
+    def results_dir(self):
+        """The directory this solver writes results into, relative to the
+        workdir. Most solvers write straight into ``<job_name>``; :class:`T3P`
+        overrides this to append its ``OUTPUT`` subdirectory."""
+        return self.job_name()
+
     def output_parser(self):
         pass
 
@@ -315,8 +358,20 @@ class ACE3P(CommandWrapper):
 
 
 class Omega3P(ACE3P):
+    """The ACE3P eigensolver.
+
+    A run writes ``<job_name>/omega3p.out`` (see :meth:`ACE3P.job_name`;
+    ``omega3p_results`` by default) — which, despite the name, is KVC input
+    syntax, so :func:`parse_ace3p` reads it unmodified. Its top-level
+    ``Mode`` sections carry the eigensolve results, one per computed mode; those
+    are what :meth:`output_parser` turns into index-aligned arrays. Reading them
+    here is what makes a mode frequency or Q available *without* an acdtool
+    ``RoverQ`` postprocess step.
+    """
 
     module_name = 'omega3p'
+
+    default_job_name = 'omega3p_results'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -327,10 +382,109 @@ class Omega3P(ACE3P):
         with open(self.input_file, 'w') as f:
             pass
 
+    def output_parser(self):
+        """Parse ``<results_dir>/omega3p.out`` into ``output_data``.
+
+        Leaves ``output_data`` empty — rather than raising, following
+        :class:`T3P` — when the file is absent (an interrupted or failed run);
+        the module layer raises with the resolved path when a workflow actually
+        *asks* for a mode quantity."""
+        self.output_data = {}
+        path = os.path.join(self.workdir, self.results_dir(), self.output_file)
+        if not os.path.isfile(path):
+            return
+        self.output_data = parse_omega3p_output(path)
+
+
+def _split_pair(value):
+    """Return ``(real, imag)`` for a ``'<real> , <imag>'`` value, or ``None``
+    when ``value`` is not such a pair.
+
+    A lossy or port eigensolve writes ``Frequency`` and ``TotalEnergy`` this
+    way — those are the two seen in practice. The split is detected from the
+    *value* rather than from a list of key names, so a future complex-valued
+    leaf needs no change here: both halves must parse as floats, which is what
+    keeps a comma inside a file path or a mode label from being mistaken for a
+    complex eigenvalue."""
+    parts = value.split(',')
+    if len(parts) != 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+
+
+def parse_omega3p_output(path):
+    """Parse an Omega3P ``omega3p.out`` file into a dict of eigenmode results.
+
+    Returns
+
+    * ``'Modes'`` — one dict per computed mode, in file order, holding that
+      mode's own leaves (``Frequency``, ``QualityFactor``, ``TotalEnergy``,
+      ``PowerLoss``, ``File``, plus ``ExternalQ`` on a run with a port). This is
+      the readable form; it is *not* a table.
+    * ``'ModeID'`` plus one array per quantity, all aligned to it — the
+      index-aligned form :class:`~lume_ace3p.modules.Omega3PModule` exposes as a
+      table axis, the way S3P's arrays align to ``Frequency``.
+
+    A lossy or port run reports complex eigenvalues as ``'<real> , <imag>'``
+    pairs. ``Frequency`` keeps the real part, so it stays a plottable table
+    column, and the imaginary half lands in ``Frequency_imag`` (same for
+    ``TotalEnergy``). An ``_imag`` array appears only when some mode reported a
+    pair, and missing entries pad with 0.0 — a real eigenvalue *has* a zero
+    imaginary part. ``ExternalQ``, by contrast, is genuinely absent on a run
+    with no port, so it pads with NaN.
+
+    ``Mode`` sections are found by name: top-level section order differs between
+    runs (the tutorial's ``pillbox`` has ``Mode`` sixth, ``pillbox-rtop+coax``
+    second), and the license banner inside ``Version`` is absorbed into the
+    first key's name — garbage that is ignored rather than cleaned up.
+    """
+    with open(path) as file:
+        tree = parse_ace3p(file.read())
+
+    modes = []
+    for section in tree.children('Mode'):
+        if not isinstance(section, Section):
+            continue
+        mode = {}
+        for key, value in section.entries:
+            if isinstance(value, Section):
+                continue
+            pair = _split_pair(value)
+            if pair is not None:
+                mode[key], mode[key + '_imag'] = pair
+                continue
+            try:
+                mode[key] = float(value)
+            except ValueError:
+                mode[key] = value.strip()
+        modes.append(mode)
+
+    data = {'Modes': modes, 'ModeID': np.arange(len(modes))}
+    # Column order follows first appearance across the modes, so it tracks the
+    # file rather than an assumed key list.
+    keys = []
+    for mode in modes:
+        keys += [key for key in mode if key not in keys]
+    for key in keys:
+        # An absent imaginary part is zero; an absent ExternalQ is unknown.
+        fill = 0.0 if key.endswith('_imag') else float('nan')
+        values = [mode.get(key, fill) for mode in modes]
+        data[key] = (np.array(values) if all(isinstance(v, float) for v in values)
+                     else values)
+    return data
+
 
 class S3P(ACE3P):
 
     module_name = 's3p'
+
+    # Not yet consulted: 'output_parser' below still hardcodes 's3p_results'.
+    # Recorded for symmetry — the S3P reference documents no output files at all,
+    # so the default is all there is to go on.
+    default_job_name = 's3p_results'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -386,9 +540,9 @@ class T3P(ACE3P):
     produces S-parameters indexed by frequency.
 
     Unlike S3P, T3P's output locations are not fixed: everything lands under
-    ``<JobName>/OUTPUT`` (``JobName`` defaults to ``t3p_results``), and each
-    monitor's files are named after that monitor's own ``Name``. Both are read
-    back out of the input file rather than hardcoded.
+    ``<job_name>/OUTPUT`` (see :meth:`ACE3P.job_name`; ``t3p_results`` by
+    default), and each monitor's files are named after that monitor's own
+    ``Name``, which is read back out of the input file rather than hardcoded.
     """
 
     module_name = 't3p'
@@ -408,21 +562,11 @@ class T3P(ACE3P):
 
     # ---- output locations, read from the input file ----------------------- #
 
-    def _input_tree(self):
-        """The parsed input tree, parsed on demand.
-
-        ``set_value`` populates ``_tree`` only when it has overrides to merge, so
-        a run with no swept ACE3P parameters reaches the parser for the first
-        time here."""
-        if self._tree is None:
-            self._tree = parse_ace3p(self.input_data)
-        return self._tree
-
     def results_dir(self):
-        """The ``<JobName>/OUTPUT`` directory T3P writes results into, relative
-        to the workdir."""
-        job_name = self._input_tree().get_leaf('JobName') or self.default_job_name
-        return os.path.join(job_name, 'OUTPUT')
+        """The ``<job_name>/OUTPUT`` directory T3P writes results into, relative
+        to the workdir. T3P is the one solver with a subdirectory here; see
+        :meth:`ACE3P.job_name` for how the parent is resolved."""
+        return os.path.join(self.job_name(), 'OUTPUT')
 
     def wake_monitor_name(self):
         """The ``Name`` of the ``WakeField`` monitor, which is what T3P names its
@@ -521,6 +665,8 @@ def parse_wakefield(path):
 class Track3P(ACE3P):
 
     module_name = 'track3p'
+
+    default_job_name = 'track3p_results'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

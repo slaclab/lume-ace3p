@@ -1,13 +1,15 @@
 # Acdtool Rework + Output-Spec Migration — Implementation Plan
 
-**Status: PHASE 0 COMPLETE** (2026-08-13). Phases 1–6 not started. Planned
+**Status: PHASES 0–1 COMPLETE** (2026-08-13). Phases 2–6 not started. Planned
 2026-08-13 from a cross-reference of the CW23 ACE3P tutorial archive against the
 current module layer, then **revised 2026-08-13 against the acdtool user guide**
 (see below), which corrected several assumptions — read
 "Revision: the acdtool user guide" before starting any phase. Phase 0 made no
 `src/` changes; all four originally confirmed defects were reproduced against
 real files and are now pinned by characterization tests in
-`tests/test_acdtool_fixtures.py`.
+`tests/test_acdtool_fixtures.py`. Phase 1 is the first phase to touch `src/`:
+Omega3P now parses its own eigenmode output, so a mode frequency or Q no longer
+requires an acdtool `RoverQ` step. It changed no example and no baseline.
 
 This plan reworks how `acdtool` is invoked and parsed, and migrates
 `output_parameters` off the positional `['section', 'mode_id', 'column']` list
@@ -778,21 +780,95 @@ acdtool and no spec changes.
 
 ### Verification (Phase 1 done when)
 
-- [ ] Both Phase-0 `omega3p.out` fixtures parse: real-eigenvalue case yields 2
+- [x] Both Phase-0 `omega3p.out` fixtures parse: real-eigenvalue case yields 2
   modes with `QualityFactor`; complex case yields 1 mode with `ExternalQ` and a
   nonzero `Frequency_imag`.
-- [ ] The copyright/banner text inside `Version` does not break parsing (it
+- [x] The copyright/banner text inside `Version` does not break parsing (it
   currently does not — a garbage first key is produced and ignored; assert the
   `Mode` sections are still found).
-- [ ] `extract` returns a scalar under `at: {mode: 0}` and a full array without it.
-- [ ] Dry-run returns the NaN sentinel rather than raising.
-- [ ] `python -m pytest tests/` green; baselines unchanged (no example migrated).
+- [x] `extract` returns a scalar under `at: {mode: 0}` and a full array without it.
+- [x] Dry-run returns the NaN sentinel rather than raising (a **scalar** NaN —
+  see deviation 2).
+- [x] `python -m pytest tests/` green; baselines unchanged (no example migrated)
+  — 282 passed (18 new), up from Phase 0's 264.
+
+### Deviations found while executing Phase 1
+
+1. **`results_dir` resolution landed on the `ACE3P` base class, not on
+   `Omega3P`.** The plan scoped it to Omega3P, but T3P already had the same logic
+   (`_input_tree` + a `JobName` lookup) and Phase 2 needs it for S3P, so the
+   resolution order lives once in `ACE3P.job_name()` (`results_dir` argument →
+   input-tree `JobName` → `default_job_name`) with `results_dir()` on top of it.
+   T3P's override now just appends `OUTPUT`, which is the one thing that is
+   actually T3P-specific. Every solver got its documented `default_job_name`
+   (`omega3p_results`, `s3p_results`, `t3p_results`, `track3p_results`); only
+   Omega3P and T3P *consult* it so far — S3P's `output_parser` still hardcodes
+   `s3p_results/`, so **Phase 2 item 7 is now a one-line change**. The
+   `results_dir:` module key is plumbed through `_SolverModule` for all three
+   solvers, so Phase 2 inherits it for S3P for free.
+
+2. **`Omega3PModule.field_index` returns `None` under dry-run rather than
+   S3P/T3P's single-row sentinel**, and `extract` returns a **scalar** NaN rather
+   than `array([nan])`. Two reasons, and they are the same reason: the sentinel
+   exists so a *long-format* table keeps one row per grid point, and Omega3P has
+   no dry-run axis to be long over. S3P's frequency scan and T3P's `s` range are
+   declared in the input file, so their axis is known to exist before the run;
+   Omega3P's mode count is a result of the eigensolve. Emitting a sentinel would
+   also have added a `ModeID` column to the existing wide `omega3p → acdtool`
+   sweep tables under dry-run, which is exactly the baseline movement this phase
+   forbids. Consequence for Phase 4: acdtool's `field_index` faces the same
+   choice, and the same answer (no sentinel) keeps `examples/omega3p_sweep`
+   byte-identical. For a **real** omega3p run the axis *is* returned, so an
+   omega3p+acdtool table goes long-format on `ModeID` — which is the end state
+   design decision 2 specifies, reached early rather than deferred.
+
+3. **The complex-pair split is detected from the value, not from a key list.**
+   The plan named `Frequency` and `TotalEnergy`; the implementation
+   (`ace3p.py::_split_pair`) treats any leaf that splits into exactly two
+   float-parseable comma parts as a `real , imag` pair, so a future complex leaf
+   needs no code change and a comma inside a `File` path cannot be mistaken for
+   one. The two known keys are named in that function's docstring.
+
+4. **Two absence semantics, not one.** `parse_omega3p_output` pads a missing
+   `_imag` entry with `0.0` (a real eigenvalue *has* a zero imaginary part) and a
+   missing `ExternalQ` with `NaN` (genuinely unknown on a portless run). An
+   `_imag` array appears only if some mode reported a pair, so the lossless
+   fixture yields no `Frequency_imag` key at all.
+
+5. **`output_data` carries both forms.** `'Modes'` is the plan's readable list of
+   per-mode dicts; alongside it are `ModeID` plus one index-aligned array per
+   quantity, which is what `extract`/`field_index` need. `field()` drops
+   `'Modes'` — a list of dicts cannot ride inside a field-artifact `.npz` without
+   pickling (`results.load_field` loads with `allow_pickle=False`).
+
+6. **Output specs must name `module: omega3p` explicitly.** `_infer_output_module`
+   routes a bare `'Frequency'` string to `s3p` by shape, and Phase 1 deliberately
+   does not touch it (Phase 4 retires shape-sniffing). Recorded in the
+   `Omega3PModule` docstring; a mis-routed bare spec already fails with "no such
+   module is in the workflow".
+
+7. **A docs section was written now rather than deferred to Phase 6.** The plan
+   puts all docs in Phase 6, but `results_dir:` and the Omega3P quantity names are
+   *new user-facing surface* with no other discoverable home, so
+   `docs/yaml_reference.md` gained an `omega3p` module section (quantity table,
+   `at: {mode: n}`, the `ModeID` field index, the `results_dir:`/`JobName`
+   distinction) alongside the existing `t3p` one, and the `t3p` section's
+   output-location paragraph was updated for the shared key. This is additive and
+   describes only what Phase 1 shipped — Phase 6 still owns the mapping-form
+   migration and the deprecation notes.
 
 ### Deliverables
 
-- [ ] `Omega3P.output_parser` + `results_dir` in `src/lume_ace3p/ace3p.py`.
-- [ ] `Omega3PModule.extract` / `field_index` / `field` in `src/lume_ace3p/modules.py`.
-- [ ] Tests in `tests/test_ace3p.py` + `tests/test_modules.py`.
+- [x] `Omega3P.output_parser` + `parse_omega3p_output` + base-class
+  `job_name`/`results_dir` in `src/lume_ace3p/ace3p.py`.
+- [x] `Omega3PModule.extract` / `field_index` / `field` + the `results_dir:`
+  module key in `src/lume_ace3p/modules.py`.
+- [x] Tests in `tests/test_ace3p.py` (9 new, against the real Phase-0 fixtures) +
+  `tests/test_modules.py` (9 new, synthetic — matching that file's convention).
+
+**No ACE3P environment needed for this phase** — the parser runs against the
+frozen Phase-0 fixtures and the module tests inject a wrapper whose
+`output_parser` is driven directly. It runs fully locally.
 
 ---
 
@@ -858,7 +934,11 @@ output parsing is Phase 3.
    `WorkflowValidationError`. `parse_wakefield` itself needs no change; it already
    reads both header forms.
 7. Fix S3P's hardcoded results dir while in the neighborhood: give `S3P` a
-   `results_dir()` and have `output_parser` use it. **Not "reading `JobName` like
+   `results_dir()` and have `output_parser` use it. **Landed in Phase 1** —
+   `ACE3P.job_name()`/`results_dir()`, `S3P.default_job_name = 's3p_results'` and
+   the `results_dir:` module key all exist already (Phase 1 deviation 1), so what
+   remains here is replacing the literal `'s3p_results/Reflection.out'` in
+   `S3P.output_parser` with `self.results_dir()`. **Not "reading `JobName` like
    `T3P`"** — the S3P reference documents no `JobName` container, so `s3p_results`
    is the authoritative default and a module-level `results_dir:` YAML key is the
    supported override. Keep the input-tree `JobName` lookup as a fallback for

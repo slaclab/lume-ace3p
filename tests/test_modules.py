@@ -30,7 +30,7 @@ from lume_ace3p.modules import (
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
-from lume_ace3p.ace3p import S3P, T3P, Section
+from lume_ace3p.ace3p import Omega3P, S3P, T3P, Section
 from lume_ace3p.acdtool import Acdtool
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles, TRACK3P_COLUMNS
@@ -311,6 +311,204 @@ def test_s3p_extract_dry_run_is_nan(tmp_path):
     module = S3PModule({'input': 'x.s3p'})
     module._solver = None
     assert np.isnan(module.extract(ctx, 'S(0,0)')).all()
+
+
+# --------------------------------------------------------------------------- #
+# Omega3P (eigenmodes read from the solver's own output)
+# --------------------------------------------------------------------------- #
+
+# Minimal Omega3P input. Nothing here names the results directory: no shipped
+# tutorial input sets 'JobName', so the per-solver default is what a real run
+# writes to.
+OMEGA3P_INPUT = """\
+ModelInfo: {
+  File: ./pillbox.ncdf
+}
+"""
+
+# Synthetic omega3p.out (KVC syntax, like the real thing): 2 modes, real
+# eigenvalues. The real frozen fixtures — banner, differing section order,
+# complex eigenvalues — are exercised in tests/test_ace3p.py.
+OMEGA3P_OUTPUT = """\
+        Mode : {
+            TotalEnergy : 4.0e-12
+            QualityFactor : 24000.0
+            File : omega3p_results/mode.l0.m0000.mod
+            PowerLoss : 1.0e-06
+            Frequency : 1.1e9
+        }
+        Mode : {
+            TotalEnergy : 4.0e-12
+            QualityFactor : 21000.0
+            File : omega3p_results/mode.l0.m0001.mod
+            PowerLoss : 2.0e-06
+            Frequency : 2.2e9
+        }
+"""
+
+# The lossy/port variant: one mode, complex eigenvalue, ExternalQ present.
+OMEGA3P_OUTPUT_COMPLEX = """\
+        Mode : {
+            QualityFactor : 28000.0
+            Frequency : 1.3e9 , 641.0
+            PowerLoss : 1.2e-06
+            TotalEnergy : 4.0e-12 , 0.0
+            ExternalQ : 1024235.0
+            File : omega3p_results/omega3p.l0.m0000.mod
+        }
+"""
+
+
+def _make_omega3p_solver(workdir, output=OMEGA3P_OUTPUT,
+                         results_dir='omega3p_results'):
+    """Construct an Omega3P wrapper over a synthetic omega3p.out and drive its
+    output_parser directly — no binary run. Mirrors _make_s3p_solver."""
+    dummy_input = os.path.join(workdir, 'dummy.omega3p')
+    _write(dummy_input, OMEGA3P_INPUT)
+    kwargs = {} if results_dir == 'omega3p_results' else {'results_dir': results_dir}
+    omega3p = Omega3P(dummy_input, workdir=workdir, **kwargs)
+    if output is not None:
+        results = os.path.join(workdir, results_dir)
+        os.makedirs(results, exist_ok=True)
+        _write(os.path.join(results, 'omega3p.out'), output)
+    omega3p.output_parser()
+    return omega3p
+
+
+def test_omega3p_extract(tmp_path):
+    """Mode quantities come straight from the eigensolver's own output — no
+    acdtool RoverQ step needed to get a frequency or a Q."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd)
+    ctx = RunContext(wd, paths=_paths())
+
+    # Full mode-indexed arrays (string spec / list spec).
+    assert np.allclose(module.extract(ctx, 'Frequency'), [1.1e9, 2.2e9])
+    assert np.allclose(module.extract(ctx, ['Frequency']), [1.1e9, 2.2e9])
+    assert np.allclose(module.extract(ctx, 'QualityFactor'), [24000.0, 21000.0])
+
+    # Scalar for one mode — the same 'at:' narrowing S3P and T3P use.
+    assert module.extract(ctx, {'quantity': 'Frequency', 'at': {'mode': 0}}) \
+        == pytest.approx(1.1e9)
+    assert module.extract(ctx, {'quantity': 'Frequency', 'at': {'mode': 1}}) \
+        == pytest.approx(2.2e9)
+    # A mapping with no 'at:' is the full array.
+    assert np.allclose(module.extract(ctx, {'quantity': 'PowerLoss'}),
+                       [1.0e-06, 2.0e-06])
+
+
+def test_omega3p_extract_complex_eigenvalue(tmp_path):
+    """A lossy/port run: Frequency keeps the real part (so it stays a plottable
+    table column) and the imaginary half is its own quantity."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd, output=OMEGA3P_OUTPUT_COMPLEX)
+    ctx = RunContext(wd, paths=_paths())
+
+    at_mode_0 = {'at': {'mode': 0}}
+    assert module.extract(ctx, {'quantity': 'Frequency', **at_mode_0}) \
+        == pytest.approx(1.3e9)
+    assert module.extract(ctx, {'quantity': 'Frequency_imag', **at_mode_0}) \
+        == pytest.approx(641.0)
+    assert module.extract(ctx, {'quantity': 'ExternalQ', **at_mode_0}) \
+        == pytest.approx(1024235.0)
+
+
+def test_omega3p_extract_honors_results_dir_config(tmp_path):
+    """'results_dir' on the module reaches the wrapper, so a run whose batch
+    job name was not the default is still readable."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p', 'results_dir': 'run17'})
+    assert module.results_dir == 'run17'
+    module._solver = _make_omega3p_solver(wd, results_dir='run17')
+    assert np.allclose(module.extract(RunContext(wd), 'Frequency'),
+                       [1.1e9, 2.2e9])
+
+
+def test_omega3p_extract_unknown_quantity(tmp_path):
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd)
+    with pytest.raises(ValueError, match='Unknown quantity'):
+        module.extract(RunContext(wd), 'RoQ')
+    # 'Modes' is the readable per-mode list, not an extractable column.
+    with pytest.raises(ValueError, match='Unknown quantity'):
+        module.extract(RunContext(wd), 'Modes')
+
+
+def test_omega3p_extract_unknown_mode_names_what_exists(tmp_path):
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd)
+    with pytest.raises(ValueError, match='no mode 5'):
+        module.extract(RunContext(wd),
+                       {'quantity': 'Frequency', 'at': {'mode': 5}})
+
+
+def test_omega3p_extract_without_output_file_explains_why(tmp_path):
+    """A failed/interrupted run writes no omega3p.out. Asking for a quantity
+    must name the path looked for and the config key that changes it, rather
+    than returning a bare NaN."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd, output=None)
+    with pytest.raises(ValueError, match='omega3p_results'):
+        module.extract(RunContext(wd), 'Frequency')
+
+
+def test_omega3p_extract_dry_run_is_nan(tmp_path):
+    """A scalar NaN, not S3P's array([nan]): Omega3P exposes no dry-run index
+    axis, so the value lands in a wide table cell as-is."""
+    ctx = RunContext(str(tmp_path / 'wd'))
+    module = Omega3PModule({'input': 'x.omega3p'})
+    module._solver = None
+    assert np.isnan(module.extract(ctx, 'Frequency'))
+
+
+def test_omega3p_field_index_and_field(tmp_path):
+    """Omega3P results are indexed by mode, the way S3P's are by Frequency."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = Omega3PModule({'input': 'dummy.omega3p'})
+    module._solver = _make_omega3p_solver(wd)
+    ctx = RunContext(wd)
+
+    label, values = module.field_index(ctx)
+    assert label == 'ModeID'
+    assert np.array_equal(values, [0, 1])
+
+    field = module.field(ctx)
+    assert np.allclose(field['Frequency'], [1.1e9, 2.2e9])
+    # The per-mode dict list is dropped: it cannot ride inside a field-artifact
+    # .npz without pickling, and adds nothing the arrays lack.
+    assert 'Modes' not in field
+
+
+def test_omega3p_field_index_is_none_without_modes(tmp_path):
+    """Deliberately NOT the single-row sentinel S3P/T3P return under dry-run.
+    Omega3P's mode count is a result of the eigensolve, not something the input
+    file declares, and a sentinel axis would silently reshape the existing wide
+    omega3p -> acdtool sweep tables."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    ctx = RunContext(wd)
+
+    module = Omega3PModule({'input': 'x.omega3p'})
+    module._solver = None
+    assert module.field_index(ctx) is None
+    assert module.field(ctx) is None
+
+    # Same when the run produced no output file at all.
+    module._solver = _make_omega3p_solver(wd, output=None)
+    assert module.field_index(ctx) is None
+    assert module.field(ctx) is None
 
 
 # --------------------------------------------------------------------------- #

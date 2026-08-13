@@ -1,4 +1,4 @@
-"""Tests for the ACE3P input-text parser and the T3P output parser.
+"""Tests for the ACE3P input-text parser and the T3P / Omega3P output parsers.
 
 The parser tests here are the regression guard for a bug that made T3P
 unusable: ``_tokenize`` only skipped spaces and tabs before testing for a block's
@@ -14,16 +14,28 @@ emitted unclosed braces. Both brace styles are legal ACE3P input and appear in
 the shipped tutorial examples (S3P/Omega3P use same-line, T3P uses next-line), so
 both are covered here, along with the byte-stability of the same-line style that
 the frozen baselines depend on.
+
+The Omega3P section at the bottom (Phase 1 of ``docs/acdtool_rework_plan.md``)
+runs against the *real* frozen ``omega3p.out`` fixtures in
+``tests/fixtures/acdtool/solver_outputs/omega3p`` rather than synthetic text —
+the license banner, the differing top-level section order and the ``'real ,
+imag'`` eigenvalues are all things only a real file carries.
 """
 
 import os
+import shutil
 
 import numpy as np
 import pytest
 
 from lume_ace3p.ace3p import (
-    Section, parse_ace3p, write_ace3p, merge_overrides, parse_wakefield, T3P,
+    Section, parse_ace3p, write_ace3p, merge_overrides, parse_wakefield,
+    parse_omega3p_output, Omega3P, T3P,
 )
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OMEGA3P_FIXTURES = os.path.join(HERE, 'fixtures', 'acdtool', 'solver_outputs',
+                                'omega3p')
 
 
 # --------------------------------------------------------------------------- #
@@ -354,3 +366,146 @@ def test_t3p_output_parser_tolerates_missing_file(tmp_path):
     t3p = _make_t3p(tmp_path)
     t3p.output_parser()
     assert t3p.output_data == {}
+
+
+def test_t3p_results_dir_override_beats_input_file_job_name(tmp_path):
+    """The supported override is the module-level ``results_dir``, because the
+    directory is really chosen by the batch script's job name. It wins over an
+    input-file ``JobName``, which is undocumented for every solver."""
+    source = tmp_path / 'model.t3p'
+    _write(source, 'JobName: from_input\n\n' + T3P_INPUT)
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir, exist_ok=True)
+    t3p = T3P(str(source), workdir=str(workdir), results_dir='from_config')
+    assert t3p.results_dir() == os.path.join('from_config', 'OUTPUT')
+
+
+# --------------------------------------------------------------------------- #
+# Omega3P eigenmode output parsing (real fixtures)
+# --------------------------------------------------------------------------- #
+
+# Minimal Omega3P input. Nothing in it names the results directory — no shipped
+# tutorial input of any type sets 'JobName', so the per-solver default is the
+# path a real run actually writes to.
+OMEGA3P_INPUT = """\
+ModelInfo: {
+  File: ./pillbox.ncdf
+}
+EigenSolver: {
+  NumEigenvalues: 2
+}
+"""
+
+
+def _fixture(name):
+    return os.path.join(OMEGA3P_FIXTURES, name + '.omega3p.out')
+
+
+def _make_omega3p(tmp_path, fixture=None, job_name=None, results_dir=None):
+    """Build an Omega3P wrapper over an input file, with a real ``omega3p.out``
+    fixture pre-placed where the wrapper should look for it. No binary runs."""
+    text = OMEGA3P_INPUT
+    if job_name is not None:
+        text = f'JobName: {job_name}\n\n' + text
+    os.makedirs(tmp_path, exist_ok=True)
+    source = tmp_path / 'model.omega3p'
+    _write(source, text)
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir, exist_ok=True)
+    omega3p = Omega3P(str(source), workdir=str(workdir), results_dir=results_dir)
+    if fixture is not None:
+        results = os.path.join(str(workdir), omega3p.results_dir())
+        os.makedirs(results, exist_ok=True)
+        shutil.copy(_fixture(fixture), os.path.join(results, 'omega3p.out'))
+    return omega3p
+
+
+def test_parse_omega3p_real_eigenvalues():
+    """The lossless case (tutorial omega3p/pillbox): 2 modes, real
+    eigenvalues, a Q per mode and no ExternalQ."""
+    data = parse_omega3p_output(_fixture('pillbox'))
+
+    assert len(data['Modes']) == 2
+    assert np.array_equal(data['ModeID'], [0, 1])
+    assert np.allclose(data['Frequency'], [1191208622.7814, 2064484143.7759])
+    assert np.allclose(data['QualityFactor'], [24860.103403403, 21202.076560245])
+    assert np.allclose(data['PowerLoss'], [1.332856826259e-06, 2.7085181866114e-06])
+    # A real eigenvalue has no imaginary part reported, so no _imag column
+    # exists at all, and a lossless run reports no ExternalQ.
+    assert 'Frequency_imag' not in data
+    assert 'ExternalQ' not in data
+    # Non-numeric leaves stay strings rather than being coerced.
+    assert data['File'][1].endswith('.mod')
+    assert data['Modes'][0]['Frequency'] == pytest.approx(1191208622.7814)
+
+
+def test_parse_omega3p_complex_eigenvalues():
+    """The lossy/port case (omega3p/pillbox-rtop+coax): one mode whose
+    Frequency and TotalEnergy arrive as 'real , imag' pairs, plus ExternalQ.
+    Frequency keeps the real part so it stays a plottable table column."""
+    data = parse_omega3p_output(_fixture('pillbox-rtop+coax'))
+
+    assert len(data['Modes']) == 1
+    assert data['Frequency'][0] == pytest.approx(1313756106.8639)
+    assert data['Frequency_imag'][0] == pytest.approx(641.33468780722)
+    assert data['Frequency_imag'][0] != 0.0
+    assert data['TotalEnergy'][0] == pytest.approx(4.4270939088102e-12)
+    assert data['TotalEnergy_imag'][0] == 0.0
+    assert data['ExternalQ'][0] == pytest.approx(1024235.9659009)
+    assert data['QualityFactor'][0] == pytest.approx(28815.235456204)
+
+
+@pytest.mark.parametrize('name', ['pillbox', 'pillbox-rtop+coax'])
+def test_parse_omega3p_survives_banner_and_section_order(name):
+    """Two hazards a real file carries and a synthetic one would not: the
+    license banner inside ``Version`` (absorbed into the first key's name —
+    garbage that must stay ignored, not cleaned up) and top-level section order
+    that differs between runs, which is why Mode sections are found by name."""
+    data = parse_omega3p_output(_fixture(name))
+    assert data['Modes']
+    assert len(data['Frequency']) == len(data['Modes'])
+
+
+def test_omega3p_output_parser_reads_default_results_dir(tmp_path):
+    """'omega3p_results' is the authoritative default: the Omega3P reference
+    documents no JobName container and no shipped input sets one."""
+    omega3p = _make_omega3p(tmp_path, fixture='pillbox')
+    assert omega3p.results_dir() == 'omega3p_results'
+    omega3p.output_parser()
+    assert len(omega3p.output_data['Modes']) == 2
+    assert 'QualityFactor' in omega3p.output_data
+
+
+def test_omega3p_output_parser_honors_results_dir_config(tmp_path):
+    """The supported override — a module-level 'results_dir', matching how the
+    directory is really chosen (the batch script's job name)."""
+    omega3p = _make_omega3p(tmp_path, fixture='pillbox-rtop+coax',
+                            results_dir='run17')
+    assert omega3p.results_dir() == 'run17'
+    omega3p.output_parser()
+    assert omega3p.output_data['ExternalQ'][0] == pytest.approx(1024235.9659009)
+
+
+def test_omega3p_input_file_job_name_is_a_fallback(tmp_path):
+    """A top-level 'JobName' in the input file is honored as a best-effort
+    fallback, and 'results_dir' beats it. UNVERIFIED against a real run: no
+    Omega3P reference documents this key, so if the solver ignores it a real run
+    writes to omega3p_results while this looks elsewhere. It is kept because it
+    costs nothing, not because it is known to work."""
+    omega3p = _make_omega3p(tmp_path, fixture='pillbox', job_name='from_input')
+    assert omega3p.results_dir() == 'from_input'
+    omega3p.output_parser()
+    assert len(omega3p.output_data['Modes']) == 2
+
+    override = _make_omega3p(tmp_path / 'other', fixture='pillbox',
+                             job_name='from_input', results_dir='from_config')
+    assert override.results_dir() == 'from_config'
+
+
+def test_omega3p_output_parser_tolerates_missing_file(tmp_path):
+    """A failed or interrupted run leaves no omega3p.out — empty output_data,
+    not a crash, the same contract T3P has. The module layer raises (naming the
+    expected path) when a workflow actually asks for a quantity."""
+    omega3p = _make_omega3p(tmp_path)
+    omega3p.output_parser()
+    assert omega3p.output_data == {}

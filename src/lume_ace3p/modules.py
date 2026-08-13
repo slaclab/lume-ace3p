@@ -335,6 +335,11 @@ class _SolverModule(Module):
         self.tasks = self.config.get('tasks', self.config.get('ace3p_tasks'))
         self.cores = self.config.get('cores', self.config.get('ace3p_cores'))
         self.opts = self.config.get('opts', self.config.get('ace3p_opts'))
+        # Overrides the solver's results directory — which is really chosen by
+        # the batch job submission script's job name, not by the input file (no
+        # solver reference documents a 'JobName' input container). Unset means
+        # the per-solver default ('omega3p_results', 't3p_results', ...).
+        self.results_dir = self.config.get('results_dir')
         self._solver = None
 
     def run(self, ctx):
@@ -353,6 +358,7 @@ class _SolverModule(Module):
                                ace3p_tasks=self.tasks,
                                ace3p_cores=self.cores,
                                ace3p_opts=self.opts,
+                               results_dir=self.results_dir,
                                workdir=ctx.workdir,
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''))
@@ -363,13 +369,108 @@ class _SolverModule(Module):
 
 
 class Omega3PModule(_SolverModule):
+    """The ACE3P eigensolver: requires a ``mesh``, provides an ``em_solution``.
+
+    Exposes the eigensolve's own results — mode frequency, Q, stored energy —
+    read from ``omega3p.out`` by :meth:`Omega3P.output_parser`. These used to be
+    reachable only by running acdtool with ``RoverQ`` enabled, which is why the
+    shipped sweep example still spells frequency as ``['RoverQ', '0',
+    'Frequency']``; the acdtool route keeps working and those examples migrate
+    later.
+
+    The quantity names are the ``Mode`` leaf names Omega3P itself writes
+    (``Frequency``, ``QualityFactor``, ``ExternalQ``, ``TotalEnergy``,
+    ``PowerLoss``, plus ``Frequency_imag`` / ``TotalEnergy_imag`` on a complex
+    eigensolve), so an output spec must name this module explicitly —
+    ``{module: omega3p, quantity: Frequency}``. A bare ``'Frequency'`` string
+    routes to S3P by shape, which is the pre-existing behavior of
+    ``_infer_output_module`` and is left alone.
+    """
+
     type = 'omega3p'
     _wrapper = Omega3P
     _label = 'Omega3P'
 
-    # Omega3P's own output file (``omega3p.out``) is not parsed for scalars;
-    # the RoverQ/kickFactor/maxFields quantities come from acdtool (rf_post),
-    # so they are extracted by :class:`AcdtoolModule`, not here.
+    def extract(self, ctx, spec):
+        """Return an eigenmode quantity from the Omega3P solution.
+
+        ``spec`` may be:
+          * a string ``'Frequency'`` — the full mode-indexed array,
+          * a single-element list ``['Frequency']`` — same,
+          * a mapping ``{'quantity': 'Frequency', 'at': {'mode': 0}}`` — the
+            scalar for one mode (the same ``at:`` narrowing S3P and T3P use).
+        """
+        solver = self._solver
+        if solver is None:
+            # Dry-run / no solver. A scalar NaN, not S3P's ``array([nan])``:
+            # Omega3P has no dry-run index axis (see :meth:`field_index`), so
+            # the value lands in a wide table cell as-is.
+            return float('nan')
+        quantity, mode = self._parse_spec(spec)
+        data = solver.output_data
+        if not data:
+            raise ValueError(
+                f"no Omega3P eigenmode results to extract '{quantity}' from. "
+                f"Expected {os.path.join(solver.results_dir(), solver.output_file)} "
+                f"under {ctx.workdir}; set 'results_dir' on the omega3p module "
+                "if the run used a different job name.")
+        if quantity == 'Modes' or quantity not in data:
+            raise ValueError(
+                "Unknown quantity '" + str(quantity) + "' in Omega3P output "
+                "dict. Known quantities: "
+                + str(sorted(k for k in data if k != 'Modes')) + ".")
+        values = data[quantity]
+        if mode is None:
+            return values
+        # Lookup by ModeID rather than by position: they coincide today, and
+        # this keeps working if a future output ever numbers modes otherwise.
+        ids = list(data['ModeID'])
+        try:
+            index = ids.index(int(mode))
+        except ValueError:
+            raise ValueError(
+                f"Omega3P produced no mode {mode}; this run has modes "
+                f"{ids}. The mode count follows from the eigensolver's "
+                "NumEigenvalues, so it is not known before the run.") from None
+        return values[index]
+
+    @staticmethod
+    def _parse_spec(spec):
+        if isinstance(spec, dict):
+            at = spec.get('at') or {}
+            return spec.get('quantity'), at.get('mode')
+        if isinstance(spec, list):
+            return spec[0], None
+        return spec, None
+
+    def field_index(self, ctx):
+        """Omega3P results are indexed by mode: returns ``('ModeID', array)``.
+
+        Returns ``None`` — **not** the single-row sentinel :class:`S3PModule` and
+        :class:`T3PModule` return — when there are no parsed modes, which covers
+        dry-run and a failed run. The asymmetry is deliberate: S3P's frequency
+        scan and T3P's ``s`` range are declared in the input file, so the axis is
+        known to exist before the run, while Omega3P's mode count is a *result*
+        of the eigensolve. Emitting a sentinel axis would also silently reshape
+        the existing wide ``omega3p -> acdtool`` sweep tables under dry-run."""
+        solver = self._solver
+        if solver is None or not solver.output_data.get('Modes'):
+            return None
+        return 'ModeID', np.asarray(solver.output_data['ModeID'])
+
+    def field(self, ctx):
+        """Return the mode-indexed arrays (``{ModeID, Frequency,
+        QualityFactor, ...}``) for the just-run evaluation, or ``None`` under
+        dry-run / when no modes were parsed.
+
+        Drops ``'Modes'`` — the readable list of per-mode dicts cannot ride
+        inside a field-artifact ``.npz`` without pickling, and it carries no
+        information the arrays do not."""
+        solver = self._solver
+        if solver is None or not solver.output_data.get('Modes'):
+            return None
+        return {key: value for key, value in solver.output_data.items()
+                if key != 'Modes'}
 
 
 class S3PModule(_SolverModule):

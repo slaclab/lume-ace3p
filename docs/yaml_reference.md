@@ -21,9 +21,9 @@ or a module whose requirement nothing provides, is a validation error.
 |-------------------|---------------------|--------------------|-----------------|
 | `cubit`           | mesh                | —                  | `journal:` (Cubit `.jou`); `meshconvert:` (bool, default `True`). |
 | `mesh`            | mesh                | —                  | `file:` — a prebuilt mesh file (declarative replacement for the old `skip_cubit` + supplied mesh). |
-| `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings). |
+| `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Exposes the eigensolve's own mode results — see [](#omega3p-module). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`. |
-| `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`. The time-domain (wakefield) solver — see [](#t3p-module). |
+| `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. The time-domain (wakefield) solver — see [](#t3p-module). |
 | `acdtool`         | rf_post             | em_solution        | `input:` (`.rfpost`). Owns extraction of the `RoverQ`/`kickFactor`/`maxFieldsOnSurface` scalars. |
 | `track3p_source`  | track3p_particles   | —                  | `file:` — an externally-produced Track3P dump (there is no in-pipeline Track3P solver). |
 | `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys — see [](#particles-module-keys). |
@@ -116,6 +116,51 @@ separately and are unaffected by `stage_mode`). With `'symlink'`, deleting or
 moving a source file after a run leaves dangling links in the workdirs that
 referenced it.
 
+(omega3p-module)=
+### `omega3p` module
+
+Omega3P is the ACE3P **eigensolver**. It requires only a `mesh`, so the minimal
+workflow is `cubit → omega3p`.
+
+**Its mode results come from the solver itself.** A run writes
+`<results_dir>/omega3p.out`, whose top-level `Mode` sections carry one
+eigenmode each; these are parsed directly, so a mode frequency or Q needs **no**
+`acdtool` postprocess step. (The older route — an `acdtool` `RoverQ` block, spelled
+`['RoverQ', '0', 'Frequency']` — still works, and the shipped
+`examples/omega3p_sweep` still uses it.)
+
+`output_parameters` quantities are the `Mode` leaf names Omega3P writes. Because
+those names overlap other modules', **name the module explicitly**:
+`{module: omega3p, quantity: Frequency}`.
+
+| Quantity | Shape | Meaning |
+|---|---|---|
+| `Frequency` | array over `ModeID` | Mode frequency, Hz. On a lossy/port run this is the **real part** of the complex eigenvalue. |
+| `Frequency_imag` | array over `ModeID` | Imaginary part, Hz. Present only when the run reported complex eigenvalues. |
+| `QualityFactor` | array over `ModeID` | Intrinsic Q. |
+| `ExternalQ` | array over `ModeID` | External Q. Present only on a run with a port. |
+| `TotalEnergy` | array over `ModeID` | Stored energy, J (plus `TotalEnergy_imag` on a complex run). |
+| `PowerLoss` | array over `ModeID` | Surface power loss, W. |
+| `ModeID` | array | The mode index itself. |
+
+Adding `at: {mode: <n>}` to a mapping spec reduces an array to that mode's
+scalar — the form an Xopt objective needs, mirroring S3P's `at: {frequency: …}`.
+Without it you get the full array, which is what a dispersion curve or an HOM
+catalog wants: for an eigensolve you often do not know the mode count in advance.
+
+`ModeID` is Omega3P's **field index**, so a `parameter_sweep` emits a long-format
+table with one row per `(grid point, mode)` — as an S3P sweep goes long over
+`Frequency`. In a dry run there are no modes yet, so the table stays wide.
+
+**`results_dir:`** names the directory the run wrote into (default
+`omega3p_results`). That directory is really chosen by the **job name in your
+batch submission script**, not by the input file, so this module key is the
+supported way to override it. A top-level `JobName` in the `.omega3p` file is also
+honored as a fallback, but no ACE3P reference documents that key for any solver —
+do not rely on it. A missing `omega3p.out` (a failed or interrupted run) is not a
+crash; the error surfaces only if a workflow asks for a mode quantity, and it
+names the path that was searched.
+
 (t3p-module)=
 ### `t3p` module
 
@@ -130,9 +175,10 @@ error rather than RF postprocessing silently pointed at time-domain output. A
 workflow may list both `s3p` and `t3p` (they provide different artifacts); two
 `t3p` entries is a duplicate-producer error like any other.
 
-**Output locations are read from the input file, not assumed.** T3P writes under
-`<JobName>/OUTPUT` (defaulting to `t3p_results`) and names each monitor's files
-after that monitor's `Name`, so both are resolved from the parsed `.t3p`. Results
+**Output locations are resolved, not assumed.** T3P writes under
+`<results_dir>/OUTPUT` (default `t3p_results`, overridable with the same
+`results_dir:` key documented under [](#omega3p-module)) and names each monitor's
+files after that monitor's `Name`, which is read from the parsed `.t3p`. Results
 are read from the `WakeField` monitor's `<Name>.out`.
 
 `output_parameters` quantities (use the explicit `{module: t3p, quantity: …}`
