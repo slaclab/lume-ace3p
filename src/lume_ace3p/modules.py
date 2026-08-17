@@ -26,12 +26,17 @@ bool.
 
 import os
 import shutil
+import warnings
 
 import numpy as np
 
 from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import Omega3P, S3P, T3P
-from lume_ace3p.acdtool import Acdtool
+from lume_ace3p.acdtool import (
+    Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
+    field_sections, mode_table_arrays, resolve_command, table_mode_ids,
+    wired_commands,
+)
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
@@ -57,6 +62,15 @@ ARTIFACT_KINDS = frozenset({
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
 })
 
+# The acdtool command table names the artifact each command consumes, and it
+# repeats these strings rather than importing them (this module imports that one,
+# not the reverse). Fail at import if the two ever drift apart.
+_UNKNOWN_ACDTOOL_ARTIFACTS = {spec.requires for spec in COMMANDS.values()
+                              if spec.requires} - ARTIFACT_KINDS
+assert not _UNKNOWN_ACDTOOL_ARTIFACTS, (
+    'lume_ace3p.acdtool.COMMANDS names artifact kinds absent from this '
+    f'vocabulary: {sorted(_UNKNOWN_ACDTOOL_ARTIFACTS)}')
+
 
 # --------------------------------------------------------------------------- #
 # RunContext — the per-evaluation state threaded through a module chain.
@@ -71,6 +85,20 @@ class RunContext:
     quantities. Modules read ``inputs`` (a materialized :class:`WorkflowInputs`
     for this eval point), ``paths`` (resolved executable paths), and
     ``dry_run``.
+
+    Two per-artifact side tables let a consumer reach back to its producer
+    without either module knowing about the other:
+
+    ``job_names``
+        ``{artifact kind: results-directory name}``, recorded by each solver
+        module. ``acdtool``'s positional ``postprocess`` commands take that name
+        as their first argument, so this is what lets the jobname be *injected*
+        rather than repeated in the YAML.
+    ``reparse``
+        ``{artifact kind: callable}``, also registered by each solver module. A
+        consumer that **overwrites** its producer's output file in place calls the
+        hook so the producer re-reads it — see :class:`AcdtoolModule` for why
+        ``postprocess transwake`` needs this.
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
@@ -82,6 +110,8 @@ class RunContext:
         self.dry_run = dry_run
         self.paths = dict(paths) if paths else {}
         self.stage_mode = stage_mode
+        self.job_names = {}
+        self.reparse = {}
 
     def ensure_workdir(self):
         if self.workdir and not os.path.exists(self.workdir):
@@ -352,6 +382,11 @@ class _SolverModule(Module):
                                 f'Cubit: {ctx.inputs.cubit}\n'
                                 f'ACE3P: {[(_, v) for _, v in leaves]}\n')
             ctx.artifacts[self._artifact] = ctx.workdir
+            # No solver instance to ask, so fall back to the declared override or
+            # the documented per-solver default. A dry-run acdtool step still
+            # builds its command line from this.
+            ctx.job_names[self._artifact] = (self.results_dir
+                                             or self._wrapper.default_job_name)
             return
         ctx.ensure_workdir()
         solver = self._wrapper(self.input_file,
@@ -366,6 +401,10 @@ class _SolverModule(Module):
         solver.run()
         self._solver = solver
         ctx.artifacts[self._artifact] = ctx.workdir
+        ctx.job_names[self._artifact] = solver.job_name()
+        # Let a consumer that rewrites this solver's output in place ask for a
+        # re-read (the acdtool wake commands overwrite wakefield.out).
+        ctx.reparse[self._artifact] = solver.output_parser
 
 
 class Omega3PModule(_SolverModule):
@@ -654,64 +693,460 @@ class T3PModule(_SolverModule):
 # Acdtool postprocess
 # --------------------------------------------------------------------------- #
 
+# What an ``at:`` narrows, per output shape. Mode-indexed sections are acdtool's
+# table axis, so their ``at:`` is *optional* — without it the whole per-mode array
+# comes back and a sweep table goes one row per mode. Surface-indexed sections are
+# never a table axis, so theirs is *required* (design decision 2). The remaining
+# shapes have no index axis at all and take no ``at:``.
+ACDTOOL_AXIS = {MODE_TABLE: 'mode', SURFACE: 'surface'}
+
+
+def _render_index(value):
+    """Render a mode / surface ID for the deprecation message the way a user
+    would write it in YAML — ``0`` rather than ``'0'`` when it is a number."""
+    try:
+        return str(int(str(value).strip()))
+    except (TypeError, ValueError):
+        return repr(str(value))
+
+
+def _index_key(value):
+    """The parsed-output dict key a mode / surface index resolves to.
+
+    The readers key modes and surfaces by their *string* IDs, because that is
+    what a positional output spec names literally (``['RoverQ', '0', 'RoQ']``),
+    while the mapping form naturally writes ``at: {mode: 0}`` as a number. So
+    ``0``, ``'0'`` and ``0.0`` all have to find mode ``'0'``."""
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def acdtool_spec(spec, warn=False):
+    """Normalize an ``output_parameters`` spec for the acdtool module, or return
+    ``None`` when the spec names no acdtool section.
+
+    This is the **single translation site** between the two spec forms — both
+    :func:`lume_ace3p.workflow_graph._infer_output_module` (which only asks
+    whether a spec is acdtool's) and :meth:`AcdtoolModule.extract` (which asks
+    what it means) come through here.
+
+    The **mapping form** is the target::
+
+        'R/Q'   : {module: acdtool, section: RoverQ, quantity: RoQ}
+        'f0'    : {module: acdtool, section: RoverQ, quantity: Frequency,
+                   at: {mode: 0}}
+        'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax,
+                   at: {surface: 6}}
+        'loc_x' : {module: acdtool, section: maxFieldsOnSurface,
+                   quantity: Emax_location, component: x, at: {surface: 6}}
+
+    The **positional form** ``['RoverQ', '0', 'RoQ']`` is a deprecated alias
+    rewritten to it. Its middle element was never a *selector* but an **index
+    axis**: ``modeID2 = -1`` in the ``.rfpost`` input means "every mode the solver
+    produced", so mode 0 is one narrowing of a table, not the table. Dropping the
+    ``at:`` is how you ask for the whole axis, which is what a dispersion curve or
+    an HOM catalog wants and what the list form cannot express.
+
+    Returns ``{section, quantity, index, at, component, deprecated}``; ``index``
+    is the ``at:`` value for the section's own axis. With `warn` set, the
+    positional form emits a :class:`DeprecationWarning` naming its mapping
+    replacement.
+    """
+    if isinstance(spec, dict):
+        section = spec.get('section')
+        if section is None or section not in SECTIONS:
+            return None
+        at = dict(spec.get('at') or {})
+        axis = ACDTOOL_AXIS.get(SECTIONS[section].shape)
+        return {'section': section, 'quantity': spec.get('quantity'),
+                'index': at.get(axis) if axis else None, 'at': at,
+                'component': spec.get('component'), 'deprecated': False}
+    if isinstance(spec, (list, tuple)) and spec:
+        section = spec[0]
+        if section not in SECTIONS:
+            return None
+        axis = ACDTOOL_AXIS.get(SECTIONS[section].shape)
+        rest = list(spec[1:])
+        index = rest.pop(0) if (axis is not None and rest) else None
+        quantity = rest.pop(0) if rest else None
+        component = rest.pop(0) if rest else None
+        resolved = {'section': section, 'quantity': quantity, 'index': index,
+                    'at': {axis: index} if index is not None else {},
+                    'component': component, 'deprecated': True}
+        if warn:
+            parts = ['module: acdtool', 'section: ' + str(section)]
+            if quantity is not None:
+                parts.append('quantity: ' + str(quantity))
+            if component is not None:
+                parts.append('component: ' + str(component))
+            if index is not None:
+                parts.append('at: {' + axis + ': ' + _render_index(index) + '}')
+            warnings.warn(
+                'the positional acdtool output spec ' + repr(list(spec))
+                + ' is deprecated; write it as {' + ', '.join(parts) + '}. '
+                'Both forms produce the same value today. The mapping form also '
+                'expresses what the list cannot: dropping the '
+                + ("'at:'" if axis else 'index')
+                + ' asks for every mode rather than one.',
+                DeprecationWarning, stacklevel=3)
+        return resolved
+    return None
+
 
 class AcdtoolModule(Module):
-    """Requires an ``em_solution``, provides ``rf_post``. Owns extraction of
-    the RoverQ / kickFactor / maxFieldsOnSurface scalars pulled from the acdtool
-    postprocess output."""
+    """One ``acdtool`` invocation. Provides ``rf_post``; what it *requires*
+    follows from the command.
+
+    ``acdtool`` is the postprocessing layer for all of ACE3P, not only for
+    frequency-domain results, so a single ``requires = {em_solution}`` was too
+    coarse: it made ``[cubit, t3p, acdtool]`` a validation error even though
+    ``transwake`` / ``coaxsignal`` / ``volmontomode`` are precisely time-domain
+    postprocessors. The requirement now comes from the command table
+    (:data:`lume_ace3p.acdtool.COMMANDS`), set on the *instance* in
+    :meth:`__init__` — which is all the DAG needs, since
+    ``workflow_graph._resolve_order`` reads ``requires``/``provides`` off
+    instances after they are built::
+
+        workflow :
+          - module : acdtool                      # requires em_solution
+            input  : 'pillbox-rtop.rfpost'
+
+          - module  : acdtool
+            command : 'postprocess transwake'     # requires td_solution
+            args    : [0.0, 0.0, 0.0, 0.0125]     # jobname is injected
+
+    Omitting ``command`` infers ``postprocess rf`` from a ``.rfpost`` input, so
+    configs written before the command surface opened up run unchanged.
+
+    The ``<jobname>`` the positional commands take is *injected* from
+    ``ctx.job_names`` — the results directory the producing solver actually
+    resolved — rather than repeated in the YAML; ``jobname:`` overrides it.
+
+    **Mutating consumers.** ``postprocess transwake`` (and ``wake_new`` /
+    ``wake_direct``) write their result *over* ``<jobname>/OUTPUT/wakefield.out``,
+    the file :class:`T3PModule` already parsed. In DAG order T3P parses the
+    longitudinal wake, then acdtool overwrites it with the transverse one, so
+    without intervention the workflow would report a wrong-but-plausible number.
+    This module therefore calls the producer's re-parse hook
+    (``ctx.reparse[artifact]``) after such a command, and ``T3PModule`` remains
+    the single owner of every wakefield quantity — one parser
+    (:func:`~lume_ace3p.ace3p.parse_wakefield`), one place to ask, whether or not
+    acdtool ran. See the Phase-2 decision in ``docs/acdtool_rework_plan.md``.
+    """
 
     type = 'acdtool'
+    # Class-level default for the common case; __init__ narrows it per command.
     requires = frozenset({EM_SOLUTION})
     provides = frozenset({RF_POST})
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
         self.input_file = self.config.get('input') or self.config.get('rfpost_input')
+        self.args = list(self.config.get('args') or [])
+        self.jobname = self.config.get('jobname')
+        self.tasks = self.config.get('tasks')
+        self.cores = self.config.get('cores')
+        self.opts = self.config.get('opts', '')
+        self.command, self.spec = self._resolve_command()
+        self.requires = (frozenset({self.spec.requires}) if self.spec.requires
+                         else frozenset())
         self._acdtool = None
+        # Deprecated positional output specs already warned about, so a sweep of
+        # N points warns once per spec rather than N times.
+        self._warned = set()
+
+    def _resolve_command(self):
+        """Return ``(command, spec)`` for the declared command, or the one
+        inferred from a ``.rfpost`` input when none is declared.
+
+        Raises on an unknown command (listing the known ones) and on a known but
+        unwired one (naming why it is held back), so neither fails later as a
+        mangled command line."""
+        command = self.config.get('command')
+        if command is None:
+            # No input file either: 'postprocess rf' over the generated default
+            # .rfpost template, which is what a bare acdtool entry has always
+            # meant.
+            extension = (os.path.splitext(self.input_file)[1].lower()
+                         if self.input_file else '.rfpost')
+            if extension != '.rfpost':
+                raise ValueError(
+                    f"module 'acdtool' cannot infer a command from input file "
+                    f"'{self.input_file}': only '.rfpost' implies a command "
+                    f"('postprocess rf'). Set 'command' explicitly. Commands "
+                    f"usable as a workflow step: {wired_commands()}.")
+            command = 'postprocess rf'
+        spec = resolve_command(command)          # raises, listing known commands
+        if not spec.wired:
+            raise ValueError(
+                f"acdtool command '{command}' is not available as a workflow "
+                f"step: {spec.note}. Commands usable as a workflow step: "
+                f"{wired_commands()}."
+                + ('' if spec.dispatch else
+                   ' It can still be invoked directly through '
+                   'lume_ace3p.acdtool.Acdtool.'))
+        return command, spec
+
+    def _resolve_jobname(self, ctx):
+        """The results-directory name to pass to a positional command: an
+        explicit ``jobname:``, else the name the producing solver resolved, else
+        the documented per-solver default."""
+        if not self.spec.jobname:
+            return None
+        return (self.jobname
+                or ctx.job_names.get(self.spec.requires)
+                or self.spec.default_jobname)
 
     def run(self, ctx):
-        if EM_SOLUTION not in ctx.artifacts:
-            raise ValueError("module 'acdtool' requires an em_solution artifact.")
+        required = self.spec.requires
+        if required and required not in ctx.artifacts:
+            raise ValueError(f"module 'acdtool' ({self.command}) requires a "
+                             f"{required} artifact.")
+        jobname = self._resolve_jobname(ctx)
         if ctx.dry_run:
             self._acdtool = None
-            _append_marker(ctx, 'Dry run mode: Acdtool step skipped.\n'
-                                f'Acdtool input: {self.input_file}\n')
+            marker = ('Dry run mode: Acdtool step skipped.\n'
+                      f'Acdtool command: {self.command}\n'
+                      f'Acdtool input: {self.input_file}\n')
+            if self.args:
+                marker += f'Acdtool args: {self.args}\n'
+            if jobname:
+                marker += f'Acdtool jobname: {jobname}\n'
+            _append_marker(ctx, marker)
             ctx.artifacts[RF_POST] = ctx.workdir
             return
         ctx.ensure_workdir()
         acdtool = Acdtool(self.input_file, workdir=ctx.workdir,
+                          acdtool_command=self.command,
+                          acdtool_args=self.args,
+                          jobname=jobname,
+                          acdtool_tasks=self.tasks,
+                          acdtool_cores=self.cores,
+                          acdtool_opts=self.opts,
                           ace3p_path=ctx.paths.get('ace3p', ''),
                           mpi_caller=ctx.paths.get('mpi', ''))
         acdtool.run()
         self._acdtool = acdtool
         ctx.artifacts[RF_POST] = ctx.workdir
+        # This command rewrote its producer's output in place; have the producer
+        # re-read it so downstream extraction sees the new result, not the one
+        # parsed before acdtool ran.
+        if self.spec.mutates and self.spec.mutates in ctx.reparse:
+            ctx.reparse[self.spec.mutates]()
 
     def extract(self, ctx, spec):
-        """Index the acdtool output by ``[section, mode/surface, entry, ...]``
-        (e.g. ``['RoverQ', '0', 'RoQ']``)."""
+        """Return one quantity from ``postprocess rf``'s ``rfpost.out``.
+
+        The spec is the mapping form ``{section, quantity, at: {mode|surface: n},
+        component}`` or its deprecated positional alias
+        ``['RoverQ', '0', 'RoQ']``; :func:`acdtool_spec` translates between them.
+        What comes back follows the section's *shape*:
+
+        * **mode-indexed** (``RoverQ``, ``kickFactor``, …) — the full per-mode
+          array without ``at:``, the scalar for one mode with
+          ``at: {mode: n}``. The array is aligned to :meth:`field_index`, so a
+          sweep table goes one row per mode.
+        * **surface-indexed** (``maxFieldsOnSurface``, ``powerThroughSurface``) —
+          ``at: {surface: n}`` is **required**, since ``ModeID`` is acdtool's only
+          table axis (design decision 2). Omitting it raises naming the surfaces
+          the run reported.
+        * **unindexed** (``FieldAtPoint``, ``[scaling]``) — the scalar directly.
+        * **curve / grid** — not a table column at all: those are per-position
+          arrays and field maps, exposed through :meth:`field`.
+
+        ``component`` picks ``x`` / ``y`` / ``z`` out of a location vector
+        (``Emax_location``).
+
+        Only ``postprocess rf`` produces an ``rfpost.out`` with named sections to
+        index. The other commands' results belong to the solver whose output they
+        write into or alongside — a transwake kick factor comes from ``t3p``, not
+        from here — so asking this module for a quantity says the output spec
+        names the wrong module."""
+        if self.spec.reader != RFPOST:
+            if self.spec.mutates == TD_SOLUTION:
+                detail = ("A transwake result is read by the t3p module, which "
+                          "owns wakefield.out: {module: t3p, quantity: "
+                          "kick_factor}.")
+            elif self.spec.reader is not None:
+                detail = (f"Its output is a column table, exposed per row as a "
+                          f"field artifact through field(), not as a table "
+                          f"column.")
+            else:
+                detail = "Only 'postprocess rf' writes indexable output."
+            raise ValueError(
+                f"the acdtool command '{self.command}' produces no indexable "
+                f"rfpost.out sections, so '{spec}' cannot be extracted from it. "
+                + detail)
+        resolved = acdtool_spec(spec, warn=repr(spec) not in self._warned)
+        if resolved is not None and resolved['deprecated']:
+            self._warned.add(repr(spec))
+        if resolved is None:
+            raise ValueError(
+                "cannot route the acdtool output spec " + repr(spec) + ": it "
+                "names no known .rfpost block. A spec is either the mapping form "
+                "{module: acdtool, section: <block>, quantity: <name>} or the "
+                "positional ['<block>', ...]. Known blocks: "
+                + str(sorted(SECTIONS)) + '.')
+        section, quantity = resolved['section'], resolved['quantity']
+        index, component = resolved['index'], resolved['component']
+        shape = SECTIONS[section].shape
+        axis = ACDTOOL_AXIS.get(shape)
+        stray = sorted(set(resolved['at']) - ({axis} if axis else set()))
+        if stray:
+            raise ValueError(
+                "acdtool section '" + section + "' takes "
+                + ("'at: {" + axis + ": n}'" if axis else 'no at: narrowing')
+                + ', not ' + str(stray) + '.')
+        if shape in (CURVE, GRID):
+            raise ValueError(
+                "acdtool section '" + section + "' writes its own file, not an "
+                'indexable rfpost.out section: a curve is a per-position array '
+                'and a field map a grid, so both ride as a field artifact '
+                'through field() rather than as a result-table column.')
         if self._acdtool is None:
             return float('nan')
-        output_data = self._acdtool.output_data
-        section = spec[0]
-        if section == 'RoverQ':
-            mode, entry = spec[1], spec[2]
-            assert entry in {'Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'}, \
-                "Unknown expression '" + entry + "' in 'RoverQ' section."
-            return output_data[section][mode][entry]
-        if section == 'kickFactor':
-            mode, entry = spec[1], spec[2]
-            assert entry in {'Frequency', 'Qext', 'Ks', 'V_r', 'V_i', 'absV'}, \
-                "Unknown expression '" + entry + "' in 'kickFactor' section."
-            return output_data[section][mode][entry]
-        if section == 'maxFieldsOnSurface':
-            surface, entry = spec[1], spec[2]
-            assert entry in {'Emax', 'Emax_location', 'Hmax', 'Hmax_location'}, \
-                "Unknown expression '" + entry + "' in 'maxFieldsOnSurface' section."
-            if entry.endswith('location'):
-                component = spec[3]
-                return output_data[section][surface][entry][component]
-            return output_data[section][surface][entry]
-        raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
+        data = self._acdtool.output_data
+        if section not in data:
+            raise ValueError(
+                "acdtool reported no '" + section + "' section. Sections read "
+                'from ' + str(self._acdtool.output_file) + ': '
+                + str(sorted(data)) + ". A block is reported only when its "
+                ".rfpost input sets 'ionoff = 1'.")
+        values = data[section]
+        if shape == MODE_TABLE:
+            ids = [str(i) for i in values.get('ModeIDs', [])]
+            if index is None:
+                # The whole axis: aligned to field_index, so a sweep table gets
+                # one row per mode.
+                return np.array([
+                    self._value(values[key], quantity, component,
+                                "acdtool section '" + section + "' mode " + key)
+                    for key in ids])
+            key = _index_key(index)
+            if key not in values:
+                raise ValueError(
+                    "acdtool section '" + section + "' reported no mode "
+                    + str(index) + '; this run has modes ' + str(ids) + '. The '
+                    "count follows the solve — 'modeID2 = -1' in the .rfpost "
+                    "input means every mode the solver produced.")
+            return self._value(values[key], quantity, component,
+                               "acdtool section '" + section + "' mode " + key)
+        if shape == SURFACE:
+            ids = [str(i) for i in values.get('SurfaceIDs', [])]
+            if index is None:
+                raise ValueError(
+                    "acdtool section '" + section + "' is surface-indexed, and "
+                    "'ModeID' is acdtool's only table axis, so it must be "
+                    "narrowed to one surface: add 'at: {surface: n}'. This run "
+                    'reported surface(s) ' + str(ids) + '. The .rfpost block '
+                    "pins the surface it evaluates ('surfaceID = 6'), so a run "
+                    'reports few of them.')
+            key = _index_key(index)
+            if key not in values:
+                raise ValueError(
+                    "acdtool section '" + section + "' reported no surface "
+                    + str(index) + '; this run reported ' + str(ids) + '. The '
+                    'surface IDs are the Cubit journal sideset IDs named by the '
+                    "block's 'surfaceID'.")
+            return self._value(values[key], quantity, component,
+                               "acdtool section '" + section + "' surface " + key)
+        # POINT / RUN: scalar assignments, no index axis at all.
+        return self._value(values, quantity, component,
+                           "acdtool section '" + section + "'")
+
+    @staticmethod
+    def _value(entry, quantity, component, where):
+        """One value out of a parsed section, or an error naming what the section
+        actually reported.
+
+        The column names are whatever the output file carried (Phase 3 reads them
+        from the header row / the ``name = value`` lines), so they are reported
+        from the data rather than checked against a hardcoded set — which is what
+        the previous ``assert entry in {...}`` per section did."""
+        names = sorted(entry)
+        if quantity is None:
+            raise ValueError(
+                where + " needs a 'quantity'; it reported " + str(names) + '.')
+        if quantity not in entry:
+            raise ValueError(
+                where + " reported no '" + str(quantity) + "'. It reported "
+                + str(names) + '.')
+        value = entry[quantity]
+        if component is None:
+            if isinstance(value, dict):
+                raise ValueError(
+                    where + "'s '" + str(quantity) + "' is a vector "
+                    + str(sorted(value)) + "; name one part with 'component: x'.")
+            return value
+        if not isinstance(value, dict):
+            raise ValueError(
+                where + "'s '" + str(quantity) + "' is a scalar, so "
+                "'component: " + str(component) + "' does not apply.")
+        if component not in value:
+            raise ValueError(
+                where + "'s '" + str(quantity) + "' has no component '"
+                + str(component) + "'; it has " + str(sorted(value)) + '.')
+        return value[component]
+
+    def field_index(self, ctx):
+        """acdtool's table axis is ``ModeID``: returns ``('ModeID', array)`` when
+        the run reported a mode-indexed section, else ``None``.
+
+        **It is the only axis acdtool ever offers** (design decision 2 of
+        ``docs/acdtool_rework_plan.md``). Surface-indexed sections resolve to
+        scalars through an ``at: {surface: n}``, so one acdtool module cannot put
+        two axes on one table; across modules the collision falls out of DAG
+        order, since :meth:`Workflow.field_index` takes the first producer — so
+        ``[cubit, s3p, acdtool]`` stays indexed on S3P's ``Frequency`` (the
+        ``window`` case is a frequency scan postprocessed at one ``FreqScanID``,
+        so that is also the right answer) and acdtool's per-mode arrays ride as a
+        field artifact instead.
+
+        Returns ``None`` under dry-run rather than S3P/T3P's single-row sentinel,
+        for the reason :meth:`Omega3PModule.field_index` records: the mode count
+        is a *result* of the solve rather than something the input declares, and a
+        sentinel would reshape the existing dry-run sweep tables."""
+        if self._acdtool is None:
+            return None
+        ids = table_mode_ids(self._acdtool.output_data)
+        if not ids:
+            return None
+        return 'ModeID', np.asarray(ids)
+
+    def field(self, ctx):
+        """Return acdtool's non-table output as a field artifact, or ``None``
+        under dry-run / when the command produced none.
+
+        Two kinds ride here:
+
+        * **curves and grids.** The ``filename`` blocks (``ALLFieldOnLine``,
+          ``FieldOnLine``, ``Multipole``, ``GBZFFT``, ``Track``, ``TrackScan``)
+          each write their own ``#``-commented column table, and ``coaxsignal``
+          writes a headerless one; those are per-position arrays, so they stay out
+          of the flat result table (design decision 4) and appear as
+          ``{section: {filename: {column: array}}}``. Grid blocks contribute
+          their filenames only — see
+          :meth:`lume_ace3p.acdtool.Acdtool._read_files`.
+        * **the mode-indexed sections**, as ``{section: {column: array}}`` (see
+          :func:`lume_ace3p.acdtool.mode_table_arrays`). These *are* table columns
+          when acdtool's ``ModeID`` is the table axis, but in a chain where
+          another module owns the axis — ``s3p -> acdtool``, where S3P's
+          ``Frequency`` wins on DAG order — a per-mode array cannot be a column of
+          a frequency-indexed table, and this is where design decision 2 sends it.
+
+        Note :meth:`Workflow.field` takes the *first* module that returns one, so
+        in an ``omega3p -> acdtool`` chain the solver's own field wins; that is a
+        pre-existing one-field-per-workflow limitation of the framework, not a
+        property of these outputs.
+        """
+        if self._acdtool is None:
+            return None
+        field = dict(field_sections(self._acdtool.output_data))
+        field.update(mode_table_arrays(self._acdtool.output_data))
+        return field or None
 
 
 # --------------------------------------------------------------------------- #

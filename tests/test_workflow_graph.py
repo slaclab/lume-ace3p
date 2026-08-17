@@ -18,11 +18,17 @@ Three groups (see docs/workflow_module_refactor_plan.md):
 """
 
 import os
+import warnings
 
 import numpy as np
 import pytest
 
 import baseline_utils as bu
+# The synthetic solver/acdtool fixtures live with the module-layer tests; the
+# index-collision cases below need parsed results from two modules at once, and
+# duplicating the fixtures here would let the two copies drift.
+from test_modules import _make_acdtool, _make_s3p_solver
+from lume_ace3p.modes import _rows_for_point
 from lume_ace3p.workflow_graph import (
     Workflow, WorkflowValidationError, _resolve_order, _build_entry,
 )
@@ -130,14 +136,73 @@ def test_order_cubit_t3p():
     assert _types(wf.modules) == ['cubit', 't3p']
 
 
-def test_acdtool_after_t3p_is_rejected():
-    """The em_solution / td_solution split doing its job: acdtool does RF
-    postprocessing on a frequency-domain solution, so pointing it at T3P's
-    time-domain output must fail validation rather than silently run."""
+def test_acdtool_rf_after_t3p_is_rejected():
+    """The em_solution / td_solution split doing its job: ``postprocess rf`` does
+    RF postprocessing on a frequency-domain solution, so pointing it at T3P's
+    time-domain output must fail validation rather than silently run.
+
+    The guard is now per-command rather than blanket — see
+    :func:`test_order_cubit_t3p_acdtool_transwake` — but it must survive for
+    ``rf``, which is the command that really needs a frequency-domain solution."""
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 't3p', 'input': 'x.t3p'},
                {'module': 'acdtool', 'input': 'x.rfpost'}]
     with pytest.raises(WorkflowValidationError, match=f"'{EM_SOLUTION}'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+    # Explicitly naming the command changes nothing.
+    entries[2] = {'module': 'acdtool', 'input': 'x.rfpost',
+                  'command': 'postprocess rf'}
+    with pytest.raises(WorkflowValidationError, match=f"'{EM_SOLUTION}'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
+def test_order_cubit_t3p_acdtool_transwake():
+    """The chain Phase 2 unblocks. ``postprocess transwake`` is a *time-domain*
+    postprocessor, so it requires ``td_solution`` and the chain that used to be a
+    WorkflowValidationError now orders cubit -> t3p -> acdtool.
+
+    Declared out of dependency order, and with the T3P step's own YAML order
+    reversed, to show the ordering comes from the artifact edges."""
+    entries = [{'module': 'acdtool', 'command': 'postprocess transwake',
+                'args': [0.0, 0.0, 0.0, 0.0125]},
+               {'module': 't3p', 'input': 'x.t3p'},
+               {'module': 'cubit', 'journal': 'x.jou'}]
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
+
+
+@pytest.mark.parametrize('command', ['postprocess transwake',
+                                     'postprocess coaxsignal',
+                                     'postprocess volmontomode'])
+def test_time_domain_acdtool_commands_need_t3p_not_omega3p(command):
+    """The three wired time-domain commands all require ``td_solution``: listed
+    after an eigensolver instead of T3P, each fails naming that artifact."""
+    args = [0.0, 0.0, 0.0, 0.0125] if command == 'postprocess transwake' else []
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'acdtool', 'command': command, 'args': args}]
+    with pytest.raises(WorkflowValidationError, match=f"'{TD_SOLUTION}'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+    entries[1] = {'module': 't3p', 'input': 'x.t3p'}
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
+
+
+def test_two_acdtool_steps_are_rejected():
+    """Both provide ``rf_post``, so a chain wanting both an rf postprocess and a
+    transwake is a duplicate producer today. Recorded rather than worked around:
+    lifting it needs per-instance artifact identity, which design decision 3 puts
+    out of scope for this plan."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 't3p', 'input': 'x.t3p'},
+               {'module': 'acdtool', 'name': 'transwake',
+                'command': 'postprocess transwake',
+                'args': [0.0, 0.0, 0.0, 0.0125]},
+               {'module': 'acdtool', 'name': 'coaxsignal',
+                'command': 'postprocess coaxsignal'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=f"'{RF_POST}'.*more than one"):
         Workflow(entries, workflow_params={'dry_run': True})
 
 
@@ -322,6 +387,138 @@ def test_omega3p_chain_evaluate(tmp_path):
             assert np.isnan(out[name]), name
     finally:
         os.chdir(cwd)
+
+
+# --------------------------------------------------------------------------- #
+# Output-spec routing + the two index collisions (Phase 4)
+# --------------------------------------------------------------------------- #
+
+
+def _acdtool_of(wf):
+    return next(m for m in wf.modules if m.type == 'acdtool')
+
+
+def test_acdtool_output_specs_route_to_acdtool():
+    """Both acdtool spec forms reach the acdtool module: the mapping form by its
+    ``section:`` key (no ``module:`` needed) and the deprecated positional form by
+    its head. Routing is not translation, so asking *which* module owns a spec
+    must not emit the deprecation — that belongs to the extraction."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'acdtool', 'input': 'x.rfpost'}]
+    specs = {
+        'a': ['RoverQ', '0', 'RoQ'],                       # deprecated list form
+        'b': {'section': 'RoverQ', 'quantity': 'RoQ'},      # mapping, no module:
+        'c': {'module': 'acdtool', 'section': 'maxFieldsOnSurface',
+              'quantity': 'Emax', 'at': {'surface': 6}},
+        'd': ['scaling', 'm_factor'],                      # a block CW23 never
+    }                                                      # declares but every
+    wf = Workflow(entries, workflow_params={'dry_run': True},  # run emits
+                  output_spec=specs)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        routed = {name: m.type for name, m in wf.output_modules().items()}
+    assert routed == {'a': 'acdtool', 'b': 'acdtool', 'c': 'acdtool',
+                      'd': 'acdtool'}
+
+
+def test_s3p_acdtool_table_indexes_on_s3p_frequency(tmp_path):
+    """Cross-module index collision (the CW23 ``window`` case): ``Frequency`` vs
+    ``ModeID``. ``Workflow.field_index`` takes the first producer in resolved DAG
+    order, so S3P wins — which is both the back-compatible answer and the right
+    one, since that case is a frequency scan postprocessed at one ``FreqScanID``.
+    acdtool's mode axis still exists; it rides as a field artifact."""
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 's3p', 'input': 'x.s3p'},
+               {'module': 'acdtool', 'input': 'x.rfpost'}]
+    wf = Workflow(entries,
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec={'S11': {'module': 's3p', 'quantity': 'S(0,0)'},
+                               'R/Q': {'module': 'acdtool', 'section': 'RoverQ',
+                                       'quantity': 'RoQ'}})
+    wf.evaluate()
+    assert _types(wf.modules) == ['cubit', 's3p', 'acdtool']
+
+    # Give both modules real parsed results (the dry-run above ran no binary).
+    s3p = next(m for m in wf.modules if m.type == 's3p')
+    s3p._solver = _make_s3p_solver(wf.workdir)
+    acdtool = _acdtool_of(wf)
+    acdtool._acdtool = _make_acdtool(wf.workdir)
+
+    label, values = wf.field_index()
+    assert label == 'Frequency'
+    assert len(values) == 3                       # the three swept frequencies
+    # acdtool's own axis is ModeID, and it is NOT the table's...
+    assert acdtool.field_index(wf.last_context)[0] == 'ModeID'
+    # ...so the per-mode data is reachable as a field artifact instead.
+    assert 'RoverQ' in acdtool.field(wf.last_context)
+
+
+def test_omega3p_acdtool_table_indexes_on_modeid(tmp_path):
+    """Intra-module collision — the shape ``examples/omega3p_sweep`` already has:
+    one acdtool module supplying a mode-indexed section *and* a surface-indexed
+    one. ``ModeID`` is the table axis, so ``RoverQ`` becomes one row per mode
+    while ``maxFieldsOnSurface`` resolves to an ``at:``-narrowed scalar that
+    repeats down the rows."""
+    output_spec = {
+        'R/Q': {'module': 'acdtool', 'section': 'RoverQ', 'quantity': 'RoQ'},
+        'E_max': {'module': 'acdtool', 'section': 'maxFieldsOnSurface',
+                  'quantity': 'Emax', 'at': {'surface': 6}},
+    }
+    entries = [{'module': 'cubit', 'journal': 'x.jou'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'acdtool', 'input': 'x.rfpost'}]
+    wf = Workflow(entries,
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec=output_spec)
+    wf.evaluate()
+    acdtool = _acdtool_of(wf)
+    acdtool._acdtool = _make_acdtool(wf.workdir)
+
+    label, ids = wf.field_index()
+    assert label == 'ModeID'
+    assert list(ids) == [0, 1]
+    outputs = {name: acdtool.extract(wf.last_context,
+                                     {k: v for k, v in spec.items()
+                                      if k != 'module'})
+               for name, spec in output_spec.items()}
+    # The result table the mode layer builds from that: one row per mode.
+    rows = _rows_for_point(wf, ['cav_radius'], [90.0], outputs)
+    assert [r['ModeID'] for r in rows] == [0, 1]
+    assert [r['R/Q'] for r in rows] == pytest.approx([250.0, 40.0])
+    assert [r['E_max'] for r in rows] == pytest.approx([1.5e6, 1.5e6])
+
+
+def test_t3p_transwake_chain_evaluate(tmp_path):
+    """cubit -> t3p -> acdtool(transwake), dry-run: the chain Phase 2 unblocks,
+    end to end through ``evaluate``.
+
+    The figure of merit is read by ``T3PModule``, not by acdtool — transwake
+    overwrites T3P's own ``wakefield.out`` and ``parse_wakefield`` handles the
+    transverse header — so the output spec names ``t3p``. Under dry-run it is the
+    NaN sentinel; the real value path is
+    ``test_modules.py::test_transwake_reparses_the_producer``."""
+    entries = [
+        {'module': 'cubit', 'journal': 'cavity.jou'},
+        {'module': 't3p', 'input': 'cavity.t3p'},
+        {'module': 'acdtool', 'name': 'transwake',
+         'command': 'postprocess transwake', 'args': [0.0, 0.0, 0.0, 0.0125]},
+    ]
+    wf = Workflow(entries,
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec={'K': {'module': 't3p', 'quantity': 'kick_factor'}})
+    out = wf.evaluate()
+
+    assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
+    assert {MESH, TD_SOLUTION, RF_POST} <= set(wf.last_context.artifacts)
+    assert np.all(np.isnan(out['K']))
+    # The jobname reached the acdtool step from the producing solver, not the YAML.
+    assert wf.last_context.job_names[TD_SOLUTION] == 't3p_results'
+    marker = open(os.path.join(wf.workdir, 'DRY_RUN.txt')).read()
+    assert 'postprocess transwake' in marker
 
 
 def test_geant4_chain_evaluate_and_baseline(tmp_path):

@@ -478,12 +478,18 @@ def parse_omega3p_output(path):
 
 
 class S3P(ACE3P):
+    """The ACE3P S-parameter solver.
+
+    A run writes its S-parameter magnitudes to ``<job_name>/Reflection.out``
+    (``s3p_results`` by default; see :meth:`ACE3P.job_name`). The S3P reference
+    documents **no** output files at all, so ``s3p_results`` is the authoritative
+    default and a module-level ``results_dir:`` is the supported override; the
+    input-tree ``JobName`` lookup :meth:`ACE3P.job_name` also consults is kept
+    for symmetry with :class:`T3P` and is unverified against a real run.
+    """
 
     module_name = 's3p'
 
-    # Not yet consulted: 'output_parser' below still hardcodes 's3p_results'.
-    # Recorded for symmetry — the S3P reference documents no output files at all,
-    # so the default is all there is to go on.
     default_job_name = 's3p_results'
 
     def __init__(self, *args, **kwargs):
@@ -492,7 +498,8 @@ class S3P(ACE3P):
 
     def output_parser(self):
         self.output_data = {}
-        with open(os.path.join(self.workdir, 's3p_results/Reflection.out')) as file:
+        path = os.path.join(self.workdir, self.results_dir(), 'Reflection.out')
+        with open(path) as file:
             lines = file.readlines()
         for ind in range(len(lines)):
             if lines[ind].startswith('#Index'):

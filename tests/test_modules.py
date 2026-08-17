@@ -17,10 +17,12 @@ scoring files are pre-placed in the workdir.
 """
 
 import os
+import warnings
 
 import numpy as np
 import pytest
 
+from lume_ace3p.results import load_field, save_field
 from lume_ace3p.modules import (
     RunContext, build_module, MODULE_REGISTRY,
     CubitModule, MeshSourceModule, Omega3PModule, S3PModule, T3PModule,
@@ -31,7 +33,11 @@ from lume_ace3p.modules import (
     _stage_file, STAGE_MODES,
 )
 from lume_ace3p.ace3p import Omega3P, S3P, T3P, Section
-from lume_ace3p.acdtool import Acdtool
+from lume_ace3p.acdtool import (
+    Acdtool, wired_commands, EM_SOLUTION as ACD_EM_SOLUTION,
+    TD_SOLUTION as ACD_TD_SOLUTION,
+    TRACK3P_PARTICLES as ACD_TRACK3P_PARTICLES,
+)
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles, TRACK3P_COLUMNS
 from lume_ace3p.inputs import WorkflowInputs
@@ -71,11 +77,15 @@ maxFieldsOnSurface
 """
 
 # rfpost.out with parseable RoverQ / kickFactor / maxFieldsOnSurface blocks.
+# [RoverQ] carries TWO modes so a mapping spec with no 'at:' has an axis longer
+# than one row; [kickFactor] carries one, as a run whose modeID range differs
+# would (the blocks are narrowed independently).
 RFPOST_OUTPUT = """\
 [RoverQ]
 Results for RoverQ:
 ModeID Frequency Qext V_r V_i absV RoQ
 0 1.300000e9 1000.0 0.5, 0.1 0.6 250.0
+1 2.400000e9 900.0 0.2, 0.05 0.3 40.0
 }
 
 [kickFactor]
@@ -706,6 +716,479 @@ def test_acdtool_extract(tmp_path):
     }
     for spec, value in expected.items():
         assert module.extract(ctx, list(spec)) == pytest.approx(value), spec
+
+
+# --------------------------------------------------------------------------- #
+# Acdtool output-spec migration (Phase 4)
+# --------------------------------------------------------------------------- #
+
+
+# A run with the two shapes that have no index axis: FieldAtPoint evaluates only
+# RFField's ModeID, and '[scaling]' is emitted by every run and declared by no
+# block.
+POINT_RFPOST_INPUT = """\
+FieldAtPoint
+{
+   ionoff = 1
+}
+"""
+
+POINT_RFPOST_OUTPUT = """\
+[FieldAtPoint]
+Ez = 1.250000e6
+Hphi = 3.400000e3
+}
+
+[scaling]
+Field scaled at: x0 = 0.00000  y0 = 0.00000  z0 = 0.00000
+Ez from O3P = ( 2.55910e+00, 0.00000e+00)
+Ez scaled to = 2.00000e+07
+m_factor = ( 7.81528e+06, 0.00000e+00)  amplitude/phase_deg = ( 7.81528e+06, 0.00000)
+}
+"""
+
+
+def _acdtool_over(workdir, input_text, output_text, name='point.rfpost'):
+    """An ``Acdtool`` over an arbitrary synthetic input/output pair, parsed."""
+    _write(os.path.join(workdir, name), input_text)
+    _write(os.path.join(workdir, 'rfpost.out'), output_text)
+    acd = Acdtool(os.path.join(workdir, name), workdir=workdir)
+    acd.output_file = 'rfpost.out'
+    acd.load_output()
+    return acd
+
+
+def _acdtool_module(workdir):
+    module = AcdtoolModule({'input': 'test.rfpost'})
+    module._acdtool = _make_acdtool(workdir)
+    return module, RunContext(workdir)
+
+
+def test_acdtool_mapping_and_list_forms_agree(tmp_path):
+    """The deprecated positional form is an *alias*: both spellings of the same
+    quantity come out of the same fixture identical, including the location
+    component the list form spells as a fourth element."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    pairs = [
+        (['RoverQ', '0', 'RoQ'],
+         {'section': 'RoverQ', 'quantity': 'RoQ', 'at': {'mode': 0}}),
+        (['RoverQ', '1', 'Frequency'],
+         {'section': 'RoverQ', 'quantity': 'Frequency', 'at': {'mode': 1}}),
+        (['kickFactor', '0', 'Ks'],
+         {'section': 'kickFactor', 'quantity': 'Ks', 'at': {'mode': 0}}),
+        (['maxFieldsOnSurface', '6', 'Emax'],
+         {'section': 'maxFieldsOnSurface', 'quantity': 'Emax',
+          'at': {'surface': 6}}),
+        (['maxFieldsOnSurface', '6', 'Emax_location', 'y'],
+         {'section': 'maxFieldsOnSurface', 'quantity': 'Emax_location',
+          'component': 'y', 'at': {'surface': 6}}),
+    ]
+    for old, new in pairs:
+        with pytest.warns(DeprecationWarning):
+            legacy = module.extract(ctx, old)
+        assert module.extract(ctx, new) == pytest.approx(legacy), new
+
+
+def test_acdtool_list_form_warns_naming_its_mapping_replacement(tmp_path):
+    """The deprecation names the exact replacement, and warns once per spec — a
+    100-point sweep calls ``extract`` 100 times and must not print 100 copies."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    with pytest.warns(DeprecationWarning) as record:
+        module.extract(ctx, ['RoverQ', '0', 'RoQ'])
+    message = str(record[0].message)
+    assert '{module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}' \
+        in message
+
+    with warnings.catch_warnings(record=True) as again:
+        warnings.simplefilter('always')
+        module.extract(ctx, ['RoverQ', '0', 'RoQ'])
+        module.extract(ctx, ['RoverQ', '0', 'Frequency'])
+    assert [w for w in again if w.category is DeprecationWarning]
+    assert len([w for w in again
+                if w.category is DeprecationWarning]) == 1     # only the new spec
+
+    # The mapping form never warns.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ',
+                             'at': {'mode': 0}})
+
+
+def test_acdtool_mode_section_without_at_returns_the_whole_axis(tmp_path):
+    """The middle element of the list form was an index *axis*, not a selector:
+    dropping the ``at:`` asks for every mode, which is what a dispersion curve or
+    an HOM catalog wants and what the list form could not express."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    values = module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ'})
+    assert isinstance(values, np.ndarray)
+    assert values == pytest.approx([250.0, 40.0])
+    freqs = module.extract(ctx, {'section': 'RoverQ', 'quantity': 'Frequency'})
+    assert freqs == pytest.approx([1.3e9, 2.4e9])
+
+    # ...and the axis those arrays are aligned to, so a sweep table gets one row
+    # per mode.
+    label, ids = module.field_index(ctx)
+    assert label == 'ModeID'
+    assert list(ids) == [0, 1]
+    # Narrowing to one mode still gives the scalar, from either spelling of 0.
+    assert module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ',
+                                'at': {'mode': 0}}) == pytest.approx(250.0)
+    assert module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ',
+                                'at': {'mode': '0'}}) == pytest.approx(250.0)
+
+
+def test_acdtool_surface_section_without_at_names_the_surface_ids(tmp_path):
+    """``ModeID`` is acdtool's only table axis (design decision 2), so a
+    surface-indexed section must be narrowed to one surface — and the error says
+    which surfaces the run actually reported rather than just refusing."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    with pytest.raises(ValueError, match=r"at: \{surface: n\}.*\['6'\]"):
+        module.extract(ctx, {'section': 'maxFieldsOnSurface',
+                             'quantity': 'Emax'})
+    with pytest.raises(ValueError, match=r"no surface 7.*\['6'\]"):
+        module.extract(ctx, {'section': 'maxFieldsOnSurface',
+                             'quantity': 'Emax', 'at': {'surface': 7}})
+    # An 'at:' on the wrong axis is a clear error, not a silent whole-axis read.
+    with pytest.raises(ValueError, match="takes 'at: \\{surface: n\\}'"):
+        module.extract(ctx, {'section': 'maxFieldsOnSurface',
+                             'quantity': 'Emax', 'at': {'mode': 0}})
+
+
+def test_acdtool_unindexed_sections_resolve_to_scalars(tmp_path):
+    """``FieldAtPoint`` has no index axis (it evaluates only ``RFField``'s
+    ``ModeID``) and ``[scaling]`` is run-level, so both take no ``at:`` — and
+    neither puts a ``ModeID`` axis on the table."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = AcdtoolModule({'input': 'point.rfpost'})
+    module._acdtool = _acdtool_over(wd, POINT_RFPOST_INPUT, POINT_RFPOST_OUTPUT)
+    ctx = RunContext(wd)
+
+    assert module.extract(ctx, {'section': 'FieldAtPoint',
+                                'quantity': 'Ez'}) == pytest.approx(1.25e6)
+    # '[scaling]' carries m_factor, the normalized-to-physical conversion.
+    assert module.extract(ctx, {'section': 'scaling',
+                                'quantity': 'm_factor'}) == pytest.approx(7.81528e6)
+    assert module.field_index(ctx) is None
+    with pytest.raises(ValueError, match='no at: narrowing'):
+        module.extract(ctx, {'section': 'FieldAtPoint', 'quantity': 'Ez',
+                             'at': {'mode': 0}})
+
+
+def test_acdtool_extract_errors_name_what_the_run_reported(tmp_path):
+    """Column names come from the output file, so an unknown one is answered with
+    the columns that are there rather than with a hardcoded set."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    with pytest.raises(ValueError, match="no 'Ks'.*'RoQ'"):
+        module.extract(ctx, {'section': 'RoverQ', 'quantity': 'Ks'})
+    with pytest.raises(ValueError, match="needs a 'quantity'"):
+        module.extract(ctx, {'section': 'RoverQ'})
+    # A location vector without a component, and a component on a scalar.
+    with pytest.raises(ValueError, match="is a vector.*component: x"):
+        module.extract(ctx, {'section': 'maxFieldsOnSurface',
+                             'quantity': 'Emax_location', 'at': {'surface': 6}})
+    with pytest.raises(ValueError, match='is a scalar'):
+        module.extract(ctx, {'section': 'maxFieldsOnSurface',
+                             'quantity': 'Emax', 'component': 'x',
+                             'at': {'surface': 6}})
+    # A block the run did not report (its 'ionoff' was off) vs. no block at all.
+    with pytest.raises(ValueError, match="no 'VFFT' section.*ionoff"):
+        module.extract(ctx, {'section': 'VFFT', 'quantity': 'RoQ'})
+    with pytest.raises(ValueError, match='names no known .rfpost block'):
+        module.extract(ctx, {'section': 'NoSuchBlock', 'quantity': 'x'})
+    # A curve block is a field artifact, not a table column.
+    with pytest.raises(ValueError, match='field artifact'):
+        module.extract(ctx, {'section': 'ALLFieldOnLine', 'quantity': 'Ez'})
+
+
+def test_acdtool_field_index_is_none_without_a_mode_section(tmp_path):
+    """No wrapper (dry-run) and a run with no mode-indexed block both yield no
+    axis — Omega3P's asymmetry, for its reason: the mode count is a result of the
+    solve, so a sentinel axis would reshape the dry-run sweep tables."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    ctx = RunContext(wd)
+
+    module = AcdtoolModule({'input': 'test.rfpost'})
+    assert module.field_index(ctx) is None       # dry-run: no wrapper
+    assert module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ'}) != \
+        module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ'})  # NaN
+
+    surface_only = AcdtoolModule({'input': 'surface.rfpost'})
+    surface_only._acdtool = _acdtool_over(
+        wd, 'maxFieldsOnSurface\n{\n   ionoff = 1\n}\n',
+        '[maxFieldsOnSurface]\nsurfaceID : 6\nEmax = 1.0e6 at (0.1, 0.2, 0.3)\n}\n',
+        name='surface.rfpost')
+    assert surface_only.field_index(ctx) is None
+
+
+def test_acdtool_field_carries_the_mode_arrays(tmp_path):
+    """When another module owns the table axis (``s3p -> acdtool``), a per-mode
+    array cannot be a column of a frequency-indexed table, so design decision 2
+    routes it to the field artifact. It is the same data ``extract`` returns."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module, ctx = _acdtool_module(wd)
+
+    field = module.field(ctx)
+    assert set(field) == {'RoverQ', 'kickFactor'}
+    assert list(field['RoverQ']['ModeID']) == [0, 1]
+    assert field['RoverQ']['RoQ'] == pytest.approx(
+        module.extract(ctx, {'section': 'RoverQ', 'quantity': 'RoQ'}))
+    # It round-trips through the field-artifact store (no pickling).
+    handle = save_field(field, os.path.join(wd, 'field'))
+    assert load_field(handle)['RoverQ']['RoQ'] == pytest.approx([250.0, 40.0])
+
+
+def test_acdtool_field_returns_curves_not_table_columns(tmp_path):
+    """Phase 3: the ``filename`` blocks write their own column tables, which are
+    per-position arrays and so ride as a field artifact rather than as table
+    columns (design decision 4). ``None`` when the command wrote none."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    ctx = RunContext(wd)
+
+    module = AcdtoolModule({'input': 'test.rfpost'})
+    module._acdtool = _make_acdtool(wd)
+    # RFPOST_OUTPUT declares no curve files, so the only thing riding here is
+    # the Phase-4 mode-table view (see
+    # test_acdtool_field_carries_the_mode_arrays); the surface block does not,
+    # since it always resolves to an ``at:``-narrowed scalar column.
+    assert set(module.field(ctx)) == {'RoverQ', 'kickFactor'}
+
+    _write(os.path.join(wd, 'curve.rfpost'),
+           'ALLFieldOnLine\n{\n   ionoff = 1\n   filename = field1\n}\n')
+    _write(os.path.join(wd, 'field1_0'),
+           '#  x           y           Ez\n'
+           ' 0.0000e+00  1.0000e-03  2.5591e+00\n'
+           ' 0.0000e+00  1.0000e-03 -8.9748e-01\n')
+    _write(os.path.join(wd, 'rfpost.out'), '')
+    acd = Acdtool(os.path.join(wd, 'curve.rfpost'), workdir=wd)
+    acd.output_file = 'rfpost.out'
+    acd.load_output()
+    module._acdtool = acd
+
+    field = module.field(ctx)
+    assert list(field) == ['ALLFieldOnLine']
+    curve = field['ALLFieldOnLine']['field1_0']
+    assert list(curve) == ['x', 'y', 'Ez']
+    assert curve['Ez'][1] == pytest.approx(-8.9748e-01)
+
+    # Dry-run: no wrapper, no field.
+    module._acdtool = None
+    assert module.field(ctx) is None
+
+
+# --------------------------------------------------------------------------- #
+# Acdtool command dispatch (Phase 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_acdtool_artifact_vocabulary_is_shared():
+    """The command table repeats the artifact-kind strings rather than importing
+    them (modules.py imports acdtool.py, not the reverse). Pin that they match,
+    since a silent drift would make every command's ``requires`` unsatisfiable."""
+    assert ACD_EM_SOLUTION == EM_SOLUTION
+    assert ACD_TD_SOLUTION == TD_SOLUTION
+    assert ACD_TRACK3P_PARTICLES == TRACK3P_PARTICLES
+
+
+def test_acdtool_requires_follows_the_command():
+    """``requires`` is set on the *instance* from the command table, which is all
+    the DAG needs — ``_resolve_order`` reads the edges off instances."""
+    cases = {
+        None: EM_SOLUTION,                        # inferred 'postprocess rf'
+        'postprocess rf': EM_SOLUTION,
+        'postprocess transwake': TD_SOLUTION,
+        'postprocess coaxsignal': TD_SOLUTION,
+        'postprocess volmontomode': TD_SOLUTION,
+    }
+    for command, artifact in cases.items():
+        config = {'input': 'x.rfpost'} if command is None else {'command': command}
+        module = AcdtoolModule(config)
+        assert module.requires == frozenset({artifact}), command
+        assert module.provides == frozenset({RF_POST}), command
+
+
+def test_acdtool_unknown_command_lists_known_ones():
+    with pytest.raises(ValueError, match='postprocess transwake'):
+        AcdtoolModule({'command': 'postprocess wiggle'})
+
+
+def test_acdtool_unwired_command_names_why():
+    """A command in the table but with no module home must say so, and say why —
+    the reason lives in the table rather than only in the plan."""
+    with pytest.raises(ValueError, match='mesh producer'):
+        AcdtoolModule({'command': 'mesh deform'})
+    with pytest.raises(ValueError, match='KVC'):
+        AcdtoolModule({'command': 'postprocess track3p'})
+    # ...and points at the wrapper for the ones that are still invocable.
+    with pytest.raises(ValueError, match='invoked directly'):
+        AcdtoolModule({'command': 'postprocess track3p'})
+
+
+def test_acdtool_non_rfpost_input_without_a_command_is_rejected():
+    """Extension inference covers only ``.rfpost``; anything else must declare
+    its command rather than be guessed at."""
+    with pytest.raises(ValueError, match='cannot infer a command'):
+        AcdtoolModule({'input': 'Pillbox.acdtool'})
+
+
+def test_acdtool_module_dry_run_records_the_command(tmp_path):
+    ctx = RunContext(str(tmp_path / 'wd'),
+                     artifacts={TD_SOLUTION: str(tmp_path / 'wd')},
+                     dry_run=True)
+    module = AcdtoolModule({'command': 'postprocess transwake',
+                            'args': [0.0, 0.0, 0.0, 0.0125]})
+    module.run(ctx)
+
+    marker = open(os.path.join(ctx.workdir, 'DRY_RUN.txt')).read()
+    assert 'postprocess transwake' in marker
+    assert '0.0125' in marker
+    assert 'Acdtool jobname: t3p_results' in marker
+    assert RF_POST in ctx.artifacts
+
+
+def test_acdtool_reports_the_artifact_its_command_needs(tmp_path):
+    ctx = RunContext(str(tmp_path / 'wd'), dry_run=True)
+    with pytest.raises(ValueError, match='td_solution'):
+        AcdtoolModule({'command': 'postprocess transwake',
+                       'args': [0.0, 0.0, 0.0, 0.0125]}).run(ctx)
+
+
+def test_acdtool_injects_the_producers_jobname(tmp_path, monkeypatch):
+    """The jobname is the *producing solver's* resolved results directory, not a
+    value the user repeats. A T3P module with ``results_dir: custom_results``
+    therefore moves acdtool's argument with it."""
+    commands = []
+    monkeypatch.setattr('subprocess.run',
+                        lambda cmd, **kw: commands.append(cmd))
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    _write(os.path.join(wd, 'model.t3p'), T3P_INPUT)
+    ctx = RunContext(wd, artifacts={MESH: wd},
+                    paths={'ace3p': '/ace3p/', 'mpi': 'srun'})
+
+    t3p = T3PModule({'input': os.path.join(wd, 'model.t3p'),
+                     'results_dir': 'custom_results'})
+    t3p.run(ctx)
+    assert ctx.job_names[TD_SOLUTION] == 'custom_results'
+
+    AcdtoolModule({'command': 'postprocess coaxsignal'}).run(ctx)
+    assert commands[-1].endswith('postprocess coaxsignal custom_results')
+
+    # An explicit 'jobname:' still wins.
+    AcdtoolModule({'command': 'postprocess coaxsignal',
+                   'jobname': 'elsewhere'}).run(ctx)
+    assert commands[-1].endswith('postprocess coaxsignal elsewhere')
+
+
+def test_transwake_reparses_the_producer(tmp_path, monkeypatch):
+    """DEFECT 7, the ordering hazard, and the test most likely to pass by
+    accident — so it asserts the **wake type**, not just that a number came out.
+
+    ``transwake`` overwrites ``<jobname>/OUTPUT/wakefield.out``, which T3P has
+    already parsed. Phase 2's decision is (a): the mutating consumer calls the
+    producer's re-parse hook, so ``T3PModule`` stays the single owner of every
+    wakefield quantity. Without it the chain silently reports the *longitudinal*
+    loss factor from before acdtool ran.
+    """
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    _write(os.path.join(wd, 'model.t3p'), T3P_INPUT)
+    wake = os.path.join(wd, 't3p_results', 'OUTPUT', 'wakefield.out')
+
+    def fake_run(cmd, **kwargs):
+        # The t3p invocation writes the longitudinal wake; the acdtool transwake
+        # invocation overwrites it with the transverse one, as the real tool does.
+        # Match the full command, not the bare word: pytest's tmp_path is named
+        # after this test, so 'transwake' appears in t3p's command line too.
+        os.makedirs(os.path.dirname(wake), exist_ok=True)
+        _write(wake, T3P_WAKEFIELD_TRANSVERSE
+               if 'acdtool postprocess transwake' in cmd else T3P_WAKEFIELD)
+    monkeypatch.setattr('subprocess.run', fake_run)
+
+    ctx = RunContext(wd, artifacts={MESH: wd},
+                     paths={'ace3p': '/ace3p/', 'mpi': 'srun'})
+    t3p = T3PModule({'input': os.path.join(wd, 'model.t3p')})
+    t3p.run(ctx)
+
+    # Before acdtool: the longitudinal result T3P's own monitor produced.
+    assert t3p._solver.output_data['WakeType'] == 'longitudinal'
+    assert t3p.extract(ctx, 'loss_factor') == pytest.approx(-3.88576373282202e-01)
+
+    acdtool = AcdtoolModule({'command': 'postprocess transwake',
+                             'args': [0.0, 0.0, 0.0, 0.0125]})
+    acdtool.run(ctx)
+
+    # After acdtool: the transverse result, read by T3PModule -- not by acdtool.
+    assert t3p._solver.output_data['WakeType'] == 'transverse'
+    assert t3p.extract(ctx, 'kick_factor') == pytest.approx(9.64058337896157e-02)
+    assert acdtool._acdtool.output_data == {}    # acdtool parses nothing here
+    assert acdtool._acdtool.output_file == 't3p_results/OUTPUT/wakefield.out'
+
+
+def test_coaxsignal_does_not_reparse_the_producer(tmp_path, monkeypatch):
+    """``coaxsignal`` writes a *new* file (``signal.out``), so there is no
+    ordering hazard and no re-parse. Pins that the hook is driven by the table's
+    ``mutates`` field rather than fired for every td_solution consumer."""
+    calls = []
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    monkeypatch.setattr('subprocess.run', lambda cmd, **kw: None)
+    ctx = RunContext(wd, artifacts={TD_SOLUTION: wd},
+                     paths={'ace3p': '/ace3p/', 'mpi': 'srun'})
+    ctx.reparse[TD_SOLUTION] = lambda: calls.append('reparsed')
+
+    AcdtoolModule({'command': 'postprocess coaxsignal'}).run(ctx)
+    assert calls == []
+
+    AcdtoolModule({'command': 'postprocess transwake',
+                   'args': [0.0, 0.0, 0.0, 0.0125]}).run(ctx)
+    assert calls == ['reparsed']
+
+
+def test_acdtool_extract_from_a_non_rf_command_points_at_the_right_module(tmp_path):
+    """Only ``postprocess rf`` writes indexable ``rfpost.out`` sections. Asking a
+    transwake step for a quantity is an output-spec mistake, and the error says
+    which module owns the value instead of returning NaN or a KeyError."""
+    module = AcdtoolModule({'command': 'postprocess transwake',
+                            'args': [0.0, 0.0, 0.0, 0.0125]})
+    with pytest.raises(ValueError, match='module: t3p'):
+        module.extract(RunContext(str(tmp_path)), ['RoverQ', '0', 'RoQ'])
+
+    module = AcdtoolModule({'command': 'postprocess volmontomode'})
+    with pytest.raises(ValueError, match="Only 'postprocess rf'"):
+        module.extract(RunContext(str(tmp_path)), ['RoverQ', '0', 'RoQ'])
+
+    # coaxsignal's output IS read (Phase 3), but as a column table — a field
+    # artifact, not an indexable rfpost.out section.
+    module = AcdtoolModule({'command': 'postprocess coaxsignal'})
+    with pytest.raises(ValueError, match='field artifact'):
+        module.extract(RunContext(str(tmp_path)), ['signal', 'V'])
+
+
+def test_wired_commands_are_the_cw23_exercised_ones():
+    """Phase 2's implement tier: the four commands the tutorial exercises that
+    map onto artifacts this package already has."""
+    assert set(wired_commands()) == {
+        'postprocess rf', 'postprocess transwake', 'postprocess coaxsignal',
+        'postprocess volmontomode'}
 
 
 # --------------------------------------------------------------------------- #

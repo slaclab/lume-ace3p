@@ -1,15 +1,30 @@
 # Acdtool Rework + Output-Spec Migration — Implementation Plan
 
-**Status: PHASES 0–1 COMPLETE** (2026-08-13). Phases 2–6 not started. Planned
-2026-08-13 from a cross-reference of the CW23 ACE3P tutorial archive against the
-current module layer, then **revised 2026-08-13 against the acdtool user guide**
-(see below), which corrected several assumptions — read
-"Revision: the acdtool user guide" before starting any phase. Phase 0 made no
-`src/` changes; all four originally confirmed defects were reproduced against
-real files and are now pinned by characterization tests in
+**Status: PHASES 0–4 COMPLETE** (Phases 0–1 2026-08-13, Phases 2–4 2026-08-17).
+Phases 5–6 not started. Planned 2026-08-13 from a cross-reference of the CW23
+ACE3P tutorial archive against the current module layer, then **revised
+2026-08-13 against the acdtool user guide** (see below), which corrected several
+assumptions — read "Revision: the acdtool user guide" before starting any phase.
+Phase 0 made no `src/` changes; all four originally confirmed defects were
+reproduced against real files and are now pinned by characterization tests in
 `tests/test_acdtool_fixtures.py`. Phase 1 is the first phase to touch `src/`:
 Omega3P now parses its own eigenmode output, so a mode frequency or Q no longer
 requires an acdtool `RoverQ` step. It changed no example and no baseline.
+Phase 2 opened the command surface: all 19 acdtool commands are in one
+declarative table, four are wired as workflow steps, `[cubit, t3p, acdtool]` now
+validates, and defects 1, 2 (narrowed), 4 and 6 are fixed. It changed no example
+and no baseline either.
+Phase 3 did the same for the *output* side: all 24 `.rfpost` blocks are in a
+second declarative table keyed on output *shape*, one reader per shape replaces
+the three hand-written section parsers, `[scaling]` and the curve files are read
+for the first time, and defect 3 is fixed. Every `[RoverQ]` number is unchanged
+and no baseline moved.
+Phase 4 turned acdtool's mode index into a real axis: output specs take the
+mapping form with `at:` narrowing, a mode-indexed section with no `at:` now
+returns every mode (and a `ModeID` field index to align it), surface-indexed
+sections require `at: {surface: n}`, and the positional list form is a deprecated
+alias that rewrites to the mapping in one place. No example was migrated
+(Phase 6) and no baseline moved.
 
 This plan reworks how `acdtool` is invoked and parsed, and migrates
 `output_parameters` off the positional `['section', 'mode_id', 'column']` list
@@ -153,27 +168,27 @@ acdtool exposes **19 commands**: three top-level, five `mesh` subtasks and eleve
 `postprocess` subtasks. The wrapper supports one. "CW23" counts invocations
 across every batch script in `examples/` and `exercises/`.
 
-| Command | Input form | Consumes | CW23 | Supported today |
-|---|---|---|---|---|
-| `meshconvert <f>.gen [out.ncdf]` | positional | genesis mesh | 50 | yes, but inside `cubit.py`, not `acdtool.py` |
-| `meshconvertdirect <f>.gen [out.ncdf]` | positional | genesis mesh | — | **no** |
-| `resource <f>.omega3p` | positional | Omega3P input | — | **no** |
-| `mesh stats <f>.ncdf` | positional | mesh | (implicit) | **no** |
-| `mesh check <f>.ncdf` | positional | mesh | (implicit) | **no** |
-| `mesh fix <in>.ncdf <out>.ncdf` | positional | mesh | — | **no** |
-| `mesh deform <in>.ncdf <out>.ncdf <scale>` | positional | TEM3P deformed mesh | 2 | **no** |
-| `mesh warpsurface <warp.in>` | `warp.in` file (**third dialect**) | mesh | — | **no** |
-| `postprocess rf <f>.rfpost` | `.rfpost` file (`=` dialect) | Omega3P **or** S3P results | 16 | yes |
-| `postprocess eigentomode <jobname>` | positional | Omega3P/S3P results | — | **no** |
-| `postprocess volmontomode <jobname>` | positional | T3P/PIC3P results | 2 | **no** |
-| `postprocess wake_new <jobname> <x y>` | positional | T3P results | — | **no** |
-| `postprocess wake_direct <jobname> <x y>` | positional | T3P results | — | **no** |
-| `postprocess transwake <jobname> <x1 y1> <x2 y2>` | positional | T3P results | 2 | **no** |
-| `postprocess coaxsignal <jobname>` | positional | T3P results | 2 | **no** |
-| `postprocess pic3pstats <f>.ncdf <symmetry factor>` | positional | PIC3P particles | 1 | **no** |
-| `postprocess pic3pconvert <f>` | positional | PIC3P particles | 2 | **no** |
-| `postprocess track3p <f>.acdtool <jobname>` | `.acdtool` file (`:` dialect) + jobname | Track3P results | 2 | **no** |
-| `postprocess project <eigenmodes> [displacements]` | positional | TEM3P results | — | **no** |
+| Command | Input form | Consumes | CW23 | Before Phase 2 | After Phase 2 |
+|---|---|---|---|---|---|
+| `meshconvert <f>.gen [out.ncdf]` | positional | genesis mesh | 50 | yes, but inside `cubit.py`, not `acdtool.py` | invocable; still produced by `cubit.py` |
+| `meshconvertdirect <f>.gen [out.ncdf]` | positional | genesis mesh | — | **no** | invocable; unwired (mesh producer) |
+| `resource <f>.omega3p` | positional | Omega3P input | — | **no** | invocable; unwired (stdout only) |
+| `mesh stats <f>.ncdf` | positional | mesh | (implicit) | **no** | invocable; unwired (stdout only) |
+| `mesh check <f>.ncdf` | positional | mesh | (implicit) | **no** | invocable; unwired (stdout only) |
+| `mesh fix <in>.ncdf <out>.ncdf` | positional | mesh | — | **no** | invocable; unwired (mesh producer) |
+| `mesh deform <in>.ncdf <out>.ncdf <scale>` | positional | TEM3P deformed mesh | 2 | **no** | invocable; unwired (mesh producer) |
+| `mesh warpsurface <warp.in>` | `warp.in` file (**third dialect**) | mesh | — | **no** | invocable; unwired (`warp.in` passed opaquely) |
+| `postprocess rf <f>.rfpost` | `.rfpost` file (`=` dialect) | Omega3P **or** S3P results | 16 | yes | **wired** (`em_solution`) |
+| `postprocess eigentomode <jobname>` | positional | Omega3P/S3P results | — | **no** | invocable; unwired (`.mod` files only) |
+| `postprocess volmontomode <jobname>` | positional | T3P/PIC3P results | 2 | **no** | **wired** (`td_solution`) |
+| `postprocess wake_new <jobname> <x y>` | positional | T3P results | — | **no** | invocable; unwired (no fixture) |
+| `postprocess wake_direct <jobname> <x y>` | positional | T3P results | — | **no** | invocable; unwired (no fixture) |
+| `postprocess transwake <jobname> <x1 y1> <x2 y2>` | positional | T3P results | 2 | **no** | **wired** (`td_solution`) |
+| `postprocess coaxsignal <jobname>` | positional | T3P results | 2 | **no** | **wired** (`td_solution`) |
+| `postprocess pic3pstats <f>.ncdf <symmetry factor>` | positional | PIC3P particles | 1 | **no** | invocable; unwired (no PIC3P module) |
+| `postprocess pic3pconvert <f>` | positional | PIC3P particles | 2 | **no** | invocable; unwired (no PIC3P module) |
+| `postprocess track3p <f>.acdtool <jobname>` | `.acdtool` file (`:` dialect) + jobname | Track3P results | 2 | **no** | **not invocable** (needs the `:` dialect) |
+| `postprocess project <eigenmodes> [displacements]` | positional | TEM3P results | — | **no** | invocable; unwired (TEM3P, stdout only) |
 
 Notes that matter for dispatch:
 
@@ -494,6 +509,10 @@ workflow :
     command : 'postprocess transwake'
     args    : [0.0, 0.0, 0.0, 0.0125]  # jobname is injected from the artifact
 ```
+
+**These two entries illustrate the two forms; they are not one runnable
+workflow.** Both provide `rf_post`, so declaring both is a duplicate-producer
+error — see Phase 2 deviation 7.
 
 `requires` is derived from `command`: `postprocess rf` → `em_solution`;
 `transwake` / `coaxsignal` / `volmontomode` / `wake_new` / `wake_direct` →
@@ -949,42 +968,196 @@ output parsing is Phase 3.
 
 ### Verification (Phase 2 done when)
 
-- [ ] `[cubit, t3p, acdtool(command: postprocess transwake)]` validates and
-  orders as `cubit → t3p → acdtool`.
-- [ ] `[cubit, t3p, acdtool(command: postprocess rf)]` still raises
-  `WorkflowValidationError` — the `em_solution` guard must survive for `rf`.
-- [ ] A `[cubit, t3p, acdtool(transwake)]` chain against the Phase-0-addendum
+- [x] `[cubit, t3p, acdtool(command: postprocess transwake)]` validates and
+  orders as `cubit → t3p → acdtool`
+  (`test_workflow_graph.py::test_order_cubit_t3p_acdtool_transwake`).
+- [x] `[cubit, t3p, acdtool(command: postprocess rf)]` still raises
+  `WorkflowValidationError` — the `em_solution` guard must survive for `rf`
+  (`test_acdtool_rf_after_t3p_is_rejected`, asserted both with and without an
+  explicit `command:`).
+- [x] A `[cubit, t3p, acdtool(transwake)]` chain against the Phase-0-addendum
   transwake `wakefield.out` reports the **transverse** result (`KickFactor`,
   `WakeType == 'transverse'`), not the longitudinal one. This is the defect-7
   regression test and the one most likely to pass by accident — assert the wake
   type, not just that a number came out.
-- [ ] A `.acdtool` input raises a clear error naming the unsupported command,
+  (`test_modules.py::test_transwake_reparses_the_producer` asserts the wake type
+  both *before* and *after* the acdtool step, so it fails if the re-parse is
+  dropped.)
+- [x] A `.acdtool` input raises a clear error naming the unsupported command,
   instead of silently parsing to two empty blocks (defect 2, narrowed). The
   Phase-0 characterization test stays as-is — this is a **new** test, not an
   inversion.
-- [ ] Multi-line `portID = {\n 7\n 8\n}` parses and round-trips through
+  (`test_acdtool_input_raises_naming_the_unsupported_command`;
+  `test_defect2_acdtool_dialect_parses_to_empty_blocks` untouched.)
+- [x] Multi-line `portID = {\n 7\n 8\n}` parses and round-trips through
   `write_input` without loss (characterization test inverted), and every
-  `write_input` output has balanced braces.
-- [ ] An unknown block in a `.rfpost` input round-trips untouched rather than
-  raising — newer acdtool builds ship blocks we have not seen.
-- [ ] An S3P module configured with `results_dir: custom_results` parses from that
+  `write_input` output has balanced braces
+  (`test_defect1_multiline_brace_value_is_parsed`,
+  `test_defect1_roundtrip_writes_balanced_braces`,
+  `test_write_input_always_balances_braces`).
+- [x] An unknown block in a `.rfpost` input round-trips untouched rather than
+  raising — newer acdtool builds ship blocks we have not seen
+  (`test_unknown_rfpost_block_roundtrips_untouched`, including an unknown block
+  with a multi-line list value).
+- [x] An S3P module configured with `results_dir: custom_results` parses from that
   directory, and one with no such key parses from `s3p_results`. **Do not** make
   the primary assertion an input-file `JobName: custom_results` — that key is
   undocumented for S3P and may be ignored by the solver. Test it only as a
   fallback, with a comment saying it is unverified against a real run.
-- [ ] Existing `postprocess rf` configs run unchanged with no `command` key.
-- [ ] No command line contains `--nodes=` or `--ntasks=`; a non-srun
-  `MPI_CALLER` produces a runnable command.
-- [ ] `python -m pytest tests/` green including baselines.
+  (`test_s3p_results_dir_override_is_honored` /
+  `test_s3p_default_results_dir_is_s3p_results` are the primary pair;
+  `test_s3p_input_tree_jobname_is_a_fallback_only` carries the caveat.)
+- [x] Existing `postprocess rf` configs run unchanged with no `command` key
+  (`test_run_infers_postprocess_rf_from_extension`,
+  `test_omega3p_chain_evaluate`, and every baseline example).
+- [x] No command line contains `--nodes=` or `--ntasks=`; a non-srun
+  `MPI_CALLER` produces a runnable command
+  (`test_defect4_non_srun_caller_gets_a_runnable_command`,
+  `test_no_mpi_caller_omits_the_rank_flags`,
+  `test_cpu_bind_opts_guarded_against_non_srun`).
+- [x] `python -m pytest tests/` green including baselines — **323 passed**
+  (41 new), up from Phase 1's 282. No baseline file touched.
 
 ### Deliverables
 
-- [ ] Declarative command table + dispatch + dialect routing + brace fix (read
+- [x] Declarative command table + dispatch + dialect routing + brace fix (read
   **and** write) in `src/lume_ace3p/acdtool.py`.
-- [ ] `command` / `args` / per-command `requires` + jobname injection in `AcdtoolModule`.
-- [ ] `S3P.results_dir()` in `src/lume_ace3p/ace3p.py`.
-- [ ] A written decision on the defect-7 ordering hazard, inline in this plan.
-- [ ] Tests in `tests/test_workflow_graph.py` (DAG cases) + `tests/test_modules.py`.
+- [x] `command` / `args` / per-command `requires` + jobname injection in `AcdtoolModule`.
+- [x] `S3P.results_dir()` in `src/lume_ace3p/ace3p.py` — the one-line change
+  Phase 1 left, plus a class docstring recording why `s3p_results` is
+  authoritative.
+- [x] A written decision on the defect-7 ordering hazard, inline in this plan
+  (see "Decision: the defect-7 ordering hazard" below).
+- [x] Tests in `tests/test_workflow_graph.py` (DAG cases) + `tests/test_modules.py`
+  + `tests/test_acdtool_fixtures.py` (dispatch, brace fix, the four
+  Phase-0-addendum fixtures).
+- [x] The four Phase-0-addendum fixtures copied in, with `SOURCES.md` and
+  `COVERAGE.md` updated.
+- [x] A `docs/yaml_reference.md` `acdtool` module section (the `command:` /
+  `args:` / `jobname:` surface, the wired-command table, the transwake ordering
+  note), following Phase 1's precedent of documenting new user-facing surface as
+  it lands rather than deferring all docs to Phase 6.
+
+### Decision: the defect-7 ordering hazard
+
+**Chosen: option (a) — re-parse the producer after a mutating consumer.**
+
+`postprocess transwake` writes its result *over* `<jobname>/OUTPUT/wakefield.out`,
+which `T3PModule` has already parsed by the time acdtool runs. The mechanism is
+two per-artifact side tables on `RunContext`, both registered by the producer:
+
+- `ctx.job_names[artifact]` — the results directory the solver actually resolved,
+  which is what acdtool's positional commands take as their first argument;
+- `ctx.reparse[artifact]` — the producer's `output_parser`, which a consumer calls
+  after overwriting its output.
+
+The command table marks *which* artifact a command rewrites (`mutates`), so
+`AcdtoolModule.run` fires the hook declaratively rather than special-casing
+transwake. `wake_new` / `wake_direct` carry the same marker and get the behavior
+for free when they are wired.
+
+Why not the alternatives:
+
+- **(b) `AcdtoolModule` owns the post-transwake parse as a distinct artifact.**
+  This would give `wakefield.out` two readers and make the *output spec* depend on
+  whether transwake ran — `{module: t3p, quantity: kick_factor}` for a plain T3P
+  run, something else for a transwake chain — which is exactly the kind of
+  incidental coupling the module layer exists to remove. It also needs a new
+  artifact kind for a file that already has an owner.
+- **(c) defer `T3P.output_parser` until all consumers have run.** `ACE3P.run`
+  calls `output_parser` itself, so this means either restructuring the wrapper's
+  run/parse contract or having the `Workflow` reach into module internals to
+  sequence parsing. Both are framework changes for a two-command problem, and
+  neither is needed once the mutation is declared.
+
+Consequence to keep in mind: an artifact's *parsed* state can now change after its
+producer's `run` returned. That is made explicit by the `mutates` field and by the
+docstrings on both sides, rather than left to ordering luck — which was the
+failure mode this decision exists to close. `parse_wakefield` itself needed no
+change; it already reads both header forms.
+
+### Deviations found while executing Phase 2
+
+1. **`postprocess track3p` is the only command held back from `Acdtool.run`
+   itself.** The plan's tier table has one "table row, no dialect support" row and
+   one "table row, no module wiring" tier, which reads as a single
+   invocable/not-invocable split. Two flags were needed, not one: `dispatch`
+   (can `Acdtool.run` invoke it) and `wired` (will `AcdtoolModule` accept it as a
+   workflow step). Only `postprocess track3p` is `dispatch=False`, because its
+   input file goes *through* this wrapper's parser and writer — a `.acdtool` input
+   would be re-emitted as garbage. `mesh warpsurface` turned out **not** to need
+   the same treatment: its `warp.in` is named positionally, so the filename passes
+   through as an opaque argument and no third parser is needed to invoke it. The
+   plan's "recommend scoping it out" applies to *parsing* it, which we do not.
+   Every held-back row carries a `note` explaining why, and the note is what the
+   error message prints — so the reason reaches the user rather than living only
+   here.
+
+2. **The parallel/serial split constrains *ranks*, not CPUs.** The plan says one
+   rank is correct for all 19 commands and only `rf`/`volmontomode` should accept
+   a configurable rank count, which is right. But it would have been wrong to pin
+   `-c` as well: CW23 runs the *serial* transwake as `srun -n 1 -c 256` and
+   coaxsignal likewise, i.e. one rank over many threads. So `tasks` is forced to 1
+   for the 17 serial commands (with a warning rather than a silent override) and
+   `cores` stays configurable for all 19.
+
+3. **The rank flags are omitted entirely when there is no MPI caller.** The plan
+   says to follow the `ace3p.py` pattern, which emits `-n N -c N` unconditionally
+   and produces ` -n 1 -c 1 acdtool ...` — a leading-space command with no
+   launcher — when `MPI_CALLER` is empty. Since the verification bullet asks for "a
+   non-srun `MPI_CALLER` produces a runnable command", the empty caller is
+   included: `_command_line` emits the flags only when there is a caller to consume
+   them. `ace3p.py` was left alone; that is a separate, pre-existing case.
+
+4. **A bare `acdtool` module entry still means `postprocess rf`.** The first cut
+   raised on a module with neither `input:` nor `command:`, which broke
+   `test_registry_edges_match_plan` — it builds every module bare to read its
+   edges. That is not merely a test artifact: `AcdtoolModule({})` has always meant
+   "`postprocess rf` over the generated default `.rfpost` template", via
+   `Acdtool.make_default_input`. The additive policy applies, so the inference
+   defaults to `.rfpost` when there is no input file at all, and only a *non*-rfpost
+   input with no `command:` raises.
+
+5. **Two adjacent latent bugs in the default-input path were fixed while there.**
+   `Acdtool.__init__` called `shutil.copy` on the fabricated `default_input.rfpost`
+   before it existed on disk (`make_default_input` builds `input_data` in memory
+   only), and `write_input` would `os.path.join` a `None` `original_input_file` on a
+   second call. Neither was reachable from any shipped config, and neither is in
+   the plan; they are in the blast radius of making `input_file` genuinely optional
+   for the positional commands, so leaving them would have turned a latent bug into
+   a reachable one.
+
+6. **`load_output` now reports a missing output file instead of raising
+   `FileNotFoundError` from inside the parser.** The plan's defect-4 item asks only
+   that `output_file` be set (or explicitly `None`) on every dispatch path, which it
+   is. The adjacent half is that a *set but absent* output — the normal shape of a
+   failed acdtool run — reached `output_parser` and raised from an `open()` deep in
+   the parse. It now prints the resolved path and returns, which is the same
+   "report, don't crash" contract `Omega3P`/`T3P` output parsing already follows.
+
+7. **The target design's own YAML example is a duplicate-producer error, and
+   stays one.** "Command dispatch" shows two `acdtool` entries in one `workflow:`
+   list (an `rf` step and a named `transwake` step). Both provide `rf_post`, so
+   `_resolve_order` rejects it — *"artifact 'rf_post' is provided by more than one
+   module"*. This is not a Phase-2 regression; it is the same
+   one-producer-per-artifact rule that design decision 3 declines to loosen, and
+   the fix is per-instance artifact identity, which that decision puts out of
+   scope for this whole plan. Pinned by
+   `test_workflow_graph.py::test_two_acdtool_steps_are_rejected` so it reads as a
+   known boundary rather than a surprise. **Treat the plan's two-entry snippet as
+   illustrating the two *forms*, not a runnable workflow** — every real chain
+   Phases 2–6 need has exactly one acdtool step, including Phase 6's
+   `examples/t3p_transwake`. If a workflow ever genuinely needs both, that is the
+   concrete need that would justify reopening artifact identity.
+
+8. **A `pytest` gotcha worth recording.** The transwake ordering test fakes
+   `subprocess.run` and branches on the command line to decide which wakefield form
+   to write. Matching the bare word `transwake` matched T3P's *own* command line
+   too, because `tmp_path` is named after the test function
+   (`test_transwake_reparses_the_0/...`) and the input path is on the command line.
+   Match `'acdtool postprocess transwake'`. This produced a test that failed for
+   the right-looking wrong reason — it reported the transverse result too *early*,
+   which is the inverse of the defect being tested.
 
 ---
 
@@ -1051,27 +1224,135 @@ reader.
 
 ### Verification (Phase 3 done when)
 
-- [ ] All six Phase-0 `rfpost.out` fixtures parse; `[RoverQ]` values match the
+- [x] All six Phase-0 `rfpost.out` fixtures parse; `[RoverQ]` values match the
   Phase-0 characterization values in
   `test_acdtool_fixtures.py::ROVERQ_EXPECTED` exactly (this is a refactor of a
-  working parser — the numbers must not move).
-- [ ] The unclosed-`[scaling]` fixture parses without corrupting the following
-  section.
-- [ ] `field1_0` / `.ec` / `.bc` load with correct column names and array lengths
-  (300 rows for `field1_0.ec`, 20 for the truncated ones — see `SOURCES.md`).
-- [ ] `[scaling]` `m_factor` extracted from both variants.
-- [ ] Sections still genuinely unimplemented raise or warn with the section name,
-  never silently return empty.
-- [ ] `python -m pytest tests/` green including baselines.
+  working parser — the numbers must not move). **Unchanged to full precision**;
+  the only movement in that test is `set(output_data)` gaining `scaling` (see
+  deviation 1).
+- [x] The unclosed-`[scaling]` fixture parses without corrupting the following
+  section (`test_defect3_unclosed_scaling_does_not_swallow_the_next_block`,
+  which asserts both that `m_factor` is read and that none of the
+  `ALLFieldOnLine` echo's keys leaked in).
+- [x] `field1_0` / `.ec` / `.bc` load with correct column names and array lengths
+  (300 rows for `field1_0.ec`, 20 for the truncated ones — see `SOURCES.md`)
+  — `test_curve_files_are_read_when_present`, driven off `CURVE_SHAPES`.
+- [x] `[scaling]` `m_factor` extracted from both variants
+  (`test_scaling_block_is_parsed_from_both_variants`, including
+  `m_factor_amplitude` / `m_factor_phase_deg` and the `Variant` label).
+- [x] Sections still genuinely unimplemented raise or warn with the section name,
+  never silently return empty — one `AcdtoolOutputWarning` per case: unknown
+  block, no `ModeID` header, no `surfaceID`, no `name = value` lines, a curve
+  block that wrote no files, and `VFFT` with `printGroup = nterm`. A section
+  merely *absent* from the output keeps the old stdout report (deviation 8).
+- [x] `python -m pytest tests/` green including baselines — **338 passed**
+  (15 net: 18 added, 3 characterization tests replaced by their inverted forms),
+  up from Phase 2's 323. No baseline file touched.
 
 ### Deliverables
 
-- [ ] Shape readers in `src/lume_ace3p/acdtool.py` (consider splitting the curve
-  reader into a module-level function, as `parse_wakefield` is, so it is testable
-  without an `Acdtool` instance).
-- [ ] `AcdtoolModule.field()` returning curve/grid artifacts.
-- [ ] Tests in `tests/test_acdtool_fixtures.py`.
-- [ ] Updated `COVERAGE.md`.
+- [x] Shape readers in `src/lume_ace3p/acdtool.py`, all module-level as
+  `parse_wakefield` is — `read_mode_table`, `read_surface_scalars`,
+  `read_point_scalars`, `read_scaling`, `parse_column_file`, plus
+  `split_output_sections` (the defect-3 fix) and the `SECTIONS` table that maps
+  each of the 24 blocks to its shape and output filenames.
+- [x] `AcdtoolModule.field()` returning curve/grid artifacts, via
+  `acdtool.field_sections`.
+- [x] Tests in `tests/test_acdtool_fixtures.py` (17 new; 4 characterization tests
+  inverted or updated) + `tests/test_modules.py` (1 new, plus a coaxsignal case
+  added to the existing wrong-module test).
+- [x] Updated `COVERAGE.md` — per-block "Parser today" for all 24 blocks, and
+  the two-gaps section rewritten to say how Phase 3 handled the missing fixtures
+  and what a real run is still owed for.
+- [x] A `docs/yaml_reference.md` subsection on what `postprocess rf` reads out of
+  its output (the shape table, `[scaling]`/`m_factor`, curves as field artifacts,
+  the warning behavior), continuing Phases 1–2's practice of documenting new
+  user-facing surface as it lands.
+
+### Deviations found while executing Phase 3
+
+1. **`[scaling]` is now always in `output_data`, which moved one characterization
+   assertion.** It is emitted by every run and declared by no input block, so the
+   `ionoff` loop could never reach it — reading it means reading it *outside* that
+   loop, and so `set(acd.output_data)` grows from `{'RoverQ'}` to
+   `{'RoverQ', 'scaling'}` in `test_roverq_values_from_real_output`. No
+   `[RoverQ]` value moved and no baseline moved: the baselines are dry-run and
+   every output spec names its section explicitly, so an extra key in the parsed
+   dict is invisible to the tables. Three other Phase-0 characterization tests
+   were inverted as the phase that fixes them should
+   (`test_scaling_block_is_never_parsed` → `..._is_parsed_from_both_variants`,
+   `test_curve_block_output_is_not_parsed` → `test_curve_files_are_read_when_present`
+   plus a warning test, and `test_unimplemented_section_reports_and_yields_nothing`
+   → `test_unreadable_section_warns_naming_itself`).
+
+2. **The blocking note was honored by making the unvalidated parsers *less*
+   layout-dependent, not by freezing them.** No cluster run was available, so
+   neither `kickFactor` nor `maxFieldsOnSurface` was "cleaned up" against its
+   assumed format. But the plan's own instruction — generalize the near-identical
+   `RoverQ`/`kickFactor` bodies into one header-driven reader — *is* a change to
+   an unvalidated parser, and refusing it would have left the positional
+   `modeline[3]` access the plan calls the fragile part. Resolution: `kickFactor`
+   now takes its column names from the file's own `ModeID` header row rather than
+   from a hardcoded order, and `maxFieldsOnSurface` reads `name = value [at
+   (x,y,z)]` lines wherever they appear rather than at a fixed two and three lines
+   below the `surfaceID`. Both are **strictly weaker assumptions** than before and
+   both produce byte-identical values on the synthetic fixture
+   (`test_modules.py::test_acdtool_extract`, untouched). What is still owed is
+   unchanged: only a real run with those blocks at `ionoff = 1` verifies their
+   column names, and `COVERAGE.md` now says so in those words.
+
+3. **A second declarative table (`SECTIONS`) was added, mirroring Phase 2's
+   command table.** The plan described the shapes in prose and the filename
+   schemes in a Motivation table; encoding them — shape, output-file patterns, a
+   `validated` flag, a note — makes "which reader" a lookup rather than a branch,
+   makes the 24-block surface assertable
+   (`test_section_table_covers_the_documented_block_surface`), and puts
+   `COVERAGE.md`'s real-output column in the code where a reader will see it. It
+   also settles where the filename schemes live: in the table, not in the reader.
+
+4. **Curve and grid filenames are globbed, not predicted.** `modeID2 = -1` means
+   "every mode the solver produced", so `ALLFieldOnLine`'s per-mode suffix is not
+   knowable before the run. The table carries `{filename}_*` and the reader globs
+   it, which also picks up the `.ec`/`.bc` siblings in one pass. Predicting names
+   would have needed the mode count the eigensolve only reveals afterwards — the
+   same asymmetry Phase 1 deviation 2 recorded for the dry-run field index.
+
+5. **`parse_column_file` also accepts an *uncommented* header row.** Found while
+   covering the Phase-0-addendum fixtures: `postprocess track3p`'s `en` names its
+   seven columns on a bare first line, not a `#` comment. Treating any
+   non-numeric line before the first data row as a header costs one `try` and
+   means the same reader covers `en` for free — even though the *command* stays
+   unwired for want of the `:` input dialect.
+
+6. **`Command.parses` became a property over a new `reader` field.** Phase 2
+   needed only a boolean; Phase 3 needs to know *which* reader, because
+   `coaxsignal`'s headerless `signal.out` is now read too (plan item 8). So the
+   table carries `reader` (`'rfpost'` / `'signal'` / `None`) and `parses` is
+   derived from it, keeping `AcdtoolModule`'s call site working.
+   `AcdtoolModule.extract`'s guard moved to `reader != RFPOST`, so asking a
+   coaxsignal step for a quantity still raises — now naming the field-artifact
+   route rather than claiming its output is unread.
+
+7. **`eval()` is gone from the whole output path**, three sites: the `ionoff`
+   flag, every number in a mode table, and the `at (x, y, z)` coordinate tuples.
+   Phase 5 lists this as a chore for `S3P.output_parser`; here it came free,
+   since every value now goes through `float()` or a float regex. The `.rfpost`
+   *input* parser never used `eval`.
+
+8. **An absent section and an unreadable one are treated differently.** The
+   verification bullet asks for a warning on an unimplemented section, but a
+   section simply not present in `rfpost.out` is a normal outcome — the run may
+   have been configured with that block off, or `postprocess rf` may have been
+   pointed at a different results directory — so that case keeps the original
+   stdout report (`test_absent_section_still_reports_to_stdout`) and the warning
+   is reserved for output that exists in a shape no reader knows. Warning on both
+   would have made the common case noisy and the real one indistinguishable.
+
+9. **Grid parsing is deferred as planned, and the deferral is visible in three
+   places**: the `SECTIONS` note per block, `Acdtool._read_files`' docstring, and
+   `output_data[block] = {'files': [...]}` — which records what was produced
+   without pretending to have read it. Two of the five write binary or HDF5, so
+   this is not a shortcut that a later session should "finish" without a use case.
 
 ---
 
@@ -1104,24 +1385,115 @@ mode axis a real field index, and keep the list form as a deprecated alias.
 
 ### Verification (Phase 4 done when)
 
-- [ ] Mapping and list forms produce identical values for the same quantity on
-  the same fixture.
-- [ ] List form emits `DeprecationWarning` naming the mapping replacement.
-- [ ] A mode-indexed acdtool output with no `at:` yields one table row per mode.
-- [ ] An `s3p + acdtool` workflow indexes its table on S3P's `Frequency` (first in
-  DAG order), exactly as it does today, with acdtool mode data as a field artifact.
-- [ ] An `omega3p + acdtool` workflow requesting both `RoverQ` and
-  `maxFieldsOnSurface` indexes on `ModeID`, with `Emax` an `at:`-narrowed scalar.
-- [ ] Requesting a surface-indexed section **without** `at:` raises an error that
-  names the available surface IDs.
-- [ ] `python -m pytest tests/` green; **baselines byte-identical** — no example
-  migrated yet, so any baseline movement here is a bug.
+- [x] Mapping and list forms produce identical values for the same quantity on
+  the same fixture (`test_acdtool_mapping_and_list_forms_agree`, over all five
+  spellings the shipped examples use — including the location component).
+- [x] List form emits `DeprecationWarning` naming the mapping replacement
+  (`test_acdtool_list_form_warns_naming_its_mapping_replacement`, which also
+  pins that it warns *once* per spec and that the mapping form never warns).
+- [x] A mode-indexed acdtool output with no `at:` yields one table row per mode
+  (`test_acdtool_mode_section_without_at_returns_the_whole_axis` for the array
+  and the axis; `test_omega3p_acdtool_table_indexes_on_modeid` for the rows the
+  mode layer builds from them).
+- [x] An `s3p + acdtool` workflow indexes its table on S3P's `Frequency` (first in
+  DAG order), exactly as it does today, with acdtool mode data as a field artifact
+  (`test_s3p_acdtool_table_indexes_on_s3p_frequency`, which asserts acdtool's own
+  axis *is* `ModeID` so the test fails if the collision is won by accident).
+- [x] An `omega3p + acdtool` workflow requesting both `RoverQ` and
+  `maxFieldsOnSurface` indexes on `ModeID`, with `Emax` an `at:`-narrowed scalar
+  (`test_omega3p_acdtool_table_indexes_on_modeid`).
+- [x] Requesting a surface-indexed section **without** `at:` raises an error that
+  names the available surface IDs
+  (`test_acdtool_surface_section_without_at_names_the_surface_ids`).
+- [x] `python -m pytest tests/` green — **349 passed** (11 new), up from Phase 3's
+  338; **no baseline file touched**.
 
 ### Deliverables
 
-- [ ] Mapping-form `extract` + `field_index` + `field` in `AcdtoolModule`.
-- [ ] Single list→mapping adapter, reachable from `_infer_output_module`.
-- [ ] Tests in `tests/test_modules.py` + `tests/test_workflow_graph.py`.
+- [x] Mapping-form `extract` + `_value` + `field_index` + broadened `field` in
+  `AcdtoolModule`, plus `mode_ids` / `table_mode_ids` / `mode_table_arrays` in
+  `src/lume_ace3p/acdtool.py`.
+- [x] Single list→mapping adapter (`modules.acdtool_spec`), reachable from
+  `_infer_output_module`.
+- [x] Tests in `tests/test_modules.py` (8 new) + `tests/test_workflow_graph.py`
+  (3 new).
+- [x] A `docs/yaml_reference.md` "Output specs for `postprocess rf`" subsection
+  (the mapping form, the whole-axis rule, the surface rule, the list→mapping
+  translation table), and a rewritten "Two spec syntaxes" — which claimed the
+  acdtool module *requires* the positional list.
+
+### Deviations found while executing Phase 4
+
+1. **`field_index` keys on the parsed output, not on "the declared outputs".**
+   A module never sees `output_parameters` — `Workflow._route_output` resolves
+   specs to modules, not the reverse — so "return `('ModeID', array)` when a
+   mode-indexed section is among the declared outputs" has no seam to read. The
+   data-driven equivalent is the same set: a block appears in `output_data` only
+   when its `.rfpost` input set `ionoff = 1`, which is what "declared" meant. It
+   also matches `Omega3PModule.field_index`, which asks its own parsed output the
+   same question, and keeps the dry-run answer `None` (Phase 1 deviation 2) for
+   free.
+
+2. **The mapping form needed a `component:` key.** The target design in this plan
+   sketches `at:` and `quantity:` only, but the list form has a *fourth* element
+   for the location vectors — `['maxFieldsOnSurface', '6', 'Emax_location', 'x']`
+   — which two shipped examples use for `loc_x`/`loc_y`/`loc_z`. Since Phase 3
+   parses a location into a `{x, y, z}` dict, the mapping needs somewhere to name
+   the part: `component: x`. The alternative (a dotted `quantity:
+   Emax_location.x`) would have introduced a path mini-language for one case.
+   Without this the alias would not have been lossless and Phase 6 could not
+   migrate `examples/omega3p_sweep`.
+
+3. **`field()` broadened to carry the mode-indexed sections as arrays.** Phase 3
+   left `field()` as curves and grids. But design decision 2 says any axis that is
+   *not* the table axis routes to a field artifact, and the `s3p + acdtool` case is
+   exactly that: a per-mode array cannot be a column of a frequency-indexed table.
+   So `field()` now also returns `{section: {ModeID, column, ...}}`
+   (`acdtool.mode_table_arrays`), and one Phase-3 assertion moved with it —
+   `test_acdtool_field_returns_curves_not_table_columns` asserted `field() is
+   None` for a rfpost-sections-only run. Surface-indexed sections are *not*
+   included: they always resolve to an `at:`-narrowed scalar column.
+
+4. **The deprecation warns at the translation site only, once per spec.**
+   `_infer_output_module` also has to ask the adapter "is this acdtool's?", and
+   warning there would double every message; `extract` runs once per evaluation,
+   so warning unconditionally would print N copies for an N-point sweep. So
+   routing calls the adapter with `warn=False` and `AcdtoolModule` keeps a
+   `_warned` set of specs it has already reported. The plan's "exactly one
+   translation site" is preserved — the warning is a parameter of that site, not a
+   second one.
+
+5. **Routing recognizes all 24 block names, not the three the old router listed.**
+   `_infer_output_module` hardcoded `RoverQ` / `kickFactor` /
+   `maxFieldsOnSurface`; the adapter now routes anything whose head (or `section:`)
+   is a key of `acdtool.SECTIONS`. This is a strict superset — none of the 24
+   collides with a T3P quantity, a Geant4 section or a Particles name (the
+   `kickFactor` / `kick_factor` distinction the Motivation calls out is the closest
+   pair) — and it means a spec naming a block that exists but has no reader fails
+   with *"writes its own file … through field()"* rather than being mis-routed to
+   `s3p`.
+
+6. **`module: acdtool` is optional in the mapping form, and a wrong-axis `at:`
+   raises.** Naming a `section:` is itself the routing signal, so
+   `{section: RoverQ, quantity: RoQ}` reaches acdtool with no `module` key —
+   which is what makes the mapping form no more verbose than the list it replaces.
+   Conversely `{section: RoverQ, at: {surface: 6}}` is an error naming the axis the
+   section does take, rather than silently ignoring the `at:` and returning the
+   whole mode axis.
+
+7. **The per-section column whitelists went with the list form.** `extract` used
+   to `assert entry in {'Frequency', 'Qext', 'V_r', ...}` per section — a
+   hardcoded set that Phase 3 already made wrong in principle, since column names
+   now come from the output file's own header row. The mapping form's errors report
+   what the run *did* produce instead (`AcdtoolModule._value`), which is both
+   accurate for a build that adds a column and more useful than naming the set the
+   code expected.
+
+8. **The synthetic `RFPOST_OUTPUT` fixture gained a second `RoverQ` mode.** With
+   one mode, "the whole axis" and "mode 0" are indistinguishable, so the fixture
+   could not tell a working whole-axis read from a broken one. `[kickFactor]`
+   deliberately keeps its single mode — the blocks are narrowed independently by
+   their own `modeID1`/`modeID2`.
 
 ---
 

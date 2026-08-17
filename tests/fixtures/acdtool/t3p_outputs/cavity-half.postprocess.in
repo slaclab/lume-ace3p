@@ -1,0 +1,63 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        MPI : { 
+            size : 16 
+            rank : 0 
+        }
+        ModelInfo : { 
+            File : ./pillboxwg2.ncdf 
+            BoundaryCondition : { 
+                Exterior : 6 , 5 
+                Absorbing : 3 , 4 
+                Magnetic : 2 
+            }
+        }
+        CheckPoint : { 
+            Action : none 
+            Ntimesteps : 500 
+        }
+        TimeStepping : { 
+            DT : 2e-12 
+            MaximumTime : 5e-9 
+        }
+        LoadingInfo : { 
+            Bunch : { 
+                Charge : 1.e-12 
+                Numberofsigmas : 5 
+                Sigma : 0.01 
+                Type : Gaussian 
+            }
+            BoundaryID : 3 
+            StartPoint : 0.0 , 6.25e-03 , -0.075 
+            SymmetryFactor : 2 
+            Direction : 0.0 , 0.0 , 1.0 
+        }
+        JobName : t3p_results 
+        FiniteElement : { 
+            Order : 2 
+            CurvedSurfaces : on 
+        }
+        LinearSolver : { 
+            Solver : MUMPS 
+        }
+        Monitor : { 
+            TimeStep : 0.2e-9 
+            TimeStart : 0e-9 
+            Name : mymon 
+            TimeEnd : 5e-9 
+            Type : Volume 
+        }
+        Monitor : { 
+            Smax : 1.4 
+            EndContour : 0.025 
+            Name : wakefield 
+            StartContour : -0.025 
+            Type : WakeField 
+        }
+/********************************/
+
+
+

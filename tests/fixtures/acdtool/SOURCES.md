@@ -105,13 +105,29 @@ Kept in full deliberately: the two `omega3p.out` files are ~6.9 KB each and
 mostly license banner, but Phase 1 must prove the banner does not break parsing,
 so trimming it would delete the thing under test.
 
+## `t3p_outputs/` and `track3p_outputs/` — the positional commands' own outputs
+
+**Added 2026-08-17, during Phase 2.** These are the four files the Phase-0
+addendum in `docs/acdtool_rework_plan.md` lists — real files that were already on
+disk in CW23, copied when the phase that needed them came up rather than as a
+separate session. They are outputs of the positional `postprocess` commands (and
+of T3P itself), not of `postprocess rf`, which is why they sit in their own
+directories.
+
+| File | Source | Notes |
+|---|---|---|
+| `t3p_outputs/cavity-half.wakefield.out` | `t3p/cavity-half/t3p_results/OUTPUT/wakefield.out` | The **transwake** form: transverse header (`# Kick factor = ...`, two transverse points, an offset) over columns `s`, `W_trans(s)[V/pC]`, `I_bunch(s)[C/m]`. `parse_wakefield` reads it unmodified. This file is the *same path* T3P's own wake monitor writes — transwake overwrites it, which is defect 7. **Truncated** to 20 data rows (`head -n 26`, 6 header lines + 20 rows) from 2,335; the header is the load-bearing part. |
+| `t3p_outputs/cavity-half.postprocess.in` | same directory | Full 63 lines. The KVC echo T3P writes of its own *resolved* input. Contains `JobName : t3p_results` even though `pillboxwg2-closed.t3p` never sets one — the only evidence that the solver has an internal JobName the per-solver default supplies. Inference, not documentation: it is why the input-tree `JobName` lookup stays a best-effort fallback while `results_dir:` is the mechanism. |
+| `t3p_outputs/BPM.signal.out` | `t3p/BPM/t3p_results/OUTPUT/signal.out` | The `coaxsignal` output: three columns `t V I` with **no header row at all**, so it needs its own reader rather than Phase 3's header-driven one; the column names come from `references/acdtool-commands.pdf`. Unlike `wakefield.out` this is a *new* file, so `coaxsignal` has no ordering hazard. **Truncated** to 20 rows (`head -n 20`) from 4,001. |
+| `track3p_outputs/Pillbox-2.3MV.en` | `track3p/Pillbox/2.3MV/en` | The `EnhancementCounter` output of `postprocess track3p`, dumped under `./<jobname>/`. Seven columns *with* a header row (`fieldlevel ID enhancement averageEnhancement maxEnhancement maxEnhancementImpactNum totalImpactNum`), so it goes through the normal reader. `2.3MV` is the **jobname**, not a field level — defect 6; the example simply names its jobname after the field level it was run at. **Truncated** to 20 data rows (`head -n 21`) from 658. |
+
 ---
 
 ## Size
 
-**131 KB of fixture data** (134,697 B), 146 KB including this file and
-`COVERAGE.md` (149,404 B) — against the plan's `du -sh tests/fixtures/` gate of
-"~50 KB".
+**138 KB of fixture data** (141,735 B), 156 KB including this file and
+`COVERAGE.md` — inside the revised **100–150 KB** budget. The original gate was
+"~50 KB"; see the deviation note below.
 
 ```
 find tests/fixtures -type f ! -name '*.md' -printf '%s\n' | paste -sd+ | bc
@@ -120,14 +136,16 @@ find tests/fixtures -type f ! -name '*.md' -printf '%s\n' | paste -sd+ | bc
 The plan's own two figures are mutually inconsistent and neither is reachable
 with the file list it specifies:
 
-| Group | Bytes |
-|---|---|
-| `curves/` | 75,868 (of which `field1_0.ec` alone is 57,973) |
-| `solver_outputs/` | 32,913 |
-| `rfpost_outputs/` | 19,023 |
-| `rfpost_inputs/` | 6,497 |
-| `acdtool_inputs/` | 396 |
-| **data total** | **134,697** |
+| Group | Bytes | Added in |
+|---|---|---|
+| `curves/` | 75,868 (of which `field1_0.ec` alone is 57,973) | Phase 0 |
+| `solver_outputs/` | 32,913 | Phase 0 |
+| `rfpost_outputs/` | 19,023 | Phase 0 |
+| `rfpost_inputs/` | 6,497 | Phase 0 |
+| `acdtool_inputs/` | 396 | Phase 0 |
+| `t3p_outputs/` | 4,406 | Phase 2 |
+| `track3p_outputs/` | 2,632 | Phase 2 |
+| **data total** | **141,735** | |
 
 The plan says "keep `field1_0.ec` in full" — 57,973 B, already above the 50 KB
 gate on its own — and separately estimates "total should land near 20 KB", which

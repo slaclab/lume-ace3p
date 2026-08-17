@@ -24,7 +24,7 @@ or a module whose requirement nothing provides, is a validation error.
 | `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Exposes the eigensolve's own mode results — see [](#omega3p-module). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`. |
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. The time-domain (wakefield) solver — see [](#t3p-module). |
-| `acdtool`         | rf_post             | em_solution        | `input:` (`.rfpost`). Owns extraction of the `RoverQ`/`kickFactor`/`maxFieldsOnSurface` scalars. |
+| `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Owns extraction of the `RoverQ`/`kickFactor`/`maxFieldsOnSurface` scalars — see [](#acdtool-module). |
 | `track3p_source`  | track3p_particles   | —                  | `file:` — an externally-produced Track3P dump (there is no in-pipeline Track3P solver). |
 | `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys — see [](#particles-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:` — a prebuilt Geant4-format source file (bypasses the `particles` weighting step). |
@@ -169,11 +169,14 @@ the same MPI keys as `omega3p`/`s3p` (`input:`, `tasks:`, `cores:`, `opts:`) and
 requires only a `mesh`, so the minimal workflow is `cubit → t3p`. See
 `examples/t3p_sweep`.
 
-**It provides `td_solution`, not `em_solution`.** That is deliberate: `acdtool`
-requires `em_solution`, so listing `acdtool` after a T3P solver is a validation
-error rather than RF postprocessing silently pointed at time-domain output. A
-workflow may list both `s3p` and `t3p` (they provide different artifacts); two
-`t3p` entries is a duplicate-producer error like any other.
+**It provides `td_solution`, not `em_solution`.** That is deliberate: `acdtool`'s
+`postprocess rf` requires `em_solution`, so listing *that command* after a T3P
+solver is a validation error rather than RF postprocessing silently pointed at
+time-domain output. acdtool's time-domain commands (`postprocess transwake` /
+`coaxsignal` / `volmontomode`) require `td_solution` instead and chain after T3P
+normally — see [](#acdtool-module). A workflow may list both `s3p` and `t3p`
+(they provide different artifacts); two `t3p` entries is a duplicate-producer
+error like any other.
 
 **Output locations are resolved, not assumed.** T3P writes under
 `<results_dir>/OUTPUT` (default `t3p_results`, overridable with the same
@@ -220,6 +223,187 @@ the dumps.
 `t3p_results/CHECKPOINT`, but LUME-ACE3P will not detect an existing checkpoint
 or set `Action: restart`. A sweep point that exceeds its wall time restarts from
 scratch on re-run.
+:::
+
+(acdtool-module)=
+### `acdtool` module
+
+`acdtool` is ACE3P's shared postprocessing utility — every solver reference ends
+with *"Refer to acdtool command syntax for postprocessing capabilities"* — and it
+exposes **19 commands**, not one. Which command runs is explicit:
+
+```yaml
+workflow :
+  - module : acdtool                      # 'postprocess rf' inferred from .rfpost
+    input  : 'pillbox-rtop.rfpost'
+
+  - module  : acdtool
+    name    : 'transwake'
+    command : 'postprocess transwake'
+    args    : [0.0, 0.0, 0.0, 0.0125]     # jobname is injected, not repeated
+```
+
+| Key | Meaning |
+|---|---|
+| `command:` | The acdtool command. Omitting it infers `postprocess rf` from a `.rfpost` `input:`, so configs written before the command surface opened up run unchanged. |
+| `input:` | The input file, for the commands that take one (`postprocess rf` takes a `.rfpost`). |
+| `args:` | The command's positional arguments, **excluding** the jobname. `postprocess transwake` takes `[x1, y1, x2, y2]`; `coaxsignal` / `volmontomode` take none. |
+| `jobname:` | Override the injected results-directory name (see below). Rarely needed. |
+| `tasks:`, `cores:`, `opts:` | MPI settings, as for the solvers. Only `postprocess rf` and `postprocess volmontomode` run in parallel; every other command is pinned to **one rank** with a warning. `cores:` is not pinned — the tutorial runs the serial `transwake` as `srun -n 1 -c 256`. |
+
+**Commands usable as a workflow step**, and what each requires:
+
+| `command:` | Requires | Notes |
+|---|---|---|
+| `postprocess rf` | `em_solution` | RF parameters from an Omega3P/S3P solution, driven by a `.rfpost` file. The default. |
+| `postprocess transwake` | `td_solution` | Transverse wakefield from a T3P run, via Panofsky-Wenzel. `args: [x1, y1, x2, y2]`. |
+| `postprocess coaxsignal` | `td_solution` | Coaxial-port signal from a beam-current excitation. Writes `<jobname>/OUTPUT/signal.out`. |
+| `postprocess volmontomode` | `td_solution` | Converts T3P volume-monitor dumps to ParaView `.mod` files. Produces no extractable quantity. |
+
+The other 15 commands are recognized — an unknown command raises listing the
+known ones — but not available as a workflow step; each raises an error naming
+why. `postprocess track3p` needs the KVC `:` input dialect this wrapper does not
+parse; `mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a second
+mesh producer; `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
+module to attach to. The dispatchable ones can still be invoked directly through
+`lume_ace3p.acdtool.Acdtool`.
+
+**The jobname is injected, not configured.** Every positional `postprocess`
+command's first argument is the producing solver's *job name* — a name, not a
+path (`t3p_results`, `omega3p_results`, …). It is taken from whatever the
+producing solver module actually resolved, so a `t3p` step with
+`results_dir: custom_results` moves acdtool's argument with it automatically.
+
+:::{important}
+**`postprocess transwake` overwrites T3P's own wakefield output**, at
+`<jobname>/OUTPUT/wakefield.out` — that is by design, and the transverse result
+is read by **`t3p`**, not by `acdtool`. So the output spec for a
+`[cubit, t3p, acdtool(transwake)]` chain names `t3p`:
+
+```yaml
+output_parameters :
+  'K' : {module: t3p, quantity: kick_factor}
+```
+
+Because acdtool rewrites a file its producer already parsed, the `acdtool` step
+asks `t3p` to re-read it afterwards. Without that the workflow would report the
+*longitudinal* loss factor computed before acdtool ran — a wrong-but-plausible
+number. The same applies to `wake_new` / `wake_direct` when they land.
+`coaxsignal` writes a new file and is unaffected.
+:::
+
+`output_parameters` for `postprocess rf` are documented under
+[](#output-specs-for-postprocess-rf) below.
+
+#### What `postprocess rf` reads out of its output
+
+The `.rfpost` format has **24 blocks**, and they fall into a handful of output
+shapes rather than 24 formats. Which blocks a run reports is set by `ionoff = 1`
+in the input file; each enabled block is read by the reader for its shape:
+
+| Shape | Blocks | Lands in |
+|---|---|---|
+| Mode-indexed table | the `modeID1`/`modeID2` blocks — `RoverQ`, `RoverQT`, `kickFactor`, `VFFT`, `ALLFieldAtPoint`, `coaxPort`, … | `output_data[block][mode_id][column]`, plus a `ModeIDs` list |
+| Surface-indexed scalars | `maxFieldsOnSurface`, `powerThroughSurface` | `output_data[block][surface_id][name]`, plus `SurfaceIDs` |
+| Single-mode scalars | `FieldAtPoint` (no index axis: it evaluates only `RFField`'s `ModeID`) | `output_data[block][name]` |
+| Column curves | the `filename` blocks — `ALLFieldOnLine`, `FieldOnLine`, `Multipole`, `GBZFFT`, … | separate files, read into `{filename: {column: array}}` |
+| Field maps | `FieldMap`, `IMPACTMap`, `OpenPMD_IMPACT`, `fieldOnSurface`, `fieldOn2DBoundary` | separate files; **filenames recorded, contents not parsed** |
+
+Column names come from the file — the header row of a column table, the
+`name = value` lines of a scalar block — not from a per-block list of column
+positions, so a build that adds or reorders a column is still read correctly. A
+complex value (`powerThroughSurface`'s power, in W) is split into `name` and
+`name_imag`, the same way Omega3P reports a complex eigenfrequency.
+
+Two things worth knowing:
+
+- **`[scaling]` is always read**, even though no input block declares it. It
+  carries `m_factor`, the normalized-to-physical field conversion, which nothing
+  else in ACE3P's output reports — and which is what reconciles the two curve
+  scalings (`FieldOnLine` output is scaled to `RFField`'s `gradient`,
+  `ALLFieldOnLine` output carries the raw eigenmode normalization). Its
+  `Variant` is `gradient` normally and `point` when `gradient = -1` selects "no
+  scaling".
+- **Curve and grid output is a field artifact, not a table column.** Curves are
+  per-position arrays, so they are exposed through the module's `field()` — the
+  structured half of the hybrid model — rather than flattened into
+  `output_parameters`. The same applies to `postprocess coaxsignal`'s
+  `signal.out`, whose three columns (`t`, `V`, `I`) are unlabeled in the file and
+  named from the reference.
+
+A block whose output cannot be read warns naming itself
+(`lume_ace3p.acdtool.AcdtoolOutputWarning`) rather than silently vanishing from
+the result — an unknown block from a newer build, a curve block that wrote no
+files, or `VFFT` with `printGroup = nterm`, which groups its results by multipole
+component instead of by mode and so is not a mode-indexed table.
+
+:::{note}
+`kickFactor` and `maxFieldsOnSurface` have **no real acdtool output** behind
+them: no tutorial run ever enabled either block, and the reference documents
+inputs only. Their readers are driven by the file rather than by an assumed
+layout, but the layouts themselves remain unverified — see
+`tests/fixtures/acdtool/COVERAGE.md`.
+:::
+
+(output-specs-for-postprocess-rf)=
+#### Output specs for `postprocess rf`
+
+An acdtool output spec names the **block**, the **quantity** (a column of that
+block, or one of its `name = value` scalars), and — for the indexed shapes —
+which index it wants:
+
+```yaml
+output_parameters :
+  'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ}
+  'Mode_freq' : {module: acdtool, section: RoverQ, quantity: Frequency}
+  'f0'        : {module: acdtool, section: RoverQ, quantity: Frequency, at: {mode: 0}}
+  'E_max'     : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax,
+                 at: {surface: 6}}
+  'loc_x'     : {module: acdtool, section: maxFieldsOnSurface,
+                 quantity: Emax_location, component: x, at: {surface: 6}}
+  'm_factor'  : {module: acdtool, section: scaling, quantity: m_factor}
+```
+
+| Key | Meaning |
+|---|---|
+| `section:` | The `.rfpost` block, spelled as acdtool spells it (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, `powerThroughSurface`, `FieldAtPoint`, `scaling`, …). Naming a block is what routes the spec to `acdtool`, so `module: acdtool` is optional. |
+| `quantity:` | The column or scalar name, as it appears in the output — `RoQ`, `Frequency`, `Qext`, `V_r`, `V_i`, `absV` for `RoverQ`; `Ks` and the same complex-voltage set for `kickFactor`; `Emax` / `Hmax` / `Emax_location` / `Hmax_location` for `maxFieldsOnSurface`; `m_factor` for `scaling`. An unknown name raises listing what the run *did* report. |
+| `at:` | Which index. `{mode: n}` for a mode-indexed block, `{surface: n}` for a surface-indexed one. |
+| `component:` | `x` / `y` / `z` of a location vector (`Emax_location`). |
+
+**Omitting `at:` on a mode-indexed block asks for every mode**, and the result
+table then carries one row per mode with `ModeID` as its index column — the shape
+a dispersion curve, an HOM catalog or a mode spectrum wants, and the reason the
+mode index is an *axis* rather than a selector (`modeID2 = -1` in the `.rfpost`
+input already means "every mode the solver produced"). Narrowing with
+`at: {mode: n}` gives the scalar for one mode.
+
+`ModeID` is acdtool's **only** table axis. Surface-indexed blocks therefore
+*require* `at: {surface: n}` and always resolve to a scalar; omitting it raises an
+error naming the surfaces the run reported. This follows the data — the input
+block pins the surface it evaluates (`maxFieldsOnSurface { surfaceID = 6 }`), so
+surfaces are few and enumerable, while modes are many and unknown before the
+solve.
+
+When another module in the chain owns the table axis — `[cubit, s3p, acdtool]`,
+where S3P's `Frequency` wins because it comes first in resolved DAG order — a
+per-mode array cannot be a column of that table, so it is exposed as a **field
+artifact** instead (see [](#results)).
+
+:::{note}
+**The positional list form is deprecated.** `['RoverQ', '0', 'RoQ']` still works
+and returns the same value, but emits a `DeprecationWarning` naming its mapping
+replacement. The translation is mechanical:
+
+| List form | Mapping form |
+|---|---|
+| `['RoverQ', '0', 'RoQ']` | `{module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}` |
+| `['kickFactor', '0', 'Ks']` | `{module: acdtool, section: kickFactor, quantity: Ks, at: {mode: 0}}` |
+| `['maxFieldsOnSurface', '6', 'Emax']` | `{module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}` |
+| `['maxFieldsOnSurface', '6', 'Emax_location', 'x']` | `{module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}` |
+
+The list cannot express the whole-axis case (no `at:`), which is why it is being
+retired rather than kept as an equal alternative.
 :::
 
 (particles-module-keys)=
@@ -311,71 +495,44 @@ column header or a VOCS objective name) to an extraction spec. The workflow
 routes each spec to the module that can satisfy it and calls that module's
 `extract`.
 
+(two-spec-syntaxes)=
 ### Two spec syntaxes
 
-There are two ways to write a spec. They are **both fully supported** and differ
-only in how the target module is identified — pick whichever reads best for the
-quantity you are extracting:
-
-- **Explicit form** — a mapping with a `module` key naming the target module,
-  e.g. `{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}`. The
-  `module` key is stripped and the rest of the mapping is handed to that module's
-  `extract`. This form is **required** for S3P scalar objectives, because an
-  S-parameter needs a keyed lookup (`quantity` + `at: {frequency}`) that no
-  positional list can express.
-- **Bare form** — a positional list `['section', string1, string2, ...]` (or a
-  bare quantity string). No `module` key: the *shape* of the spec identifies
-  the module. The head string routes it — `RoverQ`/`kickFactor`/
-  `maxFieldsOnSurface` → `acdtool`, `dose`/`edep`/`scoring` → `geant4`,
-  `count`/`total_weight` → `particles`, a T3P wakefield quantity
-  (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`, and a bare
-  S-parameter string or any other mapping → `s3p`. This form mirrors the nested
-  structure of the acdtool/Geant4 result and is the convention used throughout
-  the Omega3P and Geant4 examples.
+- **Mapping form** (preferred) — `{module: <type>, quantity: <name>, at: {...}}`,
+  with `section:` and `component:` where the module needs them. The `module` key
+  is stripped and the rest of the mapping is handed to that module's `extract`.
+  It is **required** for S3P/T3P scalar objectives, which need a keyed lookup
+  (`quantity` + `at: {frequency}` / `at: {s}`) that no positional list can
+  express, and it is the form every acdtool quantity should now use — see
+  [](#output-specs-for-postprocess-rf).
+- **Bare form** — a positional list `['section', string1, string2, ...]` or a
+  bare quantity string, with no `module` key: the *shape* of the spec identifies
+  the module. `dose`/`edep`/`scoring` → `geant4`, `count`/`total_weight` →
+  `particles`, a T3P wakefield quantity
+  (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`, a `.rfpost` block name
+  (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool` **(deprecated —
+  use the mapping form)**, and a bare S-parameter string or any other mapping →
+  `s3p`.
 
   Note acdtool's `kickFactor` section and T3P's `kick_factor` quantity are
   distinct spellings on purpose, so the two never collide.
 
-:::{note}
-**Why the S3P and Omega3P examples look different.** The two syntaxes model
-genuinely different extraction shapes. An S3P objective is a *keyed lookup* — a
-named S-parameter at a specific frequency — which is why it uses the explicit
-`{module, quantity, at}` mapping. An acdtool objective is a *positional index
-path* into the postprocess result dict (`['RoverQ', '0', 'RoQ']`), so it uses the
-bare list. The difference is deliberate, not an inconsistency; each form is the
-natural fit for its module.
+The `module:` key is optional whenever the spec's shape already identifies its
+module, which for acdtool means naming a `section:`. Spelling it out is never
+wrong and is clearer in a mixed workflow.
 
-The two forms are **not interchangeable per module**: the `acdtool`, `geant4`,
-and `particles` modules index their spec positionally (`spec[0]`, `spec[1]`, …),
-so they require the bare list. Only the two solvers with keyed lookups — `s3p`
-(`at: {frequency}`) and `t3p` (`at: {s}`) — consume a mapping. In practice, use
-the explicit mapping for S3P/T3P quantities and the bare list for everything
-else, which is what the examples do.
+:::{note}
+**Why the older examples look different.** The list form models the acdtool
+result as a *positional index path* (`['RoverQ', '0', 'RoQ']` — block, mode,
+column), which is how the postprocess result dict is nested, while S3P objectives
+have always used the keyed mapping. That difference is now being removed: the
+middle element of the list was really an **index axis**, not a selector, so the
+mapping form both expresses the same scalar and can ask for the whole axis (every
+mode) by dropping the `at:`. `geant4` and `particles` still index their specs
+positionally, so those keep the bare list.
 :::
 
-The acdtool bare-form values are:
-
-- `['RoverQ', string1, string2]` — corresponding to the `[RoverQ]` data
-  block in `rfpost.out`.
-  - `string1`: the mode ID number to be processed (usually starting from
-    `'0'`).
-  - `string2`: the data column name of the corresponding mode. Must be one
-    of `'Frequency'`, `'Qext'`, `'V_r'`, `'V_i'`, `'absV'`, or `'RoQ'`.
-- `['kickFactor', string1, string2]` — corresponding to the `[kickFactor]`
-  data block in `rfpost.out`.
-  - `string1`: the mode ID number.
-  - `string2`: the data column name. Must be one of `'Frequency'`, `'Qext'`,
-    `'Ks'`, `'V_r'`, `'V_i'`, or `'absV'`.
-- `['maxFieldsOnSurface', string1, string2, string3]` — corresponding to
-  the `[maxFieldsOnSurface]` data block in `rfpost.out`.
-  - `string1`: the surface ID number (defined by the sideset in the Cubit
-    journal file).
-  - `string2`: the data column name. Must be one of `'Emax'`,
-    `'Emax_location'`, `'Hmax'`, or `'Hmax_location'`.
-  - `string3`: `'x'`, `'y'`, or `'z'` — the component of the
-    `'Emax_location'` or `'Hmax_location'` vector.
-
-When the workflow includes a `geant4` module, the output sections instead refer
+When the workflow includes a `geant4` module, the bare-form sections instead refer
 to the Geant4 scoring-mesh output files (routed to the `geant4` module
 automatically):
 
