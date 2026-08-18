@@ -422,6 +422,26 @@ def test_acdtool_output_specs_route_to_acdtool():
                       'd': 'acdtool'}
 
 
+def test_geant4_output_specs_route_to_geant4(tmp_path):
+    """Both geant4 spec forms reach the geant4 module, the mapping one by its
+    ``section:`` without a ``module:`` key -- so a scoring-grid spec is not
+    swallowed by the bare-mapping fallback that routes to s3p."""
+    src = tmp_path / 'dump.txt'
+    src.write_text('payload')
+    entries = [{'module': 'particle_source', 'file': str(src)},
+               {'module': 'geant4', 'geant4_input': 'x.geant4'}]
+    specs = {
+        'a': ['dose', 'total'],                                # positional form
+        'b': {'section': 'dose', 'quantity': 'total'},          # mapping, no module:
+        'c': {'module': 'geant4', 'section': 'edep', 'quantity': 'peak'},
+        'd': {'section': 'scoring', 'quantity': 'peak_index'},  # dose alias
+    }
+    wf = Workflow(entries, workflow_params={'dry_run': True}, output_spec=specs)
+    routed = {name: m.type for name, m in wf.output_modules().items()}
+    assert routed == {'a': 'geant4', 'b': 'geant4', 'c': 'geant4',
+                      'd': 'geant4'}
+
+
 def test_s3p_acdtool_table_indexes_on_s3p_frequency(tmp_path):
     """Cross-module index collision (the CW23 ``window`` case): ``Frequency`` vs
     ``ModeID``. ``Workflow.field_index`` takes the first producer in resolved DAG
@@ -659,6 +679,70 @@ def test_stage_mode_propagates_to_run_context(tmp_path):
     assert wf.last_context.stage_mode == 'symlink'
     staged = os.path.join(str(tmp_path / 'wd'), 'dump.txt')
     assert os.path.islink(staged)
+
+
+# --------------------------------------------------------------------------- #
+# Shipped-example hygiene (Phase 6 of the acdtool rework)
+#
+# The list-form output spec stays *supported* (see test_omega3p_chain_evaluate
+# above, which still uses it on purpose), but no example may still teach it: a
+# shipped YAML is the first thing a user copies.
+# --------------------------------------------------------------------------- #
+
+
+def _example_yamls():
+    """Every shipped example YAML.
+
+    ``examples/incomplete/`` is excluded: those are non-runnable legacy
+    references kept for reading only (see that directory's README), so they are
+    deliberately not held to the current schema."""
+    root = bu.EXAMPLES_DIR
+    found = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        relative = os.path.relpath(dirpath, root).split(os.sep)
+        if 'incomplete' in relative:
+            continue
+        for name in filenames:
+            if name.endswith(('.yaml', '.yml')):
+                found.append(os.path.join(dirpath, name))
+    assert found, 'no example YAMLs found -- the walk is looking in the wrong place'
+    return sorted(found)
+
+
+@pytest.mark.parametrize('path', _example_yamls(),
+                         ids=lambda p: os.path.basename(p))
+def test_shipped_example_output_specs_are_all_mapping_form(path):
+    """No shipped example declares a positional-list output spec.
+
+    The acdtool list form is deprecated (it cannot ask for a whole mode axis) and
+    the geant4 one is merely superseded, but either way the mapping form is what
+    the examples should be teaching."""
+    from lume_ace3p.inputs import load_yaml
+    spec = load_yaml(path).get('output_parameters') or {}
+    positional = {name: value for name, value in spec.items()
+                  if not isinstance(value, dict)}
+    assert not positional, (
+        f'{os.path.relpath(path, bu.REPO)} still uses the positional output-spec '
+        f'form for {sorted(positional)}; write it as a mapping '
+        '({module: ..., section: ..., quantity: ..., at: {...}}).')
+
+
+@pytest.mark.parametrize('name', sorted(bu.EXAMPLES))
+def test_shipped_examples_raise_no_deprecation_warnings(name):
+    """Running each registered example raises no ``DeprecationWarning`` from
+    this package.
+
+    Third-party ones are ignored on purpose — xopt 3.0.0 emits a pydantic VOCS
+    deprecation of its own, which is not ours to fix and would make this test a
+    proxy for the dependency's release schedule."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        bu.produce(name, bu.EXAMPLES[name])
+    ours = [w for w in caught
+            if issubclass(w.category, DeprecationWarning)
+            and 'lume_ace3p' in os.path.abspath(w.filename)]
+    assert not ours, ('deprecation warnings from lume_ace3p while running '
+                      f'{name}: ' + '; '.join(str(w.message) for w in ours))
 
 
 if __name__ == '__main__':

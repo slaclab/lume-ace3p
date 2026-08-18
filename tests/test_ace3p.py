@@ -1,4 +1,5 @@
-"""Tests for the ACE3P input-text parser and the T3P / Omega3P output parsers.
+"""Tests for the ACE3P input-text parser and the T3P / Omega3P / S3P output
+parsers.
 
 The parser tests here are the regression guard for a bug that made T3P
 unusable: ``_tokenize`` only skipped spaces and tabs before testing for a block's
@@ -15,11 +16,18 @@ the shipped tutorial examples (S3P/Omega3P use same-line, T3P uses next-line), s
 both are covered here, along with the byte-stability of the same-line style that
 the frozen baselines depend on.
 
-The Omega3P section at the bottom (Phase 1 of ``docs/acdtool_rework_plan.md``)
-runs against the *real* frozen ``omega3p.out`` fixtures in
+The Omega3P section (Phase 1 of ``docs/acdtool_rework_plan.md``) runs against the
+*real* frozen ``omega3p.out`` fixtures in
 ``tests/fixtures/acdtool/solver_outputs/omega3p`` rather than synthetic text —
 the license banner, the differing top-level section order and the ``'real ,
 imag'`` eigenvalues are all things only a real file carries.
+
+The S3P section at the bottom (Phase 5) does the same against
+``solver_outputs/s3p_90DegreeBend``, and for the same reason plus one more: the
+S3P reference documents no output file at all, so those three fixtures are the
+only specification of the formats that exists. The cross-check that
+``abs(S_complex)`` reproduces the ``Reflection.out`` magnitudes is what stands in
+for the missing spec.
 """
 
 import os
@@ -29,8 +37,9 @@ import numpy as np
 import pytest
 
 from lume_ace3p.ace3p import (
-    Section, parse_ace3p, write_ace3p, merge_overrides, parse_wakefield,
-    parse_omega3p_output, Omega3P, T3P,
+    Section, parse_ace3p, write_ace3p, merge_overrides, parse_column_file,
+    parse_wakefield, parse_omega3p_output, parse_sparameters, Omega3P, S3P,
+    S3POutputWarning, T3P,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -509,3 +518,174 @@ def test_omega3p_output_parser_tolerates_missing_file(tmp_path):
     omega3p = _make_omega3p(tmp_path)
     omega3p.output_parser()
     assert omega3p.output_data == {}
+
+
+# --------------------------------------------------------------------------- #
+# S3P output parsing (real fixtures) — Phase 5
+# --------------------------------------------------------------------------- #
+
+S3P_FIXTURES = os.path.join(HERE, 'fixtures', 'acdtool', 'solver_outputs',
+                            's3p_90DegreeBend')
+
+
+def _s3p_fixture(name):
+    return os.path.join(S3P_FIXTURES, name)
+
+
+def test_parse_sparameters_reads_the_magnitude_table():
+    """Reflection.out: an index map, a 13-point scan, and 16 real columns named
+    by the file's own header row rather than rebuilt from the index-map size."""
+    index_map, frequency, columns = parse_sparameters(
+        _s3p_fixture('Reflection.out'))
+
+    assert len(index_map) == 4
+    assert index_map['0'] == {'Port': '7', 'Mode': '0', 'Type': 'TE',
+                              'Cutoff': 6557190000.0}
+    assert len(frequency) == 13
+    assert frequency[0] == 9.424e+09
+    assert len(columns) == 16
+    assert list(columns)[:3] == ['S(0,0)', 'S(0,1)', 'S(0,2)']
+    assert columns['S(0,0)'][0] == 0.0323077414
+    assert all(np.isrealobj(values) for values in columns.values())
+
+
+def test_parse_sparameters_reads_the_complex_table():
+    """SParameter.out is the same layout with '( real,  imag )' cells — the one
+    difference between the two files, which is why one reader covers both. The
+    cells contain spaces, so a whitespace split cannot parse them."""
+    index_map, frequency, columns = parse_sparameters(
+        _s3p_fixture('SParameter.out'))
+
+    assert index_map == parse_sparameters(_s3p_fixture('Reflection.out'))[0]
+    assert len(frequency) == 13
+    assert set(columns) == {'S({},{})'.format(i, j)
+                            for i in range(4) for j in range(4)}
+    assert all(np.iscomplexobj(values) for values in columns.values())
+    assert columns['S(0,0)'][0] == pytest.approx(complex(8.74038681e-03,
+                                                         3.11029869e-02))
+    # A negative real part survives the sign-carrying cell form.
+    assert columns['S(0,3)'][0].real == pytest.approx(-2.18000519e-04)
+
+
+def test_parse_sparameters_magnitudes_agree_with_the_complex_table():
+    """The cross-check the whole phase rests on, at the parser level: the two
+    undocumented files describe the same matrix, so |complex| must reproduce the
+    magnitudes everywhere."""
+    _, _, magnitudes = parse_sparameters(_s3p_fixture('Reflection.out'))
+    _, _, complexes = parse_sparameters(_s3p_fixture('SParameter.out'))
+
+    for name, values in complexes.items():
+        assert np.allclose(np.abs(values), magnitudes[name], rtol=1e-7)
+
+
+def test_parse_sparameters_falls_back_to_positional_column_names(tmp_path):
+    """A header whose names do not line up with the data rows falls back to the
+    row-major (id1, id2) rebuild — the naming this parser used before Phase 5, so
+    a build that labels its columns differently is no worse off than before."""
+    text = ('#Index mapping:\n'
+            '#  0 : Port 1, Mode 0, Type: TE (cutoff: 1.0e+09 Hz)\n'
+            '#  1 : Port 2, Mode 0, Type: TE (cutoff: 1.0e+09 Hz)\n'
+            '#Frequency[Hz]  mystery\n'
+            '1.0e+09  0.1  0.2  0.3  0.4\n')
+    path = _write(tmp_path / 'Reflection.out', text)
+
+    _, frequency, columns = parse_sparameters(path)
+
+    assert list(frequency) == [1.0e+09]
+    assert list(columns) == ['S(0,0)', 'S(0,1)', 'S(1,0)', 'S(1,1)']
+    assert columns['S(1,1)'][0] == 0.4
+
+
+def test_parse_column_file_accepts_a_percent_comment():
+    """S3P's port mode profiles are the one ACE3P output commented with '%'
+    rather than '#'. The header names the six columns."""
+    profile = parse_column_file(_s3p_fixture('PortRef7_0.out'))
+
+    assert list(profile) == ['x', 'y', 'Ex', 'Ey', 'Hx', 'Hy']
+    assert len(profile['x']) == 58
+    assert profile['Ex'][0] == pytest.approx(1952.231180159)
+
+
+def _make_s3p(tmp_path, files=('Reflection.out', 'SParameter.out',
+                               'PortRef7_0.out')):
+    """Build an S3P wrapper over an empty input file with the named 90DegreeBend
+    fixtures pre-placed in its results directory. No binary runs."""
+    os.makedirs(tmp_path, exist_ok=True)
+    source = _write(tmp_path / 'model.s3p', '')
+    workdir = tmp_path / 'wd'
+    s3p = S3P(str(source), workdir=str(workdir))
+    results = os.path.join(str(workdir), s3p.results_dir())
+    os.makedirs(results, exist_ok=True)
+    for name in files:
+        shutil.copy(_s3p_fixture(name), os.path.join(results, name))
+    return s3p
+
+
+def test_s3p_output_parser_keeps_the_magnitude_keys(tmp_path):
+    """``S(m,n)`` still means |S| and still comes from Reflection.out. Every
+    shipped example and every frozen baseline names it, so Phase 5 adds keys
+    beside it and redefines nothing."""
+    s3p = _make_s3p(tmp_path)
+    s3p.output_parser()
+    data = s3p.output_data
+
+    assert data['S(0,0)'][0] == 0.0323077414
+    assert data['S(3,3)'][-1] == 0.999897413
+    assert np.all(data['S(0,0)'] >= 0.0)
+    assert data['Frequency'][0] == 9.424e+09
+
+
+def test_s3p_output_parser_adds_the_complex_split(tmp_path):
+    """The complex S-parameter arrives as three real arrays rather than one
+    complex column, so a result table stays plottable — the same split
+    parse_omega3p_output gives a complex eigenvalue."""
+    s3p = _make_s3p(tmp_path)
+    s3p.output_parser()
+    data = s3p.output_data
+
+    for suffix in ('_real', '_imag', '_phase_deg'):
+        values = data['S(0,0)' + suffix]
+        assert np.isrealobj(values)
+        assert len(values) == len(data['Frequency'])
+    assert np.allclose(np.hypot(data['S(0,0)_real'], data['S(0,0)_imag']),
+                       data['S(0,0)'], rtol=1e-7)
+    assert np.allclose(data['S(0,0)_phase_deg'],
+                       np.degrees(np.arctan2(data['S(0,0)_imag'],
+                                             data['S(0,0)_real'])))
+
+
+def test_s3p_output_parser_reads_every_port_profile(tmp_path):
+    """Port mode profiles land under their file's stem, one nested
+    ``{column: array}`` each, and are not frequency-indexed."""
+    s3p = _make_s3p(tmp_path)
+    # A second port file, to pin that the glob reads all of them rather than an
+    # assumed PortRef7_0.
+    results = os.path.join(s3p.workdir, s3p.results_dir())
+    shutil.copy(_s3p_fixture('PortRef7_0.out'),
+                os.path.join(results, 'PortRef8_1.out'))
+    s3p.output_parser()
+
+    assert sorted(k for k in s3p.output_data if k.startswith('PortRef')) == [
+        'PortRef7_0', 'PortRef8_1']
+    assert list(s3p.output_data['PortRef8_1']) == ['x', 'y', 'Ex', 'Ey',
+                                                  'Hx', 'Hy']
+
+
+def test_s3p_output_parser_without_sparameter_file(tmp_path):
+    """Older ACE3P builds write no SParameter.out: warn naming what is missing
+    and return the magnitudes, rather than raising."""
+    s3p = _make_s3p(tmp_path, files=('Reflection.out',))
+    with pytest.warns(S3POutputWarning, match='phase'):
+        s3p.output_parser()
+
+    assert s3p.output_data['S(0,0)'][0] == 0.0323077414
+    assert 'S(0,0)_real' not in s3p.output_data
+
+
+def test_s3p_output_parser_still_raises_without_reflection(tmp_path):
+    """A missing Reflection.out is not a degraded read but a run that produced
+    nothing, so it keeps raising — unlike Omega3P/T3P, whose parsers tolerate an
+    absent output because a valid run may not write one."""
+    s3p = _make_s3p(tmp_path, files=())
+    with pytest.raises(FileNotFoundError):
+        s3p.output_parser()

@@ -1,0 +1,7 @@
+ace3p:ModelInfo.BoundaryCondition.Theta	f	Q
+-180	nan	nan
+-150	nan	nan
+-120	nan	nan
+-90	nan	nan
+-60	nan	nan
+-30	nan	nan

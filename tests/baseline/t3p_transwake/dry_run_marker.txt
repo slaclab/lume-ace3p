@@ -1,0 +1,11 @@
+Dry run mode: Cubit step skipped.
+Cubit journal: pillboxwg2.jou
+Cubit inputs: {'cell_radius': 0.05, 'iris_radius': 0.025}
+Dry run mode: T3P step skipped.
+Cubit: {'cell_radius': 0.05, 'iris_radius': 0.025}
+ACE3P: []
+Dry run mode: Acdtool step skipped.
+Acdtool command: postprocess transwake
+Acdtool input: None
+Acdtool args: [0.0, 0.0, 0.0, 0.0125]
+Acdtool jobname: t3p_results

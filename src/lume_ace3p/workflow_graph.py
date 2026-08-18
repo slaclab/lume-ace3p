@@ -34,7 +34,7 @@ import os
 import numpy as np
 
 from lume_ace3p.modules import (
-    RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
+    Geant4Module, RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
@@ -77,7 +77,9 @@ def _infer_output_module(spec):
         cannot drift apart,
       * a mapping (``{quantity: 'S(0,0)', at: {...}}``) or an S-parameter string
         -> ``s3p``,
-      * ``['dose'|'edep'|'scoring', ...]`` -> ``geant4``,
+      * anything naming a Geant4 scoring grid — ``{section: dose, quantity:
+        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
+        ``geant4``,
       * ``'count'``/``'total_weight'`` -> ``particles``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
         naming one / keyed ``at: {s: ...}`` -> ``t3p``.
@@ -91,6 +93,12 @@ def _infer_output_module(spec):
     if acdtool_spec(spec) is not None:
         return 'acdtool'
     if isinstance(spec, dict):
+        # A 'section:' that is a Geant4 scoring grid routes there. Asked before
+        # the S3P fallback for the same reason the acdtool question is asked
+        # first: naming a section is itself the routing signal, so 'module:' need
+        # not be repeated.
+        if spec.get('section') in Geant4Module.SECTIONS:
+            return 'geant4'
         quantity = spec.get('quantity')
         at = spec.get('at') or {}
         if quantity in T3PModule.QUANTITIES or 's' in at:
@@ -102,7 +110,7 @@ def _infer_output_module(spec):
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
-        if head in ('dose', 'edep', 'scoring'):
+        if head in Geant4Module.SECTIONS:
             return 'geant4'
         if head in ('count', 'total_weight'):
             return 'particles'

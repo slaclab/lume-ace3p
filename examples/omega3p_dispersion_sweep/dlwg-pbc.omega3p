@@ -1,0 +1,26 @@
+ModelInfo : {
+  File: ./pbc-4.ncdf
+
+  BoundaryCondition : {
+    Exterior: 6
+    Magnetic: 1, 2
+    Periodic_M: 3
+    Periodic_S: 4
+    Theta: -150
+  }
+
+  SurfaceMaterial: {
+    ReferenceNumber: 6
+    Sigma: 5.8e7
+  }
+}
+
+FiniteElement: {
+  Order:           2
+  CurvedSurfaces: on
+}
+
+EigenSolver : {
+  NumEigenvalues: 1
+  FrequencyShift:  1.10e9
+}

@@ -43,6 +43,10 @@ def freeze_one(name, meta):
         'files': {k: {'pattern': v[0], 'compare': v[1]}
                   for k, v in meta['files'].items()},
         'digests': {k: {'pattern': v} for k, v in meta['digests'].items()},
+        # When this set was captured and why it was (re)generated, so a reader can
+        # tell a first freeze from an intentional regeneration without reading git
+        # history. Every regeneration must say what moved and why.
+        'frozen': meta['frozen'],
         'checkable': meta['checkable'],
     }
     bu.dump_json(os.path.join(dest, 'manifest.json'), manifest)

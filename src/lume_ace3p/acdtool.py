@@ -62,6 +62,13 @@ import numpy as np
 
 from lume.base import CommandWrapper
 
+# Re-exported: the header-driven column reader that reads every curve block's
+# output lives with ``parse_wakefield`` in the solver layer, since Phase 5 needs
+# it for S3P's port mode profiles too and the dependency only runs one way
+# (postprocessor -> solver). Imported here so ``acdtool.parse_column_file``
+# keeps resolving.
+from lume_ace3p.ace3p import parse_column_file
+
 
 # --------------------------------------------------------------------------- #
 # Command table
@@ -88,6 +95,11 @@ SIGNAL = 'signal'
 # coaxsignal's columns. The file carries no header row at all, so the names come
 # from the reference rather than from the file — see :func:`parse_column_file`.
 SIGNAL_COLUMNS = ('t', 'V', 'I')
+
+# The template 'acdtool postprocess rf' writes when given no arguments: the
+# installed build's own '.rfpost' sample, and so the authoritative source for a
+# default input — see :meth:`Acdtool.make_default_input`.
+SAMPLE_INPUT = 'sample.rfpost'
 
 
 class Command:
@@ -753,52 +765,6 @@ def read_scaling(body):
     return data
 
 
-def parse_column_file(path, columns=None):
-    """Parse a ``#``-commented column table into ``{column: array}``.
-
-    The shape :func:`lume_ace3p.ace3p.parse_wakefield` already handles, read the
-    same way but **driven by the header row rather than by an assumed filename
-    pattern** — which is what lets one reader cover all six curve blocks whose
-    output filenames follow six different schemes, plus ``postprocess track3p``'s
-    ``en``.
-
-    The column names are the *last* header line whose token count matches the
-    data rows: the curve files lead with a ``# 1 2 3 ...`` ordinal line and then
-    name the columns (``# x y z Ex Ey Ez Bx By Bz Sz``). A header line need not be
-    commented — ``postprocess track3p``'s ``en`` names its seven columns on a bare
-    first line — so any non-numeric line *before* the first data row counts as
-    one.
-
-    `columns` names them explicitly, for the files that carry **no** header at
-    all — ``postprocess coaxsignal``'s ``signal.out`` is three unlabeled columns
-    (:data:`SIGNAL_COLUMNS`).
-    """
-    comments, rows = [], []
-    with open(path) as file:
-        for line in file:
-            text = line.strip()
-            if not text:
-                continue
-            if text.startswith('#'):
-                comments.append(text.lstrip('#').split())
-                continue
-            try:
-                rows.append([float(token.rstrip(',')) for token in text.split()])
-            except ValueError:
-                if not rows:
-                    comments.append(text.split())   # an uncommented header row
-                continue
-    width = max((len(row) for row in rows), default=0)
-    if columns is None:
-        columns = next((tokens for tokens in reversed(comments)
-                        if len(tokens) == width), None)
-    if columns is None:
-        columns = ['column' + str(i + 1) for i in range(width)]
-    table = np.array(rows).transpose() if rows else np.zeros((width, 0))
-    return {name: (table[i] if i < len(table) else np.array([]))
-            for i, name in enumerate(columns)}
-
-
 def field_sections(output_data):
     """The curve/grid/signal subset of an ``output_data`` dict.
 
@@ -1337,7 +1303,26 @@ class Acdtool(CommandWrapper):
         return 'Not implemented.'
 
     def make_default_input(self):
+        """Fabricate the ``.rfpost`` a bare ``acdtool`` module entry implies.
+
+        The **installed tool is the preferred source**: ``acdtool postprocess
+        rf`` with no arguments writes a ``sample.rfpost`` template for that
+        build, and only that copy is guaranteed to carry the block set the
+        installed acdtool understands. The block set genuinely varies — the
+        tutorial template ships three blocks the reference dropped and the
+        reference documents five the template lacks — so a Python copy of the
+        format is a copy of *one* build's format.
+
+        The hardcoded table below is therefore a fallback for when no binary is
+        reachable (no ``ACE3P_PATH``, a dry-run environment, the test suite). It
+        is a hand-written **2-block subset of a 24-block format**: enough to ask
+        for ``[RoverQ]`` off an Omega3P run, and it hardcodes
+        ``ResultDir = omega3p_results``, so an S3P chain or any other block needs
+        a real ``.rfpost`` on the module's ``input:`` key.
+        """
         self.input_file = 'default_input.rfpost'    #Not written to a file until write_input is called
+        if self._generate_sample_input():
+            return
         self.input_data = {'RFField' : {
                                 'ResultDir' : 'omega3p_results',
                                 'FreqScanID' : '0',
@@ -1366,3 +1351,33 @@ class Acdtool(CommandWrapper):
                                 'z1' : '1.00000e+10',
                                 'z2' : '1.00000e+10'}
                           }
+
+    def _generate_sample_input(self):
+        """Ask the installed acdtool for its own ``.rfpost`` template and adopt
+        it as this run's ``input_data``. Returns whether that worked.
+
+        ``acdtool postprocess rf`` with **no arguments** writes
+        ``sample.rfpost`` into the working directory. This is best-effort by
+        design: a missing binary, a build that writes no sample, or a file this
+        parser cannot read all fall through to :meth:`make_default_input`'s
+        hardcoded table rather than failing the run — which is what keeps a
+        machine with no ACE3P environment (and the test suite) working.
+        """
+        sample = os.path.join(self.workdir, SAMPLE_INPUT)
+        try:
+            if os.path.exists(sample):
+                os.remove(sample)
+            subprocess.run(self.ACE3P_PATH + 'acdtool postprocess rf',
+                           shell=True, cwd=self.workdir,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return False
+        if not os.path.isfile(sample):
+            return False
+        target, self.input_file = self.input_file, SAMPLE_INPUT
+        try:
+            self.input_parser()
+        except (OSError, AssertionError, ValueError):
+            self.input_data = {}
+        self.input_file = target
+        return bool(self.input_data)

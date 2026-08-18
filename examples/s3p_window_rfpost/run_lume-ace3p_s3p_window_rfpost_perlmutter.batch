@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#SBATCH --constraint=cpu
+#SBATCH --account=m349
+#SBATCH --qos=regular
+#SBATCH --job-name=lume-ace3p_window_rfpost
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --time=0-02:00:00
+
+# Three geometries x a 16-point frequency scan, plus one acdtool postprocess
+# per geometry. Each S3P point is a separate solve, so this outgrows the
+# 30-minute debug QOS; hence 'regular'.
+
+run-lume-ace3p s3p_window_rfpost.yaml

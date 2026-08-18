@@ -89,17 +89,17 @@ Phase 3 should assert 300 rows there and 20 on the others.
 
 These are Omega3P and S3P outputs, not acdtool ones. They live under
 `acdtool/` only because Phase 0 is the single fixture-freezing phase in the
-plan; they are consumed by **Phase 1** (Omega3P eigenmode parsing) and **Phase
-5** (S3P output completion). A later session looking for Omega3P or S3P
-fixtures should look here.
+plan; they were consumed by **Phase 1** (Omega3P eigenmode parsing) and **Phase
+5** (S3P output completion), both now landed. A later session looking for Omega3P
+or S3P fixtures should look here.
 
 | File | Source | Notes |
 |---|---|---|
 | `omega3p/pillbox.omega3p.out` | `omega3p/pillbox/omega3p_results/omega3p.out` | **Real** eigenvalues: 2 `Mode` sections with scalar `Frequency` and `QualityFactor`, no `ExternalQ`. Top-level order is `Version, Environment, Input, Timestamp, Timestamp, Mode, Mode, AMRLevel`. |
 | `omega3p/pillbox-rtop+coax.omega3p.out` | `omega3p/pillbox-rtop+coax/omega3p_results/omega3p.out` | **Complex** eigenvalues: 1 `Mode` with `Frequency = '1313756106.8639 , 641.33468780722'`, `TotalEnergy` likewise a pair, plus `ExternalQ`. Top-level order is `AMRLevel, Mode, Timestamp, Timestamp, Environment, Version, Input` — i.e. **different from the file above**, which is why Phase 1 must search sections by name and never by position. |
-| `s3p_90DegreeBend/Reflection.out` | `s3p/90DegreeBend/s3p_results/Reflection.out` | 13 frequencies × 16 S-parameters, **magnitudes** \|S\|. This is what `S3P.output_parser` reads today. |
-| `s3p_90DegreeBend/SParameter.out` | same directory | The same matrix as `(real, imag)` pairs. Currently unparsed — Phase 5. Kept in full (19 lines) so Phase 5 can cross-check `abs(S_complex) == S_magnitude` across every frequency. |
-| `s3p_90DegreeBend/PortRef7_0.out` | same directory | Port 7 mode 0 field profile: `%`-commented header, columns `x y Ex Ey Hx Hy`, 58 data rows. Currently unparsed — Phase 5. |
+| `s3p_90DegreeBend/Reflection.out` | `s3p/90DegreeBend/s3p_results/Reflection.out` | 13 frequencies × 16 S-parameters, **magnitudes** \|S\|. Read into the `S(m,n)` keys, which Phase 5 left untouched. |
+| `s3p_90DegreeBend/SParameter.out` | same directory | The same matrix as `( real,  imag )` pairs. Read by **Phase 5** into `S(m,n)_real` / `_imag` / `_phase_deg`. Kept in full (19 lines) because the `abs(S_complex) == S_magnitude` cross-check across every frequency is the load-bearing test — these two files are the *only* specification of either format, the S3P reference documenting no output files at all. Agreement is to ~1e-8 relative, which is all 9 significant digits allow. |
+| `s3p_90DegreeBend/PortRef7_0.out` | same directory | Port 7 mode 0 field profile: `%`-commented header, columns `x y Ex Ey Hx Hy`, 58 data rows. Read by **Phase 5** through `parse_column_file`, as a field artifact rather than a table column (58 positions against a 13-point scan). The `%` marker is why that reader accepts both comment characters. |
 
 Kept in full deliberately: the two `omega3p.out` files are ~6.9 KB each and
 mostly license banner, but Phase 1 must prove the banner does not break parsing,

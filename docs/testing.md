@@ -71,3 +71,9 @@ code:
 ```bash
 python tests/freeze_baseline.py
 ```
+
+Every fixture set carries a `frozen` note in its `manifest.json` saying **when it
+was captured and why it was (re)generated**. Update the corresponding provenance
+string in `tests/baseline_utils.py` as part of any deliberate regeneration, and say
+what moved — a regenerated fixture with no recorded reason is indistinguishable
+from an accident.

@@ -1,7 +1,7 @@
 # Acdtool Rework + Output-Spec Migration — Implementation Plan
 
-**Status: PHASES 0–4 COMPLETE** (Phases 0–1 2026-08-13, Phases 2–4 2026-08-17).
-Phases 5–6 not started. Planned 2026-08-13 from a cross-reference of the CW23
+**Status: COMPLETE** (Phases 0–1 2026-08-13, Phases 2–4 2026-08-17,
+Phases 5–6 2026-08-18). Planned 2026-08-13 from a cross-reference of the CW23
 ACE3P tutorial archive against the current module layer, then **revised
 2026-08-13 against the acdtool user guide** (see below), which corrected several
 assumptions — read "Revision: the acdtool user guide" before starting any phase.
@@ -25,6 +25,20 @@ returns every mode (and a `ModeID` field index to align it), surface-indexed
 sections require `at: {surface: n}`, and the positional list form is a deprecated
 alias that rewrites to the mapping in one place. No example was migrated
 (Phase 6) and no baseline moved.
+Phase 5 finished S3P's output: the complex `SParameter.out` and the
+`PortRef<n>_<m>.out` port mode profiles are read for the first time, so
+S-parameter phase is no longer discarded, `eval()` is gone from the last parser
+that used it, and `S(m,n)` still means the magnitude it always did. Again no
+example migrated and no baseline moved.
+Phase 6 closed the plan on the user-facing side: no shipped example declares a
+positional output spec any more, three new examples cover the workflows the
+rework unlocked (`omega3p_dispersion_sweep`, `s3p_window_rfpost`,
+`t3p_transwake`), and `docs/acdtool_reference.md` writes down the whole 19-command
+/ 24-block surface with each item's status. **The migration itself moved no
+number** — the self-check passed against the un-regenerated fixtures before
+anything was re-frozen; what Phase 6 did regenerate is fixture *format*, plus
+three new baselines and a `frozen` provenance note in every manifest (see
+deviation 3).
 
 This plan reworks how `acdtool` is invoked and parsed, and migrates
 `output_parameters` off the positional `['section', 'mode_id', 'column']` list
@@ -482,12 +496,21 @@ never by position).
 
 ### S3P discards phase
 
-`S3P.output_parser` reads `s3p_results/Reflection.out`, which holds **|S|**
+~~`S3P.output_parser` reads `s3p_results/Reflection.out`, which holds **|S|**
 magnitudes. The sibling `SParameter.out` holds the same matrix as
 `(real, imag)` pairs. Also unparsed: `PortRef<n>_<m>.out` (port mode field
-profiles). Separately, S3P **hardcodes** `s3p_results/` while T3P correctly
-reads `JobName` from the input tree (`T3P.results_dir()`), so a `.s3p` that sets
-`JobName` makes `output_parser` raise `FileNotFoundError`.
+profiles).~~ **Fixed in Phase 5:** one reader covers both S-parameter tables
+(their only difference is the cell form), the complex data lands under
+`S(m,n)_real` / `_imag` / `_phase_deg` beside the unchanged magnitudes, and each
+port profile is read as a field artifact. ~~Separately, S3P **hardcodes**
+`s3p_results/`~~ — **fixed in Phase 2** via `ACE3P.job_name()` and the
+`results_dir:` module key — ~~while T3P correctly reads `JobName` from the input
+tree (`T3P.results_dir()`), so a `.s3p` that sets `JobName` makes `output_parser`
+raise `FileNotFoundError`.~~ Note the `JobName` framing here is the one the
+"`JobName` is not an input key" revision corrects: `s3p_results` is the
+authoritative default, and the input-tree lookup is a best-effort fallback.
+The `eval()` calls this parser used on solver output are gone too — the last
+three in the package's output path, after Phase 3 removed acdtool's.
 
 ---
 
@@ -1253,8 +1276,9 @@ reader.
 
 - [x] Shape readers in `src/lume_ace3p/acdtool.py`, all module-level as
   `parse_wakefield` is — `read_mode_table`, `read_surface_scalars`,
-  `read_point_scalars`, `read_scaling`, `parse_column_file`, plus
-  `split_output_sections` (the defect-3 fix) and the `SECTIONS` table that maps
+  `read_point_scalars`, `read_scaling`, `parse_column_file` (**moved to
+  `ace3p.py` in Phase 5** — see that phase's deviation 1 — and re-exported here),
+  plus `split_output_sections` (the defect-3 fix) and the `SECTIONS` table that maps
   each of the 24 blocks to its shape and output filenames.
 - [x] `AcdtoolModule.field()` returning curve/grid artifacts, via
   `acdtool.field_sections`.
@@ -1526,20 +1550,116 @@ files are being read consistently without a documented format to check against.
 
 ### Verification (Phase 5 done when)
 
-- [ ] `S(m,n)` magnitudes from the `90DegreeBend` fixture are unchanged to full
-  precision; baselines unaffected.
-- [ ] Complex values satisfy `abs(S_complex) == S_magnitude` within tolerance
+- [x] `S(m,n)` magnitudes from the `90DegreeBend` fixture are unchanged to full
+  precision; baselines unaffected. The Phase-0 characterization test
+  (`test_s3p_magnitudes_from_real_output`) is **untouched** and still passes, and
+  `test_s3p_output_parser_keeps_the_magnitude_keys` re-pins the same numbers from
+  the parser side. No baseline file was touched.
+- [x] Complex values satisfy `abs(S_complex) == S_magnitude` within tolerance
   across the fixture — this cross-check is the real test that both files are read
   consistently.
-- [ ] `PortRef7_0.out` loads with correct column names.
-- [ ] A fixture directory lacking `SParameter.out` warns and still parses.
-- [ ] `python -m pytest tests/` green including baselines.
+  (`test_s3p_complex_magnitudes_cross_check_the_reflection_file` asserts all
+  **16 × 13 = 208** cells, and counts them so a silently-empty loop fails;
+  `test_parse_sparameters_magnitudes_agree_with_the_complex_table` does it at the
+  parser level. Agreement is ~1e-8 relative, which is all 9 significant digits
+  allow — hence `rel=1e-7`.)
+- [x] `PortRef7_0.out` loads with correct column names
+  (`test_s3p_port_mode_profile_columns`, `test_parse_column_file_accepts_a_percent_comment`
+  — the file is `%`-commented, see deviation 2).
+- [x] A fixture directory lacking `SParameter.out` warns and still parses
+  (`test_s3p_without_sparameter_file_warns_and_still_parses`,
+  `test_s3p_output_parser_without_sparameter_file`), and a *mismatched* one is
+  dropped rather than misaligned
+  (`test_s3p_mismatched_complex_scan_is_dropped_not_misaligned` — deviation 4).
+- [x] `python -m pytest tests/` green including baselines — **368 passed**
+  (19 new), up from Phase 4's 349. No baseline file touched.
 
 ### Deliverables
 
-- [ ] Extended `S3P.output_parser` in `src/lume_ace3p/ace3p.py`.
-- [ ] `S3PModule.field()` including port profiles.
-- [ ] Tests in `tests/test_ace3p.py`.
+- [x] Extended `S3P.output_parser` in `src/lume_ace3p/ace3p.py`, plus the
+  module-level `parse_sparameters` reader, `_parse_index_map_entry` and
+  `S3POutputWarning`.
+- [x] `S3PModule.field()` including port profiles, and an `extract` guard that
+  routes a non-frequency-indexed quantity to `field()` instead of returning a
+  dict into a result table.
+- [x] `parse_column_file` moved to `ace3p.py` and extended to accept a `%`
+  comment marker (deviations 1 and 2); re-exported from `acdtool.py`.
+- [x] Tests in `tests/test_ace3p.py` (10 new — the parsers), plus the two
+  Phase-0 characterization tests inverted and five added in
+  `tests/test_acdtool_fixtures.py`, six in `tests/test_modules.py` (the module
+  surface) and an extended field round-trip in `tests/test_results.py`.
+- [x] A `docs/yaml_reference.md` `s3p` module section, following Phases 1–4's
+  practice of documenting new user-facing surface as it lands. There was none
+  before — the S3P quantity names had no discoverable home at all.
+- [x] Updated `SOURCES.md` and `COVERAGE.md` for the three S3P fixtures, now
+  read rather than pending.
+
+### Deviations found while executing Phase 5
+
+1. **`parse_column_file` moved from `acdtool.py` to `ace3p.py`.** Approach item 3
+   says to read the port profiles "through the Phase-3 curve reader", which lived
+   in `acdtool.py` — so following it literally would have made the *solver* module
+   import the *postprocessor* module. That direction is wrong on its own terms,
+   and it would block the import `acdtool.py` is most likely to need next: defect
+   2's future `.acdtool` KVC dialect support routes through `ace3p.parse_ace3p`.
+   So the reader now sits beside `parse_wakefield`, whose shape it generalizes,
+   and `acdtool.py` re-exports the name so every Phase-3 call site and test import
+   keeps working. Nothing else about the function changed except deviation 2.
+
+2. **The reader needed a second comment marker.** `PortRef<n>_<m>.out` is
+   `%`-commented, not `#`-commented — the only ACE3P output in the fixture set
+   that is. Under the old reader its header (`% x y Ex Ey Hx Hy`) tokenized to
+   *seven* tokens against six data columns, so it would not have matched, and the
+   columns would have come back as `column1 … column6` with no error. That is the
+   silent-wrong-answer shape this plan keeps trying to close, so
+   `parse_column_file` now strips both markers.
+
+3. **Column names come from the header row, with the old positional arithmetic as
+   a fallback.** The plan does not discuss naming, and the pre-Phase-5 parser
+   rebuilt every key as `S(id1,id2)` from `len(IndexMap)` and indexed the table at
+   `id1 * n + id2` — an assumption about column *order* that nothing checks. Both
+   files name their columns in the `#Frequency[Hz]` header, so that is now the
+   primary source and the rebuild only runs when the header's token count does not
+   match the data width. This is a strictly weaker assumption that produces
+   byte-identical keys on both the real fixture and the synthetic ones, and it is
+   the one place a future build that adds a port could otherwise go wrong
+   silently. `COVERAGE.md` records that only a run with a different port/mode
+   count would actually exercise the difference.
+
+4. **Two failure modes, not one.** The plan's item 4 covers an *absent*
+   `SParameter.out`. A file that exists but describes a different frequency scan
+   (a run cut short, or a stale file from a previous scan left in the results
+   directory) is the more dangerous case: zipping it against the magnitudes would
+   produce phase columns that are wrong rather than missing. So a scan mismatch
+   warns and drops the complex data, and both paths carry their own test.
+
+5. **Phase is exposed as a column, not left to the caller.** The plan says to add
+   the complex data under `_re`/`_im`-style keys; the objective line says "stop
+   discarding S-parameter phase". Since the point of the phase is to be *used*,
+   `S(m,n)_phase_deg` is emitted alongside `_real`/`_imag` rather than making every
+   caller write an `arctan2`. The suffix follows Phase 3's `m_factor_phase_deg`,
+   and the naming follows Phase 1's rule that a table column stays real-valued —
+   which is also why `S(m,n)` is *not* redefined as a complex array.
+
+6. **`extract` had to learn to refuse a dict.** Port profiles land in
+   `output_data` beside the S-parameters, and `_infer_output_module` routes any
+   bare string to `s3p`, so `{module: s3p, quantity: PortRef7_0}` was suddenly a
+   spec that "worked" — returning a dict of arrays into a DataFrame cell. It now
+   raises naming `field()`, the same treatment Phase 3 gives an acdtool curve
+   block. The guard is on the *value* being a mapping rather than on a name list,
+   so it covers `IndexMap` for free and needs no update when a build adds a port
+   file.
+
+7. **The test split follows the fixtures, not the plan's one-file deliverable.**
+   The plan puts Phase 5's tests in `tests/test_ace3p.py`, but the S3P
+   characterization tests and their `_s3p` staging helper were already in
+   `tests/test_acdtool_fixtures.py` (Phase 0 put them there). Inverting them in
+   place is what keeps the before/after pairing readable, so the real-fixture
+   assertions stayed there and `tests/test_ace3p.py` got the parser-level tests
+   the deliverable asks for. `tests/test_modules.py` got the module surface, which
+   is that file's convention (synthetic fixtures), including a 3-4-5 synthetic
+   `SParameter.out` whose magnitudes reproduce the existing `S3P_REFLECTION`
+   *exactly* rather than approximately.
 
 ---
 
@@ -1556,6 +1676,14 @@ workflows the rework unlocks, and document the whole surface.
    `examples/geant4_track3p_beta`. Regenerate baselines **only** where the change
    is intentional (e.g. `Mode_freq` now sourced from Omega3P rather than acdtool
    `RoverQ`) and record each regeneration and its reason in the manifest.
+
+   **Done.** All three omega3p examples do now take their frequency from Omega3P
+   and keep acdtool only for what only it produces (R/Q, the peak surface fields).
+   That re-sourcing moved **no baseline value**: under dry-run both routes return
+   the same NaN and neither module contributes a field index, so the table shape is
+   byte-identical too. Key order was preserved deliberately, since the column order
+   of a result table follows the `output_parameters` declaration order. See
+   deviation 3 for what *was* regenerated.
 2. New example — **`dlwg-pbc` dispersion sweep.** Source:
    `CW23/examples/omega3p/dlwg-pbc`. Sweep the periodic-boundary `Theta` (phase
    advance) as an `input_parameters.ace3p` variable and plot frequency vs `Theta`.
@@ -1571,6 +1699,11 @@ workflows the rework unlocks, and document the whole surface.
    installed build — prefer generating the default from the tool (falling back to
    the hardcoded template when no binary is present) over maintaining a Python
    copy of a format that varies by build.
+
+   **Done both ways.** `examples/s3p_window_rfpost` ships the tutorial's own
+   `window.rfpost` (so the hardcoded default is not in its path at all), and
+   `Acdtool.make_default_input` now generates from the tool with the hardcoded
+   template as the fallback — see deviation 8 for why that runs where it does.
 4. New example — **T3P transwake.** Source: `CW23/examples/t3p/cavity-half`.
    A `[cubit, t3p, acdtool(transwake)]` chain — the workflow Phase 2 unblocks.
    The figure of merit is `KickFactor`, read by `T3PModule`, not by acdtool
@@ -1606,23 +1739,148 @@ workflows the rework unlocks, and document the whole surface.
 
 ### Verification (Phase 6 done when)
 
-- [ ] No shipped example YAML uses the list form; `pytest -W error::DeprecationWarning`
+- [x] No shipped example YAML uses the list form; `pytest -W error::DeprecationWarning`
   over the examples is clean.
-- [ ] All three new examples run in dry-run mode and are frozen into
-  `tests/baseline/`.
-- [ ] Every baseline regeneration is recorded with a reason in its manifest.
-- [ ] Docs contain no stale list-form spec; `docs/acdtool_reference.md` lists all
+  (`test_workflow_graph.py::test_shipped_example_output_specs_are_all_mapping_form`,
+  parametrized over all 19 non-`incomplete` example YAMLs, and
+  `test_shipped_examples_raise_no_deprecation_warnings`, which runs each
+  registered example and fails on any `DeprecationWarning` raised **from
+  `lume_ace3p`** — third-party ones are ignored on purpose, see deviation 5.)
+- [x] All three new examples run in dry-run mode and are frozen into
+  `tests/baseline/`. Registered in `baseline_utils.EXAMPLES`, so the self-check
+  covers them: **12 examples pass**, up from 9.
+- [x] Every baseline regeneration is recorded with a reason in its manifest — a new
+  `frozen` field, written by `freeze_baseline.py` from the registry (see
+  deviation 3 for what was regenerated and why).
+- [x] Docs contain no stale list-form spec; `docs/acdtool_reference.md` lists all
   **19 commands** and all **24 blocks** with their implementation status, and
-  carries the input semantics listed in approach item 6.
-- [ ] `python -m pytest tests/` green.
+  carries the input semantics listed in approach item 6. The full doc set builds
+  with no new Sphinx warning (the one `myst.xref_missing` left is pre-existing on
+  `HEAD`).
+- [x] `python -m pytest tests/` green — **406 passed** (38 new), up from Phase 5's
+  368.
 
 ### Deliverables
 
-- [ ] Migrated example YAMLs + regenerated baselines with recorded reasons.
-- [ ] `examples/omega3p_dispersion_sweep/`, `examples/s3p_window_rfpost/`,
-  `examples/t3p_transwake/` (+ READMEs).
-- [ ] `docs/acdtool_reference.md`; updates to the four docs pages above.
-- [ ] Status line in this file set to COMPLETE.
+- [x] Migrated example YAMLs (`omega3p_sweep`, `omega3p_ace3p_param_sweep`,
+  `omega3p_optimization`, `geant4_dose_single`, `geant4_track3p_beta`) with their
+  READMEs updated, plus mapping-form support on `Geant4Module` (deviation 1).
+- [x] `examples/omega3p_dispersion_sweep/`, `examples/s3p_window_rfpost/`,
+  `examples/t3p_transwake/` — each with its inputs, a Cubit journal, both batch
+  scripts and a README.
+- [x] `docs/acdtool_reference.md`; updates to `docs/yaml_reference.md`,
+  `docs/parameter_sweep.md`, `docs/optimization.md`,
+  `docs/configuration_by_mode.md`, plus `docs/workflow_inputs.md`,
+  `docs/testing.md`, `docs/index.md` and the top-level `README.md`.
+- [x] `Acdtool.make_default_input` now asks the installed tool for its own
+  `sample.rfpost` template (approach item 3), falling back to the hardcoded
+  2-block subset.
+- [x] Status line in this file set to COMPLETE.
+
+### Deviations found while executing Phase 6
+
+1. **The geant4 examples needed a mapping form to migrate *to*.** Phase 4 built
+   the mapping form for acdtool only, but approach item 1 lists
+   `geant4_dose_single` and `geant4_track3p_beta` among the examples to migrate.
+   So `Geant4Module` gained `_parse_spec` (accepting
+   `{section: dose, quantity: total}`) and `_infer_output_module` learned to route
+   a mapping whose `section:` is a scoring grid — asked before the bare-mapping
+   fallback to `s3p`, or a Geant4 spec with no `module:` key would have been
+   swallowed by it. **The geant4 list form is *not* deprecated**, unlike acdtool's:
+   a Geant4 spec is a `(grid, reduction)` pair with no index axis, so the list
+   expresses everything the mapping does and there is nothing it cannot say. The
+   examples migrate for consistency, not because the list is wrong.
+   `test_geant4_mapping_and_list_forms_agree` asserts the two agree over all nine
+   (section, entry) pairs *and* that neither warns.
+
+2. **A latent bug in `inputs._extract_nested_block` blocked the very first
+   migration.** Adding a column-0 comment above `output_parameters:` — directly
+   after the `input_parameters: ace3p:` sub-block — made
+   `omega3p_ace3p_param_sweep.yaml` fail to load with a `ScannerError`. The block
+   span runs to the next *non-comment* line at or above the header's indent, so it
+   can contain a comment belonging to the following top-level key, and the
+   de-indent guard tested the line's **length** rather than its **indent**
+   (`if len(l) >= pad`) — slicing `pad` characters off a column-0 comment ate its
+   `#` and turned it into a broken YAML key. Fixed to compare indent. This is a
+   pre-existing trap for any user who comments between an `ace3p:` block and the
+   next key, not something the migration introduced.
+
+3. **What was regenerated, and why.** The migration moved no value: the baseline
+   self-check passed against the *un*-regenerated fixtures first, which is what
+   establishes that. Three things were then regenerated deliberately:
+
+   - **Three new baselines** for the new examples (first freeze, nothing
+     regenerated).
+   - **Fixture format for the eight Phase-0.5 sets.** They had been written by the
+     pre-refactor writers and never re-cut: every sweep row carried a trailing tab
+     (which pandas read back as a phantom `Unnamed` column that the comparison then
+     dropped), and the Xopt log was fixed-width at 6 significant figures. The
+     current shared `results.write_table` emits tab-delimited full precision.
+     Re-freezing normalizes both, so a fixture is now byte-identical to what the
+     code writes rather than equal-modulo-a-phantom-column. Numeric content is
+     unchanged — agreement 5e-7, which is the *old* fixture's own rounding.
+   - **A `frozen` provenance field in every manifest**, which is the mechanism the
+     verification bullet asks for. It was not there to write into.
+
+   Also deleted: the four orphaned Phase-0.5 `dry_run_marker.txt` fixtures. The
+   module refactor dropped markers from the registry because the module layer emits
+   one dry-run block per module and so could never match the old single-block text
+   — verified still true (4 numeric tokens vs 6) — but the files and their manifest
+   entries were left behind, claiming a comparison that was not happening.
+   **One marker is frozen again**, for `t3p_transwake`: its acdtool command, its
+   positional `args` and the *injected* jobname appear in no other output, so it is
+   the only baseline that can catch a regression in jobname injection.
+
+4. **The two new mesh journals join the tutorial's two, and say so.** `dlwg-pbc`
+   and `s3p/window` each ship a build journal that exports a `.sat` and a separate
+   mesh journal that imports it, but a `cubit` module plays exactly **one** journal
+   and `Cubit.set_value` rewrites `#{var=...}` lines in that one file — so a
+   two-journal split cannot expose a swept geometry variable at all. The journals
+   are therefore concatenated with the ACIS round-trip dropped. What makes that
+   safe is the `compress ids` before the merge point: it renumbers the surviving
+   entities contiguously, which is the numbering an export/import pair also
+   produces, so the surface/curve/vertex IDs the meshing half names still resolve.
+   Both READMEs state this, because no journal in this repo can be verified without
+   Cubit and a reader deserves to know which ones were edited rather than copied.
+
+5. **The DeprecationWarning gate is scoped to this package.** The verification
+   bullet asks for `pytest -W error::DeprecationWarning` over the examples, but
+   xopt 3.0.0 emits a pydantic VOCS deprecation of its own on the
+   `s3p_optimization` path. Turning that into an error would make the test a proxy
+   for a dependency's release schedule, so the assertion filters on the warning's
+   originating file being inside `lume_ace3p`. What the bullet is actually asking —
+   *our* examples do not use *our* deprecated form — is what gets asserted.
+
+6. **`examples/incomplete/` is exempt from the no-list-form rule.** Those two
+   YAMLs are non-runnable legacy references kept for reading (see that directory's
+   README) and are already off the current schema in larger ways; holding them to
+   it would mean either rewriting configs nobody can run or carrying an
+   ever-growing exemption list. The walk excludes the directory by name and says
+   why.
+
+7. **The window example demonstrates the index collision but cannot table
+   acdtool's side of it, and the README says so.** `[cubit, s3p, acdtool]` has two
+   index-axis producers and S3P wins on DAG order, which is the designed outcome —
+   but a *consequence* nothing in Phases 1–5 had to face is that
+   `modes._persist_field` returns `None` whenever a field index exists, so in a
+   frequency-indexed sweep **no per-row field artifact is written at all** and
+   acdtool's `ALLFieldOnLine` curves never leave the workdir. That is correct for
+   S3P (the table's rows already *are* its field) but it means the field-artifact
+   route design decision 2 points at is unreachable in exactly the chain that
+   needs it. Not a Phase-6 regression and not worth reopening here — the curves
+   are on disk and readable — but it is the concrete case that would justify
+   letting a workflow persist a second module's field alongside a long-format
+   table.
+
+8. **The `sample.rfpost` generation shells out from `Acdtool.__init__`.** Approach
+   item 3 prefers generating the default input from the installed tool over
+   maintaining a Python copy of a per-build format, and the only place to do that
+   is `make_default_input`, which `__init__` calls. A subprocess in a constructor
+   is surprising, so it is scoped as tightly as possible: it runs only when
+   `input_file is None` (a bare `acdtool` module entry, which no shipped example
+   uses), it is best-effort — a missing binary, a build that writes no sample, or a
+   file the parser chokes on all fall through to the hardcoded template — and it
+   never fails the run. Both paths carry a test.
 
 ---
 

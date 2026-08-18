@@ -42,10 +42,12 @@ input_parameters :
             'ReferenceNumber' : 6
             'Sigma' : [5.8e7, 1.04e7]
 
+# Same outputs as 'omega3p_sweep' -- see that example's comments for what each
+# key means.
 output_parameters :
-  'R/Q' : ['RoverQ', '0', 'RoQ']
-  'Mode_freq' : ['RoverQ', '0', 'Frequency']
-  'E_max' : ['maxFieldsOnSurface', '6', 'Emax']
-  'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x']
-  'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y']
-  'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']
+  'R/Q' : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  'Mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}
+  'loc_x' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}
+  'loc_y' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: y, at: {surface: 6}}
+  'loc_z' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: z, at: {surface: 6}}

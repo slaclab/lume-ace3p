@@ -41,14 +41,28 @@ python -m pytest tests/test_baseline_selfcheck.py -v
   (`atol=rtol=1e-6`), timing columns (`xopt_runtime`, `xopt_error`) dropped.
 - **markers** (`dry_run_marker.txt`) — free-form dry-run text; compared by the
   numeric tokens they contain (absolute temp paths legitimately vary run-to-run).
+  Only `t3p_transwake` freezes one, because its acdtool command, positional `args`
+  and *injected* jobname appear in no other output. The four Phase-0.5 markers
+  were deleted in Phase 6: the module layer emits one dry-run block per module, so
+  they could never match the pre-refactor single-block text and were not being
+  compared.
 - **digests** (`*.digest.json`) — large numeric arrays (weighted particle dumps,
   Geant4 source files) frozen as row/col counts + per-column
   sum/min/max/mean, enough to catch a numeric regression without committing
   multi-MB arrays.
 
 Each example dir also carries a `manifest.json` (kind, source YAML, fixture
-list, and the `checkable` note). `not_frozen.json` records the examples that are
-intentionally *not* frozen as numeric baselines, with the reason.
+list, the `frozen` provenance note, and the `checkable` note). `not_frozen.json`
+records the examples that are intentionally *not* frozen as numeric baselines,
+with the reason.
+
+`frozen` says **when a fixture set was captured and why it was (re)generated**, so
+a reader can tell a first freeze from an intentional regeneration without reading
+git history. Every regeneration must say what moved. The Phase-6 re-cut of the
+Phase-0.5 sets is format-only — trailing row tabs dropped, the Xopt log widened
+from fixed-width 6 significant figures to the shared writer's full precision — and
+the self-check passed against the *un*-regenerated fixtures first, which is what
+establishes that no numbers moved.
 
 ## Per-example checkability
 
@@ -61,6 +75,9 @@ intentionally *not* frozen as numeric baselines, with the reason.
 | `track3p_particle_weight` | **real** `Particles` compute | field-emission `ParticleWeight` + all track columns (digest) | — |
 | `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest); swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
 | `s3p_optimization` | scalar_optimize, synthetic solver (seeded) | full NelderMead trajectory (cornercut, rcorner1, objective) | — |
+| `omega3p_dispersion_sweep` | omega3p sweep, dry-run | the swept ACE3P `Theta` axis — the one example with **no** cubit axis; also pins that the dry-run table stays wide (Omega3P has no field index until it has solved) | `f`, `Q` |
+| `s3p_window_rfpost` | s3p + acdtool sweep, dry-run | swept `wdwt` grid, and the `Frequency` column that pins which of the chain's **two** index-axis producers wins (S3P, by DAG order) | S-parameters, `m_factor` |
+| `t3p_transwake` | t3p + acdtool(transwake), dry-run | nominal geometry + the transwake `args` in the marker; structurally, that `[cubit, t3p, acdtool]` validates at all and that the jobname is injected | `K`, `W_trans` |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 

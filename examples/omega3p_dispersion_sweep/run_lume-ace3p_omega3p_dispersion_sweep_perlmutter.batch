@@ -1,0 +1,15 @@
+#!/bin/bash
+
+#SBATCH --constraint=cpu
+#SBATCH --account=m349
+#SBATCH --qos=debug
+#SBATCH --job-name=lume-ace3p_dispersion
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --time=0-00:30:00
+
+# Six eigensolves of one small periodic cell at 4 tasks each -- comfortably
+# inside the debug QOS.
+
+run-lume-ace3p omega3p_dispersion_sweep.yaml

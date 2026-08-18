@@ -1,3 +1,0 @@
-Dry run mode: Cubit, Omega3P, and Acdtool steps skipped.
-Cubit: {'cav_radius': 90.0, 'ellipticity': 0.5}
-ACE3P: []

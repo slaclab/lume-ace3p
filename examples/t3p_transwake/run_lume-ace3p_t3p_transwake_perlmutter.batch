@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#SBATCH --constraint=cpu
+#SBATCH --account=m349
+#SBATCH --qos=debug
+#SBATCH --job-name=lume-ace3p_transwake
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --time=0-00:30:00
+
+# One time-domain run at 16 tasks, then a single-rank acdtool transwake pass.
+# LUME-ACE3P does not orchestrate T3P restarts, so a run cut off by the wall
+# clock restarts from scratch -- raise the limit rather than resubmitting.
+
+run-lume-ace3p t3p_transwake.yaml

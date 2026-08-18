@@ -1,9 +1,10 @@
 # Omega3P parameter sweep on the declarative module/mode schema:
 #   workflow:  cubit -> omega3p -> acdtool
 #   mode:      parameter_sweep  (wide/scalar table, one row per grid point)
-# The output_parameters below target the acdtool postprocess results. Each entry
-# is a [section, ...] address into the acdtool output; the workflow routes it to
-# the acdtool module automatically (the module that provides rf_post).
+# Each output_parameters entry names the module it comes from, the thing it
+# wants, and -- for an indexed result -- which index. Mode frequency comes
+# straight from Omega3P's own eigenmode output; R/Q and the peak surface fields
+# need the acdtool postprocess step.
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_omega3p_workdir'
@@ -36,9 +37,16 @@ input_parameters :
       'num' : 4
 
 output_parameters :
-  'R/Q' : ['RoverQ', '0', 'RoQ']
-  'Mode_freq' : ['RoverQ', '0', 'Frequency']
-  'E_max' : ['maxFieldsOnSurface', '6', 'Emax']
-  'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x']
-  'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y']
-  'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']
+  # Mode-indexed acdtool block, narrowed to the fundamental. Drop the 'at:' to
+  # get one table row per mode instead (an HOM catalog rather than a sweep).
+  'R/Q' : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  # From the eigensolver itself (omega3p_results/omega3p.out), so this one needs
+  # no acdtool block at all.
+  'Mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  # Surface-indexed acdtool block: 'at: {surface: n}' is required, because
+  # ModeID is acdtool's only table axis. 6 is the sideset ID the journal sets.
+  'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}
+  # 'component:' picks one part of a location vector.
+  'loc_x' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}
+  'loc_y' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: y, at: {surface: 6}}
+  'loc_z' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: z, at: {surface: 6}}

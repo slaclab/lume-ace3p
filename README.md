@@ -54,6 +54,7 @@ The documentation covers:
 - [Parameter sweeping](https://lume-ace3p.readthedocs.io/en/latest/parameter_sweep.html) — Omega3P and S3P examples.
 - [Optimization](https://lume-ace3p.readthedocs.io/en/latest/optimization.html) — Xopt scalar, multifidelity, and Omega3P-via-script.
 - [YAML configuration reference](https://lume-ace3p.readthedocs.io/en/latest/yaml_reference.html) — every `*_parameters` block.
+- [acdtool reference](https://lume-ace3p.readthedocs.io/en/latest/acdtool_reference.html) — its 19 commands and 24 `.rfpost` blocks, with what is implemented here.
 - [Plotting tools](https://lume-ace3p.readthedocs.io/en/latest/plotting.html).
 - [Troubleshooting / FAQs](https://lume-ace3p.readthedocs.io/en/latest/troubleshooting.html).
 - [API reference](https://lume-ace3p.readthedocs.io/en/latest/api/index.html) — auto-generated from source on every build.

@@ -146,9 +146,19 @@ Not `.rfpost` blocks, listed for completeness — details in `SOURCES.md`.
 |---|---|---|
 | Omega3P `Mode` sections, real eigenvalues | **yes** — `solver_outputs/omega3p/pillbox.omega3p.out` | `parse_omega3p_output` (Phase 1) |
 | Omega3P `Mode` sections, complex eigenvalues + `ExternalQ` | **yes** — `solver_outputs/omega3p/pillbox-rtop+coax.omega3p.out` | same |
-| S3P \|S\| magnitudes | **yes** — `solver_outputs/s3p_90DegreeBend/Reflection.out` | implemented and validated by these fixtures |
-| S3P complex S-parameters | **yes** — `solver_outputs/s3p_90DegreeBend/SParameter.out` | none — Phase 5 |
-| S3P port mode profiles | **yes** — `solver_outputs/s3p_90DegreeBend/PortRef7_0.out` | none — Phase 5 |
+| S3P \|S\| magnitudes | **yes** — `solver_outputs/s3p_90DegreeBend/Reflection.out` | `parse_sparameters` -> `S(m,n)`, validated by these fixtures |
+| S3P complex S-parameters | **yes** — `solver_outputs/s3p_90DegreeBend/SParameter.out` | same reader -> `S(m,n)_real` / `_imag` / `_phase_deg` (Phase 5) |
+| S3P port mode profiles | **yes** — `solver_outputs/s3p_90DegreeBend/PortRef7_0.out` | `parse_column_file` -> a field artifact (Phase 5) |
+
+Every S3P format here is **validated only by these fixtures**: unlike the
+`.rfpost` blocks, whose inputs at least are specified in
+`references/acdtool-commands.pdf`, the S3P reference documents no output file at
+all. The cross-check that `abs(S_complex)` reproduces the `Reflection.out`
+magnitudes across all 16 S-parameters at all 13 frequencies is what stands in for
+the missing spec — it is the assertion to keep if any other is ever relaxed. What
+a real run is still owed for: a scan with a *different* port/mode count, which
+would confirm that the column names come from the header row in a case where the
+`id1 * n + id2` fallback would disagree.
 
 ## Non-`rf` command outputs (added in Phase 2)
 

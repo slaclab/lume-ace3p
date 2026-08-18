@@ -340,13 +340,49 @@ PRODUCERS = {
 #                 objective names (shaped ``S(m,n)_<freq>``), VOCS variables, the
 #                 xopt block, and (gp sweep) the sweep grid.
 #   checkable   : human note on what is numerically checkable vs reachability
+#   frozen      : provenance — when this fixture set was captured and why it was
+#                 (re)generated. Copied into manifest.json so a reader can tell a
+#                 Phase-0.5 capture from a later intentional regeneration without
+#                 digging through git history.
 #
-# DRY_RUN.txt markers are intentionally NOT frozen: the module layer has each
-# module append its own dry-run block, so an assembled chain yields a combined
-# multi-block marker that differs by design from the old single-block text.
-# Per the plan's numeric-equivalence contract, equivalence is checked on the
-# extracted tables + digests, not on marker bytes.
+# DRY_RUN.txt markers were dropped from the registry during the module refactor:
+# the module layer has each module append its *own* dry-run block, so an assembled
+# chain yields a combined multi-block marker that could not match the pre-refactor
+# single-block text, and equivalence is checked on the extracted tables + digests
+# instead. That reason has expired — the multi-block form is stable now — so a
+# marker is frozen again where it is the only place a behavior shows up at all:
+# 't3p_transwake' is the one example whose acdtool command, positional args and
+# *injected* jobname appear nowhere but its marker. The four Phase-0.5 marker
+# fixtures were deleted in Phase 6; they were unmatched-by-design leftovers.
 # --------------------------------------------------------------------------- #
+
+# Provenance shared by every fixture set first captured in Phase 0.5.
+#
+# Phase 6 of the acdtool rework migrated the shipped examples off the positional
+# output-spec list form onto the mapping form. That translation is
+# value-preserving, and the self-check confirmed every table still matched
+# *before* anything was re-frozen -- so no numbers moved for that reason.
+#
+# What Phase 6 did regenerate is FORMAT. These fixtures had been written by the
+# pre-refactor writers and never re-cut: each sweep row carried a trailing tab
+# (which pandas silently read back as an empty 'Unnamed' column and the
+# comparison then dropped), and the Xopt log was fixed-width at 6 significant
+# figures. The current shared results.write_table emits tab-delimited full
+# precision. Re-freezing normalizes both, so a fixture is now byte-identical to
+# what the code writes rather than equal-modulo-a-phantom-column.
+_PHASE_05 = (
+    'First captured Phase 0.5 (2026-08), pre-refactor. Re-frozen in Phase 6 of '
+    'the acdtool rework (2026-08-18) for FORMAT only -- trailing row tabs '
+    'dropped, and the Xopt log widened from the old fixed-width 6 significant '
+    'figures to the shared writer\'s full precision. Numeric content is '
+    'unchanged (agreement 5e-7, which is the old fixture\'s own rounding); the '
+    'Phase-6 output-spec migration from the positional list form to the mapping '
+    'form moved no value, and the self-check passed against the un-regenerated '
+    'fixtures before this re-cut.')
+
+# Provenance for the three examples the acdtool rework added.
+_PHASE_6 = ('Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new '
+            'example, so nothing was regenerated.')
 
 EXAMPLES = {
     's3p_sweep': {
@@ -356,6 +392,7 @@ EXAMPLES = {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
         },
         'digests': {},
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC: swept input grid (cornercut x rcorner2) and '
                       'Frequency column. Solver outputs absent (dry-run), so '
                       'the S-parameter values are reachability-only.'),
@@ -367,6 +404,7 @@ EXAMPLES = {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
         },
         'digests': {},
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC: swept input grid + Frequency column, with the '
                       'ACE3P settings supplied inline. Reachability for the '
                       '(absent) solver step.'),
@@ -378,6 +416,7 @@ EXAMPLES = {
             't3p_sweep_output.txt': ('t3p_sweep_output.txt', 'table'),
         },
         'digests': {},
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC: swept input grid (cell_radius x iris_radius) '
                       "and the 's' wake-coordinate column. T3P is a "
                       'time-domain solver, so the table goes long-format over '
@@ -392,6 +431,7 @@ EXAMPLES = {
             'omega3p_sweep_output.txt': ('omega3p_sweep_output.txt', 'table'),
         },
         'digests': {},
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC: swept input grid (cav_radius x ellipticity). '
                       'Output columns (R/Q, Mode_freq, E_max, loc_*) are NaN '
                       'without acdtool -> reachability-only.'),
@@ -403,6 +443,7 @@ EXAMPLES = {
             'omega3p_sweep_output.txt': ('omega3p_sweep_output.txt', 'table'),
         },
         'digests': {},
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC: the swept cubit grid PLUS the ACE3P Sigma list '
                       '[5.8e7, 1.04e7] which is treated as a third sweep axis '
                       '(so 4x4x2 = 32 runs, workdir names carry the Sigma '
@@ -416,6 +457,7 @@ EXAMPLES = {
             'weighted_particles.digest.json':
                 'lume-ace3p_track3p_workdir/track3p_particles_weighted.txt',
         },
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC (real compute): the field-emission ParticleWeight '
                       'and all track columns of the filtered/binned output. '
                       'Frozen as a per-column numeric digest.'),
@@ -432,6 +474,7 @@ EXAMPLES = {
             'particles_beta60.digest.json':
                 'lume-ace3p_geant4_workdir_60.0/particles.data',
         },
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC (real compute): the Geant4 source file '
                       '(particles.data) generated by the Particles pre-step for '
                       'each beta, frozen as per-column digests; the swept beta '
@@ -450,9 +493,64 @@ EXAMPLES = {
             'xopt': {'generator': 'NelderMeadGenerator', 'num_random': 0,
                      'num_step': 25},
         },
+        'frozen': _PHASE_05,
         'checkable': ('NUMERIC (synthetic workflow, seeded): full NelderMead '
                       'trajectory (cornercut, rcorner1, objective). '
                       'Seed-reproducible and cluster-independent.'),
+    },
+    # ---- added by Phase 6 of the acdtool rework -------------------------- #
+    'omega3p_dispersion_sweep': {
+        'kind': 'sweep',
+        'yaml': 'omega3p_dispersion_sweep.yaml',
+        'files': {
+            'dispersion_sweep_output.txt': ('dispersion_sweep_output.txt',
+                                            'table'),
+        },
+        'digests': {},
+        'frozen': _PHASE_6,
+        'checkable': ('NUMERIC: the swept ACE3P leaf Theta (the periodic-boundary '
+                      'phase advance), which is the whole input grid -- this is '
+                      'the one example with no cubit axis at all. f and Q are NaN '
+                      'without a solver -> reachability-only. Also pins that the '
+                      'dry-run table stays WIDE (no ModeID column): the mode count '
+                      'is a result of the eigensolve, so Omega3P returns no field '
+                      'index until it has run.'),
+    },
+    's3p_window_rfpost': {
+        'kind': 'sweep',
+        'yaml': 's3p_window_rfpost.yaml',
+        'files': {
+            'window_sweep_output.txt': ('window_sweep_output.txt', 'table'),
+        },
+        'digests': {},
+        'frozen': _PHASE_6,
+        'checkable': ('NUMERIC: the swept wdwt grid. Its real job is structural: '
+                      'this is the only chain with TWO index-axis producers (S3P '
+                      "Frequency, acdtool ModeID), so the table's Frequency "
+                      'column pins that DAG order resolves the collision in '
+                      "S3P's favour. S-parameters and m_factor are NaN without a "
+                      'solver -> reachability-only.'),
+    },
+    't3p_transwake': {
+        'kind': 'single',
+        'yaml': 't3p_transwake.yaml',
+        'files': {
+            'transwake_output.txt': ('transwake_output.txt', 'table'),
+            # The ONE marker fixture in the tree, because the acdtool command,
+            # its positional args and the jobname *injected* from the t3p module
+            # appear nowhere else in any output.
+            'dry_run_marker.txt': ('lume-ace3p_transwake_workdir/DRY_RUN.txt',
+                                   'marker'),
+        },
+        'digests': {},
+        'frozen': _PHASE_6,
+        'checkable': ('NUMERIC: the nominal cubit geometry and the transwake args '
+                      '[0, 0, 0, 0.0125] recorded in the marker. K / W_trans are '
+                      'NaN without a solver -> reachability-only. Structurally '
+                      'this pins that [cubit, t3p, acdtool] validates and orders '
+                      'correctly at all -- it was a WorkflowValidationError before '
+                      'Phase 2 -- and that the jobname is injected rather than '
+                      'configured.'),
     },
 }
 

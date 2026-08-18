@@ -1,0 +1,55 @@
+# T3P transverse wakefield on the declarative module/mode schema:
+#   workflow:  cubit -> t3p -> acdtool     ('postprocess transwake')
+#   mode:      single
+#
+# A half model cannot be given an off-axis beam directly, so the transverse wake
+# is recovered from the on-contour longitudinal wake by the Panofsky-Wenzel
+# theorem -- which is what 'acdtool postprocess transwake' does. This is the
+# chain that used to be a validation error: acdtool required an em_solution, so
+# listing it after a time-domain solver was rejected even though transwake is
+# precisely a time-domain postprocessor.
+#
+# IMPORTANT: the figure of merit is read by the *t3p* module, not by acdtool.
+# transwake writes its result over t3p_results/OUTPUT/wakefield.out -- the file
+# T3P itself wrote and already parsed -- so t3p stays the single owner of every
+# wakefield quantity and re-reads the file after acdtool has run. See the README.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_transwake_workdir'
+  'workdir_mode' : 'manual'
+
+workflow :
+  - module : cubit
+    journal : 'pillboxwg2.jou'
+  - module : t3p
+    input : 'pillboxwg2-closed.t3p'
+    tasks : 16
+    cores : 16
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    command : 'postprocess transwake'
+    # The two transverse points (x1, y1) and (x2, y2), in metres. The jobname
+    # acdtool takes as its first argument is injected from the t3p module, so it
+    # is not repeated here -- and it follows a 'results_dir:' override for free.
+    args : [0.0, 0.0, 0.0, 0.0125]
+
+mode :
+  type : single
+  output_file : 'transwake_output.txt'
+
+# Nominal values for the journal knobs, so they appear as columns and so the
+# geometry this ran at is recorded alongside the result.
+input_parameters :
+  cubit :
+    'cell_radius' : 0.05
+    'iris_radius' : 0.025
+
+output_parameters :
+  # The transverse figure of merit, V/pC. Asking for 'loss_factor' here raises an
+  # error naming what the run actually reports -- a transverse run has no loss
+  # factor -- rather than returning NaN.
+  'K' : {module: t3p, quantity: kick_factor}
+  # s-indexed array: the transverse wake potential, one value per table row.
+  'W_trans' : {module: t3p, quantity: 'W'}
+  # A scalar at one wake position (nearest sample on the solver's s grid).
+  'W_at_1m' : {module: t3p, quantity: 'W', at: {s: 1.0}}

@@ -1,0 +1,2 @@
+cell_radius	iris_radius	s	K	W_trans	W_at_1m
+0.05	0.025	0.0	nan	nan	nan

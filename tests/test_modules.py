@@ -32,7 +32,7 @@ from lume_ace3p.modules import (
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
-from lume_ace3p.ace3p import Omega3P, S3P, T3P, Section
+from lume_ace3p.ace3p import Omega3P, S3P, S3POutputWarning, T3P, Section
 from lume_ace3p.acdtool import (
     Acdtool, wired_commands, EM_SOLUTION as ACD_EM_SOLUTION,
     TD_SOLUTION as ACD_TD_SOLUTION,
@@ -56,6 +56,28 @@ S3P_REFLECTION = """\
 12.0e9 0.10 0.20 0.30 0.40
 12.5e9 0.50 0.60 0.70 0.80
 13.0e9 0.90 1.00 1.10 1.20
+"""
+
+# The same matrix as '( real,  imag )' pairs (SParameter.out). Every cell is a
+# 3-4-5 triple scaled to its magnitude above, so abs(complex) reproduces
+# S3P_REFLECTION exactly rather than approximately.
+S3P_SPARAMETER = """\
+#Index information
+#0  Port 1, Mode 0, Type: (TE) cutoff: 1.000000e9 Hz
+#1  Port 2, Mode 0, Type: (TE) cutoff: 1.000000e9 Hz
+#Frequency  S(0,0) S(0,1) S(1,0) S(1,1)
+12.0e9 ( 0.06,  0.08) ( 0.12,  0.16) ( 0.18,  0.24) ( 0.24,  0.32)
+12.5e9 ( 0.30,  0.40) ( 0.36,  0.48) ( 0.42,  0.56) ( 0.48,  0.64)
+13.0e9 ( 0.54,  0.72) ( 0.60,  0.80) ( 0.66,  0.88) ( 0.72,  0.96)
+"""
+
+# A port mode field profile (PortRef<n>_<m>.out): indexed by position, not by
+# frequency, and commented with '%' rather than '#'.
+S3P_PORT_PROFILE = """\
+%          x          y            Ex            Ey            Hx            Hy
+0.0 0.0 1.0 0.0 0.0 2.0
+1.0e-3 2.0e-3 3.0 4.0 5.0 6.0
+2.0e-3 4.0e-3 7.0 8.0 9.0 10.0
 """
 
 # rfpost input with all three postprocess sections flagged on.
@@ -152,15 +174,28 @@ def _paths():
             'geant4_app_exe': ''}
 
 
-def _make_s3p_solver(workdir):
+def _make_s3p_solver(workdir, complete=False):
     """Construct an S3P wrapper pointed at a synthetic Reflection.out and parse
-    it directly (bypassing the subprocess)."""
-    os.makedirs(os.path.join(workdir, 's3p_results'), exist_ok=True)
-    _write(os.path.join(workdir, 's3p_results', 'Reflection.out'), S3P_REFLECTION)
+    it directly (bypassing the subprocess).
+
+    By default only ``Reflection.out`` is written, which is the older-ACE3P-build
+    path: the parser warns that S-parameter phase is unavailable and returns the
+    magnitudes alone. `complete` adds the two files Phase 5 gave readers to —
+    ``SParameter.out`` and one ``PortRef<n>_<m>.out``."""
+    results = os.path.join(workdir, 's3p_results')
+    os.makedirs(results, exist_ok=True)
+    _write(os.path.join(results, 'Reflection.out'), S3P_REFLECTION)
+    if complete:
+        _write(os.path.join(results, 'SParameter.out'), S3P_SPARAMETER)
+        _write(os.path.join(results, 'PortRef1_0.out'), S3P_PORT_PROFILE)
     dummy_input = os.path.join(workdir, 'dummy.s3p')
     _write(dummy_input, '')
     s3p = S3P(dummy_input, workdir=workdir)
-    s3p.output_parser()
+    with warnings.catch_warnings():
+        # The incomplete case warns by design; the tests that care about the
+        # warning assert it against the real fixtures in test_acdtool_fixtures.
+        warnings.simplefilter('ignore', S3POutputWarning)
+        s3p.output_parser()
     return s3p
 
 
@@ -321,6 +356,87 @@ def test_s3p_extract_dry_run_is_nan(tmp_path):
     module = S3PModule({'input': 'x.s3p'})
     module._solver = None
     assert np.isnan(module.extract(ctx, 'S(0,0)')).all()
+
+
+def _s3p_module(tmp_path, complete=True):
+    """An S3PModule with a parsed solver injected (no binary run), plus its
+    RunContext."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    module = S3PModule({'input': 'dummy.s3p'})
+    module._solver = _make_s3p_solver(wd, complete=complete)
+    return module, RunContext(wd, paths=_paths())
+
+
+def test_s3p_extract_complex_quantities(tmp_path):
+    """PHASE 5: the complex S-parameter is extractable the same way the magnitude
+    is — a frequency-indexed array, or an ``at:``-narrowed scalar. The magnitude
+    keeps its own key, so both are available at once."""
+    module, ctx = _s3p_module(tmp_path)
+
+    assert np.allclose(module.extract(ctx, 'S(0,0)'), [0.10, 0.50, 0.90])
+    assert np.allclose(module.extract(ctx, 'S(0,0)_real'), [0.06, 0.30, 0.54])
+    assert np.allclose(module.extract(ctx, 'S(0,0)_imag'), [0.08, 0.40, 0.72])
+    # 3-4-5: atan2(4, 3) = 53.130102 deg, the same at every frequency here.
+    assert np.allclose(module.extract(ctx, 'S(0,0)_phase_deg'), 53.13010235)
+
+    scalar = module.extract(ctx, {'quantity': 'S(1,1)_imag',
+                                  'at': {'frequency': 12.5e9}})
+    assert scalar == pytest.approx(0.64)
+
+
+def test_s3p_extract_rejects_a_port_profile(tmp_path):
+    """PHASE 5: a port mode profile is indexed by position, not frequency, so it
+    is not a result-table column. Asking for one names the field-artifact route
+    rather than returning a dict into a DataFrame — the same treatment
+    AcdtoolModule gives its curve blocks."""
+    module, ctx = _s3p_module(tmp_path)
+
+    with pytest.raises(ValueError, match=r"module's field\(\)"):
+        module.extract(ctx, 'PortRef1_0')
+    # Same guard covers the index map, which is a dict for the same reason.
+    with pytest.raises(ValueError, match=r"module's field\(\)"):
+        module.extract(ctx, {'quantity': 'IndexMap'})
+
+
+def test_s3p_field_carries_the_port_profiles(tmp_path):
+    """PHASE 5: ``field()`` is where the port profiles surface, alongside the
+    spectrum, and they survive the ``.npz`` round-trip as nested dicts the way
+    ``IndexMap`` already did."""
+    module, ctx = _s3p_module(tmp_path)
+    field = module.field(ctx)
+
+    assert field['PortRef1_0']['Ex'][-1] == pytest.approx(7.0)
+    assert list(field['PortRef1_0']) == ['x', 'y', 'Ex', 'Ey', 'Hx', 'Hy']
+    assert np.allclose(field['S(0,1)_phase_deg'], 53.13010235)
+
+    handle = save_field(field, os.path.join(str(tmp_path), 'field_0'))
+    loaded = load_field(handle)
+    assert np.allclose(loaded['PortRef1_0']['Hy'], field['PortRef1_0']['Hy'])
+    assert np.allclose(loaded['S(0,1)_imag'], field['S(0,1)_imag'])
+
+
+def test_s3p_field_index_is_unaffected_by_the_new_keys(tmp_path):
+    """The table axis is still S3P's frequency scan: the complex columns align to
+    it and the port profiles are not on the table at all, so nothing here moves
+    (which is what keeps the s3p baselines byte-identical)."""
+    complete, ctx = _s3p_module(tmp_path)
+    axis, values = complete.field_index(ctx)
+    assert axis == 'Frequency'
+    assert np.allclose(values, [12.0e9, 12.5e9, 13.0e9])
+    for name in ('S(0,0)', 'S(0,0)_real', 'S(0,0)_phase_deg'):
+        assert len(complete.extract(ctx, name)) == len(values)
+
+
+def test_s3p_older_build_has_magnitudes_only(tmp_path):
+    """With no ``SParameter.out`` — an older ACE3P build — the module behaves
+    exactly as it did before Phase 5: magnitudes present, complex keys absent
+    with an error that says which quantities the run did produce."""
+    module, ctx = _s3p_module(tmp_path, complete=False)
+
+    assert np.allclose(module.extract(ctx, 'S(0,0)'), [0.10, 0.50, 0.90])
+    with pytest.raises(ValueError, match='S\\(0,0\\)_real'):
+        module.extract(ctx, 'S(0,0)_real')
 
 
 # --------------------------------------------------------------------------- #
@@ -1332,6 +1448,52 @@ def test_geant4_extract(tmp_path):
     assert module.extract(ctx, ['edep', 'total']) == pytest.approx(5.0)
     # 'scoring' is a back-compat alias for the dose grid.
     assert module.extract(ctx, ['scoring', 'total']) == pytest.approx(8.0)
+
+
+def test_geant4_mapping_and_list_forms_agree(tmp_path):
+    """The mapping form the shipped examples now use returns exactly what the
+    positional list returned, for every (section, entry) pair.
+
+    Unlike acdtool's list form this one is not deprecated — a Geant4 spec is a
+    (grid, reduction) pair with no index axis, so the list expresses everything
+    the mapping does — and the test asserts that neither form warns."""
+    wd = str(tmp_path / 'mod')
+    m_input, m_psrc = _stage_geant4(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: m_psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': m_input})
+    module.run(ctx)
+
+    pairs = [(s, e) for s in ('dose', 'edep', 'scoring')
+             for e in ('total', 'peak', 'peak_index')]
+    for section, entry in pairs:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            listed = module.extract(ctx, [section, entry])
+            mapped = module.extract(
+                ctx, {'section': section, 'quantity': entry})
+        assert mapped == listed, (section, entry)
+        assert not [w for w in caught
+                    if issubclass(w.category, DeprecationWarning)]
+    assert len(pairs) == 9
+
+
+def test_geant4_mapping_form_without_a_section_names_the_sections(tmp_path):
+    """A mapping missing its 'section:' raises naming the scoring grids, rather
+    than falling through to the NaN a malformed *list* still returns for
+    back-compat."""
+    wd = str(tmp_path / 'mod')
+    m_input, m_psrc = _stage_geant4(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: m_psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': m_input})
+    module.run(ctx)
+
+    with pytest.raises(ValueError, match="'dose'"):
+        module.extract(ctx, {'quantity': 'total'})
+    assert np.isnan(module.extract(ctx, ['dose']))     # unchanged list behavior
 
 
 # --------------------------------------------------------------------------- #

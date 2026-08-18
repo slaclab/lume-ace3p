@@ -55,7 +55,9 @@ from lume_ace3p.acdtool import (
     MODE_TABLE, SECTIONS, SIGNAL_COLUMNS, SURFACE, field_sections,
     parse_column_file, read_mode_table, read_scaling, split_output_sections,
 )
-from lume_ace3p.ace3p import S3P, parse_ace3p, parse_wakefield
+from lume_ace3p.ace3p import (
+    S3P, S3POutputWarning, parse_ace3p, parse_wakefield,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, 'fixtures', 'acdtool')
@@ -768,6 +770,48 @@ def test_run_infers_postprocess_rf_from_extension(tmp_path, monkeypatch):
     assert commands[0].endswith('_copy')
 
 
+def test_default_input_is_generated_by_the_installed_tool(tmp_path, monkeypatch):
+    """With no ``input:`` at all, ``acdtool postprocess rf`` is run with no
+    arguments so the *installed build* writes its own ``sample.rfpost`` template,
+    and that is adopted as the run's input.
+
+    The block set varies by build -- the tutorial template ships three blocks the
+    reference dropped and the reference documents five the template lacks -- so a
+    Python copy of the format is a copy of one build's format. Here the fake tool
+    writes a sample with a block the hardcoded fallback does not have, which is
+    what distinguishes the two sources."""
+    sample = ('RFField\n{\n   ResultDir   = s3p_results\n   ModeID      = 0\n}\n'
+              'powerThroughSurface\n{\n   ionoff      = 1\n   surfaceID   = 6\n}\n')
+
+    def fake_run(cmd, **kwargs):
+        assert cmd.endswith('acdtool postprocess rf'), cmd
+        with open(os.path.join(kwargs['cwd'], 'sample.rfpost'), 'w') as f:
+            f.write(sample)
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    acd = Acdtool(None, workdir=str(tmp_path))
+
+    assert set(acd.input_data) == {'RFField', 'powerThroughSurface'}
+    assert acd.input_data['RFField']['ResultDir'] == 's3p_results'
+    # The generated template is adopted, but the file the run writes is still the
+    # module's own default name, so nothing clobbers the tool's sample.
+    assert acd.input_file == 'default_input.rfpost'
+
+
+def test_default_input_falls_back_when_no_tool_writes_a_sample(tmp_path,
+                                                               monkeypatch):
+    """No binary (or a build that writes no sample) falls through to the
+    hardcoded 2-block template rather than failing the run -- which is what keeps
+    a machine with no ACE3P environment working."""
+    _capture_run(monkeypatch)          # runs nothing, writes no sample.rfpost
+
+    acd = Acdtool(None, workdir=str(tmp_path))
+
+    assert set(acd.input_data) == {'RFField', 'RoverQ'}
+    assert acd.input_data['RFField']['ResultDir'] == 'omega3p_results'
+    assert not os.path.exists(os.path.join(str(tmp_path), 'sample.rfpost'))
+
+
 def test_defect4_non_srun_caller_gets_a_runnable_command(tmp_path, monkeypatch):
     """DEFECT 4, **fixed in Phase 2** (inverted).
 
@@ -1047,7 +1091,7 @@ def test_omega3p_top_level_order_differs_between_runs():
 
 
 # --------------------------------------------------------------------------- #
-# S3P output -- the Phase 5 starting point
+# S3P output (Phase 5)
 # --------------------------------------------------------------------------- #
 
 
@@ -1072,9 +1116,13 @@ def _s3p(tmp_path, results_dir='s3p_results', files=None, override=None,
     return s3p
 
 
+S_NAMES = ['S({},{})'.format(i, j) for i in range(4) for j in range(4)]
+
+
 def test_s3p_magnitudes_from_real_output(tmp_path):
     """Phase 5 adds complex data under new keys; these magnitudes must not
-    move -- the baselines depend on them."""
+    move -- the baselines depend on them. Values pinned before Phase 5 ran, and
+    unchanged by it."""
     s3p = _s3p(tmp_path)
 
     assert len(s3p.output_data['Frequency']) == 13
@@ -1090,25 +1138,111 @@ def test_s3p_magnitudes_from_real_output(tmp_path):
         'Port': '8', 'Mode': '1', 'Type': 'TE', 'Cutoff': 13115500000.0}
 
 
-def test_s3p_ignores_sparameter_and_portref_files(tmp_path):
-    """Only Reflection.out is read. SParameter.out (the same matrix with phase)
-    and PortRef*.out (port mode profiles) sit unread next to it -- Phase 5."""
+def test_s3p_reads_sparameter_and_portref_files(tmp_path):
+    """PHASE 5, inverting ``test_s3p_ignores_sparameter_and_portref_files``:
+    all three files in the results directory are read now. The magnitudes keep
+    their own ``S(m,n)`` keys, the complex form arrives under three new suffixes,
+    and each port mode profile arrives under its file's stem."""
     s3p = _s3p(tmp_path)
-    expected = {'IndexMap', 'Frequency'} | {
-        'S({},{})'.format(i, j) for i in range(4) for j in range(4)}
+
+    expected = {'IndexMap', 'Frequency', 'PortRef7_0'}
+    expected |= set(S_NAMES)
+    for name in S_NAMES:
+        expected |= {name + '_real', name + '_imag', name + '_phase_deg'}
     assert set(s3p.output_data) == expected
 
 
-def test_s3p_phase_is_recoverable_from_the_unread_file():
-    """Motivation for Phase 5, read straight off the fixture: SParameter.out
-    holds (real, imag) whose magnitude matches Reflection.out. Nothing in src/
-    reads this yet."""
+def test_s3p_complex_magnitudes_cross_check_the_reflection_file(tmp_path):
+    """PHASE 5's load-bearing test, replacing
+    ``test_s3p_phase_is_recoverable_from_the_unread_file``.
+
+    Neither file is documented anywhere (the S3P reference lists no output files
+    at all), so ``abs(S_complex) == S_magnitude`` across the whole fixture is the
+    only way to confirm the two are read consistently -- it catches a transposed
+    table, a column-name mismatch and a frequency misalignment at once. The
+    fixture carries 9 significant digits, which sets the tolerance."""
+    s3p = _s3p(tmp_path)
+    data = s3p.output_data
+
+    checked = 0
+    for name in S_NAMES:
+        for real, imag, magnitude in zip(data[name + '_real'],
+                                         data[name + '_imag'], data[name]):
+            assert abs(complex(real, imag)) == pytest.approx(magnitude, rel=1e-7)
+            checked += 1
+    assert checked == 16 * 13          # every S-parameter at every frequency
+
+
+def test_s3p_phase_is_read_and_is_not_all_zero(tmp_path):
+    """The point of Phase 5: phase was being discarded, and now is not. Pinned
+    on ``S(0,2)``, whose phase sweeps through most of a turn across the scan --
+    an assertion that a real/imag pair silently read as (magnitude, 0) fails."""
+    s3p = _s3p(tmp_path)
+    data = s3p.output_data
+
+    # First row of SParameter.out: S(0,0) = ( 8.74038681e-03,  3.11029869e-02).
+    assert data['S(0,0)_real'][0] == pytest.approx(8.74038681e-03)
+    assert data['S(0,0)_imag'][0] == pytest.approx(3.11029869e-02)
+    assert data['S(0,0)_phase_deg'][0] == pytest.approx(74.3039, abs=1e-3)
+
+    # The transmission term rotates by more than 180 deg over the scan, so the
+    # phase column carries information no magnitude column can.
+    phases = list(data['S(0,2)_phase_deg'])
+    assert max(phases) - min(phases) > 180.0
+    assert all(-180.0 <= phase <= 180.0 for phase in phases)
+
+
+def test_s3p_port_mode_profile_columns(tmp_path):
+    """PHASE 5: ``PortRef<n>_<m>.out`` is a position-indexed column table under a
+    ``%``-commented header -- the one ACE3P output that does not comment with
+    ``#``, which is why ``parse_column_file`` accepts both markers."""
+    s3p = _s3p(tmp_path)
+    profile = s3p.output_data['PortRef7_0']
+
+    assert list(profile) == ['x', 'y', 'Ex', 'Ey', 'Hx', 'Hy']
+    assert all(len(column) == 58 for column in profile.values())
+    assert profile['x'][0] == pytest.approx(1.675111905403e-03)
+    assert profile['Hy'][0] == pytest.approx(4.401511941919e+00)
+    # Not frequency-indexed: 58 positions against a 13-point scan. This is why
+    # the profiles are field artifacts rather than table columns.
+    assert len(profile['x']) != len(s3p.output_data['Frequency'])
+
+
+def test_s3p_without_sparameter_file_warns_and_still_parses(tmp_path):
+    """PHASE 5: an older ACE3P build writes no ``SParameter.out``. That is a
+    warning naming what is unavailable, not a failure -- the magnitudes alone are
+    exactly what this parser returned before Phase 5."""
+    with pytest.warns(S3POutputWarning, match='SParameter.out'):
+        s3p = _s3p(tmp_path, files=['Reflection.out'])
+
+    assert s3p.output_data['S(0,0)'][0] == 0.0323077414
+    assert not [key for key in s3p.output_data if key.endswith('_phase_deg')]
+
+
+def test_s3p_mismatched_complex_scan_is_dropped_not_misaligned(tmp_path):
+    """PHASE 5: if the two files disagree on the frequency scan, the complex data
+    is dropped with a warning rather than zipped against the wrong magnitudes.
+    Silently misaligned phase would be worse than absent phase."""
+    workdir = str(tmp_path)
+    target = os.path.join(workdir, 's3p_results')
+    os.makedirs(target, exist_ok=True)
     src = os.path.join(SOLVER_OUT, 's3p_90DegreeBend')
+    shutil.copy(os.path.join(src, 'Reflection.out'), target)
     with open(os.path.join(src, 'SParameter.out')) as f:
-        row = [ln for ln in f if not ln.startswith('#')][0]
-    assert row.split()[0] == '9.42400000e+09'
-    real, imag = 8.74038681e-03, 3.11029869e-02      # S(0,0) at that frequency
-    assert abs(complex(real, imag)) == pytest.approx(0.0323077414, rel=1e-8)
+        lines = f.readlines()
+    with open(os.path.join(target, 'SParameter.out'), 'w') as f:
+        f.writelines(lines[:-4])           # a scan cut short mid-run
+    input_path = os.path.join(workdir, 'dummy.s3p')
+    with open(input_path, 'w') as f:
+        f.write('')
+
+    s3p = S3P(input_path, workdir=workdir)
+    with pytest.warns(S3POutputWarning, match='not the same scan'):
+        s3p.output_parser()
+
+    assert len(s3p.output_data['Frequency']) == 13
+    assert s3p.output_data['S(0,0)'][0] == 0.0323077414
+    assert 'S(0,0)_real' not in s3p.output_data
 
 
 def test_s3p_default_results_dir_is_s3p_results(tmp_path):

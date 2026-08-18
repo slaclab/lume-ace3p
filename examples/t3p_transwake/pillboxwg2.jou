@@ -1,0 +1,61 @@
+reset
+
+##generating a pillbox at S-band
+#{fac=0.5}
+#{cell_length=0.1*fac}
+#{cell_radius=0.10*fac}
+#{iris_radius=0.025}
+###{iris_rounding=0.0125}
+
+create Cylinder height {cell_length} radius {cell_radius} 
+create Cylinder height {3*cell_length} radius {iris_radius} 
+unite body all
+compress ids
+###modify curve 5 6 blend radius {iris_rounding}
+
+##adding the WG
+#{a=0.165*fac}
+##{b=0.083*fac}
+#{b=0.08*fac}
+#{wg_height=0.1*fac}
+#{slot_width=0.12*fac}
+#{slot_length=b}
+#{slot_height=0.00*fac}
+#{slot_rounding1=0.004*fac}
+#{slot_rounding2=0.004*fac}
+
+brick x {slot_width} y {2*slot_height+2*cell_radius} z {slot_length}
+unite body all
+compress ids
+
+brick x {a} y {wg_height} z {b}
+body 2 copy
+move body 2 y {cell_radius+slot_height/2+wg_height/2}
+move body 3 y {-(cell_radius+slot_height/2+wg_height/2)}
+unite body all
+compress ids
+
+webcut body 1 all plane with xplane
+del body 2
+compress ids
+
+##modify curve 7 blend radius {slot_rounding1}
+##modify curve 1 blend radius {slot_rounding2}
+
+vol all scheme tetmesh
+volume all size {0.00625}
+mesh volume all
+block 1 vol all
+quality vol all
+
+### setup sideset
+sideset 2 surface 7
+sideset 3 surface 20
+sideset 4 surface 15
+sideset 5 surface 11 17
+sideset 6 surface all except 7 20 15 11 17
+
+block all element type tetra10
+###transform mesh output scale 0.001
+export genesis "pillboxwg2.gen" overwrite
+

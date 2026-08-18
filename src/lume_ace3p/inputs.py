@@ -307,7 +307,14 @@ def _extract_nested_block(text, path):
             continue
         # Target reached — return its de-indented body and the remainder.
         pad = min(indents) if indents else 0
-        block = '\n'.join(l[pad:] if len(l) >= pad else l for l in body_lines)
+        # De-indent by the body's own indent, but only lines that actually carry
+        # it. The block span runs to the next *non-comment* line at or above the
+        # header's indent (comments are skipped when looking for the end), so it
+        # can contain a column-0 comment belonging to the following top-level
+        # key -- and slicing `pad` characters off that would eat its '#' and turn
+        # a comment into a broken YAML key.
+        block = '\n'.join(l[pad:] if _indent(l) >= pad else l
+                          for l in body_lines)
         remainder = '\n'.join(lines[:header_idx] + lines[body_hi:])
         return block, remainder
     return None, text

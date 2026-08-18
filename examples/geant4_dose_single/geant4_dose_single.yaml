@@ -46,7 +46,11 @@ mode :
   type : single
   output_file : 'dose_single_output.txt'
 
+# 'section:' names the scoring grid ('dose' reads output_dose, 'edep' reads
+# output_edep) and 'quantity:' the reduction over its bins ('total', 'peak', or
+# 'peak_index'). Naming a section is what routes the spec to the geant4 module,
+# so 'module: geant4' is optional here.
 output_parameters :
-  'total_dose' : ['dose', 'total']
-  'peak_dose'  : ['dose', 'peak']
-  'total_edep' : ['edep', 'total']
+  'total_dose' : {module: geant4, section: dose, quantity: total}
+  'peak_dose'  : {module: geant4, section: dose, quantity: peak}
+  'total_edep' : {module: geant4, section: edep, quantity: total}

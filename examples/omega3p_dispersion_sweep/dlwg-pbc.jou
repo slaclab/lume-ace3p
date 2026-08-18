@@ -1,0 +1,69 @@
+reset
+
+## One period of a detuned-structure (DS) disk-loaded waveguide cell, quarter
+## model, meshed for a periodic-boundary (PBC) eigensolve.
+##
+## Adapted from the ACE3P tutorial 'omega3p/dlwg-pbc' example, which splits this
+## into step1-Make-DS-cell.jou (build the cell, export three .sat models) and
+## step2a-pbc-mesh_1fourth.jou (import the quarter model, mesh it, set sidesets,
+## export pbc-4.gen). LUME-ACE3P plays ONE journal per cubit module, so the two
+## are joined here, the ACIS round-trip is dropped, and only the quarter model
+## the eigensolve uses is built (the tutorial's full and eighth models are not).
+## The 'compress ids' before the mesh half is what keeps the surface, curve and
+## vertex IDs it references valid: it renumbers the surviving entities
+## contiguously, which is the numbering an export/import pair also produces.
+
+## --- geometry (was step1-Make-DS-cell.jou) --------------------------------- #
+
+#{a         =  4.54700   }
+#{b         = 11.10551   }
+#{t         =  3.90124   }
+#{anose     =  2.39936   }
+#{cell_height = 10.93431}
+
+cylinder radius {b} height {cell_height - t}
+cylinder radius {a} height {cell_height}
+unite all
+compress ids
+
+modify curve 6 5 blend radius {0.5*t}
+
+## quarter model
+webcut body all plane xplane
+del body 2
+compress ids
+webcut body all plane yplane
+del body 1
+compress ids
+
+## --- mesh (was step2a-pbc-mesh_1fourth.jou) -------------------------------- #
+
+volume 1 scheme tetmesh
+
+volume 1 size 2.0
+
+## nose
+surface 5 6 size 1.
+## b
+surface 9   size 1.
+
+mesh surface 2
+
+## The periodic master/slave surfaces (sidesets 3 and 4) must carry IDENTICAL
+## meshes for Omega3P's Periodic_M / Periodic_S boundary pair, so surface 4's
+## mesh is copied from surface 2 rather than generated independently.
+copy Mesh Surface 2 Onto Surface 4 source curve 10 target curve 17 source vertex 9 target vertex 10
+
+mesh volume 1
+
+sideset 3 surface 2
+sideset 4 surface 4
+sideset 1 surface 3
+sideset 2 surface 1
+sideset 6 surface all except 2 4 3 1
+
+block 1 vol all
+block 1 element type tetra10
+transform mesh output scale 0.001
+
+export genesis "pbc-4.gen" overwrite

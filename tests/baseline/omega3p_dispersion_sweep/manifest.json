@@ -1,0 +1,13 @@
+{
+  "checkable": "NUMERIC: the swept ACE3P leaf Theta (the periodic-boundary phase advance), which is the whole input grid -- this is the one example with no cubit axis at all. f and Q are NaN without a solver -> reachability-only. Also pins that the dry-run table stays WIDE (no ModeID column): the mode count is a result of the eigensolve, so Omega3P returns no field index until it has run.",
+  "digests": {},
+  "files": {
+    "dispersion_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "dispersion_sweep_output.txt"
+    }
+  },
+  "frozen": "Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "sweep",
+  "yaml": "omega3p_dispersion_sweep.yaml"
+}

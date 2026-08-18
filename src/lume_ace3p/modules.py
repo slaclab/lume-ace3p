@@ -520,12 +520,20 @@ class S3PModule(_SolverModule):
     def extract(self, ctx, spec):
         """Return an S-parameter quantity from the S3P solution.
 
+        The quantity is any frequency-indexed key
+        :meth:`lume_ace3p.ace3p.S3P.output_parser` produces — the magnitude
+        ``'S(0,0)'``, or its complex form ``'S(0,0)_real'`` / ``'_imag'`` /
+        ``'_phase_deg'``, or ``'Frequency'`` itself.
+
         ``spec`` may be:
           * a string ``'S(0,0)'`` — the full frequency-indexed array,
           * a single-element list ``['S(0,0)']`` — same, first element used,
           * a mapping ``{'quantity': 'S(0,0)', 'at': {'frequency': f}}`` — the
             scalar value at frequency ``f`` (the objective form the Xopt driver
             needs).
+
+        The port mode profiles and the ``IndexMap`` are *not* extractable: they
+        are not indexed by frequency, so they come back through :meth:`field`.
         """
         solver = self._solver
         if solver is None:
@@ -538,6 +546,15 @@ class S3PModule(_SolverModule):
             raise ValueError("Unknown section name '" + str(quantity)
                              + "' in output dict.")
         values = data[quantity]
+        if isinstance(values, dict):
+            # A port mode profile (PortRef<n>_<m>.out) or the IndexMap: indexed by
+            # position / by S-matrix index, not by frequency, so it cannot be a
+            # column of this module's table. Name the route that does return it.
+            raise ValueError(
+                "'" + str(quantity) + "' is not a frequency-indexed S3P "
+                "quantity (it holds " + str(sorted(values)) + "), so it is not "
+                "a result-table column. It is returned as a field artifact by "
+                "this module's field(), alongside the full spectrum.")
         if frequency is None:
             return values
         freqs = list(data['Frequency'])
@@ -569,13 +586,21 @@ class S3PModule(_SolverModule):
         return 'Frequency', np.asarray(solver.output_data['Frequency'])
 
     def field(self, ctx):
-        """Return the full S3P spectrum (``{IndexMap, Frequency, S(m,n)...}``)
-        for the just-run evaluation, or ``None`` under dry-run.
+        """Return the full S3P spectrum for the just-run evaluation, or ``None``
+        under dry-run: ``{IndexMap, Frequency, S(m,n), S(m,n)_real,
+        S(m,n)_imag, S(m,n)_phase_deg, PortRef<n>_<m>: {x, y, Ex, Ey, Hx, Hy}}``.
 
         This is the structured field artifact for a single point. In a sweep,
         S3P goes long-format (its :meth:`field_index` puts one row per
         frequency), so this is used only when a caller wants to persist the raw
-        spectrum for a row rather than explode it."""
+        spectrum for a row rather than explode it.
+
+        The port mode profiles ride here and *only* here — they are indexed by
+        position rather than by frequency, so they are field artifacts by the
+        same rule that keeps acdtool's curve files out of the table (design
+        decision 4 of ``docs/acdtool_rework_plan.md``). They survive
+        :func:`lume_ace3p.results.save_field` as nested dicts, the way
+        ``IndexMap`` already does."""
         solver = self._solver
         if solver is None:
             return None
@@ -1409,10 +1434,42 @@ class Geant4Module(Module):
         from lume_ace3p.surrogate_data import read_dose_file
         return read_dose_file(os.path.join(ctx.workdir, filename))
 
+    # The scoring grids this module can be asked for. ``scoring`` is a
+    # back-compat alias for ``dose``; the router in workflow_graph keys on this
+    # set, so a new grid needs adding in one place only.
+    SECTIONS = frozenset({'dose', 'edep', 'scoring'})
+
+    @staticmethod
+    def _parse_spec(spec):
+        """Return ``(section, entry)`` for either spec form.
+
+        The **mapping form** is the target, matching every other module::
+
+            'total_dose' : {module: geant4, section: dose, quantity: total}
+
+        The **positional form** ``['dose', 'total']`` is its alias. Unlike
+        acdtool's list form it is *not* deprecated: a Geant4 spec is a
+        ``(grid, reduction)`` pair with no index axis, so the list expresses
+        everything the mapping does and nothing is lost by keeping it. The
+        shipped examples use the mapping for consistency with the rest of
+        ``output_parameters``.
+
+        Returns ``(None, None)`` for a spec of neither shape, which
+        :meth:`extract` reports as ``NaN`` the way it always has."""
+        if isinstance(spec, dict):
+            entry = spec.get('quantity')
+            if entry is None:
+                entry = spec.get('entry')          # positional-alias spelling
+            return spec.get('section'), entry
+        if isinstance(spec, (list, tuple)) and len(spec) >= 2:
+            return spec[0], spec[1]
+        return None, None
+
     def extract(self, ctx, spec):
         """Extract a scalar from the Geant4 dose/edep scoring output.
 
-        ``spec`` is ``[section, entry]`` with section in {dose, edep, scoring}
+        ``spec`` is ``{section: dose, quantity: total}`` or its positional alias
+        ``['dose', 'total']``, with section in {dose, edep, scoring}
         (``scoring`` is a back-compat alias for dose) and entry in
         {total, peak, peak_index}."""
         files = self._output_files()
@@ -1421,9 +1478,15 @@ class Geant4Module(Module):
             'edep': self._read_scoring_output(ctx, files['edep']),
         }
         grids['scoring'] = grids['dose']
-        if not isinstance(spec, list) or len(spec) < 2:
+        section, entry = self._parse_spec(spec)
+        if section is None:
+            if isinstance(spec, dict):
+                raise ValueError(
+                    "a geant4 output spec needs a 'section' naming the scoring "
+                    "grid and a 'quantity' naming the reduction, e.g. "
+                    "{module: geant4, section: dose, quantity: total}. Sections: "
+                    + str(sorted(self.SECTIONS)) + '.')
             return float('nan')
-        section, entry = spec[0], spec[1]
         if section not in grids:
             raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
         scoring = grids[section]

@@ -1,5 +1,8 @@
-import os, shutil
+import glob
+import os, re, shutil
 import subprocess
+import warnings
+
 import numpy as np
 
 from lume.base import CommandWrapper
@@ -477,6 +480,14 @@ def parse_omega3p_output(path):
     return data
 
 
+class S3POutputWarning(UserWarning):
+    """Raised when an S3P results directory is readable but incomplete — an
+    older build that wrote no ``SParameter.out``, or a complex table that does
+    not line up with the magnitudes. The magnitudes are still returned, so this
+    warns rather than raising (mirroring
+    :class:`lume_ace3p.acdtool.AcdtoolOutputWarning`)."""
+
+
 class S3P(ACE3P):
     """The ACE3P S-parameter solver.
 
@@ -486,6 +497,17 @@ class S3P(ACE3P):
     default and a module-level ``results_dir:`` is the supported override; the
     input-tree ``JobName`` lookup :meth:`ACE3P.job_name` also consults is kept
     for symmetry with :class:`T3P` and is unverified against a real run.
+
+    The same silence covers the *formats*: neither ``Reflection.out`` nor its
+    siblings ``SParameter.out`` (the same matrix with phase) and
+    ``PortRef<n>_<m>.out`` (port mode field profiles) is documented anywhere, so
+    the frozen ``s3p/90DegreeBend`` fixtures under
+    ``tests/fixtures/acdtool/solver_outputs`` are the only specification of them
+    this codebase has. That is why :func:`parse_sparameters` reads the column
+    names out of the file's own header row rather than trusting a column order,
+    and why the ``abs(S_complex) == S_magnitude`` cross-check in the tests is
+    load-bearing — it is the only way to confirm the two files are read
+    consistently.
     """
 
     module_name = 's3p'
@@ -497,45 +519,164 @@ class S3P(ACE3P):
         self.output_file = 's3p.out'
 
     def output_parser(self):
+        """Read the S-parameters and the port mode profiles out of the results
+        directory into ``output_data``:
+
+        * ``IndexMap`` — port / mode / type / cutoff per S-matrix index;
+        * ``Frequency`` — the scan, which every S-parameter array aligns to;
+        * ``S(m,n)`` — the magnitude |S|, from ``Reflection.out``. **Unchanged**
+          by Phase 5: this is the key the shipped examples and the frozen
+          baselines use, and it is not redefined;
+        * ``S(m,n)_real`` / ``S(m,n)_imag`` / ``S(m,n)_phase_deg`` — the complex
+          S-parameter from ``SParameter.out``, which this parser used to discard
+          entirely. The magnitude keeps its own key rather than becoming complex,
+          so every table column stays real-valued and plottable — the same split
+          :func:`parse_omega3p_output` gives a complex eigenvalue;
+        * one ``{column: array}`` dict per ``PortRef<n>_<m>.out``, keyed by the
+          file's stem. These are indexed by *position*, not by frequency, so they
+          reach a caller through
+          :meth:`lume_ace3p.modules.S3PModule.field` and are never result-table
+          columns.
+
+        A missing ``Reflection.out`` still raises — a run that did not write it
+        produced nothing. A missing ``SParameter.out`` only warns
+        (:class:`S3POutputWarning`): older ACE3P builds do not write one, and the
+        magnitudes alone are exactly what this parser returned before.
+        """
         self.output_data = {}
-        path = os.path.join(self.workdir, self.results_dir(), 'Reflection.out')
-        with open(path) as file:
-            lines = file.readlines()
-        for ind in range(len(lines)):
-            if lines[ind].startswith('#Index'):
-                indrow = ind
-            if lines[ind].startswith('#Frequency'):
-                freqrow = ind
-                break
-        self.output_data['IndexMap'] = {}
-        for row in lines[indrow+1:freqrow]:
-            id = row.strip('#').split()[0]
-            self.output_data['IndexMap'][id] = {}
-            self.output_data['IndexMap'][id]['Port'] = row.split('Port')[1].split()[0].strip(',')
-            self.output_data['IndexMap'][id]['Mode'] = row.split('Mode')[1].split()[0].strip(',')
-            self.output_data['IndexMap'][id]['Type'] = row.split('Type:')[1].split()[0].strip('(')
-            self.output_data['IndexMap'][id]['Cutoff'] = eval(row.split('cutoff:')[1].split('Hz')[0].strip())
-        frequency= []
-        sparameters = []
-        for row in lines[freqrow+1::]:
-            rowlist = row.split()
-            frequency.append(eval(rowlist[0]))
-            sparameter = []
-            for entry in rowlist[1::]:
-                sparameter.append(eval(entry))
-            sparameters.append(sparameter)
-        sparameters = np.array(sparameters).transpose()
-        self.output_data['Frequency'] = np.array(frequency)
-        num_ids = len(self.output_data['IndexMap'].keys())
-        for id1 in range(num_ids):
-            for id2 in range(num_ids):
-                sname = 'S(' + str(id1) + ',' + str(id2) + ')'
-                self.output_data[sname] = sparameters[id1*num_ids+id2]
+        results = os.path.join(self.workdir, self.results_dir())
+        index_map, frequency, magnitudes = parse_sparameters(
+            os.path.join(results, 'Reflection.out'))
+        self.output_data['IndexMap'] = index_map
+        self.output_data['Frequency'] = frequency
+        self.output_data.update(magnitudes)
+        self._read_complex_sparameters(results, frequency)
+        self._read_port_profiles(results)
+
+    def _read_complex_sparameters(self, results, frequency):
+        """Add ``S(m,n)_real`` / ``_imag`` / ``_phase_deg`` from
+        ``SParameter.out``, or warn and leave the magnitudes standing alone."""
+        path = os.path.join(results, 'SParameter.out')
+        if not os.path.isfile(path):
+            warnings.warn(
+                "no 'SParameter.out' in " + results + ", so S-parameter phase "
+                "is unavailable and only the |S| magnitudes from "
+                "'Reflection.out' were read. Older ACE3P builds write no "
+                "complex S-parameters.", S3POutputWarning, stacklevel=3)
+            return
+        _, complex_frequency, columns = parse_sparameters(path)
+        if (complex_frequency.shape != np.asarray(frequency).shape
+                or not np.allclose(complex_frequency, frequency)):
+            warnings.warn(
+                "'SParameter.out' covers " + str(len(complex_frequency))
+                + " frequencies and 'Reflection.out' " + str(len(frequency))
+                + ", so they are not the same scan; the complex S-parameters "
+                "were dropped rather than misaligned with the magnitudes.",
+                S3POutputWarning, stacklevel=3)
+            return
+        for name, values in columns.items():
+            self.output_data[name + '_real'] = np.real(values)
+            self.output_data[name + '_imag'] = np.imag(values)
+            self.output_data[name + '_phase_deg'] = np.degrees(np.angle(values))
+
+    def _read_port_profiles(self, results):
+        """Add each ``PortRef<n>_<m>.out`` port mode field profile, keyed by the
+        file's stem (``PortRef7_0``). Columns ``x y Ex Ey Hx Hy`` under a
+        ``%``-commented header — read by :func:`parse_column_file`, the same
+        header-driven reader the acdtool curve blocks use."""
+        pattern = os.path.join(results, 'PortRef*_*.out')
+        for path in sorted(glob.glob(pattern)):
+            name = os.path.basename(path)[:-len('.out')]
+            self.output_data[name] = parse_column_file(path)
 
     def make_default_input(self):
         self.input_file = 's3p_input_file.s3p'
         with open(self.input_file, 'w') as f:
             pass
+
+
+# One '( real,  imag )' cell of SParameter.out. Reflection.out writes the same
+# matrix as plain floats, which is the only difference between the two files.
+_COMPLEX_CELL = re.compile(r'\(([^(),]*),([^(),]*)\)')
+
+
+def parse_sparameters(path):
+    """Parse an S3P S-parameter table into ``(index_map, frequency, columns)``.
+
+    Both tables S3P writes share one layout — an index-mapping block, a
+    ``#Frequency[Hz]`` header naming the columns, then one row per swept
+    frequency::
+
+        #Index mapping:
+        #          0 : Port 7, Mode 0, Type: TE (cutoff: 6.55719e+09 Hz)
+        #Frequency[Hz]          S(0,0)          S(0,1) ...
+        9.42400000e+09  3.23077414e-02  2.24462693e-04 ...
+
+    ``Reflection.out`` holds the magnitudes |S(m,n)| as one plain float per cell;
+    ``SParameter.out`` holds the same matrix as ``( real,  imag )`` pairs. The
+    cell form is the *only* difference, so one reader covers both: ``columns``
+    maps each header name to a real array for the first file and a **complex**
+    array for the second.
+
+    Column names come from the header row. That is a weaker assumption than the
+    ``id1 * n + id2`` position arithmetic this parser used before — it survives a
+    build that reorders or adds a column — but the rebuild stays as a fallback
+    for a file whose header names do not line up with its data rows. Neither file
+    is documented (see :class:`S3P`), so the layout above comes from the frozen
+    ``s3p/90DegreeBend`` fixtures.
+    """
+    with open(path) as file:
+        lines = file.readlines()
+
+    index_map = {}
+    names = None
+    frequency = []
+    rows = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith('#'):
+            body = text.lstrip('#').strip()
+            if body.startswith('Frequency'):
+                names = body.split()[1:]
+            elif 'Port' in body and 'Mode' in body:
+                index_map.update(_parse_index_map_entry(body))
+            continue
+        cells = _COMPLEX_CELL.findall(text)
+        if cells:
+            frequency.append(float(text.split('(', 1)[0]))
+            rows.append([complex(float(real), float(imag))
+                         for real, imag in cells])
+        else:
+            values = text.split()
+            frequency.append(float(values[0]))
+            rows.append([float(value) for value in values[1:]])
+
+    table = np.array(rows).transpose() if rows else np.zeros((0, 0))
+    if names is None or len(names) != len(table):
+        size = len(index_map)
+        names = ['S(' + str(id1) + ',' + str(id2) + ')'
+                 for id1 in range(size) for id2 in range(size)]
+    columns = {name: table[index] for index, name in enumerate(names)
+               if index < len(table)}
+    return index_map, np.array(frequency), columns
+
+
+def _parse_index_map_entry(body):
+    """One index-mapping line -> ``{id: {Port, Mode, Type, Cutoff}}``.
+
+    e.g. ``0 : Port 7, Mode 0, Type: TE (cutoff: 6.55719e+09 Hz)``. Driven by
+    substring search rather than one regex, so a build that spaces or punctuates
+    the line differently still reads — this is undocumented output, and the
+    tutorial files already differ in whether the ``Type`` is parenthesized.
+    """
+    entry = {'Port': body.split('Port')[1].split()[0].strip(','),
+             'Mode': body.split('Mode')[1].split()[0].strip(','),
+             'Type': body.split('Type:')[1].split()[0].strip('(')}
+    if 'cutoff:' in body:
+        entry['Cutoff'] = float(body.split('cutoff:')[1].split('Hz')[0].strip())
+    return {body.split()[0]: entry}
 
 
 class T3P(ACE3P):
@@ -667,6 +808,62 @@ def parse_wakefield(path):
         data[label] = table[index] if index < len(table) else np.array([])
     data.setdefault('WakeType', 'longitudinal')
     return data
+
+
+# Comment markers seen at the head of an ACE3P column table: acdtool's curve
+# files and T3P's wakefield use '#', S3P's PortRef<n>_<m>.out uses '%'.
+_COMMENT_CHARS = '#%'
+
+
+def parse_column_file(path, columns=None):
+    """Parse a ``#``- or ``%``-commented column table into ``{column: array}``.
+
+    The shape :func:`parse_wakefield` already handles, read the same way but
+    **driven by the header row rather than by an assumed filename pattern** —
+    which is what lets one reader cover all six acdtool curve blocks whose output
+    filenames follow six different schemes, plus ``postprocess track3p``'s ``en``
+    and S3P's ``PortRef<n>_<m>.out`` port mode profiles.
+
+    The column names are the *last* header line whose token count matches the
+    data rows: the curve files lead with a ``# 1 2 3 ...`` ordinal line and then
+    name the columns (``# x y z Ex Ey Ez Bx By Bz Sz``). A header line need not be
+    commented — ``postprocess track3p``'s ``en`` names its seven columns on a bare
+    first line — so any non-numeric line *before* the first data row counts as
+    one.
+
+    `columns` names them explicitly, for the files that carry **no** header at
+    all — ``postprocess coaxsignal``'s ``signal.out`` is three unlabeled columns
+    (:data:`lume_ace3p.acdtool.SIGNAL_COLUMNS`).
+
+    Lives here rather than in :mod:`lume_ace3p.acdtool`, where Phase 3 of
+    ``docs/acdtool_rework_plan.md`` first wrote it, because Phase 5 needs it for
+    S3P: the postprocessor may depend on the solver layer, not the other way
+    round. ``acdtool.parse_column_file`` re-exports it.
+    """
+    comments, rows = [], []
+    with open(path) as file:
+        for line in file:
+            text = line.strip()
+            if not text:
+                continue
+            if text[0] in _COMMENT_CHARS:
+                comments.append(text.lstrip(_COMMENT_CHARS).split())
+                continue
+            try:
+                rows.append([float(token.rstrip(',')) for token in text.split()])
+            except ValueError:
+                if not rows:
+                    comments.append(text.split())   # an uncommented header row
+                continue
+    width = max((len(row) for row in rows), default=0)
+    if columns is None:
+        columns = next((tokens for tokens in reversed(comments)
+                        if len(tokens) == width), None)
+    if columns is None:
+        columns = ['column' + str(i + 1) for i in range(width)]
+    table = np.array(rows).transpose() if rows else np.zeros((width, 0))
+    return {name: (table[i] if i < len(table) else np.array([]))
+            for i, name in enumerate(columns)}
 
 
 class Track3P(ACE3P):

@@ -1,0 +1,13 @@
+{
+  "checkable": "NUMERIC: the swept wdwt grid. Its real job is structural: this is the only chain with TWO index-axis producers (S3P Frequency, acdtool ModeID), so the table's Frequency column pins that DAG order resolves the collision in S3P's favour. S-parameters and m_factor are NaN without a solver -> reachability-only.",
+  "digests": {},
+  "files": {
+    "window_sweep_output.txt": {
+      "compare": "table",
+      "pattern": "window_sweep_output.txt"
+    }
+  },
+  "frozen": "Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "sweep",
+  "yaml": "s3p_window_rfpost.yaml"
+}
