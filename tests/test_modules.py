@@ -17,6 +17,7 @@ scoring files are pre-placed in the workdir.
 """
 
 import os
+import shutil
 import warnings
 
 import numpy as np
@@ -32,7 +33,10 @@ from lume_ace3p.modules import (
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
-from lume_ace3p.ace3p import Omega3P, S3P, S3POutputWarning, T3P, Section
+from lume_ace3p.ace3p import (
+    Omega3P, S3P, S3POutputWarning, T3P, T3POutputWarning, Section,
+)
+from lume_ace3p.workflow_graph import _infer_output_module
 from lume_ace3p.acdtool import (
     Acdtool, wired_commands, EM_SOLUTION as ACD_EM_SOLUTION,
     TD_SOLUTION as ACD_TD_SOLUTION,
@@ -792,6 +796,297 @@ def test_t3p_field_index_dry_run_sentinel(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# T3P multi-monitor extraction (t3p_monitor_plan.md, Phase 2)
+# --------------------------------------------------------------------------- #
+#
+# Driven against the *real* CW23 monitor fixtures frozen in that plan's Phase 0
+# rather than synthetic text, for the same reason the Omega3P and S3P sections
+# use real output: the series monitors are headerless, so a synthetic file would
+# be a copy of an assumption. Provenance is in
+# tests/fixtures/acdtool/SOURCES.md.
+
+T3P_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'fixtures', 'acdtool', 't3p_outputs')
+
+# The BPM run: five monitor types on one run, with a wake. Fixture -> the name
+# T3P wrote. coaxpoint.out is skipped (same shape as point.out) and the netCDF
+# Volume dumps are created empty, since nothing parses them.
+BPM_STAGED = {'BPM.point.out': 'point.out',
+              'BPM.port.out': 'port.out',
+              'BPM.modecoeff.out': 'modecoeff.out',
+              'BPM.Bunch0.out': 'Bunch0.out'}
+BPM_VOLUME = ['volumets_t000000000020ps.out', 'volumets_t000000000020ps.out.mod']
+
+# The SIBC run: three Power monitors and NO WakeField monitor -- the multi-
+# instance case, and the one that forces the 't' axis.
+SIBC_STAGED = [('SIBC.inputPower.out', 'inputPower.out'),
+               ('SIBC.wallossPower.out', 'wallossPower.out'),
+               # outputPower.out has the same two-column shape as its siblings,
+               # which is why SOURCES.md records it as deliberately not copied.
+               ('SIBC.wallossPower.out', 'outputPower.out')]
+SIBC_VOLUME = ['fieldts_t000000000500ps.out', 'fieldts_t000000000500ps.out.mod']
+
+
+def _monitor_module(tmp_path, input_fixture, staged=(), touch=(), wake=None):
+    """A :class:`T3PModule` whose solver has parsed a staged results directory
+    built from the real monitor fixtures. Returns ``(module, ctx)``."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    source = os.path.join(wd, input_fixture)
+    shutil.copy(os.path.join(T3P_FIXTURES, input_fixture), source)
+    results = os.path.join(wd, 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    for fixture, name in (staged.items() if hasattr(staged, 'items') else staged):
+        shutil.copy(os.path.join(T3P_FIXTURES, fixture),
+                    os.path.join(results, name))
+    for name in touch:
+        _write(os.path.join(results, name), '')
+    if wake is not None:
+        _write(os.path.join(results, 'wakefield.out'), wake)
+
+    solver = T3P(source, workdir=wd)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', T3POutputWarning)
+        solver.output_parser()
+    module = T3PModule({'input': input_fixture})
+    module._solver = solver
+    return module, RunContext(wd, paths=_paths())
+
+
+def test_t3p_extracts_three_power_monitors_by_name(tmp_path):
+    """The workflow this package could not express: in / out / wall-loss power on
+    one run, addressed by ``Name``. ``Type`` cannot address them — all three are
+    ``Power`` monitors."""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p', staged=SIBC_STAGED,
+                                  touch=SIBC_VOLUME)
+
+    powers = {name: module.extract(ctx, {'monitor': name, 'quantity': 'P'})
+              for name in ['inputPower', 'outputPower', 'wallossPower']}
+    assert set(powers) == {'inputPower', 'outputPower', 'wallossPower'}
+    for values in powers.values():
+        assert len(values) == 20
+    assert powers['inputPower'][0] == pytest.approx(-4.664513771111e-08)
+    # inputPower and wallossPower are genuinely different columns.
+    assert not np.allclose(powers['inputPower'], powers['wallossPower'])
+
+    # A scalar at one instant, the objective form an Xopt run needs. The time grid
+    # is a consequence of TimeStepping: DT, so the nearest sample is taken.
+    at_50ps = module.extract(ctx, {'monitor': 'inputPower', 'quantity': 'P',
+                                   'at': {'t': 5.0e-11}})
+    assert at_50ps == pytest.approx(powers['inputPower'][4])
+    assert module.extract(ctx, {'monitor': 'inputPower', 'quantity': 'P',
+                                'at': {'t': 4.7e-11}}) == pytest.approx(at_50ps)
+
+
+def test_t3p_bare_ambiguous_quantity_lists_the_candidates(tmp_path):
+    """Three monitors provide ``P``, so a bare ``quantity: P`` cannot be resolved.
+    It raises naming all three rather than picking the first."""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p', staged=SIBC_STAGED,
+                                  touch=SIBC_VOLUME)
+
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'quantity': 'P'})
+    message = str(excinfo.value)
+    assert "monitor: <name>" in message
+    for name in ['inputPower', 'outputPower', 'wallossPower']:
+        assert name in message
+
+
+def test_t3p_bare_quantity_resolves_when_only_one_monitor_provides_it(tmp_path):
+    """``monitor:`` is omittable when exactly one monitor answers — which is what
+    keeps every wakefield spec ever written working, and also covers a run with a
+    single power monitor."""
+    module, ctx = _monitor_module(
+        tmp_path, 'SIBC.t3p',
+        staged=[('SIBC.inputPower.out', 'inputPower.out')], touch=SIBC_VOLUME)
+
+    assert module.extract(ctx, {'quantity': 'P'})[0] == pytest.approx(
+        -4.664513771111e-08)
+    # ...and the module is still reachable by name.
+    assert np.allclose(module.extract(ctx, {'monitor': 'inputPower',
+                                           'quantity': 'P'}),
+                       module.extract(ctx, {'quantity': 'P'}))
+
+
+def test_t3p_axis_is_t_when_the_run_has_no_wake(tmp_path):
+    """A run with no ``WakeField`` monitor is indexed by time, so its power
+    columns are table columns rather than needing an ``at:``."""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p', staged=SIBC_STAGED,
+                                  touch=SIBC_VOLUME)
+
+    label, values = module.field_index(ctx)
+    assert label == 't'
+    assert len(values) == 20
+    assert values[0] == pytest.approx(1.0e-11)
+    # SIBC's DT is 10 ps.
+    assert np.allclose(np.diff(values), 1.0e-11)
+    # The full array aligns with the index, so no narrowing is required.
+    assert len(module.extract(ctx, {'monitor': 'inputPower',
+                                    'quantity': 'P'})) == len(values)
+
+
+def test_t3p_axis_is_s_when_a_wake_is_present(tmp_path):
+    """Design decision 2: ``s`` wins over ``t``. The BPM run has a wake *and*
+    Point/Power/ModeVoltage monitors on a 4001-step time grid; the table stays
+    ``s``-indexed, which is the tiebreak that keeps every baseline where it is."""
+    module, ctx = _monitor_module(tmp_path, 'BPM.t3p', staged=BPM_STAGED,
+                                  touch=BPM_VOLUME, wake=T3P_WAKEFIELD)
+
+    label, values = module.field_index(ctx)
+    assert label == 's'
+    assert np.allclose(values, [0.0, 0.1, 0.2])
+    # The legacy specs resolve to the wake monitor with no 'monitor:' key.
+    assert module.extract(ctx, 'loss_factor') == pytest.approx(
+        -3.88576373282202e-01)
+    assert np.allclose(module.extract(ctx, 'W'), [-1e-07, -2e-07, -3e-07])
+    # ...and so does naming the wake monitor explicitly.
+    assert module.extract(ctx, {'monitor': 'wakefield',
+                                'quantity': 'loss_factor'}) == pytest.approx(
+        -3.88576373282202e-01)
+
+
+def test_t3p_off_axis_monitor_must_be_narrowed_to_a_scalar(tmp_path):
+    """A ``Point`` monitor's 20 timesteps cannot be columns of a 3-row
+    ``s``-indexed table, so the array form raises naming both axes and the array
+    is reachable at one instant instead. Same rule ``AcdtoolModule`` applies to a
+    surface-indexed section on a ``ModeID``-indexed table."""
+    module, ctx = _monitor_module(tmp_path, 'BPM.t3p', staged=BPM_STAGED,
+                                  touch=BPM_VOLUME, wake=T3P_WAKEFIELD)
+
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'monitor': 'point', 'quantity': 'Ez'})
+    message = str(excinfo.value)
+    assert "at: {t: ...}" in message
+    assert "indexed by 's'" in message
+
+    # Narrowed, it is a perfectly good table column.
+    value = module.extract(ctx, {'monitor': 'point', 'quantity': 'Ez',
+                                 'at': {'t': 5.0e-13}})
+    assert value == pytest.approx(-1.087379539e-28)
+    assert np.ndim(value) == 0
+
+
+def test_t3p_volume_monitor_provides_no_quantity(tmp_path):
+    """Design decision 7: a ``Volume`` monitor dumps netCDF field snapshots, so
+    asking it for a quantity raises naming the reason — and names the files, which
+    is what it does carry."""
+    module, ctx = _monitor_module(tmp_path, 'BPM.t3p', staged=BPM_STAGED,
+                                  touch=BPM_VOLUME, wake=T3P_WAKEFIELD)
+
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'monitor': 'volume', 'quantity': 'Ez'})
+    message = str(excinfo.value)
+    assert 'netCDF' in message
+    assert 'volumets_t000000000020ps.out' in message
+
+
+def test_t3p_unknown_monitor_names_what_is_readable(tmp_path):
+    """Naming a monitor that did not write lists both what *is* readable and what
+    the input declared, so a typo and a failed monitor look different."""
+    module, ctx = _monitor_module(tmp_path, 'BPM.t3p', staged=BPM_STAGED,
+                                  touch=BPM_VOLUME, wake=T3P_WAKEFIELD)
+
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'monitor': 'coaxpoint', 'quantity': 'Ez'})
+    message = str(excinfo.value)
+    assert 'coaxpoint' in message          # declared in BPM.t3p, wrote nothing
+    assert 'modecoeff' in message          # ...unlike this one
+
+
+def test_t3p_wrong_quantity_on_a_named_monitor_lists_its_columns(tmp_path):
+    """Reporting from the data rather than from a hardcoded set — the same style
+    ``AcdtoolModule._value`` uses, and necessary for the same reason: a
+    ``Power`` monitor and a ``Point`` monitor answer to different names."""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p', staged=SIBC_STAGED,
+                                  touch=SIBC_VOLUME)
+
+    with pytest.raises(ValueError, match=r"reported \['P', 't'\]"):
+        module.extract(ctx, {'monitor': 'inputPower', 'quantity': 'Ez'})
+
+
+def test_t3p_stray_and_wrong_axis_at_keys_are_rejected(tmp_path):
+    """``at:`` narrows on ``s`` or ``t`` and nothing else, and a monitor takes only
+    its own axis — an ``at: {s: ...}`` on a power monitor is a spec error, not a
+    silently ignored key."""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p', staged=SIBC_STAGED,
+                                  touch=SIBC_VOLUME)
+
+    with pytest.raises(ValueError, match="narrows on"):
+        module.extract(ctx, {'monitor': 'inputPower', 'quantity': 'P',
+                             'at': {'mode': 0}})
+    with pytest.raises(ValueError, match=r"takes 'at: \{t: \.\.\.\}'"):
+        module.extract(ctx, {'monitor': 'inputPower', 'quantity': 'P',
+                             'at': {'s': 0.1}})
+
+
+def test_t3p_bunch0_is_addressable(tmp_path):
+    """``Bunch0.out`` is written by every run and declared by no monitor, so it has
+    no ``Type`` — but it is a ``t``-indexed series like any other and can be asked
+    for by name."""
+    module, ctx = _monitor_module(
+        tmp_path, 'SIBC.t3p', staged=[('BPM.Bunch0.out', 'Bunch0.out')],
+        touch=SIBC_VOLUME)
+
+    current = module.extract(ctx, {'monitor': 'Bunch0', 'quantity': 'I'})
+    assert len(current) == 20
+    assert current[0] == pytest.approx(1.03510387e-07)
+    # It is also the axis of last resort when no declared monitor wrote.
+    label, values = module.field_index(ctx)
+    assert label == 't'
+    assert values[0] == pytest.approx(5.0e-13)
+
+
+def test_t3p_field_carries_every_off_axis_series(tmp_path):
+    """The other half of design decision 2: nothing is discarded. The wake keys,
+    the three series monitors and the Volume filenames all ride in ``field()``,
+    and the nested dict round-trips through ``save_field`` the way S3P's
+    ``IndexMap`` does."""
+    module, ctx = _monitor_module(tmp_path, 'BPM.t3p', staged=BPM_STAGED,
+                                  touch=BPM_VOLUME, wake=T3P_WAKEFIELD)
+    field = module.field(ctx)
+
+    assert field['WakeType'] == 'longitudinal'
+    assert np.allclose(field['W'], [-1e-07, -2e-07, -3e-07])
+    assert sorted(field['Monitors']) == ['modecoeff', 'point', 'port', 'volume']
+    assert list(field['Bunch0']) == ['t', 'I']
+
+    handle = save_field(field, str(tmp_path / 'row0'))
+    loaded = load_field(handle)
+    assert loaded['WakeType'] == 'longitudinal'
+    assert np.allclose(loaded['s'], field['s'])
+    assert np.allclose(loaded['Monitors']['point']['Ez'],
+                       field['Monitors']['point']['Ez'])
+    assert loaded['Monitors']['volume']['Type'] == 'Volume'
+    assert list(loaded['Monitors']['volume']['files']) == sorted(BPM_VOLUME)
+    assert np.allclose(loaded['Bunch0']['I'], field['Bunch0']['I'])
+
+
+def test_t3p_field_index_is_none_when_nothing_was_read(tmp_path):
+    """A real run that produced no readable monitor output has no index axis at
+    all, so the table goes wide rather than getting a fabricated one-row ``s``.
+    (The dry-run sentinel is a different case — see
+    ``test_t3p_field_index_dry_run_sentinel``.)"""
+    module, ctx = _monitor_module(tmp_path, 'SIBC.t3p')
+    assert module._solver.output_data == {}
+    assert module.field_index(ctx) is None
+    assert module.field(ctx) is None
+
+
+def test_t3p_monitor_key_routes_without_naming_the_module():
+    """A ``monitor:`` key routes to ``t3p`` on its own, the way a ``section:`` key
+    routes to acdtool — so ``module: t3p`` need not be repeated. The monitor
+    *quantities* stay unroutable bare on purpose: ``'P'`` / ``'V'`` / ``'t'`` are
+    short and generic, so ``QUANTITIES`` is not widened."""
+    assert _infer_output_module({'monitor': 'inputPower', 'quantity': 'P'}) == 't3p'
+    assert _infer_output_module({'quantity': 'loss_factor'}) == 't3p'
+    assert _infer_output_module('kick_factor') == 't3p'
+    # Unchanged: a bare monitor quantity is not a T3P routing signal.
+    assert 'P' not in T3PModule.QUANTITIES
+    assert 't' not in T3PModule.QUANTITIES
+    assert _infer_output_module({'quantity': 'P'}) == 's3p'
+
+
+# --------------------------------------------------------------------------- #
 # Acdtool
 # --------------------------------------------------------------------------- #
 
@@ -1342,7 +1637,6 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
     # Ground-truth: direct wrapper.
     ref_wd = str(tmp_path / 'ref')
     os.makedirs(ref_wd)
-    import shutil
     shutil.copy(str(dump), ref_wd)
     ref = Particles('dump.txt', dict(params), output_file='particles.data',
                     workdir=ref_wd)

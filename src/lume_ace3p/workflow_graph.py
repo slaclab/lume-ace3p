@@ -81,11 +81,20 @@ def _infer_output_module(spec):
         total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
         ``geant4``,
       * ``'count'``/``'total_weight'`` -> ``particles``,
+      * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
+        key — -> ``t3p``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
         naming one / keyed ``at: {s: ...}`` -> ``t3p``.
 
     Note ``acdtool``'s ``kickFactor`` section and T3P's ``kick_factor`` quantity
     are distinct spellings on purpose, so the two never collide here.
+
+    T3P's *monitor* quantities (``'P'``, ``'V'``, ``'Ez'``, ``'t'``) are
+    deliberately **not** routable bare — they are short and generic, and ``'t'``
+    especially would be a trap for any future spec. A ``monitor:`` key routes them
+    instead, exactly as a ``section:`` key routes an acdtool or Geant4 spec:
+    naming the thing is itself the routing signal, so ``module: t3p`` need not be
+    repeated. Everything else about bare routing is untouched.
     """
     # Asked first, and without warning: this is the routing question ("is this
     # acdtool's?"), not the translation, so a deprecated list form must not warn
@@ -99,6 +108,10 @@ def _infer_output_module(spec):
         # not be repeated.
         if spec.get('section') in Geant4Module.SECTIONS:
             return 'geant4'
+        # A 'monitor:' names a T3P monitor and nothing else in the package uses
+        # the key, so it routes on its own.
+        if spec.get('monitor') is not None:
+            return 't3p'
         quantity = spec.get('quantity')
         at = spec.get('at') or {}
         if quantity in T3PModule.QUANTITIES or 's' in at:

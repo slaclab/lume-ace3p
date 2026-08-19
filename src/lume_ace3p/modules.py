@@ -31,7 +31,10 @@ import warnings
 import numpy as np
 
 from lume_ace3p.cubit import Cubit
-from lume_ace3p.ace3p import Omega3P, S3P, T3P
+# ALWAYS / MONITORS are the T3P monitor table; ace3p's own GRID shape constant is
+# deliberately NOT imported, since acdtool exports one of the same name and value
+# — T3PModule tests for a monitor's missing index axis instead.
+from lume_ace3p.ace3p import ALWAYS, MONITORS, Omega3P, S3P, T3P
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
     field_sections, mode_table_arrays, resolve_command, table_mode_ids,
@@ -614,6 +617,28 @@ class T3PModule(_SolverModule):
     Exposes the wakefield monitor's results the same way :class:`S3PModule`
     exposes S-parameters — a scalar figure of merit plus arrays over a shared
     index — except the index is the wake coordinate ``s`` rather than frequency.
+
+    A wake is only one of six things a T3P run can monitor, though, and since
+    ``docs/t3p_monitor_plan.md`` all of them are readable. That makes ``Name``
+    the selector::
+
+        output_parameters :
+          'k_loss' : {module: t3p, quantity: loss_factor}
+          'P_in'   : {module: t3p, monitor: inputPower,   quantity: P}
+          'P_wall' : {module: t3p, monitor: wallossPower, quantity: P}
+          'Ez_gap' : {module: t3p, monitor: point, quantity: Ez, at: {t: 1.0e-9}}
+
+    ``monitor:`` may be omitted whenever exactly one monitor provides the named
+    quantity — which is every wakefield spec ever written against this package,
+    so those keep working unchanged. Where several could answer,
+    :meth:`extract` raises listing them rather than picking one.
+
+    **One index axis per module, ``s`` winning over ``t``** (the rule
+    :class:`AcdtoolModule` applies to ``ModeID``). A run with both a ``WakeField``
+    and a ``Point`` monitor has two incompatible axes — 20-odd wake samples
+    against thousands of timesteps — so :meth:`field_index` picks one and
+    everything on the other axis must be narrowed to a scalar with ``at:``. The
+    full arrays are still there: they ride in :meth:`field`.
     """
 
     type = 't3p'
@@ -622,103 +647,253 @@ class T3PModule(_SolverModule):
     _label = 'T3P'
     _artifact = TD_SOLUTION
 
-    # Bare quantity names this module answers to, used both by ``extract`` and
-    # by the output-spec router in workflow_graph.
+    # Bare quantity names this module answers to, used both by ``extract`` and by
+    # the output-spec router in workflow_graph.
+    #
+    # **Deliberately not widened** for the monitor quantities ('P', 'V', 't',
+    # 'Ex'...): they are short and generic, 't' especially, and a bare 't' routing
+    # to t3p by name would be a trap for any future spec. The new quantities are
+    # reachable through 'module: t3p' or a 'monitor:' key, both of which route
+    # explicitly, so bare routing is left exactly as it was.
     QUANTITIES = frozenset({'loss_factor', 'kick_factor', 'W', 'I_bunch', 's'})
 
     # Extractable scalars -> the key ``parse_wakefield`` stores them under.
     _SCALARS = {'loss_factor': 'LossFactor', 'kick_factor': 'KickFactor'}
 
+    # The axes a T3P ``at:`` may narrow on: the wake coordinate and time.
+    _AXES = ('s', 't')
+
+    # Keys of a monitor entry that are metadata rather than extractable values.
+    _NOT_QUANTITIES = frozenset({'Type', 'files'})
+
     def extract(self, ctx, spec):
-        """Return a wakefield quantity from the T3P solution.
+        """Return one quantity from the T3P solution.
 
         ``spec`` may be:
-          * ``'loss_factor'`` / ``'kick_factor'`` — the scalar figure of merit,
-          * ``'W'`` / ``'I_bunch'`` / ``'s'`` — the full ``s``-indexed array,
-          * a single-element list wrapping either of the above,
-          * a mapping ``{'quantity': 'W', 'at': {'s': 0.05}}`` — the value at the
-            wake position nearest ``s`` (the objective form an Xopt run needs).
+
+        * ``'loss_factor'`` / ``'kick_factor'`` — the wake monitor's scalar figure
+          of merit,
+        * ``'W'`` / ``'I_bunch'`` / ``'s'`` — the full ``s``-indexed array,
+        * a single-element list wrapping either of the above,
+        * a mapping ``{'quantity': 'W', 'at': {'s': 0.05}}`` — the value at the
+          wake position nearest ``s`` (the objective form an Xopt run needs),
+        * a mapping naming a monitor, ``{'monitor': 'inputPower', 'quantity': 'P'}``
+          or ``{'monitor': 'point', 'quantity': 'Ez', 'at': {'t': 1.0e-9}}``.
+
+        Resolution order for the monitor: an explicit ``monitor:``; else the wake
+        monitor when the quantity is one of :data:`QUANTITIES`; else the unique
+        monitor whose type provides that quantity. An ambiguous bare quantity
+        raises listing the candidates, and an unknown one raises listing what each
+        monitor did report — the error style :meth:`AcdtoolModule._value` uses.
+
+        ``at:`` takes the **nearest** sample on the monitor's own axis, for both
+        ``s`` and ``t``: neither grid is something a user can name exactly, since
+        the time grid is a consequence of ``TimeStepping: DT`` and the wake grid of
+        that in turn. It is *required* for a monitor whose axis is not the one
+        :meth:`field_index` chose, because an off-axis array cannot be a column of
+        a table indexed on the other.
         """
         solver = self._solver
         if solver is None:
             # Dry-run / no solver: same NaN sentinel S3PModule returns.
             return np.array([float('nan')])
-        quantity, position = self._parse_spec(spec)
-        data = solver.output_data
-        # 's' rather than emptiness is the test for "there is a wake result":
-        # since Phase 1 of ``docs/t3p_monitor_plan.md``, output_data is populated
-        # by a Power/Point/ModeVoltage monitor whether or not the run declared a
-        # WakeField one. **Phase 2 supersedes this whole method**; the guard is
-        # here so the intermediate state raises the informative error rather than
-        # 'Unknown quantity' or, in ``field_index``, a bare KeyError.
-        if 's' not in data:
+        quantity, monitor, at = self._parse_spec(spec)
+        stray = sorted(set(at) - set(self._AXES))
+        if stray:
             raise ValueError(
-                f"no T3P wakefield results to extract '{quantity}' from. T3P "
-                "writes them only when the input file declares a WakeField "
-                "monitor, e.g.\n"
-                "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
-                f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
-                f"under {ctx.workdir}.")
+                "a t3p 'at:' narrows on " + str(list(self._AXES)) + ', not '
+                + str(stray) + '.')
+        name, entry, axis = self._resolve(ctx, solver, quantity, monitor)
 
-        if quantity in self._SCALARS:
+        if axis == 's' and quantity in self._SCALARS:
             key = self._SCALARS[quantity]
-            if key not in data:
+            if key not in entry:
                 # Longitudinal runs report a loss factor, transverse ones a kick
                 # factor. Name the one that IS present rather than return NaN.
-                present = [name for name, k in self._SCALARS.items() if k in data]
+                present = [q for q, k in self._SCALARS.items() if k in entry]
                 raise ValueError(
-                    f"this is a {data.get('WakeType', 'unknown')} T3P run, which "
+                    f"this is a {entry.get('WakeType', 'unknown')} T3P run, which "
                     f"reports {present} — not '{quantity}'. The wake type follows "
                     "from the WakeField monitor's contour and the beam offset in "
                     "the input file.")
-            return data[key]
+            return entry[key]
 
-        if quantity not in data:
-            raise ValueError("Unknown quantity '" + str(quantity)
-                             + "' in T3P output dict. Known quantities: "
-                             + str(sorted(self.QUANTITIES)) + ".")
-        values = data[quantity]
-        if position is None:
+        if quantity not in entry:
+            raise ValueError(
+                "T3P monitor '" + str(name) + "' reported no '" + str(quantity)
+                + "'. It reported " + str(self._quantities(entry)) + '.')
+        wrong = sorted(set(at) - {axis})
+        if wrong:
+            raise ValueError(
+                "T3P monitor '" + str(name) + "' is indexed by '" + str(axis)
+                + "', so it takes 'at: {" + str(axis) + ": ...}', not "
+                + str(wrong) + '.')
+
+        values = entry[quantity]
+        position = at.get(axis)
+        if np.ndim(values) == 0:
+            if position is not None:
+                raise ValueError(
+                    "T3P monitor '" + str(name) + "'s '" + str(quantity) + "' is "
+                    "a scalar, so an 'at:' narrowing does not apply to it.")
             return values
-        # Unlike S3P's frequency scan, the s grid is a solver-chosen consequence
-        # of the timestep, so an exact match is not something a user can specify.
-        # Take the nearest sample instead.
-        grid = np.asarray(data['s'])
+        if position is None:
+            table_axis = self._field_axis(solver)
+            if table_axis is not None and axis != table_axis[0]:
+                raise ValueError(
+                    "T3P monitor '" + str(name) + "' is indexed by '" + str(axis)
+                    + "' but this run's result table is indexed by '"
+                    + str(table_axis[0]) + "' (one index axis per module, 's' "
+                    "winning over 't'), so '" + str(quantity) + "' must be "
+                    "narrowed to a scalar: add 'at: {" + str(axis) + ": ...}'. "
+                    'The whole array is still available through the run\'s field '
+                    'artifact.')
+            return values
+        # Unlike S3P's frequency scan, both T3P grids are solver-chosen
+        # consequences of the timestep, so an exact match is not something a user
+        # can specify. Take the nearest sample instead.
+        grid = np.asarray(entry[axis])
         if not grid.size:
             return float('nan')
         return values[int(np.argmin(np.abs(grid - float(position))))]
 
     @staticmethod
     def _parse_spec(spec):
+        """``(quantity, monitor, at)`` for every accepted spec form."""
         if isinstance(spec, dict):
-            at = spec.get('at') or {}
-            return spec.get('quantity'), at.get('s')
-        if isinstance(spec, list):
-            return spec[0], None
-        return spec, None
+            return (spec.get('quantity'), spec.get('monitor'),
+                    dict(spec.get('at') or {}))
+        if isinstance(spec, (list, tuple)) and spec:
+            return spec[0], None, {}
+        return spec, None, {}
+
+    @classmethod
+    def _quantities(cls, entry):
+        """The extractable names one monitor entry offers, metadata excluded. A
+        ``Volume`` monitor offers none, which is why it cannot be extracted from
+        at all."""
+        return sorted(set(entry) - cls._NOT_QUANTITIES)
+
+    @staticmethod
+    def _addressable(solver):
+        """Ordered ``{name: (entry, axis)}`` for every monitor result a spec may
+        name — the wake monitor under its own ``Name`` (its keys live at the top
+        level of ``output_data``, which is what keeps the legacy specs working),
+        then each entry of ``Monitors`` in declaration order, then ``Bunch0``."""
+        data = solver.output_data
+        found = {}
+        if 's' in data:
+            found[solver.wake_monitor_name() or 'wakefield'] = (
+                {key: value for key, value in data.items()
+                 if key != 'Monitors' and key not in ALWAYS}, 's')
+        for name, entry in (data.get('Monitors') or {}).items():
+            spec = MONITORS.get(entry.get('Type'))
+            found[name] = (entry, spec.axis if spec is not None else None)
+        for name, spec in ALWAYS.items():
+            if name in data:
+                found[name] = (data[name], spec.axis)
+        return found
+
+    def _resolve(self, ctx, solver, quantity, monitor):
+        """``(name, entry, axis)`` for the monitor a spec addresses."""
+        found = self._addressable(solver)
+        if monitor is not None:
+            name = str(monitor)
+            if name not in found:
+                declared = [n for _, n in solver.monitors() if n]
+                raise ValueError(
+                    "this T3P run has no readable monitor named '" + name
+                    + "'. Readable: " + str(sorted(found)) + '; declared in the '
+                    'input file: ' + str(declared) + '. A declared monitor that '
+                    'wrote nothing warns at parse time (T3POutputWarning).')
+            entry, axis = found[name]
+            if MONITORS.get(entry.get('Type')) is not None and axis is None:
+                raise ValueError(
+                    "T3P monitor '" + name + "' is a "
+                    + str(entry.get('Type')) + " monitor, which dumps netCDF "
+                    'field snapshots rather than a time series, so it provides no '
+                    'extractable quantity. Its filenames ride in the run\'s field '
+                    'artifact: ' + str(entry.get('files')) + '.')
+            return name, entry, axis
+
+        if quantity in self.QUANTITIES:
+            # The legacy five: the wake monitor, whatever it is called.
+            if 's' not in solver.output_data:
+                raise ValueError(
+                    f"no T3P wakefield results to extract '{quantity}' from. T3P "
+                    "writes them only when the input file declares a WakeField "
+                    "monitor, e.g.\n"
+                    "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
+                    f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
+                    f"under {ctx.workdir}.")
+            name = solver.wake_monitor_name() or 'wakefield'
+            return name, found[name][0], 's'
+
+        candidates = [name for name, (entry, _) in found.items()
+                      if quantity in self._quantities(entry)]
+        if len(candidates) == 1:
+            name = candidates[0]
+            return name, found[name][0], found[name][1]
+        reported = {name: self._quantities(entry)
+                    for name, (entry, _) in found.items()}
+        if not candidates:
+            raise ValueError(
+                "Unknown quantity '" + str(quantity) + "' in T3P output dict. "
+                'Known bare quantities: ' + str(sorted(self.QUANTITIES))
+                + '; this run\'s monitors reported ' + str(reported) + '.')
+        raise ValueError(
+            str(len(candidates)) + " T3P monitors provide '" + str(quantity)
+            + "': " + str(candidates) + ". Name one with 'monitor: <name>' — "
+            'a run may declare several monitors of one type (three Power '
+            'monitors give input, output and wall-loss power on one run), so '
+            'Name is the only unique selector.')
+
+    def _field_axis(self, solver):
+        """``(label, values)`` for the one axis this module puts on a result
+        table, or ``None`` when the run produced nothing indexable.
+
+        ``s`` wins over ``t`` when both are present. That tiebreak is what keeps
+        every existing baseline where it is — a wake run's table is ``s``-indexed
+        whether or not the input also declares a ``Point`` monitor."""
+        data = solver.output_data
+        if 's' in data:
+            return 's', np.asarray(data['s'])
+        for entry in (data.get('Monitors') or {}).values():
+            spec = MONITORS.get(entry.get('Type'))
+            if spec is not None and spec.axis == 't' and 't' in entry:
+                return 't', np.asarray(entry['t'])
+        for name, spec in ALWAYS.items():
+            if name in data and spec.axis == 't' and 't' in data[name]:
+                return 't', np.asarray(data[name]['t'])
+        return None
 
     def field_index(self, ctx):
-        """T3P field outputs are indexed by the wake coordinate ``s``. Returns
-        ``('s', array)``; under dry-run (no solver) a single-row ``[0.0]``
-        sentinel, so a swept long-format table still has one row per grid
-        point — mirroring :meth:`S3PModule.field_index`.
+        """The T3P result table's index: ``('s', array)`` when the run produced a
+        wake, ``('t', array)`` from the first time-series monitor otherwise, and
+        ``None`` when it produced neither.
 
-        **Phase 2 of ``docs/t3p_monitor_plan.md`` supersedes this**: a run with no
-        wake but with ``Power``/``Point`` monitors is indexed by ``t``, not by
-        ``s``. Until then the ``s``-axis sentinel covers that case, as it did
-        before Phase 1 populated ``output_data`` for such a run."""
+        Under dry-run (no solver) a single-row ``('s', [0.0])`` sentinel, so a
+        swept long-format table still has one row per grid point — mirroring
+        :meth:`S3PModule.field_index`. The axis cannot be known then: unlike
+        Omega3P's mode count, *both* T3P axes are declared by the input file, so
+        the sentinel keeps the label a wake run would get."""
         solver = self._solver
         if solver is None:
             return 's', np.array([0.0])
-        data = solver.output_data
-        if 's' not in data:
-            return 's', np.array([0.0])
-        return 's', np.asarray(data['s'])
+        return self._field_axis(solver)
 
     def field(self, ctx):
-        """Return the full wakefield result (``{s, W, I_bunch, LossFactor|
-        KickFactor, WakeType, ...}``) for the just-run evaluation, or ``None``
-        under dry-run / when the run declared no WakeField monitor."""
+        """Return the whole T3P result for the just-run evaluation — the wake
+        keys (``{s, W, I_bunch, LossFactor|KickFactor, WakeType, ...}``) plus
+        ``Monitors`` and ``Bunch0`` — or ``None`` under dry-run / when the run
+        produced nothing readable.
+
+        The nested ``Monitors`` dict round-trips through
+        :func:`lume_ace3p.results.save_field` as JSON, the same way S3P's
+        ``IndexMap`` and ``PortRef<n>_<m>`` entries do. This is where every array
+        that is *not* on the chosen index axis lives: a ``Point`` monitor's
+        thousands of timesteps cannot be columns of an ``s``-indexed table, but
+        they are not discarded either."""
         solver = self._solver
         if solver is None or not solver.output_data:
             return None

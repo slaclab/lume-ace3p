@@ -331,11 +331,49 @@ def test_t3p_output_specs_route_to_t3p():
         'b': ['kick_factor'],
         'c': {'quantity': 'W', 'at': {'s': 0.1}},
         'd': {'quantity': 'I_bunch'},
+        # A 'monitor:' key routes on its own, the way a 'section:' key routes to
+        # acdtool — the T3P multi-monitor plan's Phase 2. The monitor quantities
+        # themselves ('P', 'V', 't') stay unroutable bare on purpose.
+        'e': {'monitor': 'inputPower', 'quantity': 'P'},
+        'f': {'monitor': 'point', 'quantity': 'Ez', 'at': {'t': 1.0e-9}},
     }
     wf = Workflow(entries, workflow_params={'dry_run': True},
                   output_spec=specs)
     assert {name: m.type for name, m in wf.output_modules().items()} == {
-        'a': 't3p', 'b': 't3p', 'c': 't3p', 'd': 't3p'}
+        'a': 't3p', 'b': 't3p', 'c': 't3p', 'd': 't3p', 'e': 't3p', 'f': 't3p'}
+
+
+def test_t3p_monitor_spec_reaches_the_solver_under_dry_run(tmp_path):
+    """End to end: a ``monitor:`` spec routes to the t3p module and comes back as
+    the dry-run NaN sentinel rather than raising. Routing to s3p instead would
+    fail validation here, since no s3p module is in the chain."""
+    staged = _stage('t3p_sweep')
+    cwd = os.getcwd()
+    os.chdir(staged)
+    try:
+        entries = [
+            {'module': 'cubit', 'journal': 'pillboxwg.jou'},
+            {'module': 't3p', 'input': 'pillboxwg-closed.t3p'},
+        ]
+        inputs = WorkflowInputs(cubit={'cell_radius': 0.05,
+                                       'iris_radius': 0.025})
+        wf = Workflow(entries,
+                      workflow_params={'workdir': 'lume-ace3p_t3p_monitor',
+                                       'workdir_mode': 'auto', 'dry_run': True},
+                      inputs=inputs,
+                      output_spec={'P_in': {'monitor': 'inputPower',
+                                            'quantity': 'P'},
+                                   'Ez': {'module': 't3p', 'monitor': 'point',
+                                          'quantity': 'Ez',
+                                          'at': {'t': 1.0e-9}}})
+        out = wf.evaluate([0.05, 0.025])
+
+        assert np.isnan(out['P_in']).all()
+        assert np.isnan(out['Ez']).all()
+        assert {name: m.type for name, m in wf.output_modules().items()} == {
+            'P_in': 't3p', 'Ez': 't3p'}
+    finally:
+        os.chdir(cwd)
 
 
 def test_s3p_output_specs_still_route_to_s3p():

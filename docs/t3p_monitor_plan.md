@@ -1,8 +1,9 @@
 # T3P Multi-Monitor Support — Implementation Plan
 
-**Status: Phases 0 and 1 COMPLETE** (2026-08-19); Phases 2 and 3 planned. See
-"Phases 0 and 1 as landed" at the bottom for what was built and where it
-deviated. Written 2026-08-18. Follows `docs/acdtool_rework_plan.md`
+**Status: Phases 0, 1 and 2 COMPLETE** (2026-08-19); Phase 3 (docs and an
+example) planned. See "Phases 0 and 1 as landed" and "Phase 2 as landed" at the
+bottom for what was built and where it deviated. Written 2026-08-18. Follows
+`docs/acdtool_rework_plan.md`
 (COMPLETE) and reuses its machinery deliberately: the declarative shape table,
 the header-driven column reader, the "one index axis per module" rule, and the
 warn-naming-itself failure mode. Nothing in this plan invents a new pattern.
@@ -523,3 +524,64 @@ never reached at all, and the wake-only parse is pinned equal to
   collimator-type structures. No CW23 input uses one, and it changes nothing about
   the output shape, but it is a documented input surface with no fixture — worth
   listing beside `SurfacePowerLoss` in what a real run is still owed.
+
+---
+
+# Phase 2 as landed (2026-08-19)
+
+## What was built
+
+`T3PModule` rewritten in `src/lume_ace3p/modules.py`: `extract` resolves a
+monitor before a quantity, `_parse_spec` reads `monitor:` and `at: {t: ...}`,
+and three new helpers carry the resolution — `_addressable` (ordered
+`{name: (entry, axis)}` for every result a spec may name), `_resolve` (the
+resolution order, with the error messages), and `_field_axis` (the one index
+axis, `s` winning over `t`). `field_index` and `field` are rewritten on top of
+it; the two Phase-1 interim guards are gone, superseded as planned. 12 tests
+added to `tests/test_modules.py`, driven against the real Phase-0 fixtures, plus
+two in `tests/test_workflow_graph.py`. `pytest` green; **no baseline moved.**
+
+## Deviations from the plan above
+
+1. **`_infer_output_module` was touched after all — one rule.** The plan's
+   decision 4 says to require `module: t3p` "(or `monitor:`)" and in the next
+   sentence that this "keeps `_infer_output_module` untouched". Those cannot both
+   hold, so the narrower reading won: the *quantity names* (`P`, `V`, `t`, `Ez`)
+   stay out of `QUANTITIES` — that was the real hazard, `t` especially — while a
+   `monitor:` key routes to `t3p` on its own. It is the same rule a `section:` key
+   already gets for acdtool and Geant4 (naming the thing is the routing signal),
+   nothing else in the package uses the key, and without it the plan's own
+   parenthetical would be false.
+
+2. **An off-axis quantity must be narrowed with `at:`, and says so.** The plan
+   states the axis rule and shows `at: {t: 1.0e-9}` in its `Ez_gap` example but
+   never says what happens without one. It cannot silently return the array: a
+   `Point` monitor's thousands of timesteps are not columns of an `s`-indexed
+   table. So requesting an off-axis array raises naming both axes and pointing at
+   the field artifact — exactly the treatment `AcdtoolModule` gives a
+   surface-indexed section on a `ModeID`-indexed table.
+
+3. **`Bunch0` is addressable as a monitor.** The plan puts it in `field()` and
+   says nothing about `extract`. It is a `t`-indexed series like any other, so
+   `{module: t3p, monitor: Bunch0, quantity: I}` works, and it is the axis of last
+   resort when no *declared* monitor wrote. Cost: nothing; it is already in
+   `output_data`.
+
+4. **`field_index` returning `None` changes one real-run case.** As planned, a run
+   that produced nothing readable now has no axis, where before it got a
+   fabricated one-row `('s', [0.0])`. Only reachable for a run that failed, which
+   raises out of `extract` before a table is written, and the dry-run sentinel
+   (the case every baseline exercises) is unchanged.
+
+5. **Two files outside the stated deliverables**: `workflow_graph.py` and
+   `tests/test_workflow_graph.py`, both for deviation 1.
+
+## Still owed by Phase 3
+
+`docs/yaml_reference.md` and the new `docs/t3p_reference.md` do not yet document
+`monitor:`, the per-type quantity table, the axis rule, or the
+`at:`-required-off-axis rule — all four are behavior that exists now and is
+described only in docstrings and this file. The `examples/t3p_power_balance/`
+SIBC example is likewise still owed, and it is the honest demonstration: three
+`Power` monitors giving in / out / wall-loss on one run is the workflow the
+package could not express before.
