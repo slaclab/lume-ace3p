@@ -645,7 +645,13 @@ class T3PModule(_SolverModule):
             return np.array([float('nan')])
         quantity, position = self._parse_spec(spec)
         data = solver.output_data
-        if not data:
+        # 's' rather than emptiness is the test for "there is a wake result":
+        # since Phase 1 of ``docs/t3p_monitor_plan.md``, output_data is populated
+        # by a Power/Point/ModeVoltage monitor whether or not the run declared a
+        # WakeField one. **Phase 2 supersedes this whole method**; the guard is
+        # here so the intermediate state raises the informative error rather than
+        # 'Unknown quantity' or, in ``field_index``, a bare KeyError.
+        if 's' not in data:
             raise ValueError(
                 f"no T3P wakefield results to extract '{quantity}' from. T3P "
                 "writes them only when the input file declares a WakeField "
@@ -695,12 +701,17 @@ class T3PModule(_SolverModule):
         """T3P field outputs are indexed by the wake coordinate ``s``. Returns
         ``('s', array)``; under dry-run (no solver) a single-row ``[0.0]``
         sentinel, so a swept long-format table still has one row per grid
-        point — mirroring :meth:`S3PModule.field_index`."""
+        point — mirroring :meth:`S3PModule.field_index`.
+
+        **Phase 2 of ``docs/t3p_monitor_plan.md`` supersedes this**: a run with no
+        wake but with ``Power``/``Point`` monitors is indexed by ``t``, not by
+        ``s``. Until then the ``s``-axis sentinel covers that case, as it did
+        before Phase 1 populated ``output_data`` for such a run."""
         solver = self._solver
         if solver is None:
             return 's', np.array([0.0])
         data = solver.output_data
-        if not data:
+        if 's' not in data:
             return 's', np.array([0.0])
         return 's', np.asarray(data['s'])
 

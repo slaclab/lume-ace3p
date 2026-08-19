@@ -679,6 +679,180 @@ def _parse_index_map_entry(body):
     return {body.split()[0]: entry}
 
 
+class T3POutputWarning(UserWarning):
+    """Raised when a declared T3P ``Monitor`` produced no readable output.
+
+    A whole run must not die because one monitor of six did not write — the other
+    five are still results — but neither may the hole be silent, which is what it
+    was before ``docs/t3p_monitor_plan.md``: a run declaring ``Power`` and
+    ``ModeVoltage`` monitors wrote those files, LUME-ACE3P read none of them, and
+    nothing said so. Mirrors :class:`S3POutputWarning` and
+    :class:`lume_ace3p.acdtool.AcdtoolOutputWarning`."""
+
+
+# --------------------------------------------------------------------------- #
+# Monitor table — one row per T3P 'Monitor' Type
+# --------------------------------------------------------------------------- #
+
+# The output shapes, mirroring :data:`lume_ace3p.acdtool.SECTIONS`'s so the two
+# tables read the same way.
+WAKE = 'wake'      # '# Loss factor = ...' header over (s, W, I_bunch)
+SERIES = 'series'  # a headerless (t, ...) column table
+GRID = 'grid'      # netCDF field dumps; filenames recorded, never parsed
+
+# 'Point: Monitors the fields at a location. The output is the format
+# (t Hx Hy Hz Ex Ey Ez) in SI.' -- references/t3p-commands.pdf. The file itself
+# carries no header, so these names come from the reference and nowhere else.
+POINT_COLUMNS = ('t', 'Hx', 'Hy', 'Hz', 'Ex', 'Ey', 'Ez')
+
+# Bunch0.out's own '## t[sec]    I[A]' header would give the header-driven reader
+# column names *with units*, which cannot double as the module layer's 't' index
+# axis -- and its other comment line ('## Bunch distribution') is the same two
+# tokens wide, so 'last match wins' is the only thing keeping that from becoming
+# the names. Both are why this file's columns are named explicitly.
+BUNCH_COLUMNS = ('t', 'I')
+
+
+class Monitor:
+    """One T3P ``Monitor`` ``Type``'s *output*: its shape and where it lands.
+
+    Attributes
+    ----------
+    shape : str
+        One of :data:`WAKE`, :data:`SERIES`, :data:`GRID`.
+    files : tuple of str
+        Glob patterns for the files this monitor writes, formatted over its own
+        ``{name}`` — which is both the monitor's ``Name`` and its output filename
+        stem. A ``Volume`` monitor's is a *glob* (one file per dump time) where
+        every other type writes exactly one file.
+    columns : tuple of str or None
+        Column names for a :data:`SERIES` monitor, since these files carry **no
+        header at all** (the one exception, ``Bunch0.out``, names its columns
+        with units attached). ``None`` for the other shapes.
+    axis : str or None
+        The index axis this monitor's arrays are aligned to — ``'s'`` for the
+        wake, ``'t'`` for every series monitor, ``None`` for a grid dump, which
+        has no extractable quantity at all.
+    validated : bool
+        Whether real output for this type exists in
+        ``tests/fixtures/acdtool/t3p_outputs/``. Where this is ``False`` there is
+        no ground truth, so the reader follows the file's own width rather than an
+        assumed layout — the same rule the unenabled ``.rfpost`` blocks get.
+    note : str
+        Anything a reader or its caller has to know about this type.
+    """
+
+    def __init__(self, shape, files=(), columns=None, axis=None,
+                 validated=False, note=''):
+        self.shape = shape
+        self.files = tuple(files)
+        self.columns = tuple(columns) if columns else None
+        self.axis = axis
+        self.validated = validated
+        self.note = note
+
+    def filenames(self, name):
+        """Expand :attr:`files` over a monitor's ``Name``."""
+        return [pattern.format(name=name) for pattern in self.files]
+
+
+MONITORS = {
+    'WakeField': Monitor(WAKE, files=('{name}.out',), axis='s', validated=True,
+                         note='the only type read before the multi-monitor '
+                              'plan; a run may legitimately declare none'),
+    'Point': Monitor(SERIES, files=('{name}.out',), columns=POINT_COLUMNS,
+                     axis='t', validated=True,
+                     note='fields at one location vs. time, in SI'),
+    'Power': Monitor(SERIES, files=('{name}.out',), columns=('t', 'P'),
+                     axis='t', validated=True,
+                     note='power through a boundary port [W]; a run may declare '
+                          'several, addressed by Name'),
+    'ModeVoltage': Monitor(SERIES, files=('{name}.out',), columns=('t', 'V'),
+                           axis='t', validated=True,
+                           note='generalized voltage of a waveguide mode at a '
+                                'boundary port [V]'),
+    'SurfacePowerLoss': Monitor(SERIES, files=('{name}.out',),
+                                columns=('t', 'P'), axis='t',
+                                note='documented but UNVALIDATED — no CW23 run '
+                                     'declares one; SIBC uses Power on a lossy '
+                                     'surface instead'),
+    'Volume': Monitor(GRID, files=('{name}ts_t*ps.out', '{name}ts_t*ps.out.mod'),
+                      note='netCDF despite the .out extension (verified: leading '
+                           'bytes are CDF\\x02) — recorded, never parsed, and it '
+                           'provides no extractable quantity'),
+}
+
+# Emitted by every run, declared by no monitor. The structural twin of acdtool's
+# '[scaling]': read outside the per-monitor loop.
+ALWAYS = {'Bunch0': Monitor(SERIES, files=('Bunch0.out',),
+                            columns=BUNCH_COLUMNS, axis='t', validated=True,
+                            note='the bunch current profile T3P loaded, written '
+                                 'by every run and declared by no monitor')}
+
+
+def monitor_identity(section):
+    """``(Type, Name)`` for one ``Monitor`` section.
+
+    A ``WakeField`` monitor with no ``Name`` falls back to ``'wakefield'``, which
+    is what T3P names the file; for every other type a missing ``Name`` means
+    there is no filename stem to look for, so it stays ``None`` and the caller
+    warns."""
+    monitor_type = section.get_leaf('Type')
+    name = section.get_leaf('Name')
+    if not name and monitor_type == 'WakeField':
+        name = 'wakefield'
+    return monitor_type, name
+
+
+def read_monitor(results, monitor_type, name, spec):
+    """Read one monitor's output from the `results` directory.
+
+    Returns the monitor's dict — the bare wake result for :data:`WAKE`,
+    ``{'Type', <columns...>}`` for :data:`SERIES`, ``{'Type', 'files'}`` for
+    :data:`GRID` — or ``None`` after warning when the monitor wrote nothing.
+
+    The wake shape deliberately returns its keys *bare*, with no ``'Type'``
+    marker: :meth:`T3P.output_parser` lifts them to the top level of
+    ``output_data`` unchanged, which is what makes every existing output spec and
+    frozen baseline keep working by construction rather than by a shim.
+    """
+    if spec.shape == GRID:
+        files = []
+        for pattern in spec.filenames(name):
+            files += [os.path.basename(path) for path in
+                      glob.glob(os.path.join(results, pattern))]
+        if not files:
+            _warn_no_output(results, monitor_type, name, spec)
+            return None
+        return {'Type': monitor_type, 'files': sorted(files)}
+
+    paths = [os.path.join(results, filename)
+             for filename in spec.filenames(name)]
+    path = next((path for path in paths if os.path.isfile(path)), None)
+    if path is None:
+        _warn_no_output(results, monitor_type, name, spec)
+        return None
+    if spec.shape == WAKE:
+        return parse_wakefield(path)
+    data = {'Type': monitor_type}
+    data.update(parse_column_file(path, columns=spec.columns))
+    return data
+
+
+def _warn_no_output(results, monitor_type, name, spec):
+    """One :class:`T3POutputWarning` naming the monitor, the path looked for, and
+    whether the type's format is validated by a real fixture."""
+    expected = ', '.join(os.path.join(results, filename)
+                         for filename in spec.filenames(name))
+    warnings.warn(
+        "T3P monitor '" + str(name) + "' (Type: " + str(monitor_type) + ") is "
+        'declared in the input file but wrote no output; expected ' + expected
+        + '.' + ('' if spec.validated else
+                 ' No real output fixture exists for this monitor type — see '
+                 'tests/fixtures/acdtool/COVERAGE.md.'),
+        T3POutputWarning, stacklevel=4)
+
+
 class T3P(ACE3P):
     """The ACE3P time-domain solver, used for wakefield calculations.
 
@@ -691,6 +865,19 @@ class T3P(ACE3P):
     ``<job_name>/OUTPUT`` (see :meth:`ACE3P.job_name`; ``t3p_results`` by
     default), and each monitor's files are named after that monitor's own
     ``Name``, which is read back out of the input file rather than hardcoded.
+
+    A wake is only one of the six things a run can monitor, though. The input file
+    declares any number of ``Monitor`` blocks of six documented ``Type`` values,
+    and :data:`MONITORS` says what each writes; :meth:`output_parser` reads them
+    all. Two consequences shape the interface:
+
+    * **``Name`` is the selector, ``Type`` supplies the shape.** A run may declare
+      several monitors of one type — CW23's ``SIBC`` has three ``Power`` monitors,
+      giving input, output and wall-loss power on one run — so ``Type`` cannot
+      address one. ``Name`` can, and is also the output filename stem.
+    * **A run may have no wake at all.** ``SIBC`` has no ``WakeField`` monitor.
+      That was always tolerated; since the multi-monitor plan it is no longer a
+      dead end, because such a run's series monitors are read.
     """
 
     module_name = 't3p'
@@ -716,38 +903,162 @@ class T3P(ACE3P):
         :meth:`ACE3P.job_name` for how the parent is resolved."""
         return os.path.join(self.job_name(), 'OUTPUT')
 
+    def monitors(self):
+        """``[(Type, Name)]`` for every ``Monitor`` the input file declares, in
+        file order.
+
+        **The input file is the monitor list**, not the run log: it is available
+        before the run, so a validation pass can use it, and it is all that exists
+        under dry-run. :meth:`echoed_monitors` is the cross-check on what the run
+        actually resolved.
+
+        ``Name`` is the selector — ``Type`` alone cannot address a monitor,
+        because a run may declare several of one type (CW23's ``SIBC`` has three
+        ``Power`` monitors) — and it is also the output filename stem. A monitor
+        with no ``Name`` comes back as ``None`` rather than being dropped, so
+        :meth:`output_parser` can say so."""
+        return [monitor_identity(section)
+                for section in self._input_tree().children('Monitor')
+                if isinstance(section, Section)]
+
+    def echoed_monitors(self):
+        """``[(Type, Name)]`` from the ``Input :`` echo in ``t3p.out``, or ``None``
+        when there is no readable log.
+
+        T3P writes a normalized KVC echo of its whole resolved input into its run
+        log, monitors included. It is the record of what the run *used*, so it is
+        worth cross-checking — but it is not the primary source: it does not exist
+        until the solver has run, and it **normalizes keys** (``BPM.t3p``'s
+        ``Start contour`` is ``Startcontour`` in the echo), so only ``(Type,
+        Name)`` pairs are comparable."""
+        path = os.path.join(self.workdir, self.results_dir(), self.output_file)
+        if not os.path.isfile(path):
+            return None
+        with open(path) as file:
+            echo = parse_ace3p(file.read()).find('Input')
+        if echo is None:
+            return None
+        return [monitor_identity(section)
+                for section in echo.children('Monitor')
+                if isinstance(section, Section)]
+
     def wake_monitor_name(self):
         """The ``Name`` of the ``WakeField`` monitor, which is what T3P names its
         wakefield output files after, or ``None`` when the input declares no such
-        monitor (a legitimate configuration — e.g. a pulse-propagation run that
-        only monitors power)."""
-        monitor = self._input_tree().find('Monitor', Type='WakeField')
-        if monitor is None:
-            return None
-        return monitor.get_leaf('Name') or 'wakefield'
+        monitor.
+
+        Declaring none is a legitimate configuration — a pulse-propagation run
+        that only monitors power, e.g. CW23's ``SIBC`` — and since the
+        multi-monitor plan it is no longer a dead end: the other monitors are read
+        too. A thin wrapper over :meth:`monitors`, kept because it is public-ish
+        and referenced from :class:`lume_ace3p.modules.T3PModule`."""
+        for monitor_type, name in self.monitors():
+            if monitor_type == 'WakeField':
+                return name
+        return None
 
     # ---- output parsing --------------------------------------------------- #
 
     def output_parser(self):
-        """Parse the wakefield monitor's ``.out`` file into ``output_data``.
+        """Read every declared monitor's output into ``output_data``.
 
-        Populates ``s`` / ``W`` / ``I_bunch`` arrays plus ``WakeType`` and either
-        ``LossFactor`` (longitudinal) or ``KickFactor`` (transverse); a transverse
-        result also records ``TransversePoints`` and ``Offset`` from the header.
+        The wake monitor's keys stay at the **top level**, exactly where they were
+        before the multi-monitor plan: ``s`` / ``W`` / ``I_bunch`` arrays plus
+        ``WakeType`` and either ``LossFactor`` (longitudinal) or ``KickFactor``
+        (transverse), with ``TransversePoints`` and ``Offset`` on a transverse
+        run. That is load-bearing rather than incidental — it is what makes every
+        existing output spec and every frozen baseline keep working by
+        construction instead of through a compatibility shim.
+
+        Everything else arrives beside them::
+
+            {'s': ..., 'W': ..., 'I_bunch': ..., 'KickFactor': ..., 'WakeType': ...,
+             'Monitors': {'point':      {'Type': 'Point',  't': ..., 'Ex': ..., ...},
+                          'inputPower': {'Type': 'Power',  't': ..., 'P': ...},
+                          'volume':     {'Type': 'Volume', 'files': [...]}},
+             'Bunch0': {'t': ..., 'I': ...}}
+
+        ``Monitors`` is keyed by monitor ``Name``, because that is the only unique
+        selector (see :meth:`monitors`). ``Bunch0`` is read outside the loop: every
+        run writes it and no monitor declares it, the same way acdtool's
+        ``[scaling]`` is read outside its ``ionoff`` loop.
 
         Leaves ``output_data`` empty — rather than raising, as :class:`S3P` does —
-        when the input declares no WakeField monitor or the file is absent. A T3P
-        run without a wake monitor is a valid run, so this is not an error here;
-        the module layer raises if such a workflow actually *asks* for a wakefield
-        quantity."""
+        when nothing was readable at all. A T3P run with no wake monitor is a valid
+        run, so that is not an error here; the module layer raises if a workflow
+        actually *asks* for a quantity that is missing. A monitor that was declared
+        and wrote nothing does warn (:class:`T3POutputWarning`), naming itself."""
         self.output_data = {}
-        monitor = self.wake_monitor_name()
-        if monitor is None:
+        results = os.path.join(self.workdir, self.results_dir())
+        monitors = {}
+        # Declared names, not successfully-read ones: two monitors sharing a Name
+        # collide whether or not either of them wrote.
+        declared_names = set()
+        for monitor_type, name in self.monitors():
+            spec = MONITORS.get(monitor_type)
+            if spec is None:
+                warnings.warn(
+                    "T3P monitor Type '" + str(monitor_type) + "' is not one of "
+                    'the documented types ' + str(sorted(MONITORS))
+                    + ', so its output shape is unknown and nothing was read '
+                    'from it.', T3POutputWarning, stacklevel=2)
+                continue
+            if not name:
+                warnings.warn(
+                    "a T3P monitor of Type '" + str(monitor_type) + "' declares "
+                    "no 'Name', which is what T3P names its output file after, so "
+                    'there is nothing to look for.', T3POutputWarning,
+                    stacklevel=2)
+                continue
+            if name in declared_names:
+                warnings.warn(
+                    "two T3P monitors share the Name '" + str(name) + "', so "
+                    'they write the same file and only the first was kept. Names '
+                    'are the only way to address a monitor.', T3POutputWarning,
+                    stacklevel=2)
+                continue
+            declared_names.add(name)
+            entry = read_monitor(results, monitor_type, name, spec)
+            if entry is None:
+                continue
+            if spec.shape == WAKE:
+                self.output_data.update(entry)
+            else:
+                monitors[name] = entry
+        if monitors:
+            self.output_data['Monitors'] = monitors
+        self._read_always(results)
+        self._cross_check_echo()
+
+    def _read_always(self, results):
+        """Read the files every run writes and no monitor declares.
+
+        Absence is silent here: nothing *declared* these, so there is no
+        declaration to contradict, and a results directory that is missing
+        wholesale has already warned once per declared monitor."""
+        for name, spec in ALWAYS.items():
+            path = os.path.join(results, spec.filenames(name)[0])
+            if os.path.isfile(path):
+                self.output_data[name] = parse_column_file(
+                    path, columns=spec.columns)
+
+    def _cross_check_echo(self):
+        """Warn when the run log's resolved monitor list disagrees with the input
+        file's. Comparing ``(Type, Name)`` pairs only — see
+        :meth:`echoed_monitors` for why the keys themselves are not comparable —
+        and *unordered*, since which monitor the solver echoes first says nothing
+        about what it wrote."""
+        echoed = self.echoed_monitors()
+        declared = self.monitors()
+        if echoed is None or sorted(map(str, echoed)) == sorted(map(str,
+                                                                   declared)):
             return
-        path = os.path.join(self.workdir, self.results_dir(), monitor + '.out')
-        if not os.path.isfile(path):
-            return
-        self.output_data = parse_wakefield(path)
+        warnings.warn(
+            'the monitor list in ' + self.output_file + ' does not match the '
+            'input file: the run resolved ' + str(echoed) + ' where the input '
+            'declares ' + str(declared) + '. The input file is what was read; '
+            'the log is what the solver actually used.',
+            T3POutputWarning, stacklevel=3)
 
 
 # Header forms written by T3P above the (s, W, I_bunch) columns, e.g.

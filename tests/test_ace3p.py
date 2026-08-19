@@ -22,6 +22,17 @@ The Omega3P section (Phase 1 of ``docs/acdtool_rework_plan.md``) runs against th
 the license banner, the differing top-level section order and the ``'real ,
 imag'`` eigenvalues are all things only a real file carries.
 
+The T3P multi-monitor section (Phase 1 of ``docs/t3p_monitor_plan.md``) runs
+against the real ``t3p_outputs`` fixtures frozen in that plan's Phase 0 — the
+``BPM`` run's five monitor types and the ``SIBC`` run's three ``Power`` monitors
+with no wake at all. Its load-bearing test is
+:func:`test_t3p_wake_only_run_parses_byte_identically_to_before`: the wake keys
+stay at the top level of ``output_data``, which is what keeps every existing
+output spec and frozen baseline working by construction rather than through a
+compatibility shim. Format claims come from
+``tests/fixtures/acdtool/{SOURCES,COVERAGE}.md`` and, where the files say nothing
+(every series monitor is headerless), from ``references/t3p-commands.pdf``.
+
 The S3P section at the bottom (Phase 5) does the same against
 ``solver_outputs/s3p_90DegreeBend``, and for the same reason plus one more: the
 S3P reference documents no output file at all, so those three fixtures are the
@@ -30,21 +41,25 @@ only specification of the formats that exists. The cross-check that
 for the missing spec.
 """
 
+import fnmatch
 import os
 import shutil
+import warnings
 
 import numpy as np
 import pytest
 
 from lume_ace3p.ace3p import (
-    Section, parse_ace3p, write_ace3p, merge_overrides, parse_column_file,
+    ALWAYS, BUNCH_COLUMNS, GRID, MONITORS, POINT_COLUMNS, SERIES, Section,
+    parse_ace3p, write_ace3p, merge_overrides, parse_column_file,
     parse_wakefield, parse_omega3p_output, parse_sparameters, Omega3P, S3P,
-    S3POutputWarning, T3P,
+    S3POutputWarning, T3P, T3POutputWarning,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OMEGA3P_FIXTURES = os.path.join(HERE, 'fixtures', 'acdtool', 'solver_outputs',
                                 'omega3p')
+T3P_FIXTURES = os.path.join(HERE, 'fixtures', 'acdtool', 't3p_outputs')
 
 
 # --------------------------------------------------------------------------- #
@@ -340,7 +355,9 @@ def test_t3p_output_parser_reads_named_monitor_file(tmp_path):
     os.makedirs(results, exist_ok=True)
     _write(os.path.join(results, 'wakefield.out'), WAKEFIELD_LONGITUDINAL)
 
-    t3p.output_parser()
+    # T3P_INPUT also declares a Volume monitor, which wrote nothing here.
+    with pytest.warns(T3POutputWarning, match='mymon'):
+        t3p.output_parser()
     assert t3p.output_data['LossFactor'] == pytest.approx(-3.88576373282202e-01)
     assert len(t3p.output_data['s']) == 3
 
@@ -348,7 +365,11 @@ def test_t3p_output_parser_reads_named_monitor_file(tmp_path):
 def test_t3p_output_parser_tolerates_no_wake_monitor(tmp_path):
     """A T3P run with no WakeField monitor is legitimate (e.g. a pulse-
     propagation run monitoring only power), so this leaves output_data empty
-    rather than raising the way S3P.output_parser asserts."""
+    rather than raising the way S3P.output_parser asserts.
+
+    Since Phase 1 of ``docs/t3p_monitor_plan.md`` the *declared* power monitor
+    warns that it wrote nothing — which is the point of that phase: the run used
+    to be read as empty either way, whether or not the monitor had output."""
     text = """\
 ModelInfo:
 {
@@ -364,17 +385,22 @@ Monitor:
 """
     t3p = _make_t3p(tmp_path, text=text)
     assert t3p.wake_monitor_name() is None
-    t3p.output_parser()
+    with pytest.warns(T3POutputWarning, match='inputPower'):
+        t3p.output_parser()
     assert t3p.output_data == {}
 
 
 def test_t3p_output_parser_tolerates_missing_file(tmp_path):
     """Monitor declared but the file absent (an interrupted run) — empty, not a
     crash. The module layer raises when a workflow actually asks for a
-    quantity."""
+    quantity. Each declared monitor warns naming itself (Phase 1)."""
     t3p = _make_t3p(tmp_path)
-    t3p.output_parser()
+    with pytest.warns(T3POutputWarning) as record:
+        t3p.output_parser()
     assert t3p.output_data == {}
+    assert len(record) == 2                     # the Volume and the WakeField
+    assert 'mymon' in str(record[0].message)
+    assert 'wakefield' in str(record[1].message)
 
 
 def test_t3p_results_dir_override_beats_input_file_job_name(tmp_path):
@@ -387,6 +413,421 @@ def test_t3p_results_dir_override_beats_input_file_job_name(tmp_path):
     os.makedirs(workdir, exist_ok=True)
     t3p = T3P(str(source), workdir=str(workdir), results_dir='from_config')
     assert t3p.results_dir() == os.path.join('from_config', 'OUTPUT')
+
+
+# --------------------------------------------------------------------------- #
+# T3P multi-monitor reading — the MONITORS table (t3p_monitor_plan.md, Phase 1)
+# --------------------------------------------------------------------------- #
+
+# Where the Phase-0 fixtures land inside a staged results directory. The
+# fixtures are named '<case>.<file>' so provenance survives a flat directory;
+# a results directory needs them back under the names T3P wrote.
+BPM_OUTPUT = {
+    'BPM.point.out': 'point.out',
+    'BPM.port.out': 'port.out',
+    'BPM.modecoeff.out': 'modecoeff.out',
+    'BPM.Bunch0.out': 'Bunch0.out',
+    'BPM.t3p.out': 't3p.out',
+}
+SIBC_OUTPUT = {
+    'SIBC.inputPower.out': 'inputPower.out',
+    'SIBC.wallossPower.out': 'wallossPower.out',
+}
+
+# Real Volume-monitor filenames, from BPM's own results directory. Created empty
+# because they are netCDF and nothing parses them; the point is that the glob in
+# MONITORS matches what T3P really writes.
+BPM_VOLUME_FILES = ['volumets_t000000000020ps.out',
+                    'volumets_t000000000020ps.out.mod',
+                    'volumets_t000000000040ps.out',
+                    'volumets_t000000000040ps.out.mod']
+
+
+def _stage_t3p(tmp_path, input_fixture, staged=(), touch=(), wake=None):
+    """Build a :class:`T3P` over a real ``.t3p`` fixture with `staged` fixture
+    files copied into its results directory under their real names, `touch`
+    created empty there, and `wake` written as the wake monitor's output.
+
+    `staged` is a mapping or an iterable of ``(fixture, name)`` pairs — the pair
+    form because one fixture sometimes stands in for two monitors' output.
+
+    Returns the wrapper with ``output_parser`` **not** yet called, so a test can
+    wrap the call in ``pytest.warns``.
+    """
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir, exist_ok=True)
+    source = tmp_path / os.path.basename(input_fixture)
+    shutil.copy(os.path.join(T3P_FIXTURES, input_fixture), str(source))
+    results = os.path.join(str(workdir), 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    pairs = staged.items() if hasattr(staged, 'items') else staged
+    for fixture, name in pairs:
+        shutil.copy(os.path.join(T3P_FIXTURES, fixture),
+                    os.path.join(results, name))
+    for name in touch:
+        _write(os.path.join(results, name), '')
+    if wake is not None:
+        _write(os.path.join(results, 'wakefield.out'), wake)
+    return T3P(str(source), workdir=str(workdir))
+
+
+def test_monitor_table_covers_the_documented_type_surface():
+    """The six ``Monitor`` ``Type`` values in ``references/t3p-commands.pdf``, and
+    the four with a real output fixture behind them — the machine-readable form of
+    ``tests/fixtures/acdtool/COVERAGE.md``."""
+    assert set(MONITORS) == {'WakeField', 'Point', 'Power', 'ModeVoltage',
+                             'SurfacePowerLoss', 'Volume'}
+    assert {name for name, spec in MONITORS.items() if spec.validated} == {
+        'WakeField', 'Point', 'Power', 'ModeVoltage'}
+    # SurfacePowerLoss is documented but no CW23 run declares one, so its layout
+    # is an assumption; Volume is netCDF and is never parsed at all.
+    assert not MONITORS['SurfacePowerLoss'].validated
+    assert 'UNVALIDATED' in MONITORS['SurfacePowerLoss'].note
+
+    # Every series monitor names its columns, because the files carry no header.
+    for name, spec in MONITORS.items():
+        assert spec.files, name
+        assert (spec.columns is not None) == (spec.shape == SERIES), name
+        # Only a grid dump has no index axis, and that is why it has no quantity.
+        assert (spec.axis is None) == (spec.shape == GRID), name
+    assert MONITORS['WakeField'].axis == 's'
+    assert {spec.axis for spec in MONITORS.values()} == {'s', 't', None}
+
+
+def test_monitor_table_column_names_match_the_reference():
+    """``POINT_COLUMNS`` is the reference's ``(t Hx Hy Hz Ex Ey Ez)``, spelled the
+    same way ``tests/test_t3p_monitor_fixtures.py`` spells it from the reference
+    directly — the two must not drift, since the files themselves say nothing."""
+    assert POINT_COLUMNS == ('t', 'Hx', 'Hy', 'Hz', 'Ex', 'Ey', 'Ez')
+    assert MONITORS['Point'].columns == POINT_COLUMNS
+    # Power [W] and ModeVoltage [V] share the shape and differ in one name.
+    assert MONITORS['Power'].columns == ('t', 'P')
+    assert MONITORS['SurfacePowerLoss'].columns == ('t', 'P')
+    assert MONITORS['ModeVoltage'].columns == ('t', 'V')
+    # Bunch0.out is declared by nothing, so it is not in MONITORS at all.
+    assert 'Bunch0' not in MONITORS
+    assert ALWAYS['Bunch0'].columns == ('t', 'I') == BUNCH_COLUMNS
+
+
+def test_volume_monitor_glob_matches_real_filenames():
+    """A ``Volume`` monitor named ``volume`` writes ``volumets_t<...>ps.out``, one
+    pair per dump time — the ``{name}ts_t*ps.out`` scheme, confirmed against three
+    CW23 runs (``volume``, ``field``, ``mymon``). Recorded in SOURCES.md because
+    the files are netCDF and are not copied."""
+    patterns = MONITORS['Volume'].filenames('volume')
+    assert patterns == ['volumets_t*ps.out', 'volumets_t*ps.out.mod']
+    for name in BPM_VOLUME_FILES:
+        assert any(fnmatch.fnmatch(name, pattern) for pattern in patterns), name
+    # And the other two runs' monitor names give their real filenames too.
+    assert fnmatch.fnmatch('fieldts_t000000000500ps.out',
+                           MONITORS['Volume'].filenames('field')[0])
+    assert fnmatch.fnmatch('mymonts_t000000000200ps.out',
+                           MONITORS['Volume'].filenames('mymon')[0])
+
+
+def test_t3p_monitors_reads_the_list_from_the_input_file(tmp_path):
+    """``monitors()`` is the monitor list, in file order, from the input file —
+    which exists before the run and under dry-run, unlike the ``t3p.out`` echo."""
+    t3p = _stage_t3p(tmp_path, 'BPM.t3p')
+    assert t3p.monitors() == [('WakeField', 'wakefield'), ('Point', 'point'),
+                              ('Point', 'coaxpoint'), ('Volume', 'volume'),
+                              ('Power', 'port'), ('ModeVoltage', 'modecoeff')]
+    # wake_monitor_name is now a thin wrapper over it and answers the same.
+    assert t3p.wake_monitor_name() == 'wakefield'
+
+    sibc = _stage_t3p(tmp_path / 'sibc', 'SIBC.t3p')
+    assert sibc.monitors() == [('Volume', 'field'), ('Power', 'inputPower'),
+                               ('Power', 'outputPower'),
+                               ('Power', 'wallossPower')]
+    assert sibc.wake_monitor_name() is None
+
+
+def test_t3p_reads_every_monitor_of_a_five_type_run(tmp_path):
+    """The BPM run: a wake plus two ``Point``, a ``Power``, a ``ModeVoltage`` and a
+    ``Volume`` monitor. The wake keys stay at the top level and everything else
+    arrives under ``Monitors``, keyed by ``Name``."""
+    t3p = _stage_t3p(tmp_path, 'BPM.t3p', staged=BPM_OUTPUT,
+                     touch=BPM_VOLUME_FILES, wake=WAKEFIELD_LONGITUDINAL)
+    # coaxpoint is the one declared monitor with no output staged here.
+    with pytest.warns(T3POutputWarning, match='coaxpoint'):
+        t3p.output_parser()
+    data = t3p.output_data
+
+    # The wake result, at the top level and unchanged.
+    assert data['WakeType'] == 'longitudinal'
+    assert data['LossFactor'] == pytest.approx(-3.88576373282202e-01)
+    assert len(data['s']) == 3
+
+    assert sorted(data['Monitors']) == ['modecoeff', 'point', 'port', 'volume']
+    point = data['Monitors']['point']
+    assert point['Type'] == 'Point'
+    assert list(point) == ['Type'] + list(POINT_COLUMNS)
+    assert point['t'][0] == pytest.approx(5.0e-13)
+    assert point['Ez'][0] == pytest.approx(-1.087379539e-28)
+    assert data['Monitors']['port']['Type'] == 'Power'
+    assert list(data['Monitors']['port']) == ['Type', 't', 'P']
+    assert data['Monitors']['modecoeff']['V'][-1] == pytest.approx(
+        -3.449835387040e-50)
+
+    # A Volume monitor records filenames and parses nothing -- they are netCDF.
+    assert data['Monitors']['volume'] == {'Type': 'Volume',
+                                          'files': sorted(BPM_VOLUME_FILES)}
+
+    # Bunch0.out is written by every run and declared by no monitor, so it is
+    # read outside the loop and keyed at the top level.
+    assert list(data['Bunch0']) == ['t', 'I']
+    assert data['Bunch0']['I'][0] == pytest.approx(1.03510387e-07)
+
+
+def test_t3p_reads_three_power_monitors_with_no_wake(tmp_path):
+    """The SIBC run: no ``WakeField`` monitor at all, three ``Power`` monitors
+    distinguished only by ``Name``. ``Monitors`` is populated and there is no
+    ``s`` / ``W`` key anywhere — the run this package could not read before."""
+    t3p = _stage_t3p(tmp_path, 'SIBC.t3p', staged=SIBC_OUTPUT)
+    # outputPower and the Volume monitor wrote nothing in this staging.
+    with pytest.warns(T3POutputWarning):
+        t3p.output_parser()
+    data = t3p.output_data
+
+    assert sorted(data['Monitors']) == ['inputPower', 'wallossPower']
+    assert set(data) == {'Monitors'}          # no Bunch0 in this run's staging
+    for name in ['inputPower', 'wallossPower']:
+        assert data['Monitors'][name]['Type'] == 'Power'
+        assert list(data['Monitors'][name]) == ['Type', 't', 'P']
+    assert 's' not in data and 'W' not in data
+    assert data['Monitors']['inputPower']['P'][0] == pytest.approx(
+        -4.664513771111e-08)
+    assert np.all(data['Monitors']['wallossPower']['P'] == 0.0)
+
+
+def test_t3p_with_all_output_present_does_not_warn(tmp_path):
+    """Nothing warns when every declared monitor wrote — the SIBC power monitors
+    with their ``Volume`` globs and the third power file all in place."""
+    t3p = _stage_t3p(
+        tmp_path, 'SIBC.t3p',
+        # outputPower.out has the same two-column shape as its siblings, which is
+        # why SOURCES.md records it as deliberately not copied.
+        staged=list(SIBC_OUTPUT.items())
+        + [('SIBC.wallossPower.out', 'outputPower.out')],
+        touch=['fieldts_t000000000500ps.out', 'fieldts_t000000000500ps.out.mod'])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', T3POutputWarning)
+        t3p.output_parser()
+
+    assert sorted(t3p.output_data['Monitors']) == [
+        'field', 'inputPower', 'outputPower', 'wallossPower']
+
+
+def test_t3p_wake_only_run_parses_byte_identically_to_before(tmp_path):
+    """**The no-baseline-moves assertion.** A run whose only monitor is a
+    ``WakeField`` one produces exactly the dict ``parse_wakefield`` returns —
+    same keys, same values, nothing added. This is what makes the existing output
+    specs (``kick_factor``, bare ``'W'`` / ``'s'`` / ``'I_bunch'``) keep working by
+    construction rather than through a compatibility shim, so it is pinned by
+    equality against the reader rather than only by a baseline run."""
+    text = """\
+ModelInfo:
+{
+  File: ./mesh.ncdf
+}
+
+Monitor:
+{
+  Type: WakeField
+  Name: wakefield
+  Smax: 1.4
+}
+"""
+    source = os.path.join(str(tmp_path), 'wakeonly.t3p')
+    _write(source, text)
+    workdir = tmp_path / 'wd'
+    results = os.path.join(str(workdir), 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    fixture = os.path.join(T3P_FIXTURES, 'cavity-half.wakefield.out')
+    shutil.copy(fixture, os.path.join(results, 'wakefield.out'))
+
+    t3p = T3P(source, workdir=str(workdir))
+    t3p.output_parser()
+    expected = parse_wakefield(fixture)
+
+    assert set(t3p.output_data) == set(expected)
+    for key, value in expected.items():
+        if isinstance(value, np.ndarray):
+            assert np.array_equal(t3p.output_data[key], value), key
+        else:
+            assert t3p.output_data[key] == value, key
+    # In particular: no 'Monitors' key at all when there is nothing to put in it.
+    assert 'Monitors' not in t3p.output_data
+    assert t3p.output_data['KickFactor'] == pytest.approx(9.64058337896157e-02)
+
+
+def test_t3p_missing_monitor_warning_names_itself_and_the_path(tmp_path):
+    """Design decision 5: a declared monitor that wrote nothing warns naming the
+    monitor, its type, and the path looked for. A whole run must not die because
+    one monitor of six did not write, but the hole must not be silent either."""
+    t3p = _stage_t3p(tmp_path, 'SIBC.t3p')
+    with pytest.warns(T3POutputWarning) as record:
+        t3p.output_parser()
+
+    messages = [str(warning.message) for warning in record]
+    assert len(messages) == 4                    # every monitor SIBC declares
+    assert any("'inputPower' (Type: Power)" in message for message in messages)
+    assert any(os.path.join('t3p_results', 'OUTPUT', 'inputPower.out') in message
+               for message in messages)
+    # The Volume monitor's warning names its glob, not a single filename.
+    assert any('fieldts_t*ps.out' in message for message in messages)
+    assert t3p.output_data == {}
+
+
+def test_t3p_unvalidated_monitor_type_says_so_when_it_is_missing(tmp_path):
+    """``SurfacePowerLoss`` is documented and has no fixture, so its warning
+    carries the extra 'no real output fixture exists' clause the validated types'
+    warnings do not — the same disclosure ``read_mode_table`` makes."""
+    text = """\
+ModelInfo:
+{
+  File: ./mesh.ncdf
+}
+
+Monitor:
+{
+  Type: SurfacePowerLoss
+  ReferenceNumber: 3
+  Name: wallLoss
+}
+"""
+    source = tmp_path / 'loss.t3p'
+    _write(source, text)
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir, exist_ok=True)
+    t3p = T3P(str(source), workdir=str(workdir))
+
+    with pytest.warns(T3POutputWarning, match='COVERAGE.md') as record:
+        t3p.output_parser()
+    assert 'wallLoss' in str(record[0].message)
+
+
+def test_t3p_surface_power_loss_is_read_when_it_writes(tmp_path):
+    """The unvalidated type still *reads*, because the shape is shared with
+    ``Power`` and the reader follows the file. Driven with a ``Power`` fixture
+    renamed, which is the honest stand-in: the reference gives both types the same
+    two-column time/power output."""
+    text = """\
+ModelInfo:
+{
+  File: ./mesh.ncdf
+}
+
+Monitor:
+{
+  Type: SurfacePowerLoss
+  ReferenceNumber: 3
+  Name: wallLoss
+}
+"""
+    source = tmp_path / 'loss.t3p'
+    _write(source, text)
+    workdir = tmp_path / 'wd'
+    results = os.path.join(str(workdir), 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    shutil.copy(os.path.join(T3P_FIXTURES, 'SIBC.wallossPower.out'),
+                os.path.join(results, 'wallLoss.out'))
+
+    t3p = T3P(str(source), workdir=str(workdir))
+    t3p.output_parser()
+
+    loss = t3p.output_data['Monitors']['wallLoss']
+    assert loss['Type'] == 'SurfacePowerLoss'
+    assert list(loss) == ['Type', 't', 'P']
+    assert len(loss['t']) == 20
+
+
+def test_t3p_unknown_monitor_type_warns_rather_than_vanishing(tmp_path):
+    """A newer T3P build may ship a seventh ``Type``. It warns naming the type and
+    listing the six known ones, rather than being silently skipped — the same
+    treatment an unknown ``.rfpost`` block gets."""
+    text = T3P_INPUT.replace('Type: Volume', 'Type: SomethingBrandNew')
+    t3p = _make_t3p(tmp_path, text=text)
+    with pytest.warns(T3POutputWarning, match='SomethingBrandNew'):
+        t3p.output_parser()
+
+
+def test_t3p_monitor_with_no_name_warns(tmp_path):
+    """``Name`` is the output filename stem, so a monitor without one cannot be
+    looked for. Only ``WakeField`` has a documented default (``wakefield``)."""
+    text = """\
+ModelInfo:
+{
+  File: ./mesh.ncdf
+}
+
+Monitor:
+{
+  Type: Power
+  ReferenceNumber: 4
+}
+"""
+    t3p = _make_t3p(tmp_path, text=text)
+    assert t3p.monitors() == [('Power', None)]
+    with pytest.warns(T3POutputWarning, match="declares\n?\\s*no 'Name'"):
+        t3p.output_parser()
+
+
+def test_t3p_duplicate_monitor_names_warn(tmp_path):
+    """Two monitors sharing a ``Name`` write the same file, so the second cannot be
+    addressed at all. Since ``Name`` is the selector, that is worth saying."""
+    text = T3P_INPUT + """
+Monitor:
+{
+  Type: Point
+  Name: mymon
+}
+"""
+    t3p = _make_t3p(tmp_path, text=text)
+    with pytest.warns(T3POutputWarning, match='share the Name'):
+        t3p.output_parser()
+
+
+def test_t3p_echoed_monitors_cross_check_agrees_with_the_input(tmp_path):
+    """Design decision 6: the ``t3p.out`` echo is a cross-check, not the source.
+    Here it agrees with ``BPM.t3p``, so nothing warns about it."""
+    t3p = _stage_t3p(tmp_path, 'BPM.t3p', staged=BPM_OUTPUT,
+                     touch=BPM_VOLUME_FILES, wake=WAKEFIELD_LONGITUDINAL)
+    assert t3p.echoed_monitors() == t3p.monitors()
+
+    with pytest.warns(T3POutputWarning) as record:
+        t3p.output_parser()
+    assert not any('does not match the input file' in str(warning.message)
+                   for warning in record)
+
+
+def test_t3p_echo_disagreement_warns_naming_both_lists(tmp_path):
+    """A run whose log resolved a different monitor list than the input file
+    declares — an input edited after the run, or a copied results directory.
+    Warned rather than silently trusted, in either direction."""
+    text = T3P_INPUT.replace('Name: wakefield', 'Name: renamed_after_the_run')
+    source = tmp_path / 'model.t3p'
+    _write(source, text)
+    workdir = tmp_path / 'wd'
+    results = os.path.join(str(workdir), 't3p_results', 'OUTPUT')
+    os.makedirs(results, exist_ok=True)
+    shutil.copy(os.path.join(T3P_FIXTURES, 'BPM.t3p.out'),
+                os.path.join(results, 't3p.out'))
+
+    t3p = T3P(str(source), workdir=str(workdir))
+    with pytest.warns(T3POutputWarning, match='does not match the input file'):
+        t3p.output_parser()
+
+
+def test_t3p_echoed_monitors_is_none_without_a_log(tmp_path):
+    """No ``t3p.out`` — a dry run, or a run that died before writing one — is not a
+    disagreement. This is why the echo cannot be the primary monitor list."""
+    t3p = _stage_t3p(tmp_path, 'BPM.t3p')
+    assert t3p.echoed_monitors() is None
+    with pytest.warns(T3POutputWarning) as record:
+        t3p.output_parser()
+    assert not any('does not match' in str(warning.message)
+                   for warning in record)
 
 
 # --------------------------------------------------------------------------- #

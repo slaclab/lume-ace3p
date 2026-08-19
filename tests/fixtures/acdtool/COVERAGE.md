@@ -179,3 +179,46 @@ files, which nothing in this package reads.
 `t3p_outputs/cavity-half.postprocess.in` is not a command output but the KVC echo
 T3P writes of its own resolved input; it is the evidence behind the jobname
 resolution order. See `SOURCES.md`.
+
+## T3P `Monitor` types (T3P multi-monitor Phase 0, added 2026-08-19)
+
+`references/t3p-commands.pdf` documents six `Monitor` `Type` values. This table
+answers, per type: **is there a real T3P output in `tests/fixtures/` that shows
+what this monitor writes?** The machine-readable mirror is the `validated` flag
+on `src/lume_ace3p/ace3p.py::MONITORS`, asserted against this file by
+`tests/test_ace3p.py::test_monitor_table_covers_the_documented_type_surface`.
+
+| `Type` | Real output | Shape / parser | Fixture |
+|---|---|---|---|
+| `WakeField` | **yes** | `WAKE` — `parse_wakefield`; the only type read before this plan | `t3p_outputs/cavity-half.wakefield.out` (transverse), plus the `BPM.t3p` input block |
+| `Point` | **yes** | `SERIES` — `parse_column_file(columns=POINT_COLUMNS)`; 7 columns `t Hx Hy Hz Ex Ey Ez` in SI | `t3p_outputs/BPM.point.out` |
+| `Power` | **yes**, 3 files | `SERIES`, columns `t P`; time [s] and power [W] | `t3p_outputs/BPM.port.out`, `SIBC.inputPower.out`, `SIBC.wallossPower.out` |
+| `ModeVoltage` | **yes** | `SERIES`, columns `t V`; time [s] and voltage [V] | `t3p_outputs/BPM.modecoeff.out` |
+| `SurfacePowerLoss` | **input only — no fixture at all** | `SERIES`, columns `t P`, **UNVALIDATED** | none; not even an input example. See the gap note below. |
+| `Volume` | **input only** | `GRID` — filenames recorded, never parsed | `BPM.t3p` / `SIBC.t3p` input blocks; the netCDF files themselves are deliberately not copied |
+| — `Bunch0.out` | **yes** | `SERIES`, columns `t I`; emitted by every run, declared by no monitor | `t3p_outputs/BPM.Bunch0.out` |
+
+Four of the six types have real output, which is better coverage than the
+`.rfpost` blocks got. The two that do not:
+
+**`SurfacePowerLoss` has no fixture in either direction.** No CW23 run declares
+one — SIBC measures loss on its coated wire with a `Power` monitor on the
+impedance surface instead. The reference gives it the same two-column
+time/power output `Power` has, and the reader is the shared `SERIES` one, so the
+exposure is narrow: if a real build writes something else, the file's own width
+is what the reader follows. Worth noting that the reference is internally
+inconsistent here — its overview sentence lists only five types ("namely, Point,
+Volume, WakeField, Power and ModeVoltage") while `SurfacePowerLoss` has its own
+`Type` bullet and its own numbered subsection (5).
+
+**`Volume` output is netCDF and is not read by anything.** `volumets_t*ps.out`
+begins with `CDF\x02` despite the `.out` extension, `netCDF4` is not a core
+dependency, and nothing in this package consumes a field snapshot — so filenames
+are recorded and that is all. This is the same treatment `SECTIONS` gives the
+three `.rfpost` `GRID` blocks, and it means a `Volume` monitor provides no
+extractable quantity: asking for one raises naming the reason.
+
+**What a real run is still owed:** a `SurfacePowerLoss` monitor at all, and a
+`WakeField` monitor with a `Grid:` sub-block (the direct-integration form for
+collimator-type structures, documented in the reference and absent from every
+CW23 input here).

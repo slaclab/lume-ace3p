@@ -121,13 +121,62 @@ directories.
 | `t3p_outputs/BPM.signal.out` | `t3p/BPM/t3p_results/OUTPUT/signal.out` | The `coaxsignal` output: three columns `t V I` with **no header row at all**, so it needs its own reader rather than Phase 3's header-driven one; the column names come from `references/acdtool-commands.pdf`. Unlike `wakefield.out` this is a *new* file, so `coaxsignal` has no ordering hazard. **Truncated** to 20 rows (`head -n 20`) from 4,001. |
 | `track3p_outputs/Pillbox-2.3MV.en` | `track3p/Pillbox/2.3MV/en` | The `EnhancementCounter` output of `postprocess track3p`, dumped under `./<jobname>/`. Seven columns *with* a header row (`fieldlevel ID enhancement averageEnhancement maxEnhancement maxEnhancementImpactNum totalImpactNum`), so it goes through the normal reader. `2.3MV` is the **jobname**, not a field level — defect 6; the example simply names its jobname after the field level it was run at. **Truncated** to 20 data rows (`head -n 21`) from 658. |
 
+## `t3p_outputs/` — T3P monitor output (T3P multi-monitor Phase 0)
+
+**Added 2026-08-19, for Phase 0 of `docs/t3p_monitor_plan.md`.** T3P writes six
+kinds of monitor output and this package read one; these are the files the rest
+are validated against. They share the `t3p_outputs/` directory with the four
+Phase-2 files above, and follow the same `<case>.<file>` naming so provenance
+survives the flat layout.
+
+Two CW23 runs cover four of the six documented `Monitor` types with real output:
+
+| File | Source | Notes |
+|---|---|---|
+| `BPM.t3p` | `t3p/BPM/BPM.t3p` | Full 115 lines. **Six monitors of five types on one run** — `WakeField` (`wakefield`), two `Point` (`point`, `coaxpoint`), `Volume` (`volume`), `Power` (`port`), `ModeVoltage` (`modecoeff`). Also the space-in-key case: `Start contour: -0.0055`, which the reference spells `StartContour`. |
+| `SIBC.t3p` | `t3p/SIBC/SIBC.t3p` | Full 114 lines. **Three `Power` monitors and no `WakeField`** — the multi-instance case, and the one that proves `Name` (not `Type`) must be the selector. Also carries a `CheckPoint` block and `SurfaceMaterial`/`Coating` (the lossy surface `wallossPower` measures). |
+| `BPM.point.out` | `BPM/t3p_results/OUTPUT/point.out` | `Point` monitor: 7 columns `t Hx Hy Hz Ex Ey Ez` in SI, **no header line of any kind**. **Truncated** to 20 rows (`head -n 20`) from 4,001. Time grid is `TimeStepping: DT` = 0.5 ps. |
+| `BPM.port.out` | same directory | `Power` monitor (`ReferenceNumber: 5`): 2 columns, time [s] and power [W], no header. **Truncated** to 20 rows from 4,001. Values start at ~1e-150 — the pulse has not arrived yet, which is real output and not a formatting artifact. |
+| `BPM.modecoeff.out` | same directory | `ModeVoltage` monitor: 2 columns, time [s] and voltage [V], no header. **Truncated** to 20 rows from 4,001. Same shape as `port.out`; only the second column's meaning differs. |
+| `BPM.Bunch0.out` | same directory | **Emitted by every run and declared by no monitor** — the structural twin of acdtool's `[scaling]`. The one T3P monitor file *with* a header: two `##` comment lines, the second naming `t[sec] I[A]`. **Truncated** to `head -n 22` (2 header + 20 rows) from 4,003 lines. |
+| `SIBC.inputPower.out` | `SIBC/t3p_results/OUTPUT/inputPower.out` | `Power` `ReferenceNumber: 4`, the excitation port. 2 columns, no header. **Truncated** to 20 rows from 667. SIBC's `DT` is 10 ps. |
+| `SIBC.wallossPower.out` | same directory | `Power` `ReferenceNumber: 3`, the lossy coated wire. Still identically zero over the first 20 rows, which is why it is worth keeping alongside `inputPower.out` — the two columns must not be read from the same place. |
+| `BPM.t3p.out` | `BPM/t3p_results/OUTPUT/t3p.out` | Full 168 lines: the T3P run log, which is KVC. Its `Input :` section is a **normalized echo** of the whole resolved input including every `Monitor` block, plus `JobName : t3p_results`. This is the cross-check on what the run actually used; it **normalizes keys** (`Start contour` → `Startcontour`), and it does not exist under dry-run, which is why the input file stays the primary monitor list. Leading `/* ... */` and the trailing license banner are absorbed into key names exactly as in `omega3p.out`. |
+
+Deliberately **not** copied:
+
+- `coaxpoint.out` — same shape as `point.out` (a second `Point` monitor).
+- `outputPower.out` — same shape as its two SIBC siblings.
+- **Every netCDF file.** `volumets_t000000000020ps.out` (BPM) and
+  `fieldts_t000000000500ps.out` (SIBC) begin with the bytes `CDF\x02` and
+  `file(1)` reports *NetCDF Data Format data* — despite the `.out` extension.
+  Their `.out.mod` siblings are netCDF too. A `Volume` monitor's filenames are
+  recorded and never parsed, so the fixture that exercises one is `BPM.t3p`'s
+  *input* block; a test needing the files on disk creates empty ones per glob.
+  The observed real names give the glob: monitor `volume` → `volumets_t*ps.out`,
+  monitor `field` → `fieldts_t*ps.out`, monitor `mymon` (cavity-half) →
+  `mymonts_t*ps.out`, i.e. `{name}ts_t*ps.out`.
+- `SurfacePowerLoss` output — **no CW23 run declares one.** SIBC uses `Power` on
+  a lossy surface instead. It is documented in `references/t3p-commands.pdf` and
+  is implemented `validated=False`, the same treatment the unenabled `.rfpost`
+  blocks get.
+
+Recorded unknowns, present in these runs and read by nothing:
+
+| File | Where | State |
+|---|---|---|
+| `dipole.dat` | BPM, cavity-half | **0 bytes** in every run inspected |
+| `BBL1/` | BPM, cavity-half | empty directory |
+| `port_4_Pin.out`, `port_4_Vin.out` | SIBC | 2 columns, no header, 17 rows starting at t = 2.04 ns rather than at the first step. Undocumented — they appear with a waveguide port and no monitor declares them. |
+| `wakefield.bnd`, `wakefield.z*.dat`, `wakefield.z.all.dat` | BPM, cavity-half | `postprocess transwake`'s other outputs — the per-coordinate longitudinal wakes the Panofsky-Wenzel derivative is taken from, each a 2-column table under a `#(x, y)` first line. Out of scope: they belong to the acdtool command table, not the monitor table. |
+
 ---
 
 ## Size
 
-**138 KB of fixture data** (141,735 B), 156 KB including this file and
-`COVERAGE.md` — inside the revised **100–150 KB** budget. The original gate was
-"~50 KB"; see the deviation note below.
+**153 KB of fixture data** (156,662 B), 181 KB including this file and
+`COVERAGE.md` — inside the revised **100–160 KB** budget. The original gate was
+"~50 KB", then 100–150 KB; see the two deviation notes below.
 
 ```
 find tests/fixtures -type f ! -name '*.md' -printf '%s\n' | paste -sd+ | bc
@@ -143,9 +192,20 @@ with the file list it specifies:
 | `rfpost_outputs/` | 19,023 | Phase 0 |
 | `rfpost_inputs/` | 6,497 | Phase 0 |
 | `acdtool_inputs/` | 396 | Phase 0 |
-| `t3p_outputs/` | 4,406 | Phase 2 |
+| `t3p_outputs/` | 19,333 (4,406 from acdtool Phase 2 + 14,927 from t3p monitor Phase 0) | Phase 2, then t3p monitor Phase 0 |
 | `track3p_outputs/` | 2,632 | Phase 2 |
-| **data total** | **141,735** | |
+| **data total** | **156,662** | |
+
+**Budget revised again 2026-08-19**, from 100–150 KB to **100–160 KB**, for the
+nine T3P monitor fixtures. `docs/t3p_monitor_plan.md` predicted this ("roughly
+12 KB, landing near 154 KB") and offered two ways out: truncate `BPM.t3p.out` to
+its `Input :` section, or raise the stated gate. The measured addition is 14,927 B
+and truncating `BPM.t3p.out` would recover only ~2.6 KB of license banner — i.e.
+**neither file list reaches 150 KB**, so the gate was the thing that had to move.
+`BPM.t3p.out` is therefore kept whole: the banner is the part that proves
+`parse_ace3p` reads a *T3P* log unmodified, and the `omega3p.out` fixtures prove
+that only for Omega3P. The plan's instruction was "do not silently exceed it";
+this is the non-silent version.
 
 The plan says "keep `field1_0.ec` in full" — 57,973 B, already above the 50 KB
 gate on its own — and separately estimates "total should land near 20 KB", which
