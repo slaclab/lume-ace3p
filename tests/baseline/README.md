@@ -2,7 +2,7 @@
 
 Frozen capture of the **current, pre-refactor** behavior of every shipped
 example, so later phases of the workflow-modularization refactor can diff
-against a stable reference. See `docs/workflow_module_refactor_plan.md`,
+against a stable reference. See `plans/workflow_module_refactor_plan.md`,
 Phase 0.5.
 
 The refactor is a **clean break** on output *file formats* (declarative
@@ -100,3 +100,25 @@ establishes that no numbers moved.
 - **`MOBO_ExpectedHypervolume_Example`** — *de-registered 2026-08.* Botorch
   MOBO/EHVI fit: slow **and** a known nondeterministic flake, so it was both
   unrunnable in practice and unreliable when run.
+- **`omega3p_optimization`** — *recorded 2026-08-20.* Two independent reasons: a
+  real-workflow freeze has nothing to optimize (the `R/Q` objective comes from
+  acdtool, NaN under dry run, so NelderMead walks a constant surface), and the
+  synthetic route is already covered — the `xopt_scalar` producer swaps in
+  `SyntheticWorkflow` and takes its config from the registry rather than the
+  example YAML, so a second entry would re-freeze the same generic
+  `modes.scalar_optimize` path under different variable names. Its two frozen
+  sweep siblings share the same `pillbox-rtop.*` inputs.
+- **`geant4_dose_single`** — *recorded 2026-08-20.* `mode: single`, all three
+  outputs from the `geant4` module (NaN under dry run) and no swept axis, so a
+  dry-run freeze captures a one-row table of NaNs. `geant4_track3p_beta` is
+  frozen and covers the shared `Particles` pre-step with real compute.
+- **`geant4_beta_surrogate`** — *recorded 2026-08-20.* Needs real Geant4 dose
+  output and a populated training store, and its surrogate/inversion modes fit
+  GPs (the cost-and-flake objection above). Those numerics are covered directly
+  by `test_surrogate.py`, `test_surrogate_data.py` and `test_inversion.py`.
+
+The last three were an undocumented *gap* rather than a decision until
+2026-08-20 — in neither collection, so nothing said which. `test_baseline_selfcheck.py`
+now asserts that the two collections partition `examples/` between them
+(`test_every_example_is_accounted_for`), that they do not overlap, and that
+`not_frozen.json` still matches the `NOT_FROZEN` dict it is generated from.

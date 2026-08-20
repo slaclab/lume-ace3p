@@ -1,5 +1,5 @@
 """Shared machinery for the Phase-0.5 golden baseline (see
-`docs/workflow_module_refactor_plan.md`).
+`plans/workflow_module_refactor_plan.md`).
 
 The refactor is a *clean break* on output file formats, so later phases check
 equivalence on **numeric content**, not bytes. This module captures the current
@@ -385,7 +385,7 @@ _PHASE_6 = ('Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new '
             'example, so nothing was regenerated.')
 
 # Provenance for the example the T3P multi-monitor work added.
-_T3P_MONITOR = ('Phase 3 of docs/t3p_monitor_plan.md (2026-08-19). First freeze '
+_T3P_MONITOR = ('Phase 3 of plans/t3p_monitor_plan.md (2026-08-19). First freeze '
                 '-- a new example, so nothing was regenerated. It is the first '
                 "example whose field index is 't' rather than 's'/'Frequency', "
                 'which is what makes the axis label worth checking here.')
@@ -605,7 +605,50 @@ NOT_FROZEN = {
         'known nondeterministic flake, so it was both unrunnable in practice and '
         'unreliable when run. The shipped YAML is itself a non-runnable legacy '
         'reference under examples/incomplete/.'),
+    # The three below were an undocumented *gap* rather than a decision until
+    # 2026-08-20: unregistered here and unmentioned in NOT_FROZEN, so nothing
+    # said whether that was deliberate. test_every_example_is_accounted_for now
+    # keeps the two collections partitioning examples/ between them.
+    'omega3p_optimization': (
+        'RECORDED 2026-08-20 (previously an undocumented gap, not a decision). '
+        'Not frozen for two independent reasons. (1) A real-workflow freeze has '
+        "nothing to optimize: the objective 'R/Q' comes from the acdtool module, "
+        'which returns the NaN sentinel under dry run, so NelderMead would walk '
+        'a constant-NaN surface. (2) The synthetic route is already covered: the '
+        "'xopt_scalar' producer replaces the workflow with SyntheticWorkflow and "
+        'reads its config off the registry entry rather than the example YAML, '
+        'so a second entry would re-freeze the same generic '
+        'modes.scalar_optimize NelderMead path under different variable names, '
+        'testing nothing Omega3P-specific. Its two sweep siblings '
+        '(omega3p_sweep, omega3p_ace3p_param_sweep) are frozen and share the '
+        'same pillbox-rtop.* inputs, so the chain itself is covered.'),
+    'geant4_dose_single': (
+        'RECORDED 2026-08-20 (previously an undocumented gap, not a decision). '
+        "'mode: single' with all three output_parameters ('total_dose', "
+        "'peak_dose', 'total_edep') read from the geant4 module, which is NaN "
+        'under dry run — and being a single point it has no swept axis either, '
+        'so a dry-run freeze would capture a one-row table of NaNs and nothing '
+        'else. Real Geant4 output is what would make it checkable. The sibling '
+        'geant4_track3p_beta IS frozen and covers the shared part with real '
+        'compute: its Particles pre-step generates particles.data per beta, '
+        'frozen as digests.'),
+    'geant4_beta_surrogate': (
+        'RECORDED 2026-08-20 (previously an undocumented gap, not a decision). '
+        'Four YAMLs spanning collect_training_data, surrogate training, and the '
+        'two inversion modes; the campaign needs real Geant4 dose output and a '
+        'populated training store, and the surrogate/inversion modes fit GPs '
+        '(the same cost-and-flake objection that de-registered '
+        's3p_bayesian_sweep). The surrogate and inversion numerics are covered '
+        'directly by tests/test_surrogate.py, test_surrogate_data.py and '
+        'test_inversion.py instead of through an example baseline. Note this '
+        'example belongs to the Geant4 surrogate/inversion project, which is '
+        'shelved — see plans/geant4_surrogate_inversion_plan.md.'),
 }
+
+# Directories under examples/ that hold no example of their own: shared input
+# assets, and the parking lot for non-runnable legacy references (whose YAMLs
+# are registered individually, by name, with a 'stage_dir').
+NON_EXAMPLE_DIRS = {'assets', 'incomplete'}
 
 
 def example_root(name, meta):
