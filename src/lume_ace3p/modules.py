@@ -603,7 +603,7 @@ class S3PModule(_SolverModule):
         The port mode profiles ride here and *only* here — they are indexed by
         position rather than by frequency, so they are field artifacts by the
         same rule that keeps acdtool's curve files out of the table (design
-        decision 4 of ``docs/acdtool_rework_plan.md``). They survive
+        decision 4 of ``plans/acdtool_rework_plan.md``). They survive
         :func:`lume_ace3p.results.save_field` as nested dicts, the way
         ``IndexMap`` already does."""
         solver = self._solver
@@ -621,7 +621,7 @@ class T3PModule(_SolverModule):
     index — except the index is the wake coordinate ``s`` rather than frequency.
 
     A wake is only one of six things a T3P run can monitor, though, and since
-    ``docs/t3p_monitor_plan.md`` all of them are readable. That makes ``Name``
+    ``plans/t3p_monitor_plan.md`` all of them are readable. That makes ``Name``
     the selector::
 
         output_parameters :
@@ -1073,7 +1073,7 @@ class AcdtoolModule(Module):
     (``ctx.reparse[artifact]``) after such a command, and ``T3PModule`` remains
     the single owner of every wakefield quantity — one parser
     (:func:`~lume_ace3p.ace3p.parse_wakefield`), one place to ask, whether or not
-    acdtool ran. See the Phase-2 decision in ``docs/acdtool_rework_plan.md``.
+    acdtool ran. See the Phase-2 decision in ``plans/acdtool_rework_plan.md``.
     """
 
     type = 'acdtool'
@@ -1335,7 +1335,7 @@ class AcdtoolModule(Module):
         the run reported a mode-indexed section, else ``None``.
 
         **It is the only axis acdtool ever offers** (design decision 2 of
-        ``docs/acdtool_rework_plan.md``). Surface-indexed sections resolve to
+        ``plans/acdtool_rework_plan.md``). Surface-indexed sections resolve to
         scalars through an ``at: {surface: n}``, so one acdtool module cannot put
         two axes on one table; across modules the collision falls out of DAG
         order, since :meth:`Workflow.field_index` takes the first producer — so

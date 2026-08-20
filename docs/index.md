@@ -28,7 +28,7 @@ table or handed to Xopt for optimization.
 The three layers — **modules** (one adapter per step), the declarative
 **workflow** DAG, and the workflow-agnostic **modes** (`single`,
 `parameter_sweep`, `scalar_optimize`, `gp_parameter_sweep`) — are described in
-`docs/workflow_module_refactor_plan.md`.
+`plans/workflow_module_refactor_plan.md`.
 
 To run a parameter sweep or optimization the user typically provides:
 

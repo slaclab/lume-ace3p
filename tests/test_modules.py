@@ -1,4 +1,4 @@
-"""Module-layer tests (see docs/workflow_module_refactor_plan.md).
+"""Module-layer tests (see plans/workflow_module_refactor_plan.md).
 
 Two things are verified for every module:
 

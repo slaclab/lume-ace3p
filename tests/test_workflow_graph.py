@@ -1,6 +1,6 @@
 """Declarative Workflow build + DAG validation + evaluate tests.
 
-Three groups (see docs/workflow_module_refactor_plan.md):
+Three groups (see plans/workflow_module_refactor_plan.md):
 
 1. **Build / order** — a declared ``workflow:`` list is instantiated via the
    registry and topologically ordered by artifact edges, independent of the

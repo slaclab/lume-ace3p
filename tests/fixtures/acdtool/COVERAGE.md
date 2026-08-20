@@ -1,6 +1,6 @@
 # Real-output fixture coverage, per `.rfpost` block
 
-Frozen 2026-08-13 for Phase 0 of `docs/acdtool_rework_plan.md`; **"Parser today"
+Frozen 2026-08-13 for Phase 0 of `plans/acdtool_rework_plan.md`; **"Parser today"
 updated 2026-08-17 for Phase 3**, which replaced the three hand-written section
 parsers with one reader per output *shape*. Provenance for every file named here
 is in `SOURCES.md`.

@@ -1,5 +1,5 @@
 """Characterization tests over the real CW23 fixtures (see
-`docs/acdtool_rework_plan.md`, Phase 0).
+`plans/acdtool_rework_plan.md`, Phase 0).
 
 **Most of these tests assert what the code does TODAY, wrong answers included.**
 They are regression anchors captured *before* the parser rework, not statements

@@ -1,6 +1,6 @@
 # Fixture provenance — acdtool rework Phase 0
 
-Frozen 2026-08-13 for Phase 0 of `docs/acdtool_rework_plan.md`.
+Frozen 2026-08-13 for Phase 0 of `plans/acdtool_rework_plan.md`.
 
 Every file here is a **verbatim copy** of a real ACE3P input or solver/acdtool
 output from the CW23 tutorial archive, except the one file explicitly marked
@@ -108,7 +108,7 @@ so trimming it would delete the thing under test.
 ## `t3p_outputs/` and `track3p_outputs/` — the positional commands' own outputs
 
 **Added 2026-08-17, during Phase 2.** These are the four files the Phase-0
-addendum in `docs/acdtool_rework_plan.md` lists — real files that were already on
+addendum in `plans/acdtool_rework_plan.md` lists — real files that were already on
 disk in CW23, copied when the phase that needed them came up rather than as a
 separate session. They are outputs of the positional `postprocess` commands (and
 of T3P itself), not of `postprocess rf`, which is why they sit in their own
@@ -123,7 +123,7 @@ directories.
 
 ## `t3p_outputs/` — T3P monitor output (T3P multi-monitor Phase 0)
 
-**Added 2026-08-19, for Phase 0 of `docs/t3p_monitor_plan.md`.** T3P writes six
+**Added 2026-08-19, for Phase 0 of `plans/t3p_monitor_plan.md`.** T3P writes six
 kinds of monitor output and this package read one; these are the files the rest
 are validated against. They share the `t3p_outputs/` directory with the four
 Phase-2 files above, and follow the same `<case>.<file>` naming so provenance
@@ -197,7 +197,7 @@ with the file list it specifies:
 | **data total** | **156,662** | |
 
 **Budget revised again 2026-08-19**, from 100–150 KB to **100–160 KB**, for the
-nine T3P monitor fixtures. `docs/t3p_monitor_plan.md` predicted this ("roughly
+nine T3P monitor fixtures. `plans/t3p_monitor_plan.md` predicted this ("roughly
 12 KB, landing near 154 KB") and offered two ways out: truncate `BPM.t3p.out` to
 its `Input :` section, or raise the stated gate. The measured addition is 14,927 B
 and truncating `BPM.t3p.out` would recover only ~2.6 KB of license banner — i.e.
@@ -213,5 +213,5 @@ counted only the truncated curve files and omitted the 32 KB of solver outputs
 it also asks for in the same list. The substantive instruction (one full-length
 curve file, real `omega3p.out` banners, complete S-parameter tables) was
 followed and the size gate was corrected to the measured value; see the
-deviation note in `docs/acdtool_rework_plan.md`. Every file is plain numeric or
+deviation note in `plans/acdtool_rework_plan.md`. Every file is plain numeric or
 KVC text and compresses well.

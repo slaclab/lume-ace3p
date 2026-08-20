@@ -1,7 +1,7 @@
 # Geant4 Dose Surrogate & Inversion — Implementation Plan
 
 **Status:** UNSHELVED (2026-07-10). The workflow modularization refactor is
-complete (see `docs/workflow_module_refactor_plan.md`), so this project resumes
+complete (see `plans/workflow_module_refactor_plan.md`), so this project resumes
 on the new module/workflow/mode architecture.
 **Phase 0 (xopt 3.0.0 compat) done. Phase 1 (decouple Xopt from S3PWorkflow) is
 DELIVERED** by the refactor's Phase 4: `scalar_optimize` / `gp_parameter_sweep`
@@ -911,7 +911,7 @@ and/or scoring-mesh resolution — as the fidelity axis.
 
 ## Execution notes for fresh-context sessions
 
-- Read `docs/geant4_surrogate_inversion_plan.md` (this file) and the memory note
+- Read `plans/geant4_surrogate_inversion_plan.md` (this file) and the memory note
   `geant4-surrogate-inversion-project` first.
 - Execute **one phase per session.** Do not start a phase before its precondition
   phase's verification passes.

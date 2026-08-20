@@ -1,6 +1,6 @@
 """Phase-3 tests: the mode layer (``single`` + ``parameter_sweep``) driving a
 declarative :class:`~lume_ace3p.workflow_graph.Workflow` and returning pandas
-DataFrames (see docs/workflow_module_refactor_plan.md).
+DataFrames (see plans/workflow_module_refactor_plan.md).
 
 Verification (Phase 3 done when):
 

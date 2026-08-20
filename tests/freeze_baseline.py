@@ -8,7 +8,7 @@ current behavior of every example:
 Re-running overwrites the fixtures. `test_baseline_selfcheck.py` then re-runs
 the current code and confirms it still matches these fixtures — that guards
 against a flaky/nondeterministic capture being used as a reference in later
-phases. See docs/workflow_module_refactor_plan.md, Phase 0.5.
+phases. See plans/workflow_module_refactor_plan.md, Phase 0.5.
 """
 
 import os

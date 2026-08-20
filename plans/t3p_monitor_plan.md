@@ -2,7 +2,7 @@
 
 **Status: COMPLETE** — all four phases landed 2026-08-19. See the three "as
 landed" sections at the bottom for what was built and where each phase deviated.
-Written 2026-08-18. Follows `docs/acdtool_rework_plan.md`
+Written 2026-08-18. Follows `plans/acdtool_rework_plan.md`
 (COMPLETE) and reuses its machinery deliberately: the declarative shape table,
 the header-driven column reader, the "one index axis per module" rule, and the
 warn-naming-itself failure mode. Nothing in this plan invents a new pattern.

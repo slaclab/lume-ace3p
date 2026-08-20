@@ -1,5 +1,5 @@
 """Phase-5 tests: the consolidated hybrid result model (see
-docs/workflow_module_refactor_plan.md).
+plans/workflow_module_refactor_plan.md).
 
 Verification (Phase 5 done when):
 

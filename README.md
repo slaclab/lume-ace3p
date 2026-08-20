@@ -27,7 +27,7 @@ chain — an S3P sweep, a Geant4 dose optimization, or a full
 ### Architecture
 
 Three cleanly separated layers (see
-[`docs/workflow_module_refactor_plan.md`](docs/workflow_module_refactor_plan.md)):
+[`plans/workflow_module_refactor_plan.md`](plans/workflow_module_refactor_plan.md)):
 
 1. **Modules** (`src/lume_ace3p/modules.py`) — one adapter per pipeline step,
    each declaring the artifact kinds it `requires` and `provides`.
@@ -64,7 +64,12 @@ The documentation covers:
 - `src/lume_ace3p/` — the Python package (entry point: `run_lume_ace3p.py`).
 - `examples/` — runnable Cubit / ACE3P / YAML / batch-script examples.
 - `plotting/` — interactive plotting scripts for sweep and optimization output.
+- `CHANGELOG.md` — what changed in each release.
 - `docs/` — Sphinx documentation source.
+- `plans/` — implementation plans for the larger pieces of work, each recording
+  what was built, how it deviated from the design, and what it left owed. Kept
+  out of `docs/` because they are development history rather than user
+  documentation.
 - `references/` — external reference material, including the SLAC ACE3P
   command-syntax references for every module and `acdtool`.
 

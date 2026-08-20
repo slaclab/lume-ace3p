@@ -36,7 +36,7 @@ directory, and the real override lives in the batch script rather than the input
 file.
 
 `docs/acdtool_reference.md` transcribes the parts of `acdtool-commands.pdf` that
-this codebase depends on. `docs/acdtool_rework_plan.md` records where these
+this codebase depends on. `plans/acdtool_rework_plan.md` records where these
 documents corrected earlier reverse-engineered assumptions.
 
 ### Extracting text

@@ -1,5 +1,5 @@
 """Phase-4b tests: `invert_bayesian` — a posterior over β for a target dose
-(see docs/geant4_surrogate_inversion_plan.md, Phase 4b).
+(see plans/geant4_surrogate_inversion_plan.md, Phase 4b).
 
 This is the mode that *answers* the non-uniqueness `invert_optimize` reports.
 Because the surrogate reaches β only through its ``k`` retained POD coefficients,

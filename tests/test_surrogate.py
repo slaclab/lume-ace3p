@@ -1,5 +1,5 @@
 """Phase-3 tests: the PCA-GP forward dose surrogate + the ``train_surrogate``
-mode (see docs/geant4_surrogate_inversion_plan.md, Phase 3).
+mode (see plans/geant4_surrogate_inversion_plan.md, Phase 3).
 
 Verification (Phase 3 done when):
 

@@ -1,5 +1,5 @@
 """Characterization tests over the real CW23 T3P monitor fixtures (see
-`docs/t3p_monitor_plan.md`, Phase 0).
+`plans/t3p_monitor_plan.md`, Phase 0).
 
 T3P writes six kinds of monitor output; before this plan LUME-ACE3P read one
 (``WakeField``). These tests pin what the *files* look like — column counts,
