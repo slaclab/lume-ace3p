@@ -93,8 +93,20 @@ behind it.
 ## What else is in a T3P results directory
 
 Everything lands under `<jobname>/OUTPUT/` (`t3p_results` by default; see
-[](yaml_reference.md#omega3p-module) for how the jobname resolves). Besides the
-monitor files above:
+[](yaml_reference.md#omega3p-module) for how the jobname resolves).
+
+T3P is the one solver whose jobname `lume-ace3p` cannot *select*. Every other
+solver takes the results directory as a second positional argument, and the
+`omega3p`/`s3p`/`track3p` modules pass their `results_dir:` through as one. No T3P
+invocation in CW23 does that — all eight rely on the default — and no reference
+documents an ACE3P command line either way, so `t3p` is not given the argument
+rather than being guessed at. The practical consequence: `results_dir:` on a `t3p`
+module moves only where `lume-ace3p` reads, so use it to *follow* a `JobName` leaf
+in the `.t3p` file, never to impose one. Given a single CW23-style invocation
+proving `t3p` accepts the argument, flipping `T3P.accepts_results_dir_arg` to
+`True` is the whole change.
+
+Besides the monitor files above:
 
 | File | What it is | Status |
 |---|---|---|
@@ -127,7 +139,7 @@ full run.
   names, the axis rule, and `at:` narrowing.
 - [](acdtool_reference.md) — the three time-domain `postprocess` commands that
   chain after T3P, one of which **overwrites** the wake monitor's output.
-- `docs/t3p_monitor_plan.md` — how the multi-monitor support was built, and every
+- `plans/t3p_monitor_plan.md` — how the multi-monitor support was built, and every
   place the implementation deviated from its plan.
 - `tests/fixtures/acdtool/COVERAGE.md` — the machine-checked version of the "real
   output?" column above.

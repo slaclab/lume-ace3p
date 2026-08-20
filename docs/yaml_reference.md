@@ -154,14 +154,31 @@ catalog wants: for an eigensolve you often do not know the mode count in advance
 table with one row per `(grid point, mode)` — as an S3P sweep goes long over
 `Frequency`. In a dry run there are no modes yet, so the table stays wide.
 
-**`results_dir:`** names the directory the run wrote into (default
-`omega3p_results`). That directory is really chosen by the **job name in your
-batch submission script**, not by the input file, so this module key is the
-supported way to override it. A top-level `JobName` in the `.omega3p` file is also
-honored as a fallback, but no ACE3P reference documents that key for any solver —
-do not rely on it. A missing `omega3p.out` (a failed or interrupted run) is not a
-crash; the error surfaces only if a workflow asks for a mode quantity, and it
-names the path that was searched.
+**`results_dir:`** names the directory the run writes into (default
+`omega3p_results`). That directory is chosen on the solver's **command line**, not
+in the input file, so this module key is the supported way to override it:
+`lume-ace3p` passes it to the solver as the second positional argument, exactly
+as a batch script would (`omega3p SRFCell.omega3p omega3p_results`). Setting it
+therefore moves both where the solver writes *and* where `lume-ace3p` reads.
+
+A top-level `JobName` in the `.omega3p` file is also honored as a fallback, but no
+ACE3P reference documents that key for any solver — do not rely on it. It is not
+forwarded on the command line, because the solver is already reading the file that
+sets it.
+
+```{warning}
+The `t3p` module is the exception: its `results_dir:` steers only where
+`lume-ace3p` **reads**. No ACE3P reference documents a solver command line, and
+of the T3P invocations in the CW23 tutorials none passes a second positional
+argument, so nothing establishes that `t3p` accepts one — and T3P writes to
+`<results_dir>/OUTPUT` rather than straight into the directory. Setting
+`results_dir:` on a `t3p` module only makes sense when the run is already writing
+there, via a `JobName` leaf in the `.t3p` file. See [](t3p_reference.md).
+```
+
+A missing `omega3p.out` (a failed or interrupted run) is not a crash; the error
+surfaces only if a workflow asks for a mode quantity, and it names the path that
+was searched.
 
 (s3p-module)=
 ### `s3p` module
@@ -225,9 +242,13 @@ normally — see [](#acdtool-module). A workflow may list both `s3p` and `t3p`
 error like any other.
 
 **Output locations are resolved, not assumed.** T3P writes under
-`<results_dir>/OUTPUT` (default `t3p_results`, overridable with the same
-`results_dir:` key documented under [](#omega3p-module)) and names each monitor's
-files after that monitor's `Name`, which is read from the parsed `.t3p`.
+`<results_dir>/OUTPUT` (default `t3p_results`) and names each monitor's files
+after that monitor's `Name`, which is read from the parsed `.t3p`.
+
+`results_dir:` is accepted here but, uniquely among the solver modules, it is
+**read-only**: it tells `lume-ace3p` where to look without telling `t3p` where to
+write. See the warning under [](#omega3p-module) for why, and prefer leaving it
+unset unless a `JobName` leaf in the `.t3p` file already moves the run's output.
 
 #### Monitors: `Name` selects, `Type` supplies the shape
 

@@ -230,6 +230,16 @@ class ACE3P(CommandWrapper):
     # of any type sets one. See ``job_name`` for the resolution order.
     default_job_name = ''
 
+    # Whether this solver takes its results directory as a *second positional
+    # argument* on the command line, which is how a batch script overrides the
+    # default. Set per class rather than assumed, because no reference in
+    # ``references/`` describes a command line at all (they document input
+    # syntax only) — the evidence is the CW23 batch scripts, e.g.
+    # ``omega3p DeformedRfGunVacuum.omega3p omega3p_results_deformed`` and
+    # ``track3p Pillbox2.3MV.track3p 2.3MV``. T3P is the one solver that leaves
+    # this False; see :class:`T3P`.
+    accepts_results_dir_arg = False
+
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
                  ace3p_path=None, mpi_caller=None, results_dir=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -259,9 +269,32 @@ class ACE3P(CommandWrapper):
             self.input_data = file.read()
         self._tree = None  # parsed lazily by set_value
 
+    def solver_command(self):
+        """The solver invocation, as the shell string :meth:`run` executes.
+
+        A results directory supplied through a module's ``results_dir:`` key is
+        appended as the **second positional argument**, the way the CW23 batch
+        scripts select one. Without that the key would tell lume-ace3p where to
+        *look* while the solver still wrote to its default, so any non-default
+        value would leave the reader chasing an empty directory.
+
+        Only an explicit ``results_dir`` is passed. The other two rungs of
+        :meth:`job_name`'s resolution order are already known to the solver
+        itself — a ``JobName`` leaf because it is in the input file it reads, the
+        per-solver default because it *is* the solver's default — so passing
+        either would add an argument without changing an outcome. Solvers whose
+        :attr:`accepts_results_dir_arg` is False never get the argument.
+        """
+        command = [self.ACE3P_PATH + self.module_name, self.input_file]
+        if self._results_dir and self.accepts_results_dir_arg:
+            command.append(self._results_dir)
+        return (self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c '
+                + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' '
+                + ' '.join(command))
+
     def run(self):
         self.write_input()
-        subprocess.run(self.MPI_CALLER + ' -n ' + str(self.ace3p_tasks) + ' -c ' + str(self.ace3p_cores) + ' ' + self.ace3p_opts + ' ' + self.ACE3P_PATH + self.module_name + ' ' + self.input_file, shell=True, cwd=self.workdir)
+        subprocess.run(self.solver_command(), shell=True, cwd=self.workdir)
         self.output_parser()
 
     def load_input_file(self, *args):
@@ -375,6 +408,10 @@ class Omega3P(ACE3P):
     module_name = 'omega3p'
 
     default_job_name = 'omega3p_results'
+
+    # CW23 overrides this on the command line, including to a non-default value:
+    # ``omega3p DeformedRfGunVacuum.omega3p omega3p_results_deformed``.
+    accepts_results_dir_arg = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -514,6 +551,9 @@ class S3P(ACE3P):
 
     default_job_name = 's3p_results'
 
+    # CW23 passes it: ``s3p FPC-Vacuum.s3p s3p_results``.
+    accepts_results_dir_arg = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 's3p.out'
@@ -524,7 +564,7 @@ class S3P(ACE3P):
 
         * ``IndexMap`` — port / mode / type / cutoff per S-matrix index;
         * ``Frequency`` — the scan, which every S-parameter array aligns to;
-        * ``S(m,n)`` — the magnitude |S|, from ``Reflection.out``. **Unchanged**
+        * ``S(m,n)`` — the magnitude ``|S|``, from ``Reflection.out``. **Unchanged**
           by Phase 5: this is the key the shipped examples and the frozen
           baselines use, and it is not redefined;
         * ``S(m,n)_real`` / ``S(m,n)_imag`` / ``S(m,n)_phase_deg`` — the complex
@@ -612,7 +652,7 @@ def parse_sparameters(path):
         #Frequency[Hz]          S(0,0)          S(0,1) ...
         9.42400000e+09  3.23077414e-02  2.24462693e-04 ...
 
-    ``Reflection.out`` holds the magnitudes |S(m,n)| as one plain float per cell;
+    ``Reflection.out`` holds the magnitudes ``|S(m,n)|`` as one plain float per cell;
     ``SParameter.out`` holds the same matrix as ``( real,  imag )`` pairs. The
     cell form is the *only* difference, so one reader covers both: ``columns``
     maps each header name to a real array for the first file and a **complex**
@@ -684,7 +724,7 @@ class T3POutputWarning(UserWarning):
 
     A whole run must not die because one monitor of six did not write — the other
     five are still results — but neither may the hole be silent, which is what it
-    was before ``docs/t3p_monitor_plan.md``: a run declaring ``Power`` and
+    was before ``plans/t3p_monitor_plan.md``: a run declaring ``Power`` and
     ``ModeVoltage`` monitors wrote those files, LUME-ACE3P read none of them, and
     nothing said so. Mirrors :class:`S3POutputWarning` and
     :class:`lume_ace3p.acdtool.AcdtoolOutputWarning`."""
@@ -896,6 +936,9 @@ class T3P(ACE3P):
     * **A run may have no wake at all.** ``SIBC`` has no ``WakeField`` monitor.
       That was always tolerated; since the multi-monitor plan it is no longer a
       dead end, because such a run's series monitors are read.
+
+    T3P is also the one solver whose results directory lume-ace3p cannot select:
+    see :attr:`accepts_results_dir_arg`.
     """
 
     module_name = 't3p'
@@ -903,6 +946,20 @@ class T3P(ACE3P):
     # T3P's default job name — the directory it writes results into when the
     # input file does not set 'JobName' explicitly.
     default_job_name = 't3p_results'
+
+    # False, unlike every other solver here, and deliberately: of the eight
+    # distinct T3P invocations in CW23, *none* passes a second positional
+    # argument, so nothing establishes that t3p accepts one — and no reference
+    # documents a command line to settle it either way. Nor is it clear what the
+    # argument would name for this solver, since T3P writes to
+    # '<job_name>/OUTPUT' rather than straight into the directory. Passing an
+    # unverified argument would risk breaking every T3P run to make a rarely
+    # used key work, so 'results_dir:' on a t3p module stays read-only: it tells
+    # lume-ace3p where to look, and the run must already be writing there
+    # (via a 'JobName' leaf, which t3p.out confirms it honors). Documented as
+    # such in docs/yaml_reference.md. Flip this to True given one CW23-style
+    # invocation that proves the argument.
+    accepts_results_dir_arg = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1161,7 +1218,7 @@ def parse_column_file(path, columns=None):
     (:data:`lume_ace3p.acdtool.SIGNAL_COLUMNS`).
 
     Lives here rather than in :mod:`lume_ace3p.acdtool`, where Phase 3 of
-    ``docs/acdtool_rework_plan.md`` first wrote it, because Phase 5 needs it for
+    ``plans/acdtool_rework_plan.md`` first wrote it, because Phase 5 needs it for
     S3P: the postprocessor may depend on the solver layer, not the other way
     round. ``acdtool.parse_column_file`` re-exports it.
     """
@@ -1196,6 +1253,11 @@ class Track3P(ACE3P):
     module_name = 'track3p'
 
     default_job_name = 'track3p_results'
+
+    # CW23 overrides this to non-default values freely, and names the directory
+    # after whatever distinguishes the run: ``track3p Pillbox2.3MV.track3p 2.3MV``,
+    # ``track3p Muon-MagField.track3p track3p_MagField``.
+    accepts_results_dir_arg = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

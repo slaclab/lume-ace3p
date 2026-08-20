@@ -16,13 +16,13 @@ the shipped tutorial examples (S3P/Omega3P use same-line, T3P uses next-line), s
 both are covered here, along with the byte-stability of the same-line style that
 the frozen baselines depend on.
 
-The Omega3P section (Phase 1 of ``docs/acdtool_rework_plan.md``) runs against the
+The Omega3P section (Phase 1 of ``plans/acdtool_rework_plan.md``) runs against the
 *real* frozen ``omega3p.out`` fixtures in
 ``tests/fixtures/acdtool/solver_outputs/omega3p`` rather than synthetic text —
 the license banner, the differing top-level section order and the ``'real ,
 imag'`` eigenvalues are all things only a real file carries.
 
-The T3P multi-monitor section (Phase 1 of ``docs/t3p_monitor_plan.md``) runs
+The T3P multi-monitor section (Phase 1 of ``plans/t3p_monitor_plan.md``) runs
 against the real ``t3p_outputs`` fixtures frozen in that plan's Phase 0 — the
 ``BPM`` run's five monitor types and the ``SIBC`` run's three ``Power`` monitors
 with no wake at all. Its load-bearing test is
@@ -53,7 +53,7 @@ from lume_ace3p.ace3p import (
     ALWAYS, BUNCH_COLUMNS, GRID, MONITORS, POINT_COLUMNS, SERIES, Section,
     parse_ace3p, write_ace3p, merge_overrides, parse_column_file,
     parse_wakefield, parse_omega3p_output, parse_sparameters, Omega3P, S3P,
-    S3POutputWarning, T3P, T3POutputWarning,
+    S3POutputWarning, T3P, T3POutputWarning, Track3P,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -367,7 +367,7 @@ def test_t3p_output_parser_tolerates_no_wake_monitor(tmp_path):
     propagation run monitoring only power), so this leaves output_data empty
     rather than raising the way S3P.output_parser asserts.
 
-    Since Phase 1 of ``docs/t3p_monitor_plan.md`` the *declared* power monitor
+    Since Phase 1 of ``plans/t3p_monitor_plan.md`` the *declared* power monitor
     warns that it wrote nothing — which is the point of that phase: the run used
     to be read as empty either way, whether or not the monitor had output."""
     text = """\
@@ -1130,3 +1130,89 @@ def test_s3p_output_parser_still_raises_without_reflection(tmp_path):
     s3p = _make_s3p(tmp_path, files=())
     with pytest.raises(FileNotFoundError):
         s3p.output_parser()
+
+
+# --------------------------------------------------------------------------- #
+# 'results_dir:' reaches the solver's command line
+#
+# Before this, a module-level 'results_dir:' told lume-ace3p where to *look*
+# without telling the solver where to *write*, so any non-default value pointed
+# the reader at a directory the run never created. The CW23 batch scripts pass
+# the directory as a second positional argument, and 'solver_command' now does
+# too — for the three solvers CW23 shows doing it. Recorded as the adjacent
+# finding in plans/t3p_monitor_plan.md.
+# --------------------------------------------------------------------------- #
+
+def _solver(cls, tmp_path, suffix, body, **kwargs):
+    source = tmp_path / ('model' + suffix)
+    _write(source, body)
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir, exist_ok=True)
+    return cls(str(source), workdir=str(workdir), **kwargs)
+
+
+@pytest.mark.parametrize('cls, suffix, body', [
+    (Omega3P, '.omega3p', OMEGA3P_INPUT),
+    (S3P, '.s3p', OMEGA3P_INPUT),
+    (Track3P, '.track3p', OMEGA3P_INPUT),
+])
+def test_results_dir_is_passed_as_second_positional(cls, suffix, body, tmp_path):
+    """The whole point of the fix: an explicit results_dir lands on the command
+    line, so the solver writes where the reader is looking."""
+    solver = _solver(cls, tmp_path, suffix, body, results_dir='run17')
+    command = solver.solver_command()
+
+    assert command.endswith(cls.module_name + ' ' + solver.input_file + ' run17')
+    assert solver.results_dir().startswith('run17')
+
+
+@pytest.mark.parametrize('cls, suffix, body', [
+    (Omega3P, '.omega3p', OMEGA3P_INPUT),
+    (S3P, '.s3p', OMEGA3P_INPUT),
+    (T3P, '.t3p', T3P_INPUT),
+    (Track3P, '.track3p', OMEGA3P_INPUT),
+])
+def test_no_results_dir_leaves_the_command_line_unchanged(cls, suffix, body,
+                                                          tmp_path):
+    """No results_dir means no extra argument — the default invocation is
+    byte-identical to the pre-fix one, which is why no baseline moves."""
+    solver = _solver(cls, tmp_path, suffix, body)
+
+    assert solver.solver_command().endswith(cls.module_name + ' '
+                                            + solver.input_file)
+
+
+def test_t3p_does_not_pass_results_dir_on_the_command_line(tmp_path):
+    """T3P is the documented exception: no CW23 invocation passes a second
+    positional argument to t3p, so nothing establishes that it accepts one and
+    we do not guess. 'results_dir:' on a t3p module stays read-only — it still
+    steers the *reader*, which is what this asserts alongside the omission."""
+    t3p = _solver(T3P, tmp_path, '.t3p', T3P_INPUT, results_dir='run17')
+
+    assert t3p.solver_command().endswith('t3p ' + t3p.input_file)
+    assert 'run17' not in t3p.solver_command()
+    assert t3p.results_dir() == os.path.join('run17', 'OUTPUT')
+
+
+def test_input_file_job_name_is_not_passed_on_the_command_line(tmp_path):
+    """A 'JobName' leaf is already in the file the solver reads, so passing it
+    again would add an argument without changing an outcome. Only an explicit
+    results_dir is forwarded."""
+    solver = _solver(Omega3P, tmp_path, '.omega3p',
+                     'JobName: from_input\n\n' + OMEGA3P_INPUT)
+
+    assert solver.results_dir() == 'from_input'
+    assert solver.solver_command().endswith('omega3p ' + solver.input_file)
+
+
+def test_solver_command_keeps_mpi_prefix_and_opts(tmp_path):
+    """The results_dir argument goes after the input file, leaving the MPI
+    prefix, task/core counts and opts where they were."""
+    solver = _solver(Omega3P, tmp_path, '.omega3p', OMEGA3P_INPUT,
+                     results_dir='run17', ace3p_tasks=16, ace3p_cores=8,
+                     ace3p_opts='--cpu-bind=cores', mpi_caller='srun',
+                     ace3p_path='/ace3p/')
+
+    assert solver.solver_command() == (
+        'srun -n 16 -c 8 --cpu-bind=cores /ace3p/omega3p '
+        + solver.input_file + ' run17')
