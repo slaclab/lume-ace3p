@@ -1072,6 +1072,40 @@ def test_t3p_field_index_is_none_when_nothing_was_read(tmp_path):
     assert module.field(ctx) is None
 
 
+def test_t3p_dry_run_axis_is_read_from_the_input_file(tmp_path):
+    """A dry run has no solver to ask, but T3P declares **both** its axes in the
+    input file — so the sentinel's *label* is read from there rather than assumed.
+    A wake-less workflow (``examples/t3p_power_balance``) reports ``t``; anything
+    declaring a ``WakeField`` monitor reports ``s``, which is what every existing
+    baseline gets."""
+    wake = os.path.join(str(tmp_path), 'wake.t3p')
+    _write(wake, T3P_INPUT)
+    module = T3PModule({'input': wake})
+    module._solver = None
+    label, values = module.field_index(RunContext(str(tmp_path)))
+    assert label == 's'
+    assert np.allclose(values, [0.0])
+
+    powers = os.path.join(str(tmp_path), 'powers.t3p')
+    shutil.copy(os.path.join(T3P_FIXTURES, 'SIBC.t3p'), powers)
+    module = T3PModule({'input': powers})
+    module._solver = None
+    label, values = module.field_index(RunContext(str(tmp_path)))
+    assert label == 't'
+    assert np.allclose(values, [0.0])
+
+
+def test_t3p_dry_run_axis_falls_back_to_s_when_the_input_is_unreadable(tmp_path):
+    """No 'input:' at all, or a path that does not resolve, keeps the label this
+    returned unconditionally before — the sentinel must never be the thing that
+    fails a dry run."""
+    for config in [{}, {'input': str(tmp_path / 'absent.t3p')},
+                   {'input': str(tmp_path)}]:
+        module = T3PModule(config)
+        module._solver = None
+        assert module.field_index(RunContext(str(tmp_path)))[0] == 's', config
+
+
 def test_t3p_monitor_key_routes_without_naming_the_module():
     """A ``monitor:`` key routes to ``t3p`` on its own, the way a ``section:`` key
     routes to acdtool — so ``module: t3p`` need not be repeated. The monitor

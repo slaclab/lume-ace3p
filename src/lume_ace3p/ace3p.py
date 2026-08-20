@@ -804,6 +804,24 @@ def monitor_identity(section):
     return monitor_type, name
 
 
+def tree_monitors(tree):
+    """``[(Type, Name)]`` for every ``Monitor`` block of a parsed tree, in file
+    order. Used against a ``.t3p`` input, against the ``Input :`` echo inside
+    ``t3p.out``, and against input text nothing has instantiated a solver for."""
+    return [monitor_identity(section) for section in tree.children('Monitor')
+            if isinstance(section, Section)]
+
+
+def declared_monitors(text):
+    """``[(Type, Name)]`` for every ``Monitor`` block in ``.t3p`` input `text`.
+
+    The stateless form of :meth:`T3P.monitors`, for a caller holding the input
+    file but no solver — a validation pass before the run, or the module layer
+    deciding which index axis a *dry* run should report. This is possible at all
+    because T3P declares both its axes in the input file."""
+    return tree_monitors(parse_ace3p(text))
+
+
 def read_monitor(results, monitor_type, name, spec):
     """Read one monitor's output from the `results` directory.
 
@@ -917,9 +935,7 @@ class T3P(ACE3P):
         ``Power`` monitors) — and it is also the output filename stem. A monitor
         with no ``Name`` comes back as ``None`` rather than being dropped, so
         :meth:`output_parser` can say so."""
-        return [monitor_identity(section)
-                for section in self._input_tree().children('Monitor')
-                if isinstance(section, Section)]
+        return tree_monitors(self._input_tree())
 
     def echoed_monitors(self):
         """``[(Type, Name)]`` from the ``Input :`` echo in ``t3p.out``, or ``None``
@@ -938,9 +954,7 @@ class T3P(ACE3P):
             echo = parse_ace3p(file.read()).find('Input')
         if echo is None:
             return None
-        return [monitor_identity(section)
-                for section in echo.children('Monitor')
-                if isinstance(section, Section)]
+        return tree_monitors(echo)
 
     def wake_monitor_name(self):
         """The ``Name`` of the ``WakeField`` monitor, which is what T3P names its

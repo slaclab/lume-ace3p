@@ -110,6 +110,14 @@ report the *longitudinal* loss factor computed before acdtool ran — a
 wrong-but-plausible number. `coaxsignal` writes a new file
 (`<jobname>/OUTPUT/signal.out`) and is unaffected.
 
+A wake is not the only thing `t3p` owns, though: T3P writes **six** kinds of
+monitor output and all of them are read, so `{module: t3p, monitor: <Name>, …}`
+reaches a `Power`, `Point`, `ModeVoltage` or `SurfacePowerLoss` monitor with no
+acdtool step involved at all. See [](t3p_reference.md). What that means here is
+that the wake commands are a *narrower* addition than they once looked — they
+compute a transverse wake from an on-contour longitudinal one, which no monitor
+can do, and nothing else.
+
 **Why the mesh commands are not wired.** Producing a mesh would make acdtool a
 second producer of the `mesh` artifact, which the one-producer-per-artifact rule
 forbids; `meshconvert` also already lives in `lume_ace3p.cubit`. `mesh deform`
@@ -246,6 +254,8 @@ the tutorial files:
   first line.
 - S3P's `PortRef<n>_<m>.out` is `%`-commented rather than `#`-commented — the only
   ACE3P output in the fixture set that is.
+- T3P's own series monitors (`Point`, `Power`, `ModeVoltage`) are headerless too,
+  for the same reason and read the same way — see [](t3p_reference.md).
 - The T3P reference gives the wakefield monitor's columns as `W(s)` in V/C and
   `I(s)` in A/m, while the real file header says **V/pC** and **C/m**. The file
   header is authoritative and is what is read; do not "correct" the units to match

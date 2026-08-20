@@ -53,6 +53,8 @@ file via the `ace3p:` sub-block of `input_parameters`.
   [](configuration_by_mode.md) for the required-vs-optional checklist.
 - Postprocessing with acdtool? [](acdtool_reference.md) maps its 19 commands and
   24 `.rfpost` blocks to what is implemented here and what is not.
+- Running T3P? [](t3p_reference.md) maps its six `Monitor` types to what each
+  writes and which have real output behind them.
 - Running optimization? See [](optimization.md).
 - Visualizing output? See [](plotting.md).
 - Hit a snag? Check [](troubleshooting.md).
@@ -71,6 +73,7 @@ optimization
 configuration_by_mode
 yaml_reference
 acdtool_reference
+t3p_reference
 plotting
 testing
 troubleshooting

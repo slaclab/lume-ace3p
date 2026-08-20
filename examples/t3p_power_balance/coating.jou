@@ -1,0 +1,58 @@
+reset
+
+## Coaxial line with a coated centre wire, from the ACE3P tutorial t3p/SIBC
+## example. A quarter model: the two symmetry planes become magnetic boundaries,
+## the wire an impedance boundary carrying the lossy coating, and the two end
+## faces absorbing ports. Sideset IDs are what SIBC.t3p's ReferenceNumbers refer
+## to, so do not renumber them without editing that file too.
+
+create Cylinder height 1 radius 0.05
+create Cylinder height 1 radius 0.1
+sub 1 from 2
+compress ids
+
+webcut body 1 all plane with xplane
+del body 2
+webcut body 1 all plane with yplane
+del body 1
+compress ids
+
+webcut body 1 all plane with zplane offset -0.25
+webcut body 1 all plane with zplane offset  0.25
+
+imprint body all
+merge body all
+compress ids
+
+## The tutorial journal declares f/c and computes c/f/10 = 6 mm as a
+## ten-points-per-wavelength guide, then meshes at 15 mm anyway. That literal is
+## promoted to a real variable here so it is a sweepable knob; the value is
+## unchanged, so this journal produces the tutorial's mesh.
+#{f=5e9}
+#{c=3e8}
+#{wavelength_over_10 = c/f/10}
+#{meshsize = 0.015}
+
+vol all scheme tetmesh
+vol all size {meshsize}
+
+mesh vol all
+block 1 vol 1 2 3
+
+##sym. planes
+sideset 1 surface with x_coord < 0.001
+sideset 2 surface with y_coord < 0.001
+
+##wire -- the lossy coated surface, monitored by 'wallossPower'
+sideset 3 surface 13
+
+##ports -- 4 is the excitation ('inputPower'), 5 the far end ('outputPower')
+sideset 4 surface with z_coord < -0.49
+sideset 5 surface with z_coord > 0.49
+
+##exterior
+sideset 6 surface 7 12 4 16 10
+
+block all element type tetra10
+
+export genesis "test-sibc.gen" overwrite

@@ -227,42 +227,100 @@ error like any other.
 **Output locations are resolved, not assumed.** T3P writes under
 `<results_dir>/OUTPUT` (default `t3p_results`, overridable with the same
 `results_dir:` key documented under [](#omega3p-module)) and names each monitor's
-files after that monitor's `Name`, which is read from the parsed `.t3p`. Results
-are read from the `WakeField` monitor's `<Name>.out`.
+files after that monitor's `Name`, which is read from the parsed `.t3p`.
 
-`output_parameters` quantities (use the explicit `{module: t3p, quantity: …}`
-form, or the bare quantity name — both route to `t3p`):
+#### Monitors: `Name` selects, `Type` supplies the shape
 
-| Quantity | Shape | Meaning |
-|---|---|---|
-| `loss_factor` | scalar | Longitudinal loss factor, V/pC, from the monitor file's header. |
-| `kick_factor` | scalar | Transverse kick factor, V/pC. |
-| `W` | array over `s` | Wake potential, V/pC. |
-| `I_bunch` | array over `s` | Bunch current, C/m. |
-| `s` | array | The wake coordinate itself, m. |
+A `.t3p` file may declare any number of `Monitor` blocks of six documented
+`Type`s, and **all of them are read** — not just the wake. What each type writes,
+and which have real output behind them, is in [](t3p_reference.md); the quantity
+names are:
 
-A run reports **either** a loss factor (longitudinal) or a kick factor
+| `Monitor` `Type` | Quantities | Axis | Units |
+|---|---|---|---|
+| `WakeField` | `loss_factor`, `kick_factor`, `W`, `I_bunch`, `s` | `s` | V/pC; `I_bunch` C/m; `s` m |
+| `Point` | `t`, `Hx`, `Hy`, `Hz`, `Ex`, `Ey`, `Ez` | `t` | SI |
+| `Power` | `t`, `P` | `t` | s, W |
+| `SurfacePowerLoss` | `t`, `P` | `t` | s, W |
+| `ModeVoltage` | `t`, `V` | `t` | s, V |
+| `Volume` | **none** — netCDF field dumps | — | — |
+| — `Bunch0` | `t`, `I` | `t` | s, A |
+
+`Bunch0` is not a monitor: T3P writes `Bunch0.out` on every run and no input block
+declares it. It is addressable by that name like any other series.
+
+**A run may declare several monitors of one type**, so `Type` cannot address one —
+`Name` is the selector, and it is also the output filename stem:
+
+```yaml
+output_parameters :
+  'P_in'   : {module: t3p, monitor: inputPower,   quantity: P}
+  'P_out'  : {module: t3p, monitor: outputPower,  quantity: P}
+  'P_wall' : {module: t3p, monitor: wallossPower, quantity: P}
+  'Ez_gap' : {module: t3p, monitor: point, quantity: Ez, at: {t: 1.0e-9}}
+```
+
+A `monitor:` key routes the spec to `t3p` on its own, so `module: t3p` is
+optional alongside it. See `examples/t3p_power_balance`, which is three `Power`
+monitors on one run.
+
+**`monitor:` is omittable when it is unambiguous** — when exactly one monitor
+provides the named quantity, or when the quantity is one of the five wakefield
+names above. So every wakefield spec keeps its short form, and none of them is
+deprecated:
+
+```yaml
+  'k_loss'    : {module: t3p, quantity: loss_factor}
+  'W_at_10cm' : {module: t3p, quantity: 'W', at: {s: 0.10}}
+  'K'         : kick_factor           # bare form; routes to t3p by name
+```
+
+Where several monitors could answer a bare quantity, the error names all the
+candidates rather than picking one. The monitor quantities are **not** routable
+bare, though — `P`, `V` and `t` are too generic to claim as T3P's — so write
+`module: t3p` or `monitor:` for those.
+
+A wake run reports **either** a loss factor (longitudinal) or a kick factor
 (transverse), depending on the beam offset and the monitor contour. Asking for
 the wrong one raises an error naming what is actually available rather than
 returning `NaN`.
 
-Adding `at: {s: <position>}` to a mapping spec reduces an array quantity to the
-scalar at that wake position — the form an Xopt objective needs, mirroring S3P's
-`at: {frequency: …}`. Unlike an S3P frequency scan, the `s` grid is a consequence
-of the solver's timestep rather than something you specify, so the **nearest**
-sample is taken instead of requiring an exact match.
+#### One index axis per module, `s` before `t`
 
-T3P exposes `s` as its **field index**, so a `parameter_sweep` over a T3P
-workflow emits a long-format table with one row per `(grid point, s)` — exactly
-as an S3P sweep goes long over `Frequency`. Per-run scalars like `loss_factor`
-repeat down each run's block of rows.
+T3P exposes a **field index**, so a sweep over a T3P workflow emits a long-format
+table — one row per `(grid point, index)`, exactly as an S3P sweep goes long over
+`Frequency`. Which index:
+
+* `s` when the run produced a wake;
+* `t` otherwise, from the first time-series monitor;
+* under dry-run, a single-row sentinel whose label is read from the input file
+  (a `WakeField` monitor means `s`), so a swept table still gets one row per grid
+  point.
+
+The two axes are incompatible — tens of wake samples against thousands of
+timesteps — so a run declaring both keeps `s` and **everything on the other axis
+must be narrowed to a scalar** with `at:`. Requesting an off-axis array raises an
+error naming both axes; the full arrays are still there, in the per-run field
+artifact (see [](plotting.md)), together with a `Volume` monitor's filenames.
+
+`at: {s: <position>}` and `at: {t: <seconds>}` both take the **nearest** sample
+rather than requiring an exact match: unlike an S3P frequency scan, both T3P grids
+are consequences of `TimeStepping: DT` rather than something you specify. Per-run
+scalars like `loss_factor` repeat down each run's block of rows.
 
 :::{note}
 **Volume monitors are written as your input file asks.** A `Volume` monitor
 writes a full field dump per sampled timestep — tens to hundreds of MB per run,
 multiplied by every point in a sweep. LUME-ACE3P does not prune or rewrite your
 monitors; widen the monitor's `TimeStep` or remove the block if you do not need
-the dumps.
+the dumps. It is netCDF despite the `.out` extension, so its filenames are
+recorded and never parsed, and asking a `Volume` monitor for a quantity raises
+saying so.
+
+**A declared monitor that wrote nothing warns, naming itself.** One monitor of six
+failing to write does not fail the run — the other five are still results — but
+the hole is not silent either (`T3POutputWarning`, naming the monitor and the path
+looked for).
 
 **`CheckPoint` is passed through but restarts are not orchestrated.** A
 `CheckPoint` section works like any other input section and T3P will write
@@ -563,18 +621,22 @@ routes each spec to the module that can satisfy it and calls that module's
   bare quantity string, with no `module` key: the *shape* of the spec identifies
   the module. `dose`/`edep`/`scoring` → `geant4` (see
   [](#geant4-output-specs)), `count`/`total_weight` →
-  `particles`, a T3P wakefield quantity
+  `particles`, a `monitor:` key or a T3P wakefield quantity
   (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`, a `.rfpost` block name
   (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool` **(deprecated —
   use the mapping form)**, and a bare S-parameter string or any other mapping →
   `s3p`.
 
   Note acdtool's `kickFactor` section and T3P's `kick_factor` quantity are
-  distinct spellings on purpose, so the two never collide.
+  distinct spellings on purpose, so the two never collide. T3P's *monitor*
+  quantities (`P`, `V`, `t`, `Ez`, …) are deliberately **not** routable bare —
+  they are too short and generic to claim — so name `module: t3p` or a `monitor:`
+  for those; see [](#t3p-module).
 
 The `module:` key is optional whenever the spec's shape already identifies its
-module, which for both `acdtool` and `geant4` means naming a `section:`. Spelling
-it out is never wrong and is clearer in a mixed workflow.
+module, which for `acdtool` and `geant4` means naming a `section:` and for T3P's
+non-wake monitors a `monitor:`. Spelling it out is never wrong and is clearer in a
+mixed workflow.
 
 **Every shipped example uses the mapping form.** The bare forms stay supported so
 existing configs keep running, but only acdtool's is *deprecated* (it cannot

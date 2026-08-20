@@ -1,0 +1,4 @@
+ace3p:ModelInfo.SurfaceMaterial.Coating.Thickness	t	P_in	P_out	P_wall	P_wall_at_5ns
+0.0005	0.0	nan	nan	nan	nan
+0.001	0.0	nan	nan	nan	nan
+0.002	0.0	nan	nan	nan	nan

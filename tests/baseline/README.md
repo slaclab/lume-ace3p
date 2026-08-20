@@ -78,6 +78,8 @@ establishes that no numbers moved.
 | `omega3p_dispersion_sweep` | omega3p sweep, dry-run | the swept ACE3P `Theta` axis — the one example with **no** cubit axis; also pins that the dry-run table stays wide (Omega3P has no field index until it has solved) | `f`, `Q` |
 | `s3p_window_rfpost` | s3p + acdtool sweep, dry-run | swept `wdwt` grid, and the `Frequency` column that pins which of the chain's **two** index-axis producers wins (S3P, by DAG order) | S-parameters, `m_factor` |
 | `t3p_transwake` | t3p + acdtool(transwake), dry-run | nominal geometry + the transwake `args` in the marker; structurally, that `[cubit, t3p, acdtool]` validates at all and that the jobname is injected | `K`, `W_trans` |
+| `t3p_sweep` | t3p sweep, dry-run | swept grid (cell_radius × iris_radius) and the `s` wake-coordinate column, which pins that a T3P table goes long-format the way an S3P one goes over `Frequency` | `loss_factor`, `W` |
+| `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision | `P_in`, `P_out`, `P_wall` |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 

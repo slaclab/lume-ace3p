@@ -384,6 +384,12 @@ _PHASE_05 = (
 _PHASE_6 = ('Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new '
             'example, so nothing was regenerated.')
 
+# Provenance for the example the T3P multi-monitor work added.
+_T3P_MONITOR = ('Phase 3 of docs/t3p_monitor_plan.md (2026-08-19). First freeze '
+                '-- a new example, so nothing was regenerated. It is the first '
+                "example whose field index is 't' rather than 's'/'Frequency', "
+                'which is what makes the axis label worth checking here.')
+
 EXAMPLES = {
     's3p_sweep': {
         'kind': 'sweep',
@@ -423,6 +429,22 @@ EXAMPLES = {
                       "'s' the way an S3P table goes over Frequency; the "
                       'wakefield outputs (loss_factor, W) are NaN under dry-run '
                       '-> reachability-only.'),
+    },
+    't3p_power_balance': {
+        'kind': 'sweep',
+        'yaml': 't3p_power_balance.yaml',
+        'files': {
+            'power_balance_output.txt': ('power_balance_output.txt', 'table'),
+        },
+        'digests': {},
+        'frozen': _T3P_MONITOR,
+        'checkable': ('NUMERIC: the swept coating-thickness axis (an ACE3P input '
+                      "parameter, not a cubit one) and the 't' index column. The "
+                      'three power columns are NaN under dry-run -> '
+                      'reachability-only. STRUCTURALLY this is the one example '
+                      "whose field index is 't': it declares no WakeField "
+                      'monitor, so an axis label of \'s\' here would be a '
+                      'regression in the dry-run axis decision.'),
     },
     'omega3p_sweep': {
         'kind': 'sweep',

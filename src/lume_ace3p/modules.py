@@ -34,7 +34,9 @@ from lume_ace3p.cubit import Cubit
 # ALWAYS / MONITORS are the T3P monitor table; ace3p's own GRID shape constant is
 # deliberately NOT imported, since acdtool exports one of the same name and value
 # — T3PModule tests for a monitor's missing index axis instead.
-from lume_ace3p.ace3p import ALWAYS, MONITORS, Omega3P, S3P, T3P
+from lume_ace3p.ace3p import (
+    ALWAYS, MONITORS, Omega3P, S3P, T3P, declared_monitors,
+)
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
     field_sections, mode_table_arrays, resolve_command, table_mode_ids,
@@ -666,6 +668,10 @@ class T3PModule(_SolverModule):
     # Keys of a monitor entry that are metadata rather than extractable values.
     _NOT_QUANTITIES = frozenset({'Type', 'files'})
 
+    # ``(Type, Name)`` read straight from the input file, for the dry-run axis
+    # decision. None = not read yet; () = unreadable, or no Monitor blocks.
+    _declared = None
+
     def extract(self, ctx, spec):
         """Return one quantity from the T3P solution.
 
@@ -867,19 +873,41 @@ class T3PModule(_SolverModule):
                 return 't', np.asarray(data[name]['t'])
         return None
 
+    def _dry_run_axis(self):
+        """The index-axis label a dry run reports.
+
+        No solver has run, so there is nothing parsed to ask — but unlike
+        Omega3P's mode count, **both** T3P axes are declared by the *input file*,
+        so the answer is readable without one: a ``WakeField`` monitor means
+        ``'s'``, any other time-series monitor means ``'t'``. Falls back to
+        ``'s'`` when the input file cannot be read or declares nothing, which is
+        what this returned unconditionally before ``examples/t3p_power_balance``
+        made a wake-less dry run something a shipped example does."""
+        if self._declared is None:
+            try:
+                with open(self.input_file) as file:
+                    self._declared = declared_monitors(file.read())
+            except (OSError, TypeError, ValueError):
+                self._declared = ()
+        axes = [MONITORS[kind].axis for kind, _ in self._declared
+                if kind in MONITORS]
+        if 's' in axes:
+            return 's'
+        return 't' if 't' in axes else 's'
+
     def field_index(self, ctx):
         """The T3P result table's index: ``('s', array)`` when the run produced a
         wake, ``('t', array)`` from the first time-series monitor otherwise, and
         ``None`` when it produced neither.
 
-        Under dry-run (no solver) a single-row ``('s', [0.0])`` sentinel, so a
-        swept long-format table still has one row per grid point — mirroring
-        :meth:`S3PModule.field_index`. The axis cannot be known then: unlike
-        Omega3P's mode count, *both* T3P axes are declared by the input file, so
-        the sentinel keeps the label a wake run would get."""
+        Under dry-run (no solver) a single-row ``[0.0]`` sentinel, so a swept
+        long-format table still has one row per grid point — mirroring
+        :meth:`S3PModule.field_index`. Its *label* comes from the input file (see
+        :meth:`_dry_run_axis`), so a dry run of a wake-less workflow reports ``t``
+        rather than an ``s`` it will never have."""
         solver = self._solver
         if solver is None:
-            return 's', np.array([0.0])
+            return self._dry_run_axis(), np.array([0.0])
         return self._field_axis(solver)
 
     def field(self, ctx):

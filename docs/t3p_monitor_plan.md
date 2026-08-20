@@ -1,9 +1,8 @@
 # T3P Multi-Monitor Support — Implementation Plan
 
-**Status: Phases 0, 1 and 2 COMPLETE** (2026-08-19); Phase 3 (docs and an
-example) planned. See "Phases 0 and 1 as landed" and "Phase 2 as landed" at the
-bottom for what was built and where it deviated. Written 2026-08-18. Follows
-`docs/acdtool_rework_plan.md`
+**Status: COMPLETE** — all four phases landed 2026-08-19. See the three "as
+landed" sections at the bottom for what was built and where each phase deviated.
+Written 2026-08-18. Follows `docs/acdtool_rework_plan.md`
 (COMPLETE) and reuses its machinery deliberately: the declarative shape table,
 the header-driven column reader, the "one index axis per module" rule, and the
 warn-naming-itself failure mode. Nothing in this plan invents a new pattern.
@@ -576,12 +575,74 @@ two in `tests/test_workflow_graph.py`. `pytest` green; **no baseline moved.**
 5. **Two files outside the stated deliverables**: `workflow_graph.py` and
    `tests/test_workflow_graph.py`, both for deviation 1.
 
-## Still owed by Phase 3
+---
 
-`docs/yaml_reference.md` and the new `docs/t3p_reference.md` do not yet document
-`monitor:`, the per-type quantity table, the axis rule, or the
-`at:`-required-off-axis rule — all four are behavior that exists now and is
-described only in docstrings and this file. The `examples/t3p_power_balance/`
-SIBC example is likewise still owed, and it is the honest demonstration: three
-`Power` monitors giving in / out / wall-loss on one run is the workflow the
-package could not express before.
+# Phase 3 as landed (2026-08-19)
+
+## What was built
+
+**Docs.** `docs/t3p_reference.md` is new, modelled on `docs/acdtool_reference.md`:
+the six `Monitor` types with what each writes and whether real output exists behind
+it, the seven things the files do that the reference does not say, the two gaps
+(`SurfacePowerLoss`, the `Grid:` sub-block), an inventory of everything else in a
+T3P results directory including the recorded unknowns (`dipole.dat`, `BBL1/`,
+`port_<n>_{Pin,Vin}.out`, transwake's `wakefield.z*.dat`), and the two things the
+package does not do for you. `docs/yaml_reference.md`'s `t3p` section gained the
+per-type quantity table, the `monitor:` selector, the omittable-when-unambiguous
+rule, the axis rule and the `at:`-required-off-axis rule; its output-spec routing
+section now names the `monitor:` key and says why the monitor quantities stay
+unroutable bare. `docs/index.md` links the new page. `docs/acdtool_reference.md`'s
+mutating-consumer note no longer implies a transwake result is the only thing
+`t3p` exposes, and its headerless-output list points at T3P's series monitors.
+
+**The example.** `examples/t3p_power_balance/` — a `cubit → t3p` sweep from the
+CW23 `SIBC` case with three `Power` monitors (input port / far port / lossy coated
+wire), swept over the coating thickness, plus `power_balance.py` which appends the
+`P_balance` column and plots it. Registered in `tests/baseline_utils.EXAMPLES` and
+frozen; `tests/baseline/README.md` gained rows for it and for `t3p_sweep`, which
+had been missing from that table.
+
+## Deviations from the plan above
+
+1. **The dry-run axis label is read from the input file** — a `src/` change in a
+   docs phase. The example forced it: it declares no `WakeField` monitor, so the
+   dry-run sentinel labelled its index column `s`, and freezing that as a baseline
+   would have enshrined an axis the run can never have. Decision 2's own wording
+   points the way ("*whichever* axis is chosen ... both declared by the input
+   file"), and unlike Omega3P's mode count the answer really is readable without a
+   solver — so `T3PModule._dry_run_axis` reads the declared monitors from the
+   `.t3p` file, falling back to `s` when it cannot. **No baseline moved**: both
+   pre-existing T3P examples declare a `WakeField` monitor. Supporting
+   `ace3p.tree_monitors` / `ace3p.declared_monitors` were factored out of the three
+   places already walking `Monitor` blocks.
+
+2. **The balance is a script, not a `output_parameters` column.** The plan says
+   "with the balance as a derived column". There is no derived-column mechanism —
+   `output_parameters` names quantities to extract and does not evaluate
+   expressions over them — and adding one is a general mode-layer feature affecting
+   every module, nowhere in this plan's scope. `P_in - P_out - P_wall` is arithmetic
+   over columns already in the table, so `power_balance.py` appends it, the way
+   CW23's own `post1.py` post-processes the same run. Said plainly in the YAML, the
+   README and the script's docstring rather than papered over.
+
+3. **The example is a sweep, not a single run.** "Three `Power` monitors ... on one
+   run" is true per sweep point, and sweeping the coating thickness — the knob the
+   wall-loss monitor actually measures — makes the example show something moving
+   rather than one static row. It also exercises an `ace3p:` sweep axis against
+   T3P, which nothing did before. `t3p_transwake` already covers `single` mode.
+
+4. **`docs/acdtool_reference.md` needed less correction than expected.** The plan
+   says to update it "where it says a transwake result is the only thing T3P
+   exposes"; it never says that. What it does say is that `t3p` is "the single
+   owner of every wakefield quantity", which is still true. The note was extended
+   rather than corrected, with the sharper point that the wake commands are a
+   *narrower* addition than they looked: they compute a transverse wake from an
+   on-contour longitudinal one, which no monitor can do, and nothing else.
+
+## What the whole plan leaves owed
+
+Unchanged from "Out of scope" above, plus the two things only a real run can
+close: a `SurfacePowerLoss` monitor anywhere at all, and a `WakeField` monitor
+with a `Grid:` sub-block. Both are implemented from the reference, marked
+unvalidated, and documented as such in `docs/t3p_reference.md` and
+`tests/fixtures/acdtool/COVERAGE.md`.
