@@ -6,14 +6,14 @@ keys encoded the (subsystem, nested path, discriminator) triple as a string
 required several layers of escape sentinels and made it impossible to express
 duplicate-named ACE3P sections cleanly.
 
-This module replaces that with a small, explicit data model:
+This module replaces that with a small, explicit data model::
 
-  WorkflowInputs(
-      cubit     = {var_name: scalar | numpy.ndarray, ...},
-      ace3p     = Section(...),                # tree of (name, child) pairs
-      macro     = {macro_cmd: scalar | numpy.ndarray, ...},
-      particles = {var_name: scalar | numpy.ndarray, ...},
-  )
+    WorkflowInputs(
+        cubit     = {var_name: scalar | numpy.ndarray, ...},
+        ace3p     = Section(...),                # tree of (name, child) pairs
+        macro     = {macro_cmd: scalar | numpy.ndarray, ...},
+        particles = {var_name: scalar | numpy.ndarray, ...},
+    )
 
 `sweep_axes()` walks all four buckets and surfaces array-valued leaves as
 named sweep axes. `materialize(axis_values)` returns a fresh ``WorkflowInputs``

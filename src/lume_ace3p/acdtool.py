@@ -33,16 +33,16 @@ block to its shape and to where its output lands (``rfpost.out`` or a separate
 file, whose name follows a *per-block* scheme). One reader per shape replaces
 what used to be a three-branch ``if`` ladder over hand-counted column positions:
 
-===================== ============================================ ============
-Shape                 Blocks                                       Written to
-===================== ============================================ ============
-:data:`MODE_TABLE`    the ``modeID1``/``modeID2`` blocks            ``rfpost.out``
-:data:`SURFACE`       ``maxFieldsOnSurface``, ``powerThroughSurface`` ``rfpost.out``
-:data:`POINT`         ``FieldAtPoint``                             ``rfpost.out``
-:data:`RUN`           ``[scaling]`` (always emitted, never declared) ``rfpost.out``
-:data:`CURVE`         the column-table ``filename`` blocks          separate files
-:data:`GRID`          the field-map blocks                         separate files
-===================== ============================================ ============
+===================== =============================================== ==============
+Shape                 Blocks                                          Written to
+===================== =============================================== ==============
+:data:`MODE_TABLE`    the ``modeID1``/``modeID2`` blocks              ``rfpost.out``
+:data:`SURFACE`       ``maxFieldsOnSurface``, ``powerThroughSurface``  ``rfpost.out``
+:data:`POINT`         ``FieldAtPoint``                                ``rfpost.out``
+:data:`RUN`           ``[scaling]`` (always emitted, never declared)   ``rfpost.out``
+:data:`CURVE`         the column-table ``filename`` blocks             separate files
+:data:`GRID`          the field-map blocks                            separate files
+===================== =============================================== ==============
 
 Grid output is *recorded but not parsed* — see :data:`SECTIONS` — and only three
 shapes have a real-output fixture behind them (``RoverQ``, ``ALLFieldOnLine`` and
@@ -803,7 +803,7 @@ def table_mode_ids(output_data):
 
     The first mode-indexed section present, in the order the input file declared
     its blocks. One acdtool result carries at most one mode axis (design decision
-    2 of ``docs/acdtool_rework_plan.md``), and every mode-indexed block of a run
+    2 of ``plans/acdtool_rework_plan.md``), and every mode-indexed block of a run
     reports the modes of the same solve, so "first" is a choice of spelling
     rather than of data.
     """

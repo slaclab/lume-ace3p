@@ -67,6 +67,12 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
 napoleon_include_private_with_doc = False
+# Render a numpydoc 'Attributes' block as an :ivar: field list rather than as
+# individual py:attribute directives. Without this, a class that documents its
+# attributes in the docstring *and* declares them in the body — Command,
+# Section and Monitor all do — gets each one described twice, and autoapi warns
+# about the duplicate. Keeps one description per attribute.
+napoleon_use_ivar = True
 
 html_theme = "furo"
 html_static_path = ["_static"]
