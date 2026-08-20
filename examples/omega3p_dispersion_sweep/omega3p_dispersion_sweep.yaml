@@ -1,0 +1,46 @@
+# Omega3P dispersion sweep of a periodic cell, on the declarative module/mode
+# schema:
+#   workflow:  cubit -> omega3p          (no acdtool step -- see below)
+#   mode:      parameter_sweep
+#
+# The swept axis is the periodic-boundary phase advance 'Theta', which lives in
+# the .omega3p input file rather than in the Cubit journal, so it is declared
+# under 'input_parameters: ace3p:'. One eigensolve per Theta traces out the
+# structure's dispersion curve f(Theta).
+#
+# There is NO acdtool module here: the mode frequency and Q come from Omega3P's
+# own output (omega3p_results/omega3p.out), so nothing needs postprocessing.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_dispersion_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'dlwg-pbc.jou'
+  - module : omega3p
+    input : 'dlwg-pbc.omega3p'
+    tasks : 4
+    cores : 8
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 'dispersion_sweep_output.txt'
+
+input_parameters :
+  ace3p :
+    # Phase advance per period, in degrees. The ACE3P sub-block takes an explicit
+    # list (min/max/num is a cubit/geant4/particles convenience); the tutorial
+    # runs the single point Theta = -150.
+    'ModelInfo' :
+      'BoundaryCondition' :
+        'Theta' : [-180, -150, -120, -90, -60, -30]
+
+output_parameters :
+  # No 'at:' asks for the WHOLE mode axis, so the result table carries one row
+  # per (Theta, mode) with 'ModeID' as its index column. With NumEigenvalues: 1
+  # that is one row per Theta; raise it in dlwg-pbc.omega3p to pick up the higher
+  # passbands and the table grows rows rather than columns.
+  'f' : {module: omega3p, quantity: Frequency}
+  'Q' : {module: omega3p, quantity: QualityFactor}

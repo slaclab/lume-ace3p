@@ -2,15 +2,12 @@
   "checkable": "NUMERIC: swept input grid (cav_radius x ellipticity). Output columns (R/Q, Mode_freq, E_max, loc_*) are NaN without acdtool -> reachability-only.",
   "digests": {},
   "files": {
-    "dry_run_marker.txt": {
-      "compare": "marker",
-      "pattern": "lume-ace3p_omega3p_workdir_90.0_0.5/DRY_RUN.txt"
-    },
     "omega3p_sweep_output.txt": {
       "compare": "table",
       "pattern": "omega3p_sweep_output.txt"
     }
   },
+  "frozen": "First captured Phase 0.5 (2026-08), pre-refactor. Re-frozen in Phase 6 of the acdtool rework (2026-08-18) for FORMAT only -- trailing row tabs dropped, and the Xopt log widened from the old fixed-width 6 significant figures to the shared writer's full precision. Numeric content is unchanged (agreement 5e-7, which is the old fixture's own rounding); the Phase-6 output-spec migration from the positional list form to the mapping form moved no value, and the self-check passed against the un-regenerated fixtures before this re-cut.",
   "kind": "sweep",
   "yaml": "omega3p_sweep.yaml"
 }

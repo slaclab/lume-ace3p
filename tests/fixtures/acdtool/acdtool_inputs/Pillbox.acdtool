@@ -1,0 +1,17 @@
+EnhancementCounter:
+{
+   Token               :      on
+   SEYFileName1        :     copper.dat
+   SEYFileName2        :     copper.dat          
+   BoundarySurfaceID1  :     6
+   BoundarySurfaceID2  :     6
+   SolidVolID          :     0
+   MinimumEC           :     0.01
+   OutputFile          :     en
+}
+
+Trajectory:
+{
+   Token               :      on
+   ParticleID          :   16100 15400 
+}

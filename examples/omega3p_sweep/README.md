@@ -13,10 +13,11 @@ solves for its eigenmodes, and acdtool postprocesses the fields via
 `pillbox-rtop.rfpost`. The mode walks a plain Cartesian grid over two Cubit
 journal variables — `cav_radius` (90–120 mm, 4 points) and `ellipticity`
 (0.5–1.25, 4 points) — for **4 x 4 = 16 runs**, emitting one scalar row per grid
-point into `omega3p_sweep_output.txt`. Each `output_parameters` entry is a
-`[section, ...]` address into the acdtool results: `R/Q` and `Mode_freq` from the
-`RoverQ` block, plus `E_max` and its `loc_x/loc_y/loc_z` location from
-`maxFieldsOnSurface` on surface 6.
+point into `omega3p_sweep_output.txt`. Each `output_parameters` entry names the
+module it comes from and what it wants: `R/Q` from the acdtool `RoverQ` block at
+mode 0, `E_max` and its `loc_x/loc_y/loc_z` location from `maxFieldsOnSurface` on
+surface 6, and `Mode_freq` from **Omega3P's own eigenmode output** — no acdtool
+block is needed for a frequency.
 
 This is the baseline of the trio. [`../omega3p_ace3p_param_sweep`](../omega3p_ace3p_param_sweep)
 adds an ACE3P `Sigma` axis on top of the same two Cubit axes (32 runs), and

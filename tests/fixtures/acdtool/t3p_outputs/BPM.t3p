@@ -1,0 +1,115 @@
+ModelInfo:
+{
+  File: BPM.ncdf
+  BoundaryCondition:
+  {
+    Electric: 6
+    Absorbing: 1 2 5
+    Magnetic: 3 4
+  }
+
+ Material : {
+    Attribute: 1
+    Epsilon:   1.0
+    Mu:        1.0
+  }
+
+  Material : {
+    Attribute: 2
+    Epsilon:   4.9
+    Mu:        1.0
+  }
+}
+
+FiniteElement:
+{
+  Order: 2
+  Curved Surfaces: on
+}
+
+LoadingInfo:
+{
+  Bunch:
+  {
+    Type: Gaussian
+    Sigma: 0.005
+    Nsigmas: 5
+    Charge: 1.e-12
+  }
+    SymmetryFactor: 4
+    StartPoint: 0.0 0.0 -0.025
+    Direction: 0.0, 0.0, 1.0
+    BoundaryID: 1
+}
+
+TimeStepping:
+{
+  MaximumTime:  2.0e-9
+  DT: 0.5e-12
+}
+
+Monitor:
+{
+  Type: WakeField
+  Name: wakefield
+  Start contour: -0.0055
+  End contour:   0.0055
+  Smax: 0.35
+}
+
+Monitor:
+{
+  Type: Point
+  Name: point
+  Coordinate: 0 0 0
+}
+
+Monitor:
+{
+  Type: Point
+  Name: coaxpoint
+  Coordinate: 0.01457 0.03586 -0.0020955
+}
+
+Monitor:
+{
+  Type: Volume
+  Name: volume
+  TimeStart: 0.000e-9
+  TimeEnd:   0.4e-9
+  TimeStep:  0.02e-9
+}
+
+// The following two monitors are used to obtain the voltage for a 50 Ohm 
+// coaxial cable. Make sure "port" and "modecoeff" are used for the names.
+
+Monitor:
+{
+  Type: Power
+  ReferenceNumber: 5
+  Name: port
+}
+
+Monitor:
+{
+  Type: ModeVoltage
+  Name: modecoeff
+  Port: {
+    ReferenceNumber: 5
+
+    ESolver: {
+      Type: Numerical2D
+      NumberOfModes: 1
+      Frequency: 1.e9
+      Tolerance: 1.e-15
+      MaxIterations: 1000
+      }
+  }
+}
+
+LinearSolver: {
+//       Slover: MUMPS
+       Slover: CG
+}
+
+//END

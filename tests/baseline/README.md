@@ -2,7 +2,7 @@
 
 Frozen capture of the **current, pre-refactor** behavior of every shipped
 example, so later phases of the workflow-modularization refactor can diff
-against a stable reference. See `docs/workflow_module_refactor_plan.md`,
+against a stable reference. See `plans/workflow_module_refactor_plan.md`,
 Phase 0.5.
 
 The refactor is a **clean break** on output *file formats* (declarative
@@ -41,14 +41,28 @@ python -m pytest tests/test_baseline_selfcheck.py -v
   (`atol=rtol=1e-6`), timing columns (`xopt_runtime`, `xopt_error`) dropped.
 - **markers** (`dry_run_marker.txt`) — free-form dry-run text; compared by the
   numeric tokens they contain (absolute temp paths legitimately vary run-to-run).
+  Only `t3p_transwake` freezes one, because its acdtool command, positional `args`
+  and *injected* jobname appear in no other output. The four Phase-0.5 markers
+  were deleted in Phase 6: the module layer emits one dry-run block per module, so
+  they could never match the pre-refactor single-block text and were not being
+  compared.
 - **digests** (`*.digest.json`) — large numeric arrays (weighted particle dumps,
   Geant4 source files) frozen as row/col counts + per-column
   sum/min/max/mean, enough to catch a numeric regression without committing
   multi-MB arrays.
 
 Each example dir also carries a `manifest.json` (kind, source YAML, fixture
-list, and the `checkable` note). `not_frozen.json` records the examples that are
-intentionally *not* frozen as numeric baselines, with the reason.
+list, the `frozen` provenance note, and the `checkable` note). `not_frozen.json`
+records the examples that are intentionally *not* frozen as numeric baselines,
+with the reason.
+
+`frozen` says **when a fixture set was captured and why it was (re)generated**, so
+a reader can tell a first freeze from an intentional regeneration without reading
+git history. Every regeneration must say what moved. The Phase-6 re-cut of the
+Phase-0.5 sets is format-only — trailing row tabs dropped, the Xopt log widened
+from fixed-width 6 significant figures to the shared writer's full precision — and
+the self-check passed against the *un*-regenerated fixtures first, which is what
+establishes that no numbers moved.
 
 ## Per-example checkability
 
@@ -61,6 +75,11 @@ intentionally *not* frozen as numeric baselines, with the reason.
 | `track3p_particle_weight` | **real** `Particles` compute | field-emission `ParticleWeight` + all track columns (digest) | — |
 | `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest); swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
 | `s3p_optimization` | scalar_optimize, synthetic solver (seeded) | full NelderMead trajectory (cornercut, rcorner1, objective) | — |
+| `omega3p_dispersion_sweep` | omega3p sweep, dry-run | the swept ACE3P `Theta` axis — the one example with **no** cubit axis; also pins that the dry-run table stays wide (Omega3P has no field index until it has solved) | `f`, `Q` |
+| `s3p_window_rfpost` | s3p + acdtool sweep, dry-run | swept `wdwt` grid, and the `Frequency` column that pins which of the chain's **two** index-axis producers wins (S3P, by DAG order) | S-parameters, `m_factor` |
+| `t3p_transwake` | t3p + acdtool(transwake), dry-run | nominal geometry + the transwake `args` in the marker; structurally, that `[cubit, t3p, acdtool]` validates at all and that the jobname is injected | `K`, `W_trans` |
+| `t3p_sweep` | t3p sweep, dry-run | swept grid (cell_radius × iris_radius) and the `s` wake-coordinate column, which pins that a T3P table goes long-format the way an S3P one goes over `Frequency` | `loss_factor`, `W` |
+| `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision | `P_in`, `P_out`, `P_wall` |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 
@@ -81,3 +100,25 @@ intentionally *not* frozen as numeric baselines, with the reason.
 - **`MOBO_ExpectedHypervolume_Example`** — *de-registered 2026-08.* Botorch
   MOBO/EHVI fit: slow **and** a known nondeterministic flake, so it was both
   unrunnable in practice and unreliable when run.
+- **`omega3p_optimization`** — *recorded 2026-08-20.* Two independent reasons: a
+  real-workflow freeze has nothing to optimize (the `R/Q` objective comes from
+  acdtool, NaN under dry run, so NelderMead walks a constant surface), and the
+  synthetic route is already covered — the `xopt_scalar` producer swaps in
+  `SyntheticWorkflow` and takes its config from the registry rather than the
+  example YAML, so a second entry would re-freeze the same generic
+  `modes.scalar_optimize` path under different variable names. Its two frozen
+  sweep siblings share the same `pillbox-rtop.*` inputs.
+- **`geant4_dose_single`** — *recorded 2026-08-20.* `mode: single`, all three
+  outputs from the `geant4` module (NaN under dry run) and no swept axis, so a
+  dry-run freeze captures a one-row table of NaNs. `geant4_track3p_beta` is
+  frozen and covers the shared `Particles` pre-step with real compute.
+- **`geant4_beta_surrogate`** — *recorded 2026-08-20.* Needs real Geant4 dose
+  output and a populated training store, and its surrogate/inversion modes fit
+  GPs (the cost-and-flake objection above). Those numerics are covered directly
+  by `test_surrogate.py`, `test_surrogate_data.py` and `test_inversion.py`.
+
+The last three were an undocumented *gap* rather than a decision until
+2026-08-20 — in neither collection, so nothing said which. `test_baseline_selfcheck.py`
+now asserts that the two collections partition `examples/` between them
+(`test_every_example_is_accounted_for`), that they do not overlap, and that
+`not_frozen.json` still matches the `NOT_FROZEN` dict it is generated from.

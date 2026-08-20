@@ -152,5 +152,12 @@ Make sure the appropriate sections (e.g. `[RoverQ]`) are included with the
 appropriate `ionoff` flag set to `1` for postprocessing.
 :::
 
+A `.rfpost` file is only one of acdtool's three input dialects, and
+`postprocess rf` only one of its nineteen commands. For the full command surface,
+all 24 `.rfpost` blocks with the shape and destination of each one's output, and
+the input semantics that are not guessable from the tutorial files (the `>1e6`
+domain-bound sentinels, `gradient = -1`, `modeID2 = -1`), see
+[](acdtool_reference.md).
+
 For more information on configuring acdtool input files, see the
 [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).

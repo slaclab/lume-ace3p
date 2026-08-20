@@ -1,0 +1,202 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        AMRLevel : { 
+            TimePostProcess : { 
+                average : 0.24905518025008 
+                max : 0.25076177300002 
+                stddev : 0.0018045048535656 
+                min : 0.24729233500011 
+            }
+            TimeMeshSet : { 
+                average : 0.10139808974998 
+                max : 0.10141208899995 
+                stddev : 9.3571629932736e-06 
+                min : 0.10139282199998 
+            }
+            TimeEigenSolver : { 
+                average : 1.677356279 
+                max : 1.6811595199999 
+                stddev : 0.0027437366862149 
+                min : 1.6752302709999 
+            }
+            Matrix : { 
+                NonZeroDistribution : { 
+                    total : 2429320 
+                    min : 584952 
+                    max : 623592 
+                    stddev : 17151.20069655 
+                    average : 607330.0 
+                }
+                RowDistribution : { 
+                    total : 62172 
+                    min : 15090 
+                    max : 16134 
+                    stddev : 468.08973498679 
+                    average : 15543.0 
+                }
+            }
+            TimeMatrixAssembly : { 
+                average : 0.16656513674997 
+                max : 0.16856467100001 
+                stddev : 0.0027849424834693 
+                min : 0.16256804199998 
+            }
+            TimeModeWriting : { 
+                average : 0.0 
+                max : 0.0 
+                stddev : 0.0 
+                min : 0.0 
+            }
+            TimeSiloConversion : { 
+                average : 1777.85174956 
+                max : 1777.853439212 
+                stddev : 0.0017793698855571 
+                min : 1777.849967961 
+            }
+            Mesh : { 
+                ReplicatedElementDistribution : { 
+                    total : 2674 
+                    min : 160 
+                    max : 1002 
+                    stddev : 360.79310784252 
+                    average : 668.5 
+                }
+                MeshCoords : 2517 
+                ElementDistribution : { 
+                    total : 10426 
+                    min : 2510 
+                    max : 2732 
+                    stddev : 96.022566792048 
+                    average : 2606.5 
+                }
+                File : /global/cfs/cdirs/m1779/zli/cw23-perlmutter/examples/omega3p/pillbox-rtop+coax/pillbox-rtop+coax2.ncdf 
+            }
+            TimeCheckPoint : { 
+                average : 0.062858629750053 
+                max : 0.063378467000121 
+                stddev : 0.00036359328050036 
+                min : 0.062543356999868 
+            }
+        }
+        Mode : { 
+            QualityFactor : 28815.235456204 
+            Frequency : 1313756106.8639 , 641.33468780722 
+            PowerLoss : 1.2682100135574e-06 
+            TotalEnergy : 4.4270939088102e-12 , 0.0 
+            ExternalQ : 1024235.9659009 
+            File : omega3p_results/omega3p.l0.m0000.R1.3137561e+09.I6.4133469e+02.mod 
+        }
+        Timestamp : { 
+            begin : Mon Mar 20 10:29:34 2023 
+        }
+        Timestamp : { 
+            end : Mon Mar 20 10:29:37 2023 
+        }
+        Environment : { 
+            start : Mon Mar 20 10:29:34 2023 
+            commsize : 4 
+            user : zli 
+        }
+        Version : { 
+            Application : Omega3P
+
+
+ACE3P Codes Source Date:   Mon Mar 6 23:26:49 2023 -0800
+ACE3P Codes Source Branch: master
+ACE3P Codes Source Tag:    503652f41066a31de4a9b7088dd1fd7572ada43a
+Support Lib Source Date:   Fri Dec 2 09:43:53 2022 -0800
+Support Lib Source Branch: master
+Support Lib Source Tag:    2f7bd8bf8ec6eb3646dc05e32622a4475531a105
+Compilation Date:          Mon 06 Mar 2023 11:38:55 PM PST
+
+*************************************************************
+
+         Copyright 2023, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Input : { 
+            MeshPartition : { 
+                Method : parmetis 
+            }
+            EigenSolver : { 
+                FrequencyShift : 1.0e9 
+                SOARAdaptive : { 
+                    MaxIterations : 200 
+                    FactorizationType : 1 
+                    MaxBadIterations : 200 
+                    Tolerance : 1e-08 
+                    MaxRestarts : 10 
+                    ncv : 198 
+                    LinearSolver : { 
+                        Solver : MUMPS 
+                    }
+                    EigenvalueLocation : AboveShift 
+                }
+                NumEigenvalues : 1 
+                SolverMode : QuadraticEigenValue 
+            }
+            CheckPoint : { 
+                Directory : /global/cfs/cdirs/m1779/zli/cw23-perlmutter/examples/omega3p/pillbox-rtop+coax/omega3p_results/VECTOR 
+            }
+            Port : { 
+                ReferenceNumber : 7 
+                NumberOfModes : 1 
+                ESolver : { 
+                    Type : Numerical2D 
+                    NumberOfModes : 1 
+                    Frequency : 1000000000.0 
+                }
+            }
+            ModelInfo : { 
+                SurfaceMaterial : { 
+                    ReferenceNumber : 6 
+                    Sigma : 5.8e7 
+                }
+                BoundaryCondition : { 
+                    Electric : 3 , 4 
+                    Magnetic : 2 
+                    Exterior : 6 
+                    Waveguide : 7 
+                }
+                File : /global/cfs/cdirs/m1779/zli/cw23-perlmutter/examples/omega3p/pillbox-rtop+coax/pillbox-rtop+coax2.ncdf 
+            }
+            FiniteElement : { 
+                Order : 2 
+                CurvedSurfaces : on 
+                Tolerance : 1e-7 
+            }
+            JobName : omega3p_results 
+            MPI : { 
+                size : 4 
+                rank : 0 
+            }
+        }
+/********************************/
+
+
+

@@ -43,13 +43,13 @@ input_parameters :
         'cav_radius' : 100.0
         'ellipticity' : 0.5
 
-# The objective and any tracked observables are pulled from the acdtool
-# postprocess results. Each entry is a [section, ...] address into the acdtool
-# output; the workflow routes it to the acdtool module automatically (the module
-# that provides rf_post).
+# The objective and any tracked observables. Each entry names its module, the
+# quantity, and -- for an indexed result -- which index: the R/Q comes from the
+# acdtool 'RoverQ' block narrowed to the fundamental mode, while the frequency
+# comes from Omega3P's own eigenmode output and needs no postprocessing.
 output_parameters :
-    'R/Q'       : ['RoverQ', '0', 'RoQ']
-    'mode_freq' : ['RoverQ', '0', 'Frequency']
+    'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+    'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
 
 vocs_parameters :
     'variables' :          # bounds only; names route via input_parameters above

@@ -1,0 +1,114 @@
+CheckPoint:
+{
+  Action: restart
+  Ntimesteps: 500
+}
+
+ModelInfo: {
+
+  File: test-sibc.ncdf
+
+  BoundaryCondition: {
+    Electric: 6
+    Magnetic: 1 2 
+    Impedance: 3   //wire
+    Absorbing: 4 5 //ports 
+  }
+
+  SurfaceMaterial: {
+    ReferenceNumber: 3
+    Sigma: 5.8e7
+    Frequency: 5e9
+
+    Coating: {
+      Type: ThinLossyDielectric
+      Epsilon:   56
+      Sigma: 12
+      Thickness:1.e-3
+    } 
+  }
+}
+
+FiniteElement:
+{
+  Order: 0
+  CurvedSurfaces: on
+}
+
+PRegion:
+{
+  Type: AutomaticMovingWindow
+  Object: Pulse
+  StartPoint: 0.01 0.05 -0.5
+  Direction: 0 0 1
+  ExcitationPort: 4
+  Order: 2
+  Back:  0.1
+  Front: 0.1
+  StructureEnd: 0.5
+}
+
+Loading:
+{
+ Type: PortModeLoading
+
+ ScalingFactor: 1.0
+ 
+ Port:  {
+   ReferenceNumber: 4   // port is at reference surface 4
+   SymmetricFactor: 4
+   NumberOfModes: 1
+ }
+
+ Excitation:  {
+    Power: 1.
+    Pulse: {
+      Type: Gaussian
+      Frequency: 5e9
+      Bandwidth: 2e9
+      DB: 30     // cutof in dB of the Gaussian from the peak value
+      T0: 2.82   // No. of sigma
+      Phase: 0   //phase for the sin oscillation at the mean frequency
+    }
+ }
+}
+
+TimeStepping:
+{
+  MaximumTime: 1.0e-8
+  DT: 10.e-12
+}
+
+Monitor:
+{
+  Type: Volume
+  Name: field
+  TimeStart: 0
+  TimeEnd:   1.0e-8
+  TimeStep:  0.5e-9
+}
+
+Monitor: {
+   Type: Power
+   ReferenceNumber: 4     //which reference surface to monitor
+   Name: inputPower
+}
+
+Monitor: {
+   Type: Power
+   ReferenceNumber: 5     //which reference surface to monitor
+   Name: outputPower
+}
+
+Monitor: {
+   Type: Power
+   ReferenceNumber: 3     //which reference surface to monitor
+   Name: wallossPower
+}
+
+LinearSolver: {
+        Solver:              CG
+}
+
+//END
+

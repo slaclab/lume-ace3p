@@ -87,6 +87,44 @@ def test_all_examples_have_fixtures():
         'missing fixtures (run tests/freeze_baseline.py): ' + ', '.join(missing))
 
 
+def test_every_example_is_accounted_for():
+    """Every shipped example is either frozen as a baseline or recorded in
+    NOT_FROZEN with a reason — no third state.
+
+    Added 2026-08-20, because there had been one: omega3p_optimization,
+    geant4_dose_single and geant4_beta_surrogate were in neither collection, so
+    nothing distinguished 'deliberately not frozen' from 'nobody noticed'. The
+    baseline is only honest about its coverage gaps if the gaps are enumerated,
+    and a doc claim alone rots the next time an example is added.
+    """
+    shipped = {name for name in os.listdir(bu.EXAMPLES_DIR)
+               if os.path.isdir(os.path.join(bu.EXAMPLES_DIR, name))
+               and name not in bu.NON_EXAMPLE_DIRS}
+    unaccounted = sorted(shipped - set(bu.EXAMPLES) - set(bu.NOT_FROZEN))
+
+    assert not unaccounted, (
+        'examples/ directories in neither EXAMPLES nor NOT_FROZEN: '
+        + ', '.join(unaccounted)
+        + '. Freeze them (tests/freeze_baseline.py) or add a NOT_FROZEN entry '
+          'saying why not.')
+
+
+def test_not_frozen_names_nothing_that_is_frozen():
+    """The two collections must not overlap: a name in both would leave the
+    reason text contradicting the fixtures sitting next to it."""
+    both = sorted(set(bu.EXAMPLES) & set(bu.NOT_FROZEN))
+    assert not both, 'in both EXAMPLES and NOT_FROZEN: ' + ', '.join(both)
+
+
+def test_not_frozen_json_matches_its_source():
+    """not_frozen.json is generated from NOT_FROZEN by freeze_baseline.py, so a
+    hand-edit of the JSON (or a NOT_FROZEN change with no regeneration) is a
+    drift this catches."""
+    path = os.path.join(bu.BASELINE_DIR, 'not_frozen.json')
+    assert bu.load_json(path) == bu.NOT_FROZEN, (
+        'not_frozen.json is stale; regenerate with tests/freeze_baseline.py')
+
+
 if __name__ == '__main__':
     passed = 0
     failed = 0

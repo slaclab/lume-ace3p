@@ -1,5 +1,5 @@
 """Phase-5 tests: the consolidated hybrid result model (see
-docs/workflow_module_refactor_plan.md).
+plans/workflow_module_refactor_plan.md).
 
 Verification (Phase 5 done when):
 
@@ -56,6 +56,25 @@ S3P_REFLECTION = """\
 13.0e9 0.90 1.00 1.10 1.20
 """
 
+# The same matrix with phase (SParameter.out) and one port mode field profile
+# (PortRef<n>_<m>.out) — the two files Phase 5 taught S3P.output_parser to read.
+# Both ride in the field artifact, so both belong in its round-trip.
+S3P_SPARAMETER = """\
+#Index information
+#0  Port 1, Mode 0, Type: (TE) cutoff: 1.000000e9 Hz
+#1  Port 2, Mode 0, Type: (TE) cutoff: 1.000000e9 Hz
+#Frequency  S(0,0) S(0,1) S(1,0) S(1,1)
+12.0e9 ( 0.06,  0.08) ( 0.12,  0.16) ( 0.18,  0.24) ( 0.24,  0.32)
+12.5e9 ( 0.30,  0.40) ( 0.36,  0.48) ( 0.42,  0.56) ( 0.48,  0.64)
+13.0e9 ( 0.54,  0.72) ( 0.60,  0.80) ( 0.66,  0.88) ( 0.72,  0.96)
+"""
+
+S3P_PORT_PROFILE = """\
+%          x          y            Ex            Ey            Hx            Hy
+0.0 0.0 1.0 0.0 0.0 2.0
+1.0e-3 2.0e-3 3.0 4.0 5.0 6.0
+"""
+
 GEANT4_INPUT = """\
 particles = particles.data
 nthreads = 4
@@ -73,8 +92,11 @@ def _write(path, text):
 
 def _make_s3p_solver(workdir):
     from lume_ace3p.ace3p import S3P
-    os.makedirs(os.path.join(workdir, 's3p_results'), exist_ok=True)
-    _write(os.path.join(workdir, 's3p_results', 'Reflection.out'), S3P_REFLECTION)
+    results_dir = os.path.join(workdir, 's3p_results')
+    os.makedirs(results_dir, exist_ok=True)
+    _write(os.path.join(results_dir, 'Reflection.out'), S3P_REFLECTION)
+    _write(os.path.join(results_dir, 'SParameter.out'), S3P_SPARAMETER)
+    _write(os.path.join(results_dir, 'PortRef1_0.out'), S3P_PORT_PROFILE)
     dummy = os.path.join(workdir, 'dummy.s3p')
     _write(dummy, '')
     s3p = S3P(dummy, workdir=workdir)
@@ -98,8 +120,9 @@ def _stage_geant4(workdir):
 
 
 def test_save_load_field_s3p_spectrum(tmp_path):
-    """An S3P spectrum (numeric arrays + a nested IndexMap dict) round-trips
-    through save_field/load_field to the same arrays."""
+    """An S3P spectrum (numeric arrays + a nested IndexMap dict + one nested port
+    mode profile per PortRef file) round-trips through save_field/load_field to
+    the same arrays."""
     wd = str(tmp_path / 'wd')
     s3p = _make_s3p_solver(wd)
     module = S3PModule({'input': 'dummy.s3p'})
@@ -113,9 +136,13 @@ def test_save_load_field_s3p_spectrum(tmp_path):
 
     assert np.allclose(loaded['Frequency'], field['Frequency'])
     for skey in ('S(0,0)', 'S(0,1)', 'S(1,0)', 'S(1,1)'):
-        assert np.allclose(loaded[skey], field[skey]), skey
+        for suffix in ('', '_real', '_imag', '_phase_deg'):
+            key = skey + suffix
+            assert np.allclose(loaded[key], field[key]), key
     # Nested IndexMap dict survives (values rehydrated).
     assert set(loaded['IndexMap'].keys()) == set(field['IndexMap'].keys())
+    # So does a port mode profile, which is a nested dict for the same reason.
+    assert np.allclose(loaded['PortRef1_0']['Ex'], field['PortRef1_0']['Ex'])
 
 
 def test_save_load_field_geant4_grid(tmp_path):

@@ -1,5 +1,5 @@
 """Phase-2 tests: the ``collect_training_data`` mode + the training-data store
-(see docs/geant4_surrogate_inversion_plan.md, Phase 2).
+(see plans/geant4_surrogate_inversion_plan.md, Phase 2).
 
 Verification (Phase 2 done when):
 

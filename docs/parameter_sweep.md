@@ -124,19 +124,25 @@ Then, output parameters:
 
 ```yaml
 output_parameters :
-  'R/Q' : ['RoverQ', '0', 'RoQ']
-  'Mode_freq' : ['RoverQ', '0', 'Frequency']
-  'E_max' : ['maxFieldsOnSurface', '6', 'Emax']
-  'loc_x' : ['maxFieldsOnSurface', '6', 'Emax_location', 'x']
-  'loc_y' : ['maxFieldsOnSurface', '6', 'Emax_location', 'y']
-  'loc_z' : ['maxFieldsOnSurface', '6', 'Emax_location', 'z']
+  'R/Q' : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  'Mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}
+  'loc_x' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}
+  'loc_y' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: y, at: {surface: 6}}
+  'loc_z' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: z, at: {surface: 6}}
 ```
 
-`output_parameters` maps user-chosen labels to a bare-form list specifying the
-section id (`'RoverQ'`), mode/surface id string (`'0'`), and entry name
-(`'RoQ'`); the workflow routes each to the `acdtool` module, which extracts it
-from `rfpost.out`. The `output_file` is a tab-delimited table with one column
-per input or output, one row per workflow evaluation.
+`output_parameters` maps user-chosen labels to an extraction spec naming the
+module, the thing wanted, and — for an indexed result — which index. `R/Q` and
+`E_max` come from `acdtool`, which reads them out of `rfpost.out`; `Mode_freq`
+comes from **Omega3P's own eigenmode output**, so it needs no postprocessing
+block at all. Dropping the `at:` from a mode-indexed acdtool spec asks for *every*
+mode instead of one, which is what a dispersion curve or an HOM catalog wants. The
+full spec grammar is in [](yaml_reference.md#output_parameters); the `.rfpost`
+block surface is in [](acdtool_reference.md).
+
+The `output_file` is a tab-delimited table with one column per input or output,
+one row per workflow evaluation.
 
 In this example the table has 9 columns — one per swept axis (`cav_radius`,
 `ellipticity`, and the swept ACE3P leaf, whose column is labeled by its path
@@ -250,7 +256,7 @@ allows duplicate-named sibling sections (one per port, surface,
 boundary condition, …), and the `ace3p:` parser preserves them verbatim —
 entries are matched positionally with the ACE3P input file rather than
 collapsed into a Python `dict`. See
-[](yaml_reference.md#ace3p_input_parameters) for details.
+[](ace3p_input_parameters) for details.
 
 This functions exactly the same as the previous example. Errors may arise if
 a necessary ACE3P input parameter is missing.
@@ -414,9 +420,9 @@ mode :
   output_file : 'dose_single_output.txt'
 
 output_parameters :
-  'total_dose' : ['dose', 'total']
-  'peak_dose'  : ['dose', 'peak']
-  'total_edep' : ['edep', 'total']
+  'total_dose' : {module: geant4, section: dose, quantity: total}
+  'peak_dose'  : {module: geant4, section: dose, quantity: peak}
+  'total_edep' : {module: geant4, section: edep, quantity: total}
 ```
 
 Optional Geant4 input-file overrides go in the `geant4:` sub-block of

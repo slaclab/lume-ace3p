@@ -26,12 +26,22 @@ bool.
 
 import os
 import shutil
+import warnings
 
 import numpy as np
 
 from lume_ace3p.cubit import Cubit
-from lume_ace3p.ace3p import Omega3P, S3P, T3P
-from lume_ace3p.acdtool import Acdtool
+# ALWAYS / MONITORS are the T3P monitor table; ace3p's own GRID shape constant is
+# deliberately NOT imported, since acdtool exports one of the same name and value
+# — T3PModule tests for a monitor's missing index axis instead.
+from lume_ace3p.ace3p import (
+    ALWAYS, MONITORS, Omega3P, S3P, T3P, declared_monitors,
+)
+from lume_ace3p.acdtool import (
+    Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
+    field_sections, mode_table_arrays, resolve_command, table_mode_ids,
+    wired_commands,
+)
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.particles import Particles
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
@@ -57,6 +67,15 @@ ARTIFACT_KINDS = frozenset({
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
 })
 
+# The acdtool command table names the artifact each command consumes, and it
+# repeats these strings rather than importing them (this module imports that one,
+# not the reverse). Fail at import if the two ever drift apart.
+_UNKNOWN_ACDTOOL_ARTIFACTS = {spec.requires for spec in COMMANDS.values()
+                              if spec.requires} - ARTIFACT_KINDS
+assert not _UNKNOWN_ACDTOOL_ARTIFACTS, (
+    'lume_ace3p.acdtool.COMMANDS names artifact kinds absent from this '
+    f'vocabulary: {sorted(_UNKNOWN_ACDTOOL_ARTIFACTS)}')
+
 
 # --------------------------------------------------------------------------- #
 # RunContext — the per-evaluation state threaded through a module chain.
@@ -71,6 +90,20 @@ class RunContext:
     quantities. Modules read ``inputs`` (a materialized :class:`WorkflowInputs`
     for this eval point), ``paths`` (resolved executable paths), and
     ``dry_run``.
+
+    Two per-artifact side tables let a consumer reach back to its producer
+    without either module knowing about the other:
+
+    ``job_names``
+        ``{artifact kind: results-directory name}``, recorded by each solver
+        module. ``acdtool``'s positional ``postprocess`` commands take that name
+        as their first argument, so this is what lets the jobname be *injected*
+        rather than repeated in the YAML.
+    ``reparse``
+        ``{artifact kind: callable}``, also registered by each solver module. A
+        consumer that **overwrites** its producer's output file in place calls the
+        hook so the producer re-reads it — see :class:`AcdtoolModule` for why
+        ``postprocess transwake`` needs this.
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
@@ -82,6 +115,8 @@ class RunContext:
         self.dry_run = dry_run
         self.paths = dict(paths) if paths else {}
         self.stage_mode = stage_mode
+        self.job_names = {}
+        self.reparse = {}
 
     def ensure_workdir(self):
         if self.workdir and not os.path.exists(self.workdir):
@@ -335,6 +370,11 @@ class _SolverModule(Module):
         self.tasks = self.config.get('tasks', self.config.get('ace3p_tasks'))
         self.cores = self.config.get('cores', self.config.get('ace3p_cores'))
         self.opts = self.config.get('opts', self.config.get('ace3p_opts'))
+        # Overrides the solver's results directory — which is really chosen by
+        # the batch job submission script's job name, not by the input file (no
+        # solver reference documents a 'JobName' input container). Unset means
+        # the per-solver default ('omega3p_results', 't3p_results', ...).
+        self.results_dir = self.config.get('results_dir')
         self._solver = None
 
     def run(self, ctx):
@@ -347,12 +387,18 @@ class _SolverModule(Module):
                                 f'Cubit: {ctx.inputs.cubit}\n'
                                 f'ACE3P: {[(_, v) for _, v in leaves]}\n')
             ctx.artifacts[self._artifact] = ctx.workdir
+            # No solver instance to ask, so fall back to the declared override or
+            # the documented per-solver default. A dry-run acdtool step still
+            # builds its command line from this.
+            ctx.job_names[self._artifact] = (self.results_dir
+                                             or self._wrapper.default_job_name)
             return
         ctx.ensure_workdir()
         solver = self._wrapper(self.input_file,
                                ace3p_tasks=self.tasks,
                                ace3p_cores=self.cores,
                                ace3p_opts=self.opts,
+                               results_dir=self.results_dir,
                                workdir=ctx.workdir,
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''))
@@ -360,16 +406,115 @@ class _SolverModule(Module):
         solver.run()
         self._solver = solver
         ctx.artifacts[self._artifact] = ctx.workdir
+        ctx.job_names[self._artifact] = solver.job_name()
+        # Let a consumer that rewrites this solver's output in place ask for a
+        # re-read (the acdtool wake commands overwrite wakefield.out).
+        ctx.reparse[self._artifact] = solver.output_parser
 
 
 class Omega3PModule(_SolverModule):
+    """The ACE3P eigensolver: requires a ``mesh``, provides an ``em_solution``.
+
+    Exposes the eigensolve's own results — mode frequency, Q, stored energy —
+    read from ``omega3p.out`` by :meth:`Omega3P.output_parser`. These used to be
+    reachable only by running acdtool with ``RoverQ`` enabled, which is why the
+    shipped sweep example still spells frequency as ``['RoverQ', '0',
+    'Frequency']``; the acdtool route keeps working and those examples migrate
+    later.
+
+    The quantity names are the ``Mode`` leaf names Omega3P itself writes
+    (``Frequency``, ``QualityFactor``, ``ExternalQ``, ``TotalEnergy``,
+    ``PowerLoss``, plus ``Frequency_imag`` / ``TotalEnergy_imag`` on a complex
+    eigensolve), so an output spec must name this module explicitly —
+    ``{module: omega3p, quantity: Frequency}``. A bare ``'Frequency'`` string
+    routes to S3P by shape, which is the pre-existing behavior of
+    ``_infer_output_module`` and is left alone.
+    """
+
     type = 'omega3p'
     _wrapper = Omega3P
     _label = 'Omega3P'
 
-    # Omega3P's own output file (``omega3p.out``) is not parsed for scalars;
-    # the RoverQ/kickFactor/maxFields quantities come from acdtool (rf_post),
-    # so they are extracted by :class:`AcdtoolModule`, not here.
+    def extract(self, ctx, spec):
+        """Return an eigenmode quantity from the Omega3P solution.
+
+        ``spec`` may be:
+          * a string ``'Frequency'`` — the full mode-indexed array,
+          * a single-element list ``['Frequency']`` — same,
+          * a mapping ``{'quantity': 'Frequency', 'at': {'mode': 0}}`` — the
+            scalar for one mode (the same ``at:`` narrowing S3P and T3P use).
+        """
+        solver = self._solver
+        if solver is None:
+            # Dry-run / no solver. A scalar NaN, not S3P's ``array([nan])``:
+            # Omega3P has no dry-run index axis (see :meth:`field_index`), so
+            # the value lands in a wide table cell as-is.
+            return float('nan')
+        quantity, mode = self._parse_spec(spec)
+        data = solver.output_data
+        if not data:
+            raise ValueError(
+                f"no Omega3P eigenmode results to extract '{quantity}' from. "
+                f"Expected {os.path.join(solver.results_dir(), solver.output_file)} "
+                f"under {ctx.workdir}; set 'results_dir' on the omega3p module "
+                "if the run used a different job name.")
+        if quantity == 'Modes' or quantity not in data:
+            raise ValueError(
+                "Unknown quantity '" + str(quantity) + "' in Omega3P output "
+                "dict. Known quantities: "
+                + str(sorted(k for k in data if k != 'Modes')) + ".")
+        values = data[quantity]
+        if mode is None:
+            return values
+        # Lookup by ModeID rather than by position: they coincide today, and
+        # this keeps working if a future output ever numbers modes otherwise.
+        ids = list(data['ModeID'])
+        try:
+            index = ids.index(int(mode))
+        except ValueError:
+            raise ValueError(
+                f"Omega3P produced no mode {mode}; this run has modes "
+                f"{ids}. The mode count follows from the eigensolver's "
+                "NumEigenvalues, so it is not known before the run.") from None
+        return values[index]
+
+    @staticmethod
+    def _parse_spec(spec):
+        if isinstance(spec, dict):
+            at = spec.get('at') or {}
+            return spec.get('quantity'), at.get('mode')
+        if isinstance(spec, list):
+            return spec[0], None
+        return spec, None
+
+    def field_index(self, ctx):
+        """Omega3P results are indexed by mode: returns ``('ModeID', array)``.
+
+        Returns ``None`` — **not** the single-row sentinel :class:`S3PModule` and
+        :class:`T3PModule` return — when there are no parsed modes, which covers
+        dry-run and a failed run. The asymmetry is deliberate: S3P's frequency
+        scan and T3P's ``s`` range are declared in the input file, so the axis is
+        known to exist before the run, while Omega3P's mode count is a *result*
+        of the eigensolve. Emitting a sentinel axis would also silently reshape
+        the existing wide ``omega3p -> acdtool`` sweep tables under dry-run."""
+        solver = self._solver
+        if solver is None or not solver.output_data.get('Modes'):
+            return None
+        return 'ModeID', np.asarray(solver.output_data['ModeID'])
+
+    def field(self, ctx):
+        """Return the mode-indexed arrays (``{ModeID, Frequency,
+        QualityFactor, ...}``) for the just-run evaluation, or ``None`` under
+        dry-run / when no modes were parsed.
+
+        Drops ``'Modes'`` — the readable list of per-mode dicts cannot ride
+        inside a field-artifact ``.npz`` without pickling, and it carries no
+        information the arrays do not."""
+        solver = self._solver
+        if solver is None or not solver.output_data.get('Modes'):
+            return None
+        return {key: value for key, value in solver.output_data.items()
+                if key != 'Modes'}
 
 
 class S3PModule(_SolverModule):
@@ -380,12 +525,20 @@ class S3PModule(_SolverModule):
     def extract(self, ctx, spec):
         """Return an S-parameter quantity from the S3P solution.
 
+        The quantity is any frequency-indexed key
+        :meth:`lume_ace3p.ace3p.S3P.output_parser` produces — the magnitude
+        ``'S(0,0)'``, or its complex form ``'S(0,0)_real'`` / ``'_imag'`` /
+        ``'_phase_deg'``, or ``'Frequency'`` itself.
+
         ``spec`` may be:
           * a string ``'S(0,0)'`` — the full frequency-indexed array,
           * a single-element list ``['S(0,0)']`` — same, first element used,
           * a mapping ``{'quantity': 'S(0,0)', 'at': {'frequency': f}}`` — the
             scalar value at frequency ``f`` (the objective form the Xopt driver
             needs).
+
+        The port mode profiles and the ``IndexMap`` are *not* extractable: they
+        are not indexed by frequency, so they come back through :meth:`field`.
         """
         solver = self._solver
         if solver is None:
@@ -398,6 +551,15 @@ class S3PModule(_SolverModule):
             raise ValueError("Unknown section name '" + str(quantity)
                              + "' in output dict.")
         values = data[quantity]
+        if isinstance(values, dict):
+            # A port mode profile (PortRef<n>_<m>.out) or the IndexMap: indexed by
+            # position / by S-matrix index, not by frequency, so it cannot be a
+            # column of this module's table. Name the route that does return it.
+            raise ValueError(
+                "'" + str(quantity) + "' is not a frequency-indexed S3P "
+                "quantity (it holds " + str(sorted(values)) + "), so it is not "
+                "a result-table column. It is returned as a field artifact by "
+                "this module's field(), alongside the full spectrum.")
         if frequency is None:
             return values
         freqs = list(data['Frequency'])
@@ -429,13 +591,21 @@ class S3PModule(_SolverModule):
         return 'Frequency', np.asarray(solver.output_data['Frequency'])
 
     def field(self, ctx):
-        """Return the full S3P spectrum (``{IndexMap, Frequency, S(m,n)...}``)
-        for the just-run evaluation, or ``None`` under dry-run.
+        """Return the full S3P spectrum for the just-run evaluation, or ``None``
+        under dry-run: ``{IndexMap, Frequency, S(m,n), S(m,n)_real,
+        S(m,n)_imag, S(m,n)_phase_deg, PortRef<n>_<m>: {x, y, Ex, Ey, Hx, Hy}}``.
 
         This is the structured field artifact for a single point. In a sweep,
         S3P goes long-format (its :meth:`field_index` puts one row per
         frequency), so this is used only when a caller wants to persist the raw
-        spectrum for a row rather than explode it."""
+        spectrum for a row rather than explode it.
+
+        The port mode profiles ride here and *only* here — they are indexed by
+        position rather than by frequency, so they are field artifacts by the
+        same rule that keeps acdtool's curve files out of the table (design
+        decision 4 of ``plans/acdtool_rework_plan.md``). They survive
+        :func:`lume_ace3p.results.save_field` as nested dicts, the way
+        ``IndexMap`` already does."""
         solver = self._solver
         if solver is None:
             return None
@@ -449,6 +619,28 @@ class T3PModule(_SolverModule):
     Exposes the wakefield monitor's results the same way :class:`S3PModule`
     exposes S-parameters — a scalar figure of merit plus arrays over a shared
     index — except the index is the wake coordinate ``s`` rather than frequency.
+
+    A wake is only one of six things a T3P run can monitor, though, and since
+    ``plans/t3p_monitor_plan.md`` all of them are readable. That makes ``Name``
+    the selector::
+
+        output_parameters :
+          'k_loss' : {module: t3p, quantity: loss_factor}
+          'P_in'   : {module: t3p, monitor: inputPower,   quantity: P}
+          'P_wall' : {module: t3p, monitor: wallossPower, quantity: P}
+          'Ez_gap' : {module: t3p, monitor: point, quantity: Ez, at: {t: 1.0e-9}}
+
+    ``monitor:`` may be omitted whenever exactly one monitor provides the named
+    quantity — which is every wakefield spec ever written against this package,
+    so those keep working unchanged. Where several could answer,
+    :meth:`extract` raises listing them rather than picking one.
+
+    **One index axis per module, ``s`` winning over ``t``** (the rule
+    :class:`AcdtoolModule` applies to ``ModeID``). A run with both a ``WakeField``
+    and a ``Point`` monitor has two incompatible axes — 20-odd wake samples
+    against thousands of timesteps — so :meth:`field_index` picks one and
+    everything on the other axis must be narrowed to a scalar with ``at:``. The
+    full arrays are still there: they ride in :meth:`field`.
     """
 
     type = 't3p'
@@ -457,92 +649,279 @@ class T3PModule(_SolverModule):
     _label = 'T3P'
     _artifact = TD_SOLUTION
 
-    # Bare quantity names this module answers to, used both by ``extract`` and
-    # by the output-spec router in workflow_graph.
+    # Bare quantity names this module answers to, used both by ``extract`` and by
+    # the output-spec router in workflow_graph.
+    #
+    # **Deliberately not widened** for the monitor quantities ('P', 'V', 't',
+    # 'Ex'...): they are short and generic, 't' especially, and a bare 't' routing
+    # to t3p by name would be a trap for any future spec. The new quantities are
+    # reachable through 'module: t3p' or a 'monitor:' key, both of which route
+    # explicitly, so bare routing is left exactly as it was.
     QUANTITIES = frozenset({'loss_factor', 'kick_factor', 'W', 'I_bunch', 's'})
 
     # Extractable scalars -> the key ``parse_wakefield`` stores them under.
     _SCALARS = {'loss_factor': 'LossFactor', 'kick_factor': 'KickFactor'}
 
+    # The axes a T3P ``at:`` may narrow on: the wake coordinate and time.
+    _AXES = ('s', 't')
+
+    # Keys of a monitor entry that are metadata rather than extractable values.
+    _NOT_QUANTITIES = frozenset({'Type', 'files'})
+
+    # ``(Type, Name)`` read straight from the input file, for the dry-run axis
+    # decision. None = not read yet; () = unreadable, or no Monitor blocks.
+    _declared = None
+
     def extract(self, ctx, spec):
-        """Return a wakefield quantity from the T3P solution.
+        """Return one quantity from the T3P solution.
 
         ``spec`` may be:
-          * ``'loss_factor'`` / ``'kick_factor'`` — the scalar figure of merit,
-          * ``'W'`` / ``'I_bunch'`` / ``'s'`` — the full ``s``-indexed array,
-          * a single-element list wrapping either of the above,
-          * a mapping ``{'quantity': 'W', 'at': {'s': 0.05}}`` — the value at the
-            wake position nearest ``s`` (the objective form an Xopt run needs).
+
+        * ``'loss_factor'`` / ``'kick_factor'`` — the wake monitor's scalar figure
+          of merit,
+        * ``'W'`` / ``'I_bunch'`` / ``'s'`` — the full ``s``-indexed array,
+        * a single-element list wrapping either of the above,
+        * a mapping ``{'quantity': 'W', 'at': {'s': 0.05}}`` — the value at the
+          wake position nearest ``s`` (the objective form an Xopt run needs),
+        * a mapping naming a monitor, ``{'monitor': 'inputPower', 'quantity': 'P'}``
+          or ``{'monitor': 'point', 'quantity': 'Ez', 'at': {'t': 1.0e-9}}``.
+
+        Resolution order for the monitor: an explicit ``monitor:``; else the wake
+        monitor when the quantity is one of :data:`QUANTITIES`; else the unique
+        monitor whose type provides that quantity. An ambiguous bare quantity
+        raises listing the candidates, and an unknown one raises listing what each
+        monitor did report — the error style :meth:`AcdtoolModule._value` uses.
+
+        ``at:`` takes the **nearest** sample on the monitor's own axis, for both
+        ``s`` and ``t``: neither grid is something a user can name exactly, since
+        the time grid is a consequence of ``TimeStepping: DT`` and the wake grid of
+        that in turn. It is *required* for a monitor whose axis is not the one
+        :meth:`field_index` chose, because an off-axis array cannot be a column of
+        a table indexed on the other.
         """
         solver = self._solver
         if solver is None:
             # Dry-run / no solver: same NaN sentinel S3PModule returns.
             return np.array([float('nan')])
-        quantity, position = self._parse_spec(spec)
-        data = solver.output_data
-        if not data:
+        quantity, monitor, at = self._parse_spec(spec)
+        stray = sorted(set(at) - set(self._AXES))
+        if stray:
             raise ValueError(
-                f"no T3P wakefield results to extract '{quantity}' from. T3P "
-                "writes them only when the input file declares a WakeField "
-                "monitor, e.g.\n"
-                "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
-                f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
-                f"under {ctx.workdir}.")
+                "a t3p 'at:' narrows on " + str(list(self._AXES)) + ', not '
+                + str(stray) + '.')
+        name, entry, axis = self._resolve(ctx, solver, quantity, monitor)
 
-        if quantity in self._SCALARS:
+        if axis == 's' and quantity in self._SCALARS:
             key = self._SCALARS[quantity]
-            if key not in data:
+            if key not in entry:
                 # Longitudinal runs report a loss factor, transverse ones a kick
                 # factor. Name the one that IS present rather than return NaN.
-                present = [name for name, k in self._SCALARS.items() if k in data]
+                present = [q for q, k in self._SCALARS.items() if k in entry]
                 raise ValueError(
-                    f"this is a {data.get('WakeType', 'unknown')} T3P run, which "
+                    f"this is a {entry.get('WakeType', 'unknown')} T3P run, which "
                     f"reports {present} — not '{quantity}'. The wake type follows "
                     "from the WakeField monitor's contour and the beam offset in "
                     "the input file.")
-            return data[key]
+            return entry[key]
 
-        if quantity not in data:
-            raise ValueError("Unknown quantity '" + str(quantity)
-                             + "' in T3P output dict. Known quantities: "
-                             + str(sorted(self.QUANTITIES)) + ".")
-        values = data[quantity]
-        if position is None:
+        if quantity not in entry:
+            raise ValueError(
+                "T3P monitor '" + str(name) + "' reported no '" + str(quantity)
+                + "'. It reported " + str(self._quantities(entry)) + '.')
+        wrong = sorted(set(at) - {axis})
+        if wrong:
+            raise ValueError(
+                "T3P monitor '" + str(name) + "' is indexed by '" + str(axis)
+                + "', so it takes 'at: {" + str(axis) + ": ...}', not "
+                + str(wrong) + '.')
+
+        values = entry[quantity]
+        position = at.get(axis)
+        if np.ndim(values) == 0:
+            if position is not None:
+                raise ValueError(
+                    "T3P monitor '" + str(name) + "'s '" + str(quantity) + "' is "
+                    "a scalar, so an 'at:' narrowing does not apply to it.")
             return values
-        # Unlike S3P's frequency scan, the s grid is a solver-chosen consequence
-        # of the timestep, so an exact match is not something a user can specify.
-        # Take the nearest sample instead.
-        grid = np.asarray(data['s'])
+        if position is None:
+            table_axis = self._field_axis(solver)
+            if table_axis is not None and axis != table_axis[0]:
+                raise ValueError(
+                    "T3P monitor '" + str(name) + "' is indexed by '" + str(axis)
+                    + "' but this run's result table is indexed by '"
+                    + str(table_axis[0]) + "' (one index axis per module, 's' "
+                    "winning over 't'), so '" + str(quantity) + "' must be "
+                    "narrowed to a scalar: add 'at: {" + str(axis) + ": ...}'. "
+                    'The whole array is still available through the run\'s field '
+                    'artifact.')
+            return values
+        # Unlike S3P's frequency scan, both T3P grids are solver-chosen
+        # consequences of the timestep, so an exact match is not something a user
+        # can specify. Take the nearest sample instead.
+        grid = np.asarray(entry[axis])
         if not grid.size:
             return float('nan')
         return values[int(np.argmin(np.abs(grid - float(position))))]
 
     @staticmethod
     def _parse_spec(spec):
+        """``(quantity, monitor, at)`` for every accepted spec form."""
         if isinstance(spec, dict):
-            at = spec.get('at') or {}
-            return spec.get('quantity'), at.get('s')
-        if isinstance(spec, list):
-            return spec[0], None
-        return spec, None
+            return (spec.get('quantity'), spec.get('monitor'),
+                    dict(spec.get('at') or {}))
+        if isinstance(spec, (list, tuple)) and spec:
+            return spec[0], None, {}
+        return spec, None, {}
+
+    @classmethod
+    def _quantities(cls, entry):
+        """The extractable names one monitor entry offers, metadata excluded. A
+        ``Volume`` monitor offers none, which is why it cannot be extracted from
+        at all."""
+        return sorted(set(entry) - cls._NOT_QUANTITIES)
+
+    @staticmethod
+    def _addressable(solver):
+        """Ordered ``{name: (entry, axis)}`` for every monitor result a spec may
+        name — the wake monitor under its own ``Name`` (its keys live at the top
+        level of ``output_data``, which is what keeps the legacy specs working),
+        then each entry of ``Monitors`` in declaration order, then ``Bunch0``."""
+        data = solver.output_data
+        found = {}
+        if 's' in data:
+            found[solver.wake_monitor_name() or 'wakefield'] = (
+                {key: value for key, value in data.items()
+                 if key != 'Monitors' and key not in ALWAYS}, 's')
+        for name, entry in (data.get('Monitors') or {}).items():
+            spec = MONITORS.get(entry.get('Type'))
+            found[name] = (entry, spec.axis if spec is not None else None)
+        for name, spec in ALWAYS.items():
+            if name in data:
+                found[name] = (data[name], spec.axis)
+        return found
+
+    def _resolve(self, ctx, solver, quantity, monitor):
+        """``(name, entry, axis)`` for the monitor a spec addresses."""
+        found = self._addressable(solver)
+        if monitor is not None:
+            name = str(monitor)
+            if name not in found:
+                declared = [n for _, n in solver.monitors() if n]
+                raise ValueError(
+                    "this T3P run has no readable monitor named '" + name
+                    + "'. Readable: " + str(sorted(found)) + '; declared in the '
+                    'input file: ' + str(declared) + '. A declared monitor that '
+                    'wrote nothing warns at parse time (T3POutputWarning).')
+            entry, axis = found[name]
+            if MONITORS.get(entry.get('Type')) is not None and axis is None:
+                raise ValueError(
+                    "T3P monitor '" + name + "' is a "
+                    + str(entry.get('Type')) + " monitor, which dumps netCDF "
+                    'field snapshots rather than a time series, so it provides no '
+                    'extractable quantity. Its filenames ride in the run\'s field '
+                    'artifact: ' + str(entry.get('files')) + '.')
+            return name, entry, axis
+
+        if quantity in self.QUANTITIES:
+            # The legacy five: the wake monitor, whatever it is called.
+            if 's' not in solver.output_data:
+                raise ValueError(
+                    f"no T3P wakefield results to extract '{quantity}' from. T3P "
+                    "writes them only when the input file declares a WakeField "
+                    "monitor, e.g.\n"
+                    "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
+                    f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
+                    f"under {ctx.workdir}.")
+            name = solver.wake_monitor_name() or 'wakefield'
+            return name, found[name][0], 's'
+
+        candidates = [name for name, (entry, _) in found.items()
+                      if quantity in self._quantities(entry)]
+        if len(candidates) == 1:
+            name = candidates[0]
+            return name, found[name][0], found[name][1]
+        reported = {name: self._quantities(entry)
+                    for name, (entry, _) in found.items()}
+        if not candidates:
+            raise ValueError(
+                "Unknown quantity '" + str(quantity) + "' in T3P output dict. "
+                'Known bare quantities: ' + str(sorted(self.QUANTITIES))
+                + '; this run\'s monitors reported ' + str(reported) + '.')
+        raise ValueError(
+            str(len(candidates)) + " T3P monitors provide '" + str(quantity)
+            + "': " + str(candidates) + ". Name one with 'monitor: <name>' — "
+            'a run may declare several monitors of one type (three Power '
+            'monitors give input, output and wall-loss power on one run), so '
+            'Name is the only unique selector.')
+
+    def _field_axis(self, solver):
+        """``(label, values)`` for the one axis this module puts on a result
+        table, or ``None`` when the run produced nothing indexable.
+
+        ``s`` wins over ``t`` when both are present. That tiebreak is what keeps
+        every existing baseline where it is — a wake run's table is ``s``-indexed
+        whether or not the input also declares a ``Point`` monitor."""
+        data = solver.output_data
+        if 's' in data:
+            return 's', np.asarray(data['s'])
+        for entry in (data.get('Monitors') or {}).values():
+            spec = MONITORS.get(entry.get('Type'))
+            if spec is not None and spec.axis == 't' and 't' in entry:
+                return 't', np.asarray(entry['t'])
+        for name, spec in ALWAYS.items():
+            if name in data and spec.axis == 't' and 't' in data[name]:
+                return 't', np.asarray(data[name]['t'])
+        return None
+
+    def _dry_run_axis(self):
+        """The index-axis label a dry run reports.
+
+        No solver has run, so there is nothing parsed to ask — but unlike
+        Omega3P's mode count, **both** T3P axes are declared by the *input file*,
+        so the answer is readable without one: a ``WakeField`` monitor means
+        ``'s'``, any other time-series monitor means ``'t'``. Falls back to
+        ``'s'`` when the input file cannot be read or declares nothing, which is
+        what this returned unconditionally before ``examples/t3p_power_balance``
+        made a wake-less dry run something a shipped example does."""
+        if self._declared is None:
+            try:
+                with open(self.input_file) as file:
+                    self._declared = declared_monitors(file.read())
+            except (OSError, TypeError, ValueError):
+                self._declared = ()
+        axes = [MONITORS[kind].axis for kind, _ in self._declared
+                if kind in MONITORS]
+        if 's' in axes:
+            return 's'
+        return 't' if 't' in axes else 's'
 
     def field_index(self, ctx):
-        """T3P field outputs are indexed by the wake coordinate ``s``. Returns
-        ``('s', array)``; under dry-run (no solver) a single-row ``[0.0]``
-        sentinel, so a swept long-format table still has one row per grid
-        point — mirroring :meth:`S3PModule.field_index`."""
+        """The T3P result table's index: ``('s', array)`` when the run produced a
+        wake, ``('t', array)`` from the first time-series monitor otherwise, and
+        ``None`` when it produced neither.
+
+        Under dry-run (no solver) a single-row ``[0.0]`` sentinel, so a swept
+        long-format table still has one row per grid point — mirroring
+        :meth:`S3PModule.field_index`. Its *label* comes from the input file (see
+        :meth:`_dry_run_axis`), so a dry run of a wake-less workflow reports ``t``
+        rather than an ``s`` it will never have."""
         solver = self._solver
         if solver is None:
-            return 's', np.array([0.0])
-        data = solver.output_data
-        if not data:
-            return 's', np.array([0.0])
-        return 's', np.asarray(data['s'])
+            return self._dry_run_axis(), np.array([0.0])
+        return self._field_axis(solver)
 
     def field(self, ctx):
-        """Return the full wakefield result (``{s, W, I_bunch, LossFactor|
-        KickFactor, WakeType, ...}``) for the just-run evaluation, or ``None``
-        under dry-run / when the run declared no WakeField monitor."""
+        """Return the whole T3P result for the just-run evaluation — the wake
+        keys (``{s, W, I_bunch, LossFactor|KickFactor, WakeType, ...}``) plus
+        ``Monitors`` and ``Bunch0`` — or ``None`` under dry-run / when the run
+        produced nothing readable.
+
+        The nested ``Monitors`` dict round-trips through
+        :func:`lume_ace3p.results.save_field` as JSON, the same way S3P's
+        ``IndexMap`` and ``PortRef<n>_<m>`` entries do. This is where every array
+        that is *not* on the chosen index axis lives: a ``Point`` monitor's
+        thousands of timesteps cannot be columns of an ``s``-indexed table, but
+        they are not discarded either."""
         solver = self._solver
         if solver is None or not solver.output_data:
             return None
@@ -553,64 +932,460 @@ class T3PModule(_SolverModule):
 # Acdtool postprocess
 # --------------------------------------------------------------------------- #
 
+# What an ``at:`` narrows, per output shape. Mode-indexed sections are acdtool's
+# table axis, so their ``at:`` is *optional* — without it the whole per-mode array
+# comes back and a sweep table goes one row per mode. Surface-indexed sections are
+# never a table axis, so theirs is *required* (design decision 2). The remaining
+# shapes have no index axis at all and take no ``at:``.
+ACDTOOL_AXIS = {MODE_TABLE: 'mode', SURFACE: 'surface'}
+
+
+def _render_index(value):
+    """Render a mode / surface ID for the deprecation message the way a user
+    would write it in YAML — ``0`` rather than ``'0'`` when it is a number."""
+    try:
+        return str(int(str(value).strip()))
+    except (TypeError, ValueError):
+        return repr(str(value))
+
+
+def _index_key(value):
+    """The parsed-output dict key a mode / surface index resolves to.
+
+    The readers key modes and surfaces by their *string* IDs, because that is
+    what a positional output spec names literally (``['RoverQ', '0', 'RoQ']``),
+    while the mapping form naturally writes ``at: {mode: 0}`` as a number. So
+    ``0``, ``'0'`` and ``0.0`` all have to find mode ``'0'``."""
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def acdtool_spec(spec, warn=False):
+    """Normalize an ``output_parameters`` spec for the acdtool module, or return
+    ``None`` when the spec names no acdtool section.
+
+    This is the **single translation site** between the two spec forms — both
+    :func:`lume_ace3p.workflow_graph._infer_output_module` (which only asks
+    whether a spec is acdtool's) and :meth:`AcdtoolModule.extract` (which asks
+    what it means) come through here.
+
+    The **mapping form** is the target::
+
+        'R/Q'   : {module: acdtool, section: RoverQ, quantity: RoQ}
+        'f0'    : {module: acdtool, section: RoverQ, quantity: Frequency,
+                   at: {mode: 0}}
+        'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax,
+                   at: {surface: 6}}
+        'loc_x' : {module: acdtool, section: maxFieldsOnSurface,
+                   quantity: Emax_location, component: x, at: {surface: 6}}
+
+    The **positional form** ``['RoverQ', '0', 'RoQ']`` is a deprecated alias
+    rewritten to it. Its middle element was never a *selector* but an **index
+    axis**: ``modeID2 = -1`` in the ``.rfpost`` input means "every mode the solver
+    produced", so mode 0 is one narrowing of a table, not the table. Dropping the
+    ``at:`` is how you ask for the whole axis, which is what a dispersion curve or
+    an HOM catalog wants and what the list form cannot express.
+
+    Returns ``{section, quantity, index, at, component, deprecated}``; ``index``
+    is the ``at:`` value for the section's own axis. With `warn` set, the
+    positional form emits a :class:`DeprecationWarning` naming its mapping
+    replacement.
+    """
+    if isinstance(spec, dict):
+        section = spec.get('section')
+        if section is None or section not in SECTIONS:
+            return None
+        at = dict(spec.get('at') or {})
+        axis = ACDTOOL_AXIS.get(SECTIONS[section].shape)
+        return {'section': section, 'quantity': spec.get('quantity'),
+                'index': at.get(axis) if axis else None, 'at': at,
+                'component': spec.get('component'), 'deprecated': False}
+    if isinstance(spec, (list, tuple)) and spec:
+        section = spec[0]
+        if section not in SECTIONS:
+            return None
+        axis = ACDTOOL_AXIS.get(SECTIONS[section].shape)
+        rest = list(spec[1:])
+        index = rest.pop(0) if (axis is not None and rest) else None
+        quantity = rest.pop(0) if rest else None
+        component = rest.pop(0) if rest else None
+        resolved = {'section': section, 'quantity': quantity, 'index': index,
+                    'at': {axis: index} if index is not None else {},
+                    'component': component, 'deprecated': True}
+        if warn:
+            parts = ['module: acdtool', 'section: ' + str(section)]
+            if quantity is not None:
+                parts.append('quantity: ' + str(quantity))
+            if component is not None:
+                parts.append('component: ' + str(component))
+            if index is not None:
+                parts.append('at: {' + axis + ': ' + _render_index(index) + '}')
+            warnings.warn(
+                'the positional acdtool output spec ' + repr(list(spec))
+                + ' is deprecated; write it as {' + ', '.join(parts) + '}. '
+                'Both forms produce the same value today. The mapping form also '
+                'expresses what the list cannot: dropping the '
+                + ("'at:'" if axis else 'index')
+                + ' asks for every mode rather than one.',
+                DeprecationWarning, stacklevel=3)
+        return resolved
+    return None
+
 
 class AcdtoolModule(Module):
-    """Requires an ``em_solution``, provides ``rf_post``. Owns extraction of
-    the RoverQ / kickFactor / maxFieldsOnSurface scalars pulled from the acdtool
-    postprocess output."""
+    """One ``acdtool`` invocation. Provides ``rf_post``; what it *requires*
+    follows from the command.
+
+    ``acdtool`` is the postprocessing layer for all of ACE3P, not only for
+    frequency-domain results, so a single ``requires = {em_solution}`` was too
+    coarse: it made ``[cubit, t3p, acdtool]`` a validation error even though
+    ``transwake`` / ``coaxsignal`` / ``volmontomode`` are precisely time-domain
+    postprocessors. The requirement now comes from the command table
+    (:data:`lume_ace3p.acdtool.COMMANDS`), set on the *instance* in
+    :meth:`__init__` — which is all the DAG needs, since
+    ``workflow_graph._resolve_order`` reads ``requires``/``provides`` off
+    instances after they are built::
+
+        workflow :
+          - module : acdtool                      # requires em_solution
+            input  : 'pillbox-rtop.rfpost'
+
+          - module  : acdtool
+            command : 'postprocess transwake'     # requires td_solution
+            args    : [0.0, 0.0, 0.0, 0.0125]     # jobname is injected
+
+    Omitting ``command`` infers ``postprocess rf`` from a ``.rfpost`` input, so
+    configs written before the command surface opened up run unchanged.
+
+    The ``<jobname>`` the positional commands take is *injected* from
+    ``ctx.job_names`` — the results directory the producing solver actually
+    resolved — rather than repeated in the YAML; ``jobname:`` overrides it.
+
+    **Mutating consumers.** ``postprocess transwake`` (and ``wake_new`` /
+    ``wake_direct``) write their result *over* ``<jobname>/OUTPUT/wakefield.out``,
+    the file :class:`T3PModule` already parsed. In DAG order T3P parses the
+    longitudinal wake, then acdtool overwrites it with the transverse one, so
+    without intervention the workflow would report a wrong-but-plausible number.
+    This module therefore calls the producer's re-parse hook
+    (``ctx.reparse[artifact]``) after such a command, and ``T3PModule`` remains
+    the single owner of every wakefield quantity — one parser
+    (:func:`~lume_ace3p.ace3p.parse_wakefield`), one place to ask, whether or not
+    acdtool ran. See the Phase-2 decision in ``plans/acdtool_rework_plan.md``.
+    """
 
     type = 'acdtool'
+    # Class-level default for the common case; __init__ narrows it per command.
     requires = frozenset({EM_SOLUTION})
     provides = frozenset({RF_POST})
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
         self.input_file = self.config.get('input') or self.config.get('rfpost_input')
+        self.args = list(self.config.get('args') or [])
+        self.jobname = self.config.get('jobname')
+        self.tasks = self.config.get('tasks')
+        self.cores = self.config.get('cores')
+        self.opts = self.config.get('opts', '')
+        self.command, self.spec = self._resolve_command()
+        self.requires = (frozenset({self.spec.requires}) if self.spec.requires
+                         else frozenset())
         self._acdtool = None
+        # Deprecated positional output specs already warned about, so a sweep of
+        # N points warns once per spec rather than N times.
+        self._warned = set()
+
+    def _resolve_command(self):
+        """Return ``(command, spec)`` for the declared command, or the one
+        inferred from a ``.rfpost`` input when none is declared.
+
+        Raises on an unknown command (listing the known ones) and on a known but
+        unwired one (naming why it is held back), so neither fails later as a
+        mangled command line."""
+        command = self.config.get('command')
+        if command is None:
+            # No input file either: 'postprocess rf' over the generated default
+            # .rfpost template, which is what a bare acdtool entry has always
+            # meant.
+            extension = (os.path.splitext(self.input_file)[1].lower()
+                         if self.input_file else '.rfpost')
+            if extension != '.rfpost':
+                raise ValueError(
+                    f"module 'acdtool' cannot infer a command from input file "
+                    f"'{self.input_file}': only '.rfpost' implies a command "
+                    f"('postprocess rf'). Set 'command' explicitly. Commands "
+                    f"usable as a workflow step: {wired_commands()}.")
+            command = 'postprocess rf'
+        spec = resolve_command(command)          # raises, listing known commands
+        if not spec.wired:
+            raise ValueError(
+                f"acdtool command '{command}' is not available as a workflow "
+                f"step: {spec.note}. Commands usable as a workflow step: "
+                f"{wired_commands()}."
+                + ('' if spec.dispatch else
+                   ' It can still be invoked directly through '
+                   'lume_ace3p.acdtool.Acdtool.'))
+        return command, spec
+
+    def _resolve_jobname(self, ctx):
+        """The results-directory name to pass to a positional command: an
+        explicit ``jobname:``, else the name the producing solver resolved, else
+        the documented per-solver default."""
+        if not self.spec.jobname:
+            return None
+        return (self.jobname
+                or ctx.job_names.get(self.spec.requires)
+                or self.spec.default_jobname)
 
     def run(self, ctx):
-        if EM_SOLUTION not in ctx.artifacts:
-            raise ValueError("module 'acdtool' requires an em_solution artifact.")
+        required = self.spec.requires
+        if required and required not in ctx.artifacts:
+            raise ValueError(f"module 'acdtool' ({self.command}) requires a "
+                             f"{required} artifact.")
+        jobname = self._resolve_jobname(ctx)
         if ctx.dry_run:
             self._acdtool = None
-            _append_marker(ctx, 'Dry run mode: Acdtool step skipped.\n'
-                                f'Acdtool input: {self.input_file}\n')
+            marker = ('Dry run mode: Acdtool step skipped.\n'
+                      f'Acdtool command: {self.command}\n'
+                      f'Acdtool input: {self.input_file}\n')
+            if self.args:
+                marker += f'Acdtool args: {self.args}\n'
+            if jobname:
+                marker += f'Acdtool jobname: {jobname}\n'
+            _append_marker(ctx, marker)
             ctx.artifacts[RF_POST] = ctx.workdir
             return
         ctx.ensure_workdir()
         acdtool = Acdtool(self.input_file, workdir=ctx.workdir,
+                          acdtool_command=self.command,
+                          acdtool_args=self.args,
+                          jobname=jobname,
+                          acdtool_tasks=self.tasks,
+                          acdtool_cores=self.cores,
+                          acdtool_opts=self.opts,
                           ace3p_path=ctx.paths.get('ace3p', ''),
                           mpi_caller=ctx.paths.get('mpi', ''))
         acdtool.run()
         self._acdtool = acdtool
         ctx.artifacts[RF_POST] = ctx.workdir
+        # This command rewrote its producer's output in place; have the producer
+        # re-read it so downstream extraction sees the new result, not the one
+        # parsed before acdtool ran.
+        if self.spec.mutates and self.spec.mutates in ctx.reparse:
+            ctx.reparse[self.spec.mutates]()
 
     def extract(self, ctx, spec):
-        """Index the acdtool output by ``[section, mode/surface, entry, ...]``
-        (e.g. ``['RoverQ', '0', 'RoQ']``)."""
+        """Return one quantity from ``postprocess rf``'s ``rfpost.out``.
+
+        The spec is the mapping form ``{section, quantity, at: {mode|surface: n},
+        component}`` or its deprecated positional alias
+        ``['RoverQ', '0', 'RoQ']``; :func:`acdtool_spec` translates between them.
+        What comes back follows the section's *shape*:
+
+        * **mode-indexed** (``RoverQ``, ``kickFactor``, …) — the full per-mode
+          array without ``at:``, the scalar for one mode with
+          ``at: {mode: n}``. The array is aligned to :meth:`field_index`, so a
+          sweep table goes one row per mode.
+        * **surface-indexed** (``maxFieldsOnSurface``, ``powerThroughSurface``) —
+          ``at: {surface: n}`` is **required**, since ``ModeID`` is acdtool's only
+          table axis (design decision 2). Omitting it raises naming the surfaces
+          the run reported.
+        * **unindexed** (``FieldAtPoint``, ``[scaling]``) — the scalar directly.
+        * **curve / grid** — not a table column at all: those are per-position
+          arrays and field maps, exposed through :meth:`field`.
+
+        ``component`` picks ``x`` / ``y`` / ``z`` out of a location vector
+        (``Emax_location``).
+
+        Only ``postprocess rf`` produces an ``rfpost.out`` with named sections to
+        index. The other commands' results belong to the solver whose output they
+        write into or alongside — a transwake kick factor comes from ``t3p``, not
+        from here — so asking this module for a quantity says the output spec
+        names the wrong module."""
+        if self.spec.reader != RFPOST:
+            if self.spec.mutates == TD_SOLUTION:
+                detail = ("A transwake result is read by the t3p module, which "
+                          "owns wakefield.out: {module: t3p, quantity: "
+                          "kick_factor}.")
+            elif self.spec.reader is not None:
+                detail = (f"Its output is a column table, exposed per row as a "
+                          f"field artifact through field(), not as a table "
+                          f"column.")
+            else:
+                detail = "Only 'postprocess rf' writes indexable output."
+            raise ValueError(
+                f"the acdtool command '{self.command}' produces no indexable "
+                f"rfpost.out sections, so '{spec}' cannot be extracted from it. "
+                + detail)
+        resolved = acdtool_spec(spec, warn=repr(spec) not in self._warned)
+        if resolved is not None and resolved['deprecated']:
+            self._warned.add(repr(spec))
+        if resolved is None:
+            raise ValueError(
+                "cannot route the acdtool output spec " + repr(spec) + ": it "
+                "names no known .rfpost block. A spec is either the mapping form "
+                "{module: acdtool, section: <block>, quantity: <name>} or the "
+                "positional ['<block>', ...]. Known blocks: "
+                + str(sorted(SECTIONS)) + '.')
+        section, quantity = resolved['section'], resolved['quantity']
+        index, component = resolved['index'], resolved['component']
+        shape = SECTIONS[section].shape
+        axis = ACDTOOL_AXIS.get(shape)
+        stray = sorted(set(resolved['at']) - ({axis} if axis else set()))
+        if stray:
+            raise ValueError(
+                "acdtool section '" + section + "' takes "
+                + ("'at: {" + axis + ": n}'" if axis else 'no at: narrowing')
+                + ', not ' + str(stray) + '.')
+        if shape in (CURVE, GRID):
+            raise ValueError(
+                "acdtool section '" + section + "' writes its own file, not an "
+                'indexable rfpost.out section: a curve is a per-position array '
+                'and a field map a grid, so both ride as a field artifact '
+                'through field() rather than as a result-table column.')
         if self._acdtool is None:
             return float('nan')
-        output_data = self._acdtool.output_data
-        section = spec[0]
-        if section == 'RoverQ':
-            mode, entry = spec[1], spec[2]
-            assert entry in {'Frequency', 'Qext', 'V_r', 'V_i', 'absV', 'RoQ'}, \
-                "Unknown expression '" + entry + "' in 'RoverQ' section."
-            return output_data[section][mode][entry]
-        if section == 'kickFactor':
-            mode, entry = spec[1], spec[2]
-            assert entry in {'Frequency', 'Qext', 'Ks', 'V_r', 'V_i', 'absV'}, \
-                "Unknown expression '" + entry + "' in 'kickFactor' section."
-            return output_data[section][mode][entry]
-        if section == 'maxFieldsOnSurface':
-            surface, entry = spec[1], spec[2]
-            assert entry in {'Emax', 'Emax_location', 'Hmax', 'Hmax_location'}, \
-                "Unknown expression '" + entry + "' in 'maxFieldsOnSurface' section."
-            if entry.endswith('location'):
-                component = spec[3]
-                return output_data[section][surface][entry][component]
-            return output_data[section][surface][entry]
-        raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
+        data = self._acdtool.output_data
+        if section not in data:
+            raise ValueError(
+                "acdtool reported no '" + section + "' section. Sections read "
+                'from ' + str(self._acdtool.output_file) + ': '
+                + str(sorted(data)) + ". A block is reported only when its "
+                ".rfpost input sets 'ionoff = 1'.")
+        values = data[section]
+        if shape == MODE_TABLE:
+            ids = [str(i) for i in values.get('ModeIDs', [])]
+            if index is None:
+                # The whole axis: aligned to field_index, so a sweep table gets
+                # one row per mode.
+                return np.array([
+                    self._value(values[key], quantity, component,
+                                "acdtool section '" + section + "' mode " + key)
+                    for key in ids])
+            key = _index_key(index)
+            if key not in values:
+                raise ValueError(
+                    "acdtool section '" + section + "' reported no mode "
+                    + str(index) + '; this run has modes ' + str(ids) + '. The '
+                    "count follows the solve — 'modeID2 = -1' in the .rfpost "
+                    "input means every mode the solver produced.")
+            return self._value(values[key], quantity, component,
+                               "acdtool section '" + section + "' mode " + key)
+        if shape == SURFACE:
+            ids = [str(i) for i in values.get('SurfaceIDs', [])]
+            if index is None:
+                raise ValueError(
+                    "acdtool section '" + section + "' is surface-indexed, and "
+                    "'ModeID' is acdtool's only table axis, so it must be "
+                    "narrowed to one surface: add 'at: {surface: n}'. This run "
+                    'reported surface(s) ' + str(ids) + '. The .rfpost block '
+                    "pins the surface it evaluates ('surfaceID = 6'), so a run "
+                    'reports few of them.')
+            key = _index_key(index)
+            if key not in values:
+                raise ValueError(
+                    "acdtool section '" + section + "' reported no surface "
+                    + str(index) + '; this run reported ' + str(ids) + '. The '
+                    'surface IDs are the Cubit journal sideset IDs named by the '
+                    "block's 'surfaceID'.")
+            return self._value(values[key], quantity, component,
+                               "acdtool section '" + section + "' surface " + key)
+        # POINT / RUN: scalar assignments, no index axis at all.
+        return self._value(values, quantity, component,
+                           "acdtool section '" + section + "'")
+
+    @staticmethod
+    def _value(entry, quantity, component, where):
+        """One value out of a parsed section, or an error naming what the section
+        actually reported.
+
+        The column names are whatever the output file carried (Phase 3 reads them
+        from the header row / the ``name = value`` lines), so they are reported
+        from the data rather than checked against a hardcoded set — which is what
+        the previous ``assert entry in {...}`` per section did."""
+        names = sorted(entry)
+        if quantity is None:
+            raise ValueError(
+                where + " needs a 'quantity'; it reported " + str(names) + '.')
+        if quantity not in entry:
+            raise ValueError(
+                where + " reported no '" + str(quantity) + "'. It reported "
+                + str(names) + '.')
+        value = entry[quantity]
+        if component is None:
+            if isinstance(value, dict):
+                raise ValueError(
+                    where + "'s '" + str(quantity) + "' is a vector "
+                    + str(sorted(value)) + "; name one part with 'component: x'.")
+            return value
+        if not isinstance(value, dict):
+            raise ValueError(
+                where + "'s '" + str(quantity) + "' is a scalar, so "
+                "'component: " + str(component) + "' does not apply.")
+        if component not in value:
+            raise ValueError(
+                where + "'s '" + str(quantity) + "' has no component '"
+                + str(component) + "'; it has " + str(sorted(value)) + '.')
+        return value[component]
+
+    def field_index(self, ctx):
+        """acdtool's table axis is ``ModeID``: returns ``('ModeID', array)`` when
+        the run reported a mode-indexed section, else ``None``.
+
+        **It is the only axis acdtool ever offers** (design decision 2 of
+        ``plans/acdtool_rework_plan.md``). Surface-indexed sections resolve to
+        scalars through an ``at: {surface: n}``, so one acdtool module cannot put
+        two axes on one table; across modules the collision falls out of DAG
+        order, since :meth:`Workflow.field_index` takes the first producer — so
+        ``[cubit, s3p, acdtool]`` stays indexed on S3P's ``Frequency`` (the
+        ``window`` case is a frequency scan postprocessed at one ``FreqScanID``,
+        so that is also the right answer) and acdtool's per-mode arrays ride as a
+        field artifact instead.
+
+        Returns ``None`` under dry-run rather than S3P/T3P's single-row sentinel,
+        for the reason :meth:`Omega3PModule.field_index` records: the mode count
+        is a *result* of the solve rather than something the input declares, and a
+        sentinel would reshape the existing dry-run sweep tables."""
+        if self._acdtool is None:
+            return None
+        ids = table_mode_ids(self._acdtool.output_data)
+        if not ids:
+            return None
+        return 'ModeID', np.asarray(ids)
+
+    def field(self, ctx):
+        """Return acdtool's non-table output as a field artifact, or ``None``
+        under dry-run / when the command produced none.
+
+        Two kinds ride here:
+
+        * **curves and grids.** The ``filename`` blocks (``ALLFieldOnLine``,
+          ``FieldOnLine``, ``Multipole``, ``GBZFFT``, ``Track``, ``TrackScan``)
+          each write their own ``#``-commented column table, and ``coaxsignal``
+          writes a headerless one; those are per-position arrays, so they stay out
+          of the flat result table (design decision 4) and appear as
+          ``{section: {filename: {column: array}}}``. Grid blocks contribute
+          their filenames only — see
+          :meth:`lume_ace3p.acdtool.Acdtool._read_files`.
+        * **the mode-indexed sections**, as ``{section: {column: array}}`` (see
+          :func:`lume_ace3p.acdtool.mode_table_arrays`). These *are* table columns
+          when acdtool's ``ModeID`` is the table axis, but in a chain where
+          another module owns the axis — ``s3p -> acdtool``, where S3P's
+          ``Frequency`` wins on DAG order — a per-mode array cannot be a column of
+          a frequency-indexed table, and this is where design decision 2 sends it.
+
+        Note :meth:`Workflow.field` takes the *first* module that returns one, so
+        in an ``omega3p -> acdtool`` chain the solver's own field wins; that is a
+        pre-existing one-field-per-workflow limitation of the framework, not a
+        property of these outputs.
+        """
+        if self._acdtool is None:
+            return None
+        field = dict(field_sections(self._acdtool.output_data))
+        field.update(mode_table_arrays(self._acdtool.output_data))
+        return field or None
 
 
 # --------------------------------------------------------------------------- #
@@ -873,10 +1648,42 @@ class Geant4Module(Module):
         from lume_ace3p.surrogate_data import read_dose_file
         return read_dose_file(os.path.join(ctx.workdir, filename))
 
+    # The scoring grids this module can be asked for. ``scoring`` is a
+    # back-compat alias for ``dose``; the router in workflow_graph keys on this
+    # set, so a new grid needs adding in one place only.
+    SECTIONS = frozenset({'dose', 'edep', 'scoring'})
+
+    @staticmethod
+    def _parse_spec(spec):
+        """Return ``(section, entry)`` for either spec form.
+
+        The **mapping form** is the target, matching every other module::
+
+            'total_dose' : {module: geant4, section: dose, quantity: total}
+
+        The **positional form** ``['dose', 'total']`` is its alias. Unlike
+        acdtool's list form it is *not* deprecated: a Geant4 spec is a
+        ``(grid, reduction)`` pair with no index axis, so the list expresses
+        everything the mapping does and nothing is lost by keeping it. The
+        shipped examples use the mapping for consistency with the rest of
+        ``output_parameters``.
+
+        Returns ``(None, None)`` for a spec of neither shape, which
+        :meth:`extract` reports as ``NaN`` the way it always has."""
+        if isinstance(spec, dict):
+            entry = spec.get('quantity')
+            if entry is None:
+                entry = spec.get('entry')          # positional-alias spelling
+            return spec.get('section'), entry
+        if isinstance(spec, (list, tuple)) and len(spec) >= 2:
+            return spec[0], spec[1]
+        return None, None
+
     def extract(self, ctx, spec):
         """Extract a scalar from the Geant4 dose/edep scoring output.
 
-        ``spec`` is ``[section, entry]`` with section in {dose, edep, scoring}
+        ``spec`` is ``{section: dose, quantity: total}`` or its positional alias
+        ``['dose', 'total']``, with section in {dose, edep, scoring}
         (``scoring`` is a back-compat alias for dose) and entry in
         {total, peak, peak_index}."""
         files = self._output_files()
@@ -885,9 +1692,15 @@ class Geant4Module(Module):
             'edep': self._read_scoring_output(ctx, files['edep']),
         }
         grids['scoring'] = grids['dose']
-        if not isinstance(spec, list) or len(spec) < 2:
+        section, entry = self._parse_spec(spec)
+        if section is None:
+            if isinstance(spec, dict):
+                raise ValueError(
+                    "a geant4 output spec needs a 'section' naming the scoring "
+                    "grid and a 'quantity' naming the reduction, e.g. "
+                    "{module: geant4, section: dose, quantity: total}. Sections: "
+                    + str(sorted(self.SECTIONS)) + '.')
             return float('nan')
-        section, entry = spec[0], spec[1]
         if section not in grids:
             raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
         scoring = grids[section]

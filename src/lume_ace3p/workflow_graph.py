@@ -34,7 +34,7 @@ import os
 import numpy as np
 
 from lume_ace3p.modules import (
-    RunContext, build_module, STAGE_MODES, T3PModule,
+    Geant4Module, RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
@@ -70,18 +70,48 @@ def _infer_output_module(spec):
     handles the terse bare forms used by the Omega3P/Geant4 examples, where the
     spec shape alone identifies the target module:
 
+      * anything naming a ``.rfpost`` block — a mapping with a
+        ``section: RoverQ`` key, or the deprecated positional
+        ``['RoverQ', '0', 'RoQ']`` — -> ``acdtool``, decided by
+        :func:`lume_ace3p.modules.acdtool_spec` so that routing and translation
+        cannot drift apart,
       * a mapping (``{quantity: 'S(0,0)', at: {...}}``) or an S-parameter string
         -> ``s3p``,
-      * ``['RoverQ'|'kickFactor'|'maxFieldsOnSurface', ...]`` -> ``acdtool``,
-      * ``['dose'|'edep'|'scoring', ...]`` -> ``geant4``,
+      * anything naming a Geant4 scoring grid — ``{section: dose, quantity:
+        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
+        ``geant4``,
       * ``'count'``/``'total_weight'`` -> ``particles``,
+      * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
+        key — -> ``t3p``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
         naming one / keyed ``at: {s: ...}`` -> ``t3p``.
 
     Note ``acdtool``'s ``kickFactor`` section and T3P's ``kick_factor`` quantity
     are distinct spellings on purpose, so the two never collide here.
+
+    T3P's *monitor* quantities (``'P'``, ``'V'``, ``'Ez'``, ``'t'``) are
+    deliberately **not** routable bare — they are short and generic, and ``'t'``
+    especially would be a trap for any future spec. A ``monitor:`` key routes them
+    instead, exactly as a ``section:`` key routes an acdtool or Geant4 spec:
+    naming the thing is itself the routing signal, so ``module: t3p`` need not be
+    repeated. Everything else about bare routing is untouched.
     """
+    # Asked first, and without warning: this is the routing question ("is this
+    # acdtool's?"), not the translation, so a deprecated list form must not warn
+    # once here and again in AcdtoolModule.extract.
+    if acdtool_spec(spec) is not None:
+        return 'acdtool'
     if isinstance(spec, dict):
+        # A 'section:' that is a Geant4 scoring grid routes there. Asked before
+        # the S3P fallback for the same reason the acdtool question is asked
+        # first: naming a section is itself the routing signal, so 'module:' need
+        # not be repeated.
+        if spec.get('section') in Geant4Module.SECTIONS:
+            return 'geant4'
+        # A 'monitor:' names a T3P monitor and nothing else in the package uses
+        # the key, so it routes on its own.
+        if spec.get('monitor') is not None:
+            return 't3p'
         quantity = spec.get('quantity')
         at = spec.get('at') or {}
         if quantity in T3PModule.QUANTITIES or 's' in at:
@@ -93,9 +123,7 @@ def _infer_output_module(spec):
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
-        if head in ('RoverQ', 'kickFactor', 'maxFieldsOnSurface'):
-            return 'acdtool'
-        if head in ('dose', 'edep', 'scoring'):
+        if head in Geant4Module.SECTIONS:
             return 'geant4'
         if head in ('count', 'total_weight'):
             return 'particles'

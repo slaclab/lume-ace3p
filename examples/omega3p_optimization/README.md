@@ -14,9 +14,11 @@ solves for its eigenmodes, and acdtool postprocesses the fields via
 loop (`NelderMeadGenerator`, `num_random: 0`, `num_step: 25`) that **maximizes
 `R/Q`** over two Cubit journal variables, `cav_radius` (bounds `[95, 105]`) and
 `ellipticity` (bounds `[0.5, 1.2]`). The VOCS objective name `R/Q` is an
-`output_parameters` name (`['RoverQ', '0', 'RoQ']` from the acdtool results), so
-the Xopt driver never parses acdtool output itself — extraction stays a workflow
-concern. `mode_freq` is declared as a tracked observable, not optimized.
+`output_parameters` name (`{module: acdtool, section: RoverQ, quantity: RoQ,
+at: {mode: 0}}`), so the Xopt driver never parses acdtool output itself —
+extraction stays a workflow concern. `mode_freq` is declared as a tracked
+observable, not optimized, and comes from Omega3P's own eigenmode output rather
+than from acdtool.
 
 Declaring `input_parameters` gives each VOCS variable an explicit home: a
 variable routes to the module bucket where it is declared (both live under

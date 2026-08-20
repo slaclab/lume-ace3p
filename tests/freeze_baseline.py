@@ -8,7 +8,7 @@ current behavior of every example:
 Re-running overwrites the fixtures. `test_baseline_selfcheck.py` then re-runs
 the current code and confirms it still matches these fixtures — that guards
 against a flaky/nondeterministic capture being used as a reference in later
-phases. See docs/workflow_module_refactor_plan.md, Phase 0.5.
+phases. See plans/workflow_module_refactor_plan.md, Phase 0.5.
 """
 
 import os
@@ -43,6 +43,10 @@ def freeze_one(name, meta):
         'files': {k: {'pattern': v[0], 'compare': v[1]}
                   for k, v in meta['files'].items()},
         'digests': {k: {'pattern': v} for k, v in meta['digests'].items()},
+        # When this set was captured and why it was (re)generated, so a reader can
+        # tell a first freeze from an intentional regeneration without reading git
+        # history. Every regeneration must say what moved and why.
+        'frozen': meta['frozen'],
         'checkable': meta['checkable'],
     }
     bu.dump_json(os.path.join(dest, 'manifest.json'), manifest)

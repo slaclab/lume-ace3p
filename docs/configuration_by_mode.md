@@ -75,7 +75,7 @@ mode :
   output_file : 'single_output.txt'
 
 output_parameters :
-  'R/Q' : ['RoverQ', '0', 'RoQ']
+  'R/Q' : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
 ```
 
 ## `parameter_sweep`
@@ -108,8 +108,8 @@ input_parameters :
     'ellipticity' : {min: 0.5,  max: 1.25,  num: 4}
 
 output_parameters :
-  'R/Q'       : ['RoverQ', '0', 'RoQ']
-  'Mode_freq' : ['RoverQ', '0', 'Frequency']
+  'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  'Mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
 ```
 
 ## `scalar_optimize`
@@ -141,8 +141,8 @@ input_parameters :          # recommended: gives each VOCS variable a home bucke
     'ellipticity' : 0.5
 
 output_parameters :
-  'R/Q'       : ['RoverQ', '0', 'RoQ']
-  'mode_freq' : ['RoverQ', '0', 'Frequency']
+  'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
 
 vocs_parameters :
   'variables' :

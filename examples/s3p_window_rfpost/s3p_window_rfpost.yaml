@@ -1,0 +1,59 @@
+# S3P + acdtool postprocessing on the declarative module/mode schema:
+#   workflow:  cubit -> s3p -> acdtool
+#   mode:      parameter_sweep
+#
+# This is the one chain where 'acdtool postprocess rf' runs against S3P results
+# rather than Omega3P's: window.rfpost sets 'ResultDir = s3p_results' and
+# 'FreqScanID = 2', i.e. postprocess the third point of the frequency scan.
+#
+# Two modules in this chain expose an index axis -- S3P's 'Frequency' and
+# acdtool's 'ModeID' -- and the table can only have one. The rule is "first
+# producer in resolved DAG order wins", so the table is frequency-indexed and
+# acdtool's per-mode data rides outside it. See the README.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_window_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'window.jou'
+  - module : s3p
+    input : 'window.s3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    # No 'command:' -- a '.rfpost' input infers 'postprocess rf', which requires
+    # an em_solution and so orders after s3p.
+    input : 'window.rfpost'
+
+mode :
+  type : parameter_sweep
+  output_file : 'window_sweep_output.txt'
+
+input_parameters :
+  cubit :
+    # Ceramic disk thickness in mm: the knob that tunes the window's match.
+    'wdwt' :
+      'min' : 2.0
+      'max' : 4.0
+      'num' : 3
+
+output_parameters :
+  # S-matrix indices, not port numbers: index 0 is port 7 mode 0 and index 1 is
+  # port 8 mode 0 (the run's IndexMap records the mapping). So S(0,0) is the
+  # reflection and S(0,1) the transmission through the window.
+  'S11' : {module: s3p, quantity: 'S(0,0)'}
+  'S21' : {module: s3p, quantity: 'S(0,1)'}
+  # Phase is available now too, in degrees, from SParameter.out.
+  'S21_phase' : {module: s3p, quantity: 'S(0,1)_phase_deg'}
+  # 'at:' narrows a frequency-indexed array to one scalar -- the shape an Xopt
+  # objective takes. 2.556 GHz is the third scan point, which is the one
+  # window.rfpost postprocesses (FreqScanID = 2).
+  'S11_at_scan_point' : {module: s3p, quantity: 'S(0,0)', at: {frequency: 2.556e9}}
+  # The acdtool step's one extractable scalar: '[scaling]' is emitted by every
+  # 'postprocess rf' run and carries the normalized-to-physical field conversion.
+  # window.rfpost's other block, ALLFieldOnLine, writes column files rather than
+  # rfpost.out sections -- see the README.
+  'm_factor' : {module: acdtool, section: scaling, quantity: m_factor}

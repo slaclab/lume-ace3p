@@ -239,8 +239,8 @@ input_parameters :
         'ellipticity' : 0.5
 
 output_parameters :
-    'R/Q'       : ['RoverQ', '0', 'RoQ']
-    'mode_freq' : ['RoverQ', '0', 'Frequency']
+    'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+    'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
 
 vocs_parameters :
     'variables' :

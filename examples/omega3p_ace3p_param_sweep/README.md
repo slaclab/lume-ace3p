@@ -16,9 +16,10 @@ adds a third axis from the ACE3P config: the surface-material `Sigma` list
 `[5.8e7, 1.04e7]` (2 values). That makes **4 x 4 x 2 = 32 runs**. The mode
 iterates every swept axis generically, so the ACE3P axis rides alongside the
 Cubit ones with no special-casing and appears as its own column in
-`omega3p_sweep_output.txt`. The `output_parameters` pull `R/Q` and `Mode_freq`
-from the acdtool `RoverQ` block plus `E_max` and its `loc_x/loc_y/loc_z` from
-`maxFieldsOnSurface` on surface 6.
+`omega3p_sweep_output.txt`. The `output_parameters` are the same set
+[`../omega3p_sweep`](../omega3p_sweep) declares: `R/Q` from the acdtool `RoverQ`
+block, `E_max` and its `loc_x/loc_y/loc_z` from `maxFieldsOnSurface` on surface 6,
+and `Mode_freq` from Omega3P's own eigenmode output.
 
 This differs from its siblings only in that added ACE3P axis:
 [`../omega3p_sweep`](../omega3p_sweep) sweeps the same two Cubit axes alone (16

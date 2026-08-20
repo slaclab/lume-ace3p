@@ -1,0 +1,39 @@
+ModelInfo: {
+
+  File: ./window.ncdf
+
+  BoundaryCondition: {
+    Magnetic: 1
+    Electric: 2
+    Exterior: 6
+    Waveguide: 7, 8
+  }
+
+  Material : {
+    Attribute: 1
+    Epsilon:   1.0
+    Mu:        1.0
+  }
+
+  Material : {
+    Attribute: 2
+    Epsilon:   9.37
+    Mu:        1.0
+  }
+
+  SurfaceMaterial: {
+    ReferenceNumber: 6
+    Sigma: 5.8e7
+  }
+}
+
+FiniteElement: {
+  Order: 2
+  CurvedSurfaces: on
+}
+
+FrequencyScan: {  //enable frequency scan of S parameter
+  Start: 2.356e9
+  End:   3.856e9
+  Interval: 0.1e+9
+}

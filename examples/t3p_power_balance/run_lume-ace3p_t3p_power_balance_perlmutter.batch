@@ -1,0 +1,17 @@
+#!/bin/bash
+
+#SBATCH --constraint=cpu
+#SBATCH --account=m349
+#SBATCH --qos=regular
+#SBATCH --job-name=lume-ace3p_t3p_power_balance
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --time=0-01:00:00
+
+# Three time-domain runs at 16 tasks each. The tutorial's single SIBC run fits in
+# the 10-minute debug slot, so an hour on 'regular' leaves headroom for three.
+# LUME-ACE3P does not orchestrate T3P restarts, so a sweep point cut off by the
+# wall clock restarts from scratch; size this for the whole sweep.
+
+run-lume-ace3p t3p_power_balance.yaml

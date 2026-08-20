@@ -1,0 +1,168 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        AMRLevel : { 
+            Matrix : { 
+                RowDistribution : { 
+                    total : 430032 
+                    max : 3690 
+                    average : 3359.625 
+                    min : 2828 
+                    stddev : 164.91386441766 
+                }
+                NonlocalelementsDistribution : { 
+                    total : 313226 
+                    max : 3788 
+                    average : 2447.078125 
+                    min : 920 
+                    stddev : 603.55210500397 
+                }
+                NonZeroDistribution : { 
+                    total : 17828768 
+                    max : 154216 
+                    average : 139287.25 
+                    min : 98640 
+                    stddev : 11064.676390299 
+                }
+            }
+        }
+        Input : { 
+            FiniteElement : { 
+                Order : 2 
+                CurvedSurfaces : on 
+            }
+            MPI : { 
+                rank : 0 
+                size : 128 
+            }
+            LoadingInfo : { 
+                StartPoint : 0.0 , 0.0 , -0.025 
+                Bunch : { 
+                    Nsigmas : 5 
+                    Sigma : 0.005 
+                    Charge : 1.e-12 
+                    Type : Gaussian 
+                }
+                SymmetryFactor : 4 
+                BoundaryID : 1 
+                Direction : 0.0 , 0.0 , 1.0 
+            }
+            ModelInfo : { 
+                BoundaryCondition : { 
+                    Absorbing : 1 , 2 , 5 
+                    Electric : 6 
+                    Magnetic : 3 , 4 
+                }
+                File : /pscratch/sd/c/cho/cw23/t3p/BPM/BPM.ncdf 
+                Material : { 
+                    Attribute : 1 
+                    Epsilon : 1.0 
+                    Mu : 1.0 
+                }
+                Material : { 
+                    Attribute : 2 
+                    Epsilon : 4.9 
+                    Mu : 1.0 
+                }
+            }
+            TimeStepping : { 
+                MaximumTime : 2.0e-9 
+                DT : 0.5e-12 
+            }
+            LinearSolver : { 
+                Slover : CG 
+            }
+            Monitor : { 
+                Name : wakefield 
+                Type : WakeField 
+                Startcontour : -0.0055 
+                Endcontour : 0.0055 
+                Smax : 0.35 
+            }
+            Monitor : { 
+                Name : point 
+                Coordinate : 0 , 0 , 0 
+                Type : Point 
+            }
+            Monitor : { 
+                Name : coaxpoint 
+                Coordinate : 0.01457 , 0.03586 , -0.0020955 
+                Type : Point 
+            }
+            Monitor : { 
+                TimeStart : 0.000e-9 
+                TimeEnd : 0.4e-9 
+                Type : Volume 
+                TimeStep : 0.02e-9 
+                Name : volume 
+            }
+            Monitor : { 
+                Name : port 
+                Type : Power 
+                ReferenceNumber : 5 
+            }
+            Monitor : { 
+                Name : modecoeff 
+                Type : ModeVoltage 
+                Port : { 
+                    ESolver : { 
+                        NumberOfModes : 1 
+                        Type : Numerical2D 
+                        MaxIterations : 1000 
+                        Tolerance : 1.e-15 
+                        Frequency : 1.e9 
+                    }
+                    ReferenceNumber : 5 
+                }
+            }
+            JobName : t3p_results 
+        }
+        Version : { 
+            Application : 
+
+ACE3P Codes Source Date:   Fri Mar 3 08:34:46 2023 -0800
+ACE3P Codes Source Branch: master
+ACE3P Codes Source Tag:    af707a0547a44b97f666de42842393aa19e3d097
+Support Lib Source Date:   Fri Dec 2 09:43:53 2022 -0800
+Support Lib Source Branch: master
+Support Lib Source Tag:    2f7bd8bf8ec6eb3646dc05e32622a4475531a105
+Compilation Date:          Fri 03 Mar 2023 09:42:31 AM PST
+
+*************************************************************
+
+         Copyright 2023, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Environment : { 
+            commsize : 128 
+            user : cho 
+            start : Mon Mar  6 20:14:06 2023 
+        }
+/********************************/
+
+
+

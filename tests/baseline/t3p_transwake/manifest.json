@@ -1,0 +1,17 @@
+{
+  "checkable": "NUMERIC: the nominal cubit geometry and the transwake args [0, 0, 0, 0.0125] recorded in the marker. K / W_trans are NaN without a solver -> reachability-only. Structurally this pins that [cubit, t3p, acdtool] validates and orders correctly at all -- it was a WorkflowValidationError before Phase 2 -- and that the jobname is injected rather than configured.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_transwake_workdir/DRY_RUN.txt"
+    },
+    "transwake_output.txt": {
+      "compare": "table",
+      "pattern": "transwake_output.txt"
+    }
+  },
+  "frozen": "Phase 6 of the acdtool rework (2026-08-18). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "single",
+  "yaml": "t3p_transwake.yaml"
+}

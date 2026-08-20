@@ -27,7 +27,7 @@ chain — an S3P sweep, a Geant4 dose optimization, or a full
 ### Architecture
 
 Three cleanly separated layers (see
-[`docs/workflow_module_refactor_plan.md`](docs/workflow_module_refactor_plan.md)):
+[`plans/workflow_module_refactor_plan.md`](plans/workflow_module_refactor_plan.md)):
 
 1. **Modules** (`src/lume_ace3p/modules.py`) — one adapter per pipeline step,
    each declaring the artifact kinds it `requires` and `provides`.
@@ -54,6 +54,7 @@ The documentation covers:
 - [Parameter sweeping](https://lume-ace3p.readthedocs.io/en/latest/parameter_sweep.html) — Omega3P and S3P examples.
 - [Optimization](https://lume-ace3p.readthedocs.io/en/latest/optimization.html) — Xopt scalar, multifidelity, and Omega3P-via-script.
 - [YAML configuration reference](https://lume-ace3p.readthedocs.io/en/latest/yaml_reference.html) — every `*_parameters` block.
+- [acdtool reference](https://lume-ace3p.readthedocs.io/en/latest/acdtool_reference.html) — its 19 commands and 24 `.rfpost` blocks, with what is implemented here.
 - [Plotting tools](https://lume-ace3p.readthedocs.io/en/latest/plotting.html).
 - [Troubleshooting / FAQs](https://lume-ace3p.readthedocs.io/en/latest/troubleshooting.html).
 - [API reference](https://lume-ace3p.readthedocs.io/en/latest/api/index.html) — auto-generated from source on every build.
@@ -63,8 +64,14 @@ The documentation covers:
 - `src/lume_ace3p/` — the Python package (entry point: `run_lume_ace3p.py`).
 - `examples/` — runnable Cubit / ACE3P / YAML / batch-script examples.
 - `plotting/` — interactive plotting scripts for sweep and optimization output.
+- `CHANGELOG.md` — what changed in each release.
 - `docs/` — Sphinx documentation source.
-- `references/` — external reference material.
+- `plans/` — implementation plans for the larger pieces of work, each recording
+  what was built, how it deviated from the design, and what it left owed. Kept
+  out of `docs/` because they are development history rather than user
+  documentation.
+- `references/` — external reference material, including the SLAC ACE3P
+  command-syntax references for every module and `acdtool`.
 
 ## Building the docs locally
 

@@ -1,0 +1,89 @@
+# T3P power balance from three Power monitors on one run:
+#   workflow:  cubit -> t3p
+#   mode:      parameter_sweep  (over the coating thickness)
+#
+# A Gaussian pulse propagates down a coaxial line whose centre wire carries a
+# thin lossy coating. Three Power monitors -- input port, output port, coated
+# wire -- measure where the energy goes, and all three come from ONE time-domain
+# run per sweep point. Before the T3P multi-monitor work only the WakeField
+# monitor was read, so this workflow could not be expressed at all.
+#
+# Three things this example is the demonstration of:
+#
+#   1. 'monitor:' is the selector. All three monitors have Type: Power, so the
+#      type cannot address one of them -- only the Name can. Omitting 'monitor:'
+#      here raises an error listing all three rather than picking one.
+#
+#   2. The index axis is TIME. This run declares no WakeField monitor, so the
+#      table goes long-format over 't' the way a wake run goes over 's' and an
+#      S3P sweep goes over Frequency.
+#
+#   3. The swept axis is an ACE3P input parameter, not a Cubit one: the coating
+#      thickness lives in SIBC.t3p, so it is addressed by its path there. The
+#      mode iterates it exactly like a geometry axis.
+#
+# The balance itself (P_in - P_out - P_wall, which should settle to ~0 once the
+# pulse has cleared) is computed by 'power_balance.py' from the result table:
+# output_parameters names quantities, it does not evaluate expressions.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_power_balance_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'coating.jou'
+  - module : t3p
+    input : 'SIBC.t3p'
+    tasks : 16
+    cores : 16
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 'power_balance_output.txt'
+
+input_parameters :
+  # Fixed, so the element size is pinned from here rather than from the journal
+  # (it is the tutorial's 15 mm either way; see coating.jou). Only *swept* axes
+  # become table columns, so this one shows up in each workdir's DRY_RUN.txt
+  # rather than in the result table.
+  cubit :
+    'meshsize' : 0.015
+  # The swept axis: the thickness of the lossy coating on the centre wire, in
+  # metres, addressed by its path inside SIBC.t3p. This is what the wall-loss
+  # monitor measures, so it is the knob that moves the balance.
+  ace3p :
+    'ModelInfo' :
+      'SurfaceMaterial' :
+        'Coating' :
+          'Thickness' : [0.5e-3, 1.0e-3, 2.0e-3]
+
+output_parameters :
+  # Power through the excitation port (ReferenceNumber 4), in W, one value per
+  # row of the long table. 'monitor:' alone routes the spec to t3p -- naming the
+  # module as well is optional and done here for readability.
+  'P_in' :
+    module : t3p
+    monitor : 'inputPower'
+    quantity : 'P'
+  # Power leaving the far port (ReferenceNumber 5).
+  'P_out' :
+    module : t3p
+    monitor : 'outputPower'
+    quantity : 'P'
+  # Power dissipated on the coated wire (ReferenceNumber 3) -- the whole point of
+  # the surface-impedance model, and the column the sweep should move.
+  'P_wall' :
+    module : t3p
+    monitor : 'wallossPower'
+    quantity : 'P'
+  # A scalar at one instant, which is the shape an Xopt objective takes. The time
+  # grid follows from TimeStepping: DT, so the NEAREST sample is used rather than
+  # requiring an exact match.
+  'P_wall_at_5ns' :
+    module : t3p
+    monitor : 'wallossPower'
+    quantity : 'P'
+    at :
+      t : 5.0e-9
