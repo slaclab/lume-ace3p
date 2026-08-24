@@ -127,8 +127,13 @@ or delete that block; the wakefield result does not depend on it.
 
 **Checkpoint/restart.** The `CheckPoint` section is passed through like any other
 input section and T3P will write `t3p_results/CHECKPOINT` if asked, but LUME-ACE3P
-does **not** orchestrate restarts — it will not detect an existing checkpoint or
-set `Action: restart`. Size the allocation for a full run.
+does **not** orchestrate solver-level restarts — it will not detect an existing
+checkpoint or set `Action: restart`. Size the allocation for a full T3P run.
+
+What it *can* resume is the chain around it: `mode: {resume: true}` skips steps a
+previous run finished, so a job that died in the acdtool pass re-runs only that
+pass rather than re-meshing and re-solving. See
+[the sweep docs](https://github.com/slaclab/lume-ace3p/blob/main/docs/parameter_sweep.md).
 
 ## Adapting this to your own model
 

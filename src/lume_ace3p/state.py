@@ -1,4 +1,4 @@
-"""The per-evaluation completion manifest (Phase 3 of
+"""The per-evaluation completion manifest (Phases 3-4 of
 ``plans/evaluation_isolation_resume_plan.md``).
 
 Every evaluation writes one JSON file, ``lume_ace3p_state.json``, into its own
@@ -7,8 +7,11 @@ outputs. It is written **incrementally — after each module, not once at the
 end** — because the partial file is the whole point: a sweep point cut off by
 the wall clock is exactly the case that needs a record of how far it got.
 
-Phase 3 only *writes* it; Phase 4 reads it to resume. Nothing about the run
-changes because it exists.
+Phase 3 wrote it and read nothing back. Phase 4 reads it: under
+``mode: {resume: true}`` :meth:`lume_ace3p.workflow_graph.Workflow.evaluate`
+resumes a point from the first module this file does not record as complete, and
+``run-lume-ace3p --status`` summarizes a half-finished campaign from these files
+alone (:func:`point_status`).
 
 Why a manifest rather than a file-presence check
 ------------------------------------------------
@@ -36,7 +39,7 @@ structural rather than a filter that can rot:
 * YAML comments and key order: the hash is taken over parsed values, so
   reformatting a config does not invalidate a campaign.
 
-A changed hash means the point must be re-run, and Phase 4 says so by name.
+A changed hash means the point must be re-run, and a resume says so by name.
 
 The manifest is **not a baseline artifact** — it carries timestamps and absolute
 paths, so ``tests/baseline_utils.py`` excludes it explicitly.
@@ -60,6 +63,13 @@ STATE_FILE = 'lume_ace3p_state.json'
 # deliberately distinct from ``FAILED``.
 COMPLETE = 'complete'
 FAILED = 'failed'
+
+# The per-*point* verdicts :func:`point_status` reports, on top of the two above.
+# ``COMPLETE`` and ``FAILED`` double as point verdicts: a point is complete when
+# every module in its chain is, and failed when any module is.
+ABSENT = 'absent'      # no manifest at all — the point has not been started
+STALE = 'stale'        # a manifest for a *different* configuration
+PARTIAL = 'partial'    # some modules complete, none failed, the rest unattempted
 
 
 def state_path(workdir):
@@ -136,11 +146,73 @@ def record_outputs(state, outputs):
 
 
 def module_entry(state, name):
-    """The recorded entry for the module called ``name``, or ``None``."""
+    """The recorded entry for the module called ``name``, or ``None``.
+
+    Keyed on the module's **name**, which a chain is required to make unique
+    (:func:`lume_ace3p.workflow_graph._resolve_order` rejects a duplicate) —
+    otherwise "resume from the first non-complete module" could not tell two
+    steps apart, and they would already be sharing one log."""
     for entry in (state or {}).get('modules') or []:
         if entry.get('name') == name:
             return entry
     return None
+
+
+def is_complete(state, name):
+    """Whether ``state`` records the module called ``name`` as complete.
+
+    The manifest is authoritative for "did it run" and the module for "is the
+    output still there" (:meth:`lume_ace3p.modules.Module.verify`) — design
+    decision 2. Absent and ``failed`` are both "not complete" here; they differ
+    only in what is worth reporting to a user."""
+    entry = module_entry(state, name)
+    return entry is not None and entry.get('status') == COMPLETE
+
+
+def recorded_output(entry):
+    """The clearest description a completed module's entry gives of what it left
+    behind: a solver's results directory, else the artifacts it recorded.
+
+    Used to name what is missing when a module is recorded complete but
+    :meth:`~lume_ace3p.modules.Module.verify` says its output is gone. Returns
+    ``''`` when the entry describes nothing locatable — a solver whose only
+    artifact is the workdir itself records ``'.'``, which says nothing."""
+    entry = entry or {}
+    if entry.get('job_name'):
+        return str(entry['job_name'])
+    paths = sorted(str(path) for path in (entry.get('artifacts') or {}).values()
+                   if path not in ('.', '', None))
+    return ', '.join(paths)
+
+
+def point_status(state, config_hash=None, module_names=()):
+    """Summarize one point's manifest as ``(verdict, complete, pending)``.
+
+    ``verdict`` is :data:`ABSENT` (nothing recorded), :data:`STALE` (recorded for
+    a different ``config_hash``), :data:`FAILED` (some module recorded a failure),
+    :data:`COMPLETE` (every module of ``module_names`` is complete), or
+    :data:`PARTIAL`. ``complete`` counts the modules of ``module_names`` recorded
+    complete, and ``pending`` names the first that is not — the module a resume
+    would run — or ``None`` when there is none.
+
+    ``config_hash`` is the hash the *current* configuration produces for this
+    point; pass ``None`` to skip that comparison. This is what
+    ``run-lume-ace3p --status`` reports and what makes a half-finished campaign
+    legible without running anything."""
+    names = list(module_names)
+    if state is None:
+        return ABSENT, 0, (names[0] if names else None)
+    if config_hash is not None and state.get('config_hash') != config_hash:
+        return STALE, 0, (names[0] if names else None)
+    complete = [name for name in names if is_complete(state, name)]
+    pending = next((name for name in names if not is_complete(state, name)), None)
+    failed = any(entry.get('status') == FAILED
+                 for entry in state.get('modules') or [])
+    if failed:
+        return FAILED, len(complete), pending
+    if pending is None and names:
+        return COMPLETE, len(complete), None
+    return PARTIAL, len(complete), pending
 
 
 # --------------------------------------------------------------------------- #

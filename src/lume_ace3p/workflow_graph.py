@@ -37,8 +37,13 @@ Design notes
 * **Every evaluation records what it did.** ``evaluate`` writes a completion
   manifest into the evaluation's workdir (:mod:`lume_ace3p.state`), updated after
   each module, so a point cut off by the wall clock leaves behind how far it got.
-  Writing it changes nothing about the run; Phase 4 of
-  ``plans/evaluation_isolation_resume_plan.md`` is what reads it back.
+* **...and can pick up where the last one stopped.** ``evaluate(resume=True)``
+  reads that manifest and skips the *subprocess* of every module it records as
+  complete, re-running their parsers so the row is rebuilt exactly as an
+  uninterrupted run would have (design decision 1 of
+  ``plans/evaluation_isolation_resume_plan.md``). It is opt-in, per point, and
+  keyed on a ``config_hash`` of the resolved configuration, so a workdir left by a
+  different study is re-run rather than mistaken for this one's.
 """
 
 import os
@@ -51,8 +56,9 @@ from lume_ace3p.modules import (
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 from lume_ace3p.state import (
-    COMPLETE, FAILED, config_hash, new_state, record_module, record_outputs,
-    relative, write_state,
+    COMPLETE, FAILED, config_hash, is_complete, module_entry, new_state,
+    read_state, record_module, record_outputs, recorded_output, relative,
+    write_state,
 )
 
 
@@ -159,7 +165,8 @@ def _resolve_order(modules):
     """Validate the module list and return it topologically ordered.
 
     Raises :class:`WorkflowValidationError` (with the offending artifact/module
-    named) on a duplicate producer, an unmet requirement, or a cycle."""
+    named) on a duplicate producer, a duplicate module *name*, an unmet
+    requirement, or a cycle."""
     if not modules:
         raise WorkflowValidationError('workflow contains no modules.')
 
@@ -183,6 +190,27 @@ def _resolve_order(modules):
                 raise WorkflowValidationError(
                     f"module '{m.name}' requires artifact '{kind}' but no "
                     f"module in the workflow provides it.")
+
+    # Unique names. A module's name is its identity in three places outside the
+    # DAG — its log file (``<workdir>/<name>.log``), its entry in the run manifest,
+    # and the "resume from the first non-complete module" decision that reads that
+    # entry — and none of the three can tell two identically-named steps apart.
+    #
+    # Asked *after* the two rules above, which is what keeps the more specific
+    # diagnosis: two modules of one type collide on their artifact as well as on
+    # their name, and "you have two mesh producers" is the more useful of the two
+    # things to be told. What is left for this to catch is two entries of different
+    # types given the same explicit ``name:`` — which validates today, and leaves
+    # the two steps overwriting each other's log.
+    seen = {}
+    for m in modules:
+        if m.name in seen:
+            raise WorkflowValidationError(
+                f"two modules are named '{m.name}' (types '{seen[m.name]}' and "
+                f"'{m.type}'); a module's name identifies its log file and its "
+                "entry in the run manifest, so it must be unique within a "
+                "workflow. Give one of them a different 'name:'.")
+        seen[m.name] = m.type
 
     deps = {i: {producer[k] for k in m.requires} for i, m in enumerate(modules)}
 
@@ -353,7 +381,7 @@ class Workflow:
 
     # ---- the single seam the modes call ----------------------------------
 
-    def evaluate(self, input_scalars=None, workdir=None):
+    def evaluate(self, input_scalars=None, workdir=None, resume=False):
         """Run the ordered module chain once for one input point.
 
         ``input_scalars`` selects the input point:
@@ -368,6 +396,16 @@ class Workflow:
         training-data collector) drives one point into a directory of its choosing
         without mutating the workflow.
 
+        ``resume`` reads the completion manifest already in the workdir and
+        **skips the external tool of every module it records as complete**,
+        re-running only their parsers (:meth:`Module.run`'s ``skip_execution``);
+        execution restarts at the first module the manifest does not record as
+        complete, or at the first whose :meth:`Module.verify` says its output is
+        gone. It is off by default and the mode layer is what turns it on
+        (``mode: {resume: true}``): a sweep that silently picked up a stale
+        workdir from a different study would be worse than no resume at all, which
+        is what ``config_hash`` and this default together prevent.
+
         Returns ``(outputs, ctx)``: ``{output_name: extracted_value}`` for the
         ``output_parameters`` spec, and the populated :class:`RunContext` that
         produced it. The context is the per-evaluation carrier — pass it back to
@@ -376,9 +414,11 @@ class Workflow:
         which is only correct while evaluations do not overlap.
 
         A completion manifest is written into the workdir and updated after every
-        module (:mod:`lume_ace3p.state`). It is a record only — nothing here reads
-        it — but it is written *incrementally* because the partial file is what a
-        resumed or wall-clock-killed campaign has to work from."""
+        module (:mod:`lume_ace3p.state`), *incrementally*, because the partial file
+        is what a resumed or wall-clock-killed campaign has to work from. A
+        resumed run rewrites it from scratch, recording the modules it reused as
+        complete before it runs the ones it did not — so being killed again is not
+        a loss of the record."""
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = (workdir if workdir is not None
                         else self._getworkdir(inputs, sweep_scalars))
@@ -391,17 +431,29 @@ class Workflow:
                          capture_output=self.capture_output)
         ctx.ensure_workdir()
 
-        state = new_state(
-            config_hash=config_hash(self.entries, inputs, self.output_spec),
-            point=self._point_record(inputs, sweep_scalars),
-            workdir=self.workdir)
+        current_hash = config_hash(self.entries, inputs, self.output_spec)
+        # Read before the new manifest overwrites it.
+        previous = self._resume_state(current_hash) if resume else None
+
+        state = new_state(config_hash=current_hash,
+                          point=self._point_record(inputs, sweep_scalars),
+                          workdir=self.workdir)
         # Written before the first module runs, so a point killed inside module 0
         # still leaves its identity and config hash behind.
         write_state(self.workdir, state)
 
+        # Stays True only while every module so far was recorded complete and
+        # still verifies; once one has to run, so does everything downstream of
+        # it — its inputs have just changed.
+        reusing = previous is not None
         for module in ctx.modules:
+            if reusing:
+                reusing = self._reusable(previous, module, ctx)
             try:
-                module.run(ctx)
+                # The keyword is passed only when it is True, so the ordinary path
+                # is the call it has always been — including for a caller or test
+                # double whose run() takes ctx alone.
+                module.run(ctx, **({'skip_execution': True} if reusing else {}))
             except Exception as exc:
                 # An exception is a failure of *this* module and the later ones
                 # never started, which is exactly the state a resume needs. A
@@ -413,7 +465,8 @@ class Workflow:
                 write_state(self.workdir, state)
                 raise
             record_module(state, module, COMPLETE,
-                          **self._module_record(ctx, module))
+                          **self._module_record(ctx, module),
+                          **({'resumed': True} if reusing else {}))
             write_state(self.workdir, state)
 
         outputs = {}
@@ -424,10 +477,110 @@ class Workflow:
             module, cleaned = self._route_output(name, spec, ctx.modules)
             outputs[name] = module.extract(ctx, cleaned)
         ctx.outputs = outputs
+        if previous is not None:
+            self._compare_recorded_outputs(previous, outputs)
         record_outputs(state, outputs)
         write_state(self.workdir, state)
         self.last_context = ctx
         return outputs, ctx
+
+    # ---- resume (Phase 4) -------------------------------------------------- #
+
+    def _resume_state(self, current_hash):
+        """The manifest a resume may reuse in this workdir, or ``None``.
+
+        ``None`` covers every reason not to trust one: there is no manifest, it is
+        unreadable or of another schema (:func:`~lume_ace3p.state.read_state`
+        already degrades those to ``None``), or it was written for a *different*
+        resolved configuration. The last is the case worth saying out loud, since
+        the user asked to resume and is about to watch the point run from the
+        start anyway."""
+        previous = read_state(self.workdir)
+        if previous is None:
+            return None
+        if previous.get('config_hash') != current_hash:
+            print(f" - resume: '{self.workdir}' was written for a different "
+                  "configuration (its config_hash does not match this one), so "
+                  "this point is re-run from the start. The hash covers the "
+                  "module entries, the input point and output_parameters — not "
+                  "paths, dry_run or comments.")
+            return None
+        return previous
+
+    def _reusable(self, previous, module, ctx):
+        """Whether ``module``'s external tool may be skipped on this resume.
+
+        Two questions, in the order design decision 2 sets: the **manifest** is
+        authoritative for "did it run" and the **module** for "is its output still
+        there". Either answering no re-runs this module — and, because the caller
+        stops asking once this returns ``False``, everything after it.
+
+        Asked lazily, one module at a time, rather than planned up front: by the
+        time this is asked about module *k*, modules 0..*k*-1 have re-recorded
+        their artifacts and job names on ``ctx``, which is exactly what
+        ``particles`` needs to name its output file and what an ``acdtool`` step
+        needs to name its jobname. Asked before any of them had run, both would
+        have to answer "cannot tell"."""
+        entry = module_entry(previous, module.name)
+        if not is_complete(previous, module.name):
+            if entry is None:
+                why = 'no record of it running'
+            else:
+                why = str(entry.get('status'))
+                if entry.get('error'):
+                    why += ': ' + str(entry['error'])
+            print(f" - resume: '{self.workdir}' re-runs from '{module.name}' "
+                  f"({why}).")
+            return False
+        if module.verify(ctx) is False:
+            where = recorded_output(entry) or 'its output'
+            print(f" - resume: '{module.name}' is recorded complete in "
+                  f"'{self.workdir}' but {where} is missing, so it and every "
+                  "later step are re-run.")
+            return False
+        return True
+
+    @staticmethod
+    def _compare_recorded_outputs(previous, outputs):
+        """Warn when a resumed point re-extracts a different value than the one
+        its own manifest recorded.
+
+        A free nondeterminism detector: the parsers ran again over the same files,
+        so the two numbers must agree. When they do not, either the results on
+        disk changed under us or an extraction is not reproducible — both worth
+        one line, neither worth refusing the point over, since the freshly
+        extracted value is the one actually backed by the files present now."""
+        recorded = (previous.get('outputs') or {})
+        drifted = sorted(name for name, value in outputs.items()
+                         if name in recorded
+                         and not _same_output(recorded[name], value))
+        if drifted:
+            print('Warning: resumed point re-extracted ' + str(drifted)
+                  + ' differently than its manifest recorded. The re-extracted '
+                    'values are the ones reported; the recorded ones are in '
+                    'lume_ace3p_state.json.')
+
+    # ---- what a point is, without running it ------------------------------- #
+
+    def point_config_hash(self, input_scalars=None):
+        """The :func:`~lume_ace3p.state.config_hash` this configuration produces
+        for one input point — what a manifest in that point's workdir must match
+        to be resumable. Used by the ``--status`` walk, which reads manifests
+        without running anything."""
+        inputs, _sweep_scalars = self._materialize(input_scalars)
+        return config_hash(self.entries, inputs, self.output_spec)
+
+    def resolved_workdir(self, input_scalars=None, point_index=None):
+        """The workdir a point *would* run in, resolved without running it.
+
+        The same choice :meth:`evaluate` makes for the same arguments, which is
+        what lets ``--status`` find each point's manifest. ``point_index`` is only
+        consulted under ``workdir_mode: indexed`` — the mode layer owns sweep
+        ordering, and this mirrors how it passes ``workdir=``."""
+        if self.workdir_mode == 'indexed' and point_index is not None:
+            return self.point_workdir(point_index)
+        inputs, sweep_scalars = self._materialize(input_scalars)
+        return self._getworkdir(inputs, sweep_scalars)
 
     # ---- what an evaluation records about itself --------------------------- #
 
@@ -563,6 +716,32 @@ class Workflow:
                 f"output '{name}' targets module type '{module_type}' but no "
                 f"such module is in the workflow.")
         return candidates[-1], cleaned
+
+
+def _same_output(recorded, value):
+    """Whether a manifest's recorded output value and a freshly extracted one
+    agree.
+
+    Numeric first — a recorded value has been through JSON, so an array is a list
+    and a numpy scalar a float, and ``NaN`` must compare *equal* to ``NaN`` since a
+    dry run or an unavailable quantity legitimately produces one, and every such
+    output would otherwise read as drift on every resumed point.
+
+    A non-numeric value (a Geant4 ``peak_index`` tuple, a wake type) falls back to
+    equality rather than being called a difference by the numeric comparison
+    failing. **Never raises**: it is asked about two values of unknown shape, and a
+    comparison that cannot be made is a difference worth reporting, not an error
+    worth failing the point over."""
+    try:
+        return bool(np.allclose(np.asarray(recorded, dtype=float),
+                                np.asarray(value, dtype=float),
+                                rtol=1e-9, atol=0.0, equal_nan=True))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return bool(np.all(np.asarray(recorded) == np.asarray(value)))
+    except (TypeError, ValueError):
+        return False
 
 
 def _build_entry(entry):

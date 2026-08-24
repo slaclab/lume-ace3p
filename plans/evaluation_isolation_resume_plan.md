@@ -1,7 +1,7 @@
 # Evaluation Isolation + Resume — Implementation Plan
 
-**Status: PHASES 1–3 COMPLETE** (2026-08-24); Phase 4 planned. Four phases.
-Phases 1–2 change no behavior and must move no baseline; Phases 3–4 add resume.
+**Status: COMPLETE** — all four phases (2026-08-24).
+Phases 1–2 change no behavior and move no baseline; Phases 3–4 add resume.
 
 This plan does **not** add concurrent evaluation. It removes the three things
 that make concurrency unsafe, and delivers resume — which needs the same three
@@ -535,7 +535,7 @@ Two implementation notes worth keeping:
 
 ---
 
-# Phase 4 — Resume in the table modes
+# Phase 4 — Resume in the table modes — **COMPLETE** (2026-08-24)
 
 ### Approach
 
@@ -582,27 +582,156 @@ Finally, migrate `collect_training_data` onto the shared mechanism, keeping the
 `field.npz`-presence check as a recognised legacy state so existing training
 stores are not invalidated.
 
-### Verification (Phase 4 done when)
+### Verification (Phase 4 done when) — all met 2026-08-24
 
-- A sweep interrupted after point 3 of 8, re-run with `resume: true`, produces a
-  table identical to the uninterrupted run, and its logs show points 0–3 not
-  re-executing.
-- A sweep whose acdtool step is made to fail, then fixed and resumed, re-runs
-  **only** acdtool — the mesh and solve are not repeated. Assert on the mesh
-  file's mtime.
-- A resumed `t3p` + `transwake` point re-runs the acdtool step (decision 3) and
-  reports the same kick factor as the uninterrupted run. This is the test that
-  matters most; without it the feature can silently regress defect 7.
-- Long-format (S3P) resume produces the same row count and the same
-  `Frequency` column as the uninterrupted run.
-- `resume: true` + `workdir_mode: manual` raises, naming `indexed`.
-- `--status` on a half-finished sweep prints the right counts.
-- Baselines byte-identical with `resume` unset.
+Every one of these runs **real subprocesses through fake binaries**
+(`tests/test_resume.py`'s `_fake_ace3p`: shell stand-ins for the MPI caller,
+Cubit, Omega3P, S3P, T3P and acdtool, reached through the wrappers' own command
+lines). That was not optional. Everything this phase promises is about work *not*
+being repeated, and a dry-run chain launches nothing to begin with, so it can
+neither show a skipped subprocess nor produce a table worth comparing. The fake
+Cubit writes the swept geometry value *into* the mesh and each fake solver reads
+it back out, so the numbers are produced by the chain — which is also what makes
+"a resumed Cubit's mesh is the one the solver used" an observation rather than an
+assumption.
 
-### Deliverables
+- [x] **A sweep interrupted after point 3 of 8, re-run with `resume: true`,
+  produces a table identical to the uninterrupted run**, and points 0–3 did not
+  re-execute. The interruption is simulated the way a wall clock makes one — by
+  running the first four points of the grid and stopping — rather than by deleting
+  directories, which works because `config_hash` is over the *materialized* point,
+  so the truncated sweep's point 3 and the full sweep's point 3 are the same point.
+  Not-re-executing is asserted from the run's own artifacts: each inherited
+  workdir's module logs still hold exactly one `$ <command>` invocation and its
+  mesh file's mtime has not moved.
+- [x] A sweep whose acdtool step fails, is fixed and resumed re-runs **only**
+  acdtool — mesh mtime unchanged, `t3p.log` still one invocation. Merged with the
+  next bullet, since the same run answers both.
+- [x] **A resumed `t3p` + `transwake` point reports the same kick factor**, twice
+  over: once for a point whose acdtool step had failed (so `wakefield.out` held the
+  *longitudinal* loss factor going in, and reporting it would have been defect 7)
+  and once for a point that was already complete. A third test is the sharp case
+  the plan did not name and that nothing else caught — see deviation 3.
+- [x] Long-format (S3P) resume produces the same row count (3 points × 3
+  frequencies) and the same `Frequency` column, by `assert_frame_equal` against the
+  uninterrupted run. This is what pins decision 1 end-to-end: a module skipped
+  outright rather than re-parsed would have no axis and the table would silently
+  change shape.
+- [x] `resume: true` + `workdir_mode: manual` raises naming `indexed`, for both
+  `parameter_sweep` and `single`, and through `run_mode` (so the YAML key really
+  reaches it).
+- [x] `--status` on a half-finished sweep prints the right counts, with all five
+  verdicts present — three from real runs, two (`stale`, `failed`) from an edited
+  manifest. Also asserted: reading a status writes nothing and runs nothing, the
+  all-`absent` case does not raise, `--status` through `main()` with the flag as a
+  user types it, and the refusal for a mode whose points are not a fixed set.
+- [x] **Baselines byte-identical with `resume` unset.** Full registry (16 entries)
+  re-frozen and diffed against HEAD: the only differing bytes are the same two
+  Phases 1–3 recorded — the `xopt_runtime` wall-clock column of
+  `s3p_optimization/sim_output.txt` (a zero-tolerance comparison of every other
+  column passes) and the pre-existing `docs/` → `plans/` provenance-string drift in
+  `t3p_power_balance/manifest.json`.
 
-`modes.py`, `modules.py`, `run_lume_ace3p.py` (`--status`), `docs/yaml_reference.md`,
-`docs/parameter_sweep.md`, `tests/test_modes.py` additions.
+Beyond the list: a changed `config_hash` re-runs the point and says so; a
+recorded-complete module whose results directory was deleted is re-run and the
+message names it; the recorded-vs-re-extracted output cross-check fires on a
+tampered manifest and stays silent otherwise; `collect_training_data` passes
+`resume` through and still honors a persisted `field.npz`; `resolved_workdir` agrees
+with what `evaluate` chooses under both per-point naming modes.
+
+Each mechanism was confirmed load-bearing by reverting it and watching the matching
+tests fail: never skipping (5 tests), skipping the module instead of re-parsing (7),
+ignoring `verify` (2), not checking `config_hash` (1), and deciding each module
+independently rather than one-way (1 — which is how deviation 3 was found).
+
+### Deviations from the plan as written
+
+1. **Duplicate module names are rejected**, the first of the two options the plan
+   left open (the other was keying the manifest on `(name, position)`). It is a new
+   error for a config that runs today, but a narrower one than it looks: two modules
+   of the same *type* already collide on their artifact, so the only way to reach it
+   is two entries of different types given the same explicit `name:` — a config
+   whose two steps were already overwriting each other's log. The check is asked
+   *after* the duplicate-producer and unmet-requirement rules, so the more specific
+   diagnosis still wins for the same-type case and no existing message changed.
+
+2. **The failure that a resume restarts from is injected in the test, not driven by
+   a nonzero exit status** — because no ACE3P wrapper raises on one, and never has
+   (`logs.run_logged` records the status and returns it; Phase 2 recorded the same
+   thing). A fake binary exiting 1 would therefore be recorded `complete`. That is a
+   pre-existing property of the wrappers rather than something resume introduces,
+   and `verify` covers its practical consequence for every module that can name its
+   own output — a `postprocess rf` step that wrote no `rfpost.out` verifies false and
+   re-runs. The one gap it leaves is a *mutating* acdtool command (`transwake`),
+   where `verify` must answer `None` by decision 3; but a failed `transwake` already
+   produced a wrong-quantity result on the *first* run, so resume neither creates nor
+   worsens it. Documented in `docs/yaml_reference.md`.
+
+3. **⚠️ A module that has to re-run makes every later module re-run too** — the
+   plan's table implies this ("run from the first non-complete module in DAG order")
+   but never says it, and the first draft's tests all passed with the decision made
+   *independently per module*. The case that separates them is the sharpest form of
+   defect 7 through resume: all three steps of a `cubit → t3p → transwake` chain
+   recorded complete, but T3P's results deleted, so `verify` sends the solver back to
+   work — and T3P writes the **longitudinal** loss factor over `wakefield.out`. Judged
+   on its own record, acdtool is complete, and `verify` cannot save it (`None`, by
+   decision 3), so it would be skipped and the point would report 100.0 as a kick
+   factor. The one-way rule is the only thing between that chain and a
+   wrong-but-plausible number. `test_a_re_run_solver_drags_its_consumers_with_it`
+   exists because reverting the rule broke nothing else.
+
+4. **`--status` covers the table modes only.** The plan says it "walks the points a
+   config implies"; an Xopt mode's points are chosen by the generator as it goes, so
+   there is no fixed set of them to have finished part of, and it says so by name
+   rather than reporting zero points. `collect_training_data`'s samples *are* a fixed
+   set, but they are named by the store rather than by `workdir_mode`, and the mode
+   already reports its own progress; wiring them in would mean re-deriving the DOE
+   from inside the CLI for no question a user is currently asking.
+
+5. **`resume` is threaded as an argument, not a `ctx` flag**, as the plan preferred —
+   and the mode layer passes it (like `workdir=`) *only when it is true*, so the
+   ordinary path is the exact call it was before this phase. That is what keeps the
+   five existing test doubles whose `evaluate`/`run` signatures predate the keyword
+   working, including the two in `test_state.py` that monkeypatch `run(self, ctx)`.
+
+6. **The tests live in a new `tests/test_resume.py`** rather than as
+   `tests/test_modes.py` additions — following the per-phase file this plan already
+   uses (`test_evaluation_isolation.py` for Phases 1–2, `test_state.py` for Phase 3),
+   and because the fake-ACE3P harness is the substance of the file rather than an
+   aside in a mode-layer test. `test_workflow_graph.py` gained the two
+   duplicate-name tests, which are validation rules and belong there.
+
+7. **Four docs outside the deliverable list asserted the opposite of the new
+   behavior** and were corrected: `docs/troubleshooting.md`'s "Can I restart a
+   parameter sweep" answer ("checkpointing is not currently implemented"),
+   `docs/t3p_reference.md` and `examples/t3p_transwake/README.md` (which conflated
+   T3P's own `CheckPoint`/`Action: restart` — still not orchestrated — with
+   step-level resume, which now exists), and the two T3P batch scripts whose comment
+   "a sweep point cut off by the wall clock restarts from scratch" is the line this
+   plan's motivation quotes. The T3P checkpoint statements were sharpened rather than
+   dropped: the interrupted *solve* does still start over.
+
+### Deliverables — as built
+
+`state.py` (`ABSENT` / `STALE` / `PARTIAL`, `is_complete`, `recorded_output`,
+`point_status`), `workflow_graph.py` (`evaluate(resume=)`, `_resume_state`,
+`_reusable`, `_compare_recorded_outputs`, `_same_output`, `point_config_hash`,
+`resolved_workdir`, duplicate-name validation), `modules.py`
+(`Module.run(ctx, skip_execution=False)` plus the parse-only branch in `cubit`,
+the three solvers, `acdtool` and `geant4`; `CubitModule._mesh_path`), `acdtool.py`
+(`Acdtool.parse_output` — `run` minus the subprocess, the seam the solvers already
+had in `output_parser`), `modes.py` (`resume=` on `single` / `parameter_sweep` /
+`run_mode` / `collect_training_data`, `_require_resumable`, `_evaluate`, `status`,
+`_print_status`), `run_lume_ace3p.py` (`--status`, `STATUS_MODES`,
+`_report_status`), `tests/test_resume.py` (new, 30 tests),
+`tests/test_workflow_graph.py` (2 tests), `docs/yaml_reference.md`
+(`resume` and `--status` sections, the `mode:` and `collect_training_data` key
+tables, the `name:` uniqueness rule, the Workflow API list),
+`docs/parameter_sweep.md` (a "Resuming a sweep that was cut off" section),
+`docs/troubleshooting.md`, `docs/t3p_reference.md`,
+`examples/t3p_transwake/README.md`, the two T3P batch scripts, `CHANGELOG.md`.
+
+No baseline change, and one new YAML key (`mode: {resume: ...}`, default `false`).
 
 ---
 

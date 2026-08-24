@@ -233,6 +233,31 @@ def test_two_mesh_sources():
         Workflow(entries, workflow_params={'dry_run': True})
 
 
+def test_two_modules_sharing_a_name_are_rejected():
+    """A module's ``name`` is its identity in three places outside the DAG — its
+    log file, its entry in the run manifest, and the resume decision that reads
+    that entry — and none of them can tell two identically-named steps apart.
+
+    This is a new error for a config that *ran* before (with the two steps
+    overwriting each other's log), and it is only reachable with an explicit
+    ``name:``: two modules of one type collide on their artifact first."""
+    entries = [{'module': 'cubit', 'name': 'step', 'journal': 'x.jou'},
+               {'module': 't3p', 'name': 'step', 'input': 'x.t3p'}]
+    with pytest.raises(WorkflowValidationError,
+                       match="two modules are named 'step'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
+def test_the_duplicate_producer_diagnosis_wins_over_the_duplicate_name():
+    """Two modules of one type collide both ways, and "you have two mesh
+    producers" is the more useful of the two things to be told — so the name check
+    is asked last and this message is unchanged from before it existed."""
+    entries = [{'module': 'cubit', 'journal': 'a.jou'},
+               {'module': 'cubit', 'journal': 'b.jou'}]
+    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
 def test_output_targets_absent_module(tmp_path):
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 's3p', 'input': 'x.s3p'}]

@@ -3,7 +3,15 @@ import sys
 from lume_ace3p import __version__
 from lume_ace3p.inputs import load_yaml
 from lume_ace3p.workflow_graph import Workflow
-from lume_ace3p.modes import run_mode, is_store_consuming, mode_type_of
+from lume_ace3p.modes import (
+    is_store_consuming, mode_type_of, run_mode, status,
+)
+
+
+# The modes ``--status`` can walk: the ones whose points are a fixed, knowable set
+# and the ones resume applies to. An Xopt mode's points are chosen by the generator
+# as it goes, and a store-consuming mode has none.
+STATUS_MODES = ('single', 'parameter_sweep')
 
 
 def _run_declarative(lume_ace3p_data):
@@ -20,7 +28,12 @@ def _run_declarative(lume_ace3p_data):
     **Store-consuming modes** (``train_surrogate`` / ``invert_optimize``, see
     :data:`lume_ace3p.modes.STORE_CONSUMING_MODES`) read an on-disk store or saved
     model and never drive the module chain, so no ``workflow:`` block is built (or
-    required) for them — their config declares only what they actually read."""
+    required) for them — their config declares only what they actually read.
+
+    A ``resume: true`` in the ``mode:`` block reaches the table modes from here
+    through :func:`~lume_ace3p.modes.run_mode`; ``--status`` (see
+    :func:`_report_status`) is the read-only counterpart and does not come through
+    this function at all."""
     mode_cfg = lume_ace3p_data.get('mode') or {}
     mode_type = mode_type_of(mode_cfg)
     if mode_type not in ('single', 'parameter_sweep', 'collect_training_data',
@@ -39,6 +52,23 @@ def _run_declarative(lume_ace3p_data):
                     vocs=lume_ace3p_data.get('vocs_parameters'),
                     xopt=lume_ace3p_data.get('xopt_parameters'),
                     sweep=lume_ace3p_data.get('sweep_parameters'))
+
+
+def _report_status(lume_ace3p_data):
+    """Print the per-point completion status a config's workdirs already record.
+
+    Reads only the run manifests (:mod:`lume_ace3p.state`) — nothing is executed
+    and nothing is written — so it is safe to run against a campaign that is still
+    going, and it is how a half-finished one is made legible: which points are
+    done, which broke and where, which never started."""
+    mode_type = mode_type_of(lume_ace3p_data.get('mode'))
+    if mode_type not in STATUS_MODES:
+        raise ValueError(
+            f"--status covers the table modes {list(STATUS_MODES)}, and this "
+            f"config's mode is '{mode_type}'. The Xopt modes choose their points "
+            "as they go, so there is no fixed set of points to have finished part "
+            "of, and the store-consuming modes run no points at all.")
+    return status(Workflow.from_config(lume_ace3p_data))
 
 
 def _is_legacy_format(lume_ace3p_data):
@@ -73,12 +103,25 @@ def main():
         return
     if not args or args[0] in ('--help', '-h'):
         print("usage: run-lume-ace3p <input.yaml>\n"
+              "       run-lume-ace3p --status <input.yaml>\n"
               "       run-lume-ace3p --version\n\n"
               "Runs a LUME-ACE3P workflow from a declarative YAML config (a "
               "'workflow:' list of modules plus a 'mode:' block). See the "
-              "examples/ directory and docs/yaml_reference.md.")
+              "examples/ directory and docs/yaml_reference.md.\n\n"
+              "--status runs nothing: it reads the run manifest each point's "
+              "workdir already holds and prints a per-point completion table, "
+              "which is what a campaign resumed with 'mode: {resume: true}' will "
+              "pick up from.")
         # Exit non-zero when no input file was given (a usage error), zero for -h.
         sys.exit(0 if args else 1)
+
+    report_status = args[0] == '--status'
+    if report_status:
+        args = args[1:]
+        if not args:
+            print("Error: --status needs a config file: "
+                  "run-lume-ace3p --status <input.yaml>")
+            sys.exit(1)
 
     input_file = args[0]
     print(f"lume-ace3p {__version__}", file=sys.stderr)
@@ -111,6 +154,14 @@ def main():
     if lume_ace3p_data.get('mode') is None and _is_legacy_format(lume_ace3p_data):
         print(_legacy_removal_notice())
         sys.exit(1)
+
+    if report_status:
+        try:
+            _report_status(lume_ace3p_data)
+        except ValueError as exc:
+            print(f'Error: {exc}')
+            sys.exit(1)
+        return
 
     _run_declarative(lume_ace3p_data)
 

@@ -11,7 +11,10 @@
 
 # Nine time-domain runs at 16 tasks each. The debug QOS caps out at 30 minutes,
 # which is not enough for a full sweep — hence 'regular' and a 2-hour budget.
-# LUME-ACE3P does not orchestrate T3P restarts, so a sweep point cut off by the
-# wall clock restarts from scratch; size this for the whole sweep.
+# Size this for the whole sweep: LUME-ACE3P does not orchestrate T3P's own
+# checkpoint/restart, so a solve cut off by the wall clock starts that solve over.
+# If it does happen, add 'resume: True' to the mode block (with
+# workdir_mode: indexed) and re-run: the points that finished are not repeated.
+# See docs/parameter_sweep.md.
 
 run-lume-ace3p t3p_sweep.yaml

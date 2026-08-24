@@ -9,16 +9,51 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
-Groundwork for sweep **resume** (a sweep point cut off by the wall clock
-currently restarts from scratch). These phases add no feature and move no
-result — they remove the per-evaluation state that lived on shared objects, give
-a sweep point a stable identity, and record what each evaluation did, so resume
-and, later, concurrent evaluation have somewhere to stand. The design and its
-verification are in
+**Sweep resume.** A sweep point cut off by a batch wall clock used to be lost
+entirely — the next run rebuilt its mesh and re-solved from scratch, so a 2-hour
+allocation that died at 90% cost the whole 2 hours. It is now recoverable: every
+evaluation records what it did, and `mode: {resume: true}` picks a campaign up
+where it stopped. Getting there took removing the per-evaluation state that lived
+on shared objects and giving a sweep point a stable identity, which is also the
+groundwork concurrent evaluation will stand on. The design and its verification are
+in
 [`plans/evaluation_isolation_resume_plan.md`](plans/evaluation_isolation_resume_plan.md).
 
 ### Added
 
+- **`mode: {resume: true}`** (the table modes) drives each point through the run
+  manifest in its own workdir: a point that already finished contributes its row
+  without launching a solver, one that died partway restarts at its first
+  unfinished step, and one that never started runs normally. **The result table is
+  identical to an uninterrupted run's** — resuming is the same sweep minus the work
+  already done, not a different kind of run.
+
+  A resumed module re-runs its *parser* and skips only its subprocess, which is
+  what makes that identity hold with no special cases: an S3P point has to re-read
+  its frequency axis to know how many rows it contributes. A module that does have
+  to re-run makes every later module re-run too, since its outputs are their
+  inputs — which is what stops a re-solved `t3p` from being paired with a skipped
+  `acdtool postprocess transwake` and reporting the longitudinal loss factor as a
+  kick factor.
+
+  Opt-in on purpose (a sweep that silently adopted a stale workdir would be worse
+  than no resume), keyed on the manifest's `config_hash` so a workdir written for
+  another configuration is re-run and says so, and refused under
+  `workdir_mode: manual`, where every point shares one directory and so cannot
+  carry per-point state. A completed step whose output files have since been
+  deleted is re-run rather than trusted (`Module.verify`), and a resumed point's
+  re-extracted outputs are cross-checked against the recorded ones. See
+  [the reference](docs/yaml_reference.md#resume).
+- **`run-lume-ace3p --status <config.yaml>`** prints a per-point completion table —
+  `complete` / `partial` / `failed` / `stale` / `absent`, how much of each point's
+  chain is recorded, and the step a resume would start from. It reads only the
+  manifests already on disk, runs nothing and writes nothing, so it is safe to
+  poll while a campaign is still going.
+- `collect_training_data` accepts `resume:` too, so a DOE sample interrupted
+  *midway through the chain* restarts at its first unfinished step. Its existing
+  behavior is unchanged: a sample whose `field.npz` is already stored is still
+  skipped outright, whether or not `resume` is set, so training stores collected
+  before this release stay valid.
 - **A run manifest, `lume_ace3p_state.json`,** written into every evaluation's
   workdir and updated **after each module rather than once at the end** — so the
   file a wall-clock-killed run leaves behind says how far it got: which modules
@@ -27,8 +62,8 @@ verification are in
   configuration (module entries, materialized input point, `output_parameters`)
   and deliberately not over `paths`, `dry_run`, `workdir` or comments, so the same
   workdir is recognizable on another machine and reformatting a config does not
-  invalidate a half-finished campaign. Nothing reads it back yet; resume is the
-  next phase. No YAML key — see
+  invalidate a half-finished campaign. No YAML key: it is always written, and it is
+  what `resume` and `--status` read — see
   [the reference](docs/yaml_reference.md#run-manifest).
 - **`Module.verify(ctx)`**, answering `True` / `False` / `None` (unknown) for "is
   this module's output still on disk" — the check that stops a recorded-complete
@@ -37,7 +72,6 @@ verification are in
   (`postprocess transwake` writes over `wakefield.out`): that file's presence is
   no evidence the step ran, and treating it as evidence would report T3P's
   longitudinal wake as a kick factor.
-
 - **`workflow_parameters: {workdir_mode: indexed}`** names each evaluation's
   folder `<workdir>_0`, `<workdir>_1`, … by its position in the sweep, alongside
   the existing `manual` and `auto`. `auto` names by swept scalar value, which is
@@ -76,9 +110,15 @@ verification are in
 - **`parameter_sweep` assembles rows by point index rather than in completion
   order.** Each point's contribution is collected as it finishes and the frame is
   built from that list, sorted, once the loop is done. Today the loop is serial
-  and in order, so nothing changes; it is what keeps the frame identical when a
-  later phase resumes or parallelizes the loop, instead of quietly making every
-  result table depend on which point finished first.
+  and in order, so nothing changes; it is what keeps the frame identical when the
+  loop resumes or (later) parallelizes, instead of quietly making every result
+  table depend on which point finished first.
+- **Two modules may no longer share a `name:`.** A module's name identifies its log
+  file and its entry in the run manifest, and resume identifies a step by it, so a
+  duplicate is now a validation error rather than two steps overwriting each
+  other's record. Reachable only with an explicit `name:` on two entries of
+  different types — two modules of one type already collided on their artifact, and
+  that remains the error reported for them.
 - A solver's results subdirectory is now a class attribute
   (`ACE3P.results_subdir`, `'OUTPUT'` for T3P only) rather than a `results_dir()`
   override, so a caller holding the class — the module layer asking where results

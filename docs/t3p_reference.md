@@ -127,11 +127,19 @@ to hundreds of MB per run, multiplied by every point in a sweep (the tutorial's
 input file declares and does not prune or rewrite them. Widen the monitor's
 `TimeStep` or delete the block.
 
-**Checkpoint/restart.** A `CheckPoint` block is passed through like any other
-input section and T3P will write `t3p_results/CHECKPOINT`, but LUME-ACE3P will not
-detect an existing checkpoint or set `Action: restart` for you. A sweep point that
-exceeds its wall time restarts from scratch on re-run, so size the allocation for a
-full run.
+**Checkpoint/restart _of a single solve_.** A `CheckPoint` block is passed through
+like any other input section and T3P will write `t3p_results/CHECKPOINT`, but
+LUME-ACE3P will not detect an existing checkpoint or set `Action: restart` for you.
+So a T3P run that exceeds its wall time restarts *that solve* from the beginning,
+and the allocation still has to be big enough for one full run.
+
+What LUME-ACE3P does resume is a sweep, at step granularity: with
+`mode: {resume: true}` the points that finished are not re-run and an interrupted
+point restarts at its first unfinished step (see
+[](#resuming-a-sweep)). For a `cubit → t3p` chain that means the
+mesh is not rebuilt and the finished points' solves are not repeated — but the
+interrupted solve itself starts over, because that is the part a solver-level
+checkpoint would be needed for.
 
 ## Related
 

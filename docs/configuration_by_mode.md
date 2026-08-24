@@ -85,9 +85,13 @@ grid point.
 
 **Required:** `workflow:`, `mode:`, and an `input_parameters` block containing at
 least one array-valued leaf (a list or a `min/max/num` mapping).
-**Optional:** `output_parameters`, `mode.output_file`. Array leaves across
-different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all multiply
-into the same tensor grid.
+**Optional:** `output_parameters`, `mode.output_file`, `mode.resume`. Array leaves
+across different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all
+multiply into the same tensor grid.
+
+`mode.resume: True` (with `workflow_parameters: {workdir_mode: indexed}`) re-runs
+only the points and steps a previous run did not finish — see
+[](#resuming-a-sweep).
 
 ```yaml
 workflow :

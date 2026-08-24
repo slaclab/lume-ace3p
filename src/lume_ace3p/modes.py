@@ -9,6 +9,14 @@ A *mode* is how a validated :class:`~lume_ace3p.workflow_graph.Workflow` is
 * ``gp_parameter_sweep`` drives an Xopt Bayesian-exploration loop and emits a
   GP-posterior-mean sweep (Phase 4).
 
+The two table modes are also **resumable** (``mode: {resume: true}``): each point
+is driven through the completion manifest in its own workdir, so a point that
+already finished re-runs only its parsers, a half-finished one restarts at its
+first non-complete module, and the table comes out the same either way. That is
+what makes an allocation lost to the wall clock recoverable. :func:`status` is the
+read-only half — it reports what those manifests say without running anything, and
+is what ``run-lume-ace3p --status`` prints.
+
 Modes are deliberately **workflow-agnostic** — they touch the workflow only
 through its public seams (:meth:`Workflow.evaluate`, :meth:`Workflow.sweep_axes`,
 :meth:`Workflow.field_index`) and never reach into any solver-specific code. In
@@ -58,6 +66,7 @@ from lume_ace3p.results import (
     write_table, save_field, FIELD_ARTIFACT_COLUMN,
 )
 from lume_ace3p import surrogate_data
+from lume_ace3p.state import point_status, read_state
 
 
 # Modes that consume an on-disk store / saved model rather than driving the
@@ -108,6 +117,11 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     Xopt and (for the GP sweep) sweep configuration blocks are passed through
     ``vocs`` / ``xopt`` / ``sweep``. These return the :class:`xopt.Xopt` object.
 
+    ``resume: true`` (table modes only) picks each point up from its completion
+    manifest instead of re-running it from scratch — see :func:`parameter_sweep`.
+    The Xopt modes take no ``resume``: their points are chosen by the generator as
+    it goes, so there is no fixed set of them to have finished part of.
+
     ``output_spec`` is accepted for API symmetry but is informational only — the
     workflow already carries its ``output_parameters`` (``workflow.output_spec``)
     and does the extraction inside :meth:`Workflow.evaluate`."""
@@ -117,10 +131,11 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
             "Rename it to 'type:' — the 'mode' alias will be removed in a future "
             "release.")
     mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode')).lower()
+    resume = bool(mode_cfg.get('resume', False))
     if mode_type == 'single':
-        df = single(workflow)
+        df = single(workflow, resume=resume)
     elif mode_type == 'parameter_sweep':
-        df = parameter_sweep(workflow)
+        df = parameter_sweep(workflow, resume=resume)
     elif mode_type == 'collect_training_data':
         return collect_training_data(mode_cfg, workflow)
     elif mode_type == 'train_surrogate':
@@ -160,7 +175,7 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     return df
 
 
-def single(workflow):
+def single(workflow, resume=False):
     """Run the workflow once and return a one-row (or, for a field-indexed
     solver, one-row-per-index) result DataFrame.
 
@@ -168,17 +183,21 @@ def single(workflow):
     columns are the scalar cubit + particles knobs; output columns are the
     extracted ``output_parameters``. When the workflow produces a structured
     field (Geant4 voxel grids, an S3P spectrum in the wide case), it is
-    persisted and referenced by a field-artifact column."""
+    persisted and referenced by a field-artifact column.
+
+    ``resume`` picks the run up from its completion manifest — see
+    :func:`parameter_sweep`, which resumes the same way per point."""
+    _require_resumable(workflow, resume)
     scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
-    outputs, ctx = _evaluate_point(workflow, None, 0)
+    outputs, ctx = _evaluate_point(workflow, None, 0, resume=resume)
     point = _PointResult(0, scalars, outputs, workflow.field_index(ctx),
                          _persist_field(workflow, ctx, 0))
     return _assemble(workflow, input_names, [point])
 
 
-def parameter_sweep(workflow):
+def parameter_sweep(workflow, resume=False):
     """Run the workflow over the tensor product of its swept axes, one row per
     grid point (or per ``(grid-point, field-index)`` for a field-indexed
     solver). Returns the result DataFrame.
@@ -192,9 +211,19 @@ def parameter_sweep(workflow):
     collected into a list keyed by point index, and the frame is built from that
     list in index order once the loop is done (:func:`_assemble`). Today the loop
     is serial and in order, so this changes nothing; it is what makes the frame
-    identical when points run out of order — a resumed campaign (Phase 4) or a
-    concurrent one — instead of silently making every baseline dependent on
-    completion order."""
+    identical when points run out of order — a resumed campaign or a concurrent
+    one — instead of silently making every baseline dependent on completion order.
+
+    **``resume``** (``mode: {resume: true}``) drives each point through its
+    completion manifest: a point already finished re-runs only its parsers and
+    rebuilds its row, a half-finished one restarts at its first non-complete
+    module, and an unstarted one runs normally. The table is the same table either
+    way — which is the point, and what makes an allocation lost to the wall clock
+    recoverable instead of thrown away. It is off by default (a sweep that silently
+    adopted a stale workdir would be worse than no resume) and refused under
+    ``workdir_mode: manual``, where every point shares one directory and so cannot
+    carry per-point state."""
+    _require_resumable(workflow, resume)
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
@@ -202,7 +231,8 @@ def parameter_sweep(workflow):
     points = []
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
-        outputs, ctx = _evaluate_point(workflow, scalars if axes else None, i)
+        outputs, ctx = _evaluate_point(workflow, scalars if axes else None, i,
+                                       resume=resume)
         # Everything the rows need is read out here, so the per-point ``ctx`` —
         # and the whole parsed solver output hanging off it — is not held for the
         # length of the sweep.
@@ -212,7 +242,26 @@ def parameter_sweep(workflow):
     return _assemble(workflow, input_names, points)
 
 
-def _evaluate_point(workflow, input_scalars, point_index):
+def _require_resumable(workflow, resume):
+    """Refuse ``resume: true`` under ``workdir_mode: manual``, naming the fix.
+
+    Resume is per point, and under ``manual`` every point runs in the *same*
+    directory — so there is one manifest for the whole sweep, describing whichever
+    point ran last. Skipping work on the strength of it would mean skipping point 5
+    because point 4 finished. ``indexed`` gives each point its own directory and a
+    stable identity across runs, which is what this needs (design decision 5)."""
+    if resume and getattr(workflow, 'workdir_mode', None) == 'manual':
+        raise ValueError(
+            "resume is not available under workdir_mode: manual — every point "
+            "shares one workdir there, so its single run manifest describes "
+            "whichever point ran last rather than the point being resumed. Set "
+            "workflow_parameters: {workdir_mode: indexed} (per-point directories "
+            "'<workdir>_0', '<workdir>_1', … and a stable point identity across "
+            "runs); 'auto' also gives per-point directories, but its names are "
+            "not guaranteed unique.")
+
+
+def _evaluate_point(workflow, input_scalars, point_index, resume=False):
     """Evaluate one sweep point, choosing its workdir.
 
     ``workdir_mode: indexed`` is implemented **here** rather than in
@@ -221,10 +270,25 @@ def _evaluate_point(workflow, input_scalars, point_index):
     stays unaware of sweep ordering. ``manual`` / ``auto`` pass no workdir at all
     and are named by the workflow exactly as before — including for a test double
     whose ``evaluate`` takes no ``workdir`` keyword."""
-    if getattr(workflow, 'workdir_mode', None) != 'indexed':
-        return workflow.evaluate(input_scalars)
-    return workflow.evaluate(input_scalars,
-                             workdir=workflow.point_workdir(point_index))
+    workdir = (workflow.point_workdir(point_index)
+               if getattr(workflow, 'workdir_mode', None) == 'indexed' else None)
+    return _evaluate(workflow, input_scalars, workdir=workdir, resume=resume)
+
+
+def _evaluate(workflow, input_scalars, workdir=None, resume=False):
+    """Call ``workflow.evaluate``, passing only the keywords that carry something.
+
+    An omitted ``workdir=`` means "name it yourself" and an omitted ``resume=``
+    means "as always", so the default call is the one-argument form this seam has
+    had since Phase 1 — which is what keeps the several test doubles whose
+    ``evaluate`` predates one of these keywords working, and what keeps the
+    non-resume path byte-for-byte the call it was."""
+    kwargs = {}
+    if workdir is not None:
+        kwargs['workdir'] = workdir
+    if resume:
+        kwargs['resume'] = True
+    return workflow.evaluate(input_scalars, **kwargs)
 
 
 def _persist_field(workflow, ctx, point_index):
@@ -245,6 +309,72 @@ def _persist_field(workflow, ctx, point_index):
     # wrote to, which is the same distinction the ctx itself exists to make.
     path = os.path.join(ctx.workdir or '.', f'field_{point_index}.npz')
     return save_field(field, path)
+
+
+# --------------------------------------------------------------------------- #
+# status — what a half-finished campaign looks like, without running anything.
+# Reads only the per-point manifests the runs already wrote, so it is safe to
+# poll while a sweep is in progress (and is the seam a driver would poll).
+# --------------------------------------------------------------------------- #
+
+
+# The status table's columns after the point index and its swept inputs: the
+# verdict, how much of the chain is recorded, what a resume would run next, and
+# where to look.
+_STATUS_COLUMNS = ('status', 'modules', 'next', 'workdir')
+
+
+def status(workflow):
+    """Report what the completion manifests say about the points ``workflow``
+    implies, and return the report as a DataFrame.
+
+    One row per point of the sweep grid (one row for a workflow with no swept
+    axes), each carrying the point's verdict from
+    :func:`lume_ace3p.state.point_status` — ``complete`` / ``failed`` /
+    ``partial`` / ``absent`` / ``stale`` — how many of its modules are recorded
+    complete, and the first module a resume would run.
+
+    Nothing is executed and no manifest is written: this is the inspection half of
+    the resume feature, and it is what makes a campaign that half-finished
+    overnight legible. ``stale`` is the verdict worth reading closely — it means a
+    manifest is there but was written for a different resolved configuration, so
+    resume will re-run that point from the start."""
+    axes = workflow.sweep_axes()
+    labels = [label for label, _values, _setter in axes]
+    tensor = _input_tensor(axes)
+    names = [module.name for module in workflow.modules]
+
+    rows = []
+    for i in range(tensor.shape[0]):
+        scalars = tensor[i].tolist()
+        point = scalars if axes else None
+        workdir = workflow.resolved_workdir(point, i)
+        verdict, complete, pending = point_status(
+            read_state(workdir), workflow.point_config_hash(point), names)
+        row = dict(zip(labels, scalars))
+        row.update(point=i, status=verdict, modules=f'{complete}/{len(names)}',
+                   next=pending or '', workdir=workdir)
+        rows.append(row)
+
+    columns = ['point', *labels, *_STATUS_COLUMNS]
+    df = pd.DataFrame(rows, columns=columns)
+    _print_status(df)
+    return df
+
+
+def _print_status(df):
+    """Print the status table under a one-line summary of the counts.
+
+    The summary is what a user actually reads — "3 of 8 done, one broke" — so it
+    comes first and names the counts in a fixed order rather than in whatever
+    order the points happen to be in."""
+    counts = df['status'].value_counts()
+    summary = ', '.join(f'{int(counts[key])} {key}'
+                        for key in ('complete', 'partial', 'failed', 'stale',
+                                    'absent')
+                        if key in counts)
+    print(f" - {len(df)} point(s) implied by this configuration: {summary}")
+    print(df.to_string(index=False))
 
 
 # --------------------------------------------------------------------------- #
@@ -403,15 +533,29 @@ def collect_training_data(mode_cfg, workflow):
     DOE provenance. The mesh is validated up front and re-checked per sample so a
     mid-campaign mesh edit hard-fails rather than misaligning the PCA basis.
 
-    **Resumable:** each sample runs in its own ``<store>/sample_NNNNN`` workdir
-    (passed to :meth:`Workflow.evaluate` as an explicit ``workdir``, so the
-    workflow's own ``workdir_mode`` is left untouched); a sample whose dose grid
-    was already persisted is skipped on re-run.
+    **Resumable, in two layers.** Each sample runs in its own
+    ``<store>/sample_NNNNN`` workdir (passed to :meth:`Workflow.evaluate` as an
+    explicit ``workdir``, so the workflow's own ``workdir_mode`` is left
+    untouched).
+
+    * A sample whose ``field.npz`` is already there is skipped outright, exactly as
+      before. That check predates the completion manifest and is kept as a
+      **recognised legacy complete state**: it is what every training store
+      collected so far records, and re-deriving those samples would invalidate
+      stores that are perfectly good. A persisted dose grid *is* the sample — the
+      store holds nothing else per sample — so unlike a file-presence check on a
+      solver's output (which cannot distinguish an overwritten ``wakefield.out``,
+      design decision 3) this one is exact.
+    * ``resume: true`` additionally hands each *unfinished* sample to the shared
+      mechanism, so a sample cut off midway through the chain restarts at its first
+      non-complete module rather than at the mesh. Off by default, like everywhere
+      else.
 
     Returns the training-store result :class:`pandas.DataFrame`."""
     beta_names, num_bins = _require_fixed_bin_edges(workflow)
     mesh_fingerprint = _require_fixed_mesh(workflow)
     bounds = _doe_bounds(mode_cfg, beta_names)
+    resume = bool(mode_cfg.get('resume', False))
 
     store = mode_cfg.get('store') or mode_cfg.get('output_dir') or 'training_store'
     num_samples = int(mode_cfg.get('num_samples', 8))
@@ -437,7 +581,9 @@ def collect_training_data(mode_cfg, workflow):
         overrides = {name: float(v) for name, v in zip(beta_names, beta_vec)}
 
         if os.path.isfile(field_path):
-            # Resume: the dose grid for this β was already persisted.
+            # Already done: the dose grid for this β is persisted, and the grid is
+            # the whole of the sample. The recognised legacy state above — it
+            # predates the run manifest and every existing store is in it.
             handle = field_path
         else:
             # Constraint #3: defend against a mid-campaign edit to the geant4
@@ -455,7 +601,8 @@ def collect_training_data(mode_cfg, workflow):
                         f"(was {mesh_fingerprint}, now {current}); the mesh "
                         "must stay fixed for the whole campaign "
                         "(constraint #3).")
-            _outputs, ctx = workflow.evaluate(overrides, workdir=sample_dir)
+            _outputs, ctx = _evaluate(workflow, overrides, workdir=sample_dir,
+                                      resume=resume)
             handle = save_field(workflow.field(ctx), field_path)
 
         if handle is not None and mesh_shape is None:

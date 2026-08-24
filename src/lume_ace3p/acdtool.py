@@ -1022,6 +1022,30 @@ class Acdtool(CommandWrapper):
             self.load_output()
         return self.output_data
 
+    def parse_output(self, command=None, jobname=None):
+        """Read a *previous* invocation's output without invoking anything.
+
+        Everything :meth:`run` does after the subprocess returns, and nothing it
+        does before: resolve the command, resolve where its output landed, and
+        parse it. This is the seam a **resumed** workflow step uses (design
+        decision 1 of ``plans/evaluation_isolation_resume_plan.md`` — a resumed
+        module re-runs its parser and skips only the subprocess), matching what
+        :meth:`lume_ace3p.ace3p.ACE3P.output_parser` already gave the solvers.
+
+        Deliberately does *not* call :meth:`write_input`: nothing is going to read
+        that file, and rewriting it would be the one side effect a question about a
+        finished run must not have.
+
+        Returns ``output_data``, like :meth:`run`.
+        """
+        name, spec = self.resolve(command)
+        self._spec = spec
+        self.output_file = spec.resolve_output(
+            jobname or self.jobname or spec.default_jobname)
+        if spec.parses:
+            self.load_output()
+        return self.output_data
+
     def _command_line(self, name, operands, spec):
         """Build the shell command line.
 

@@ -78,18 +78,26 @@ between those values).
 
 ### Can I restart a parameter sweep if the job failed mid-sweep?
 
-Checkpointing is not currently implemented. As a workaround, adjusting the
-swept range in `input_parameters` can achieve similar results. For example,
-when sweeping `input_1` (a `cubit:` knob) from 20 to 80 in steps of 10 (7
-evaluations: 20, 30, 40, 50, 60, 70, 80), if the job fails at `input_1 = 50`,
-edit that leaf's range to start at 50; the sweep will restart at 50 and
-continue to 80 (4 evaluations: 50, 60, 70, 80).
+Yes. Add `resume: True` to the `mode:` block, set
+`workflow_parameters: {workdir_mode: indexed}`, and re-run the same command: each
+point that already finished contributes its row without launching a solver, the
+point that was interrupted restarts at the step that did not finish, and the rest
+run normally. The result table comes out identical to an uninterrupted run — see
+[](#resuming-a-sweep) for the full per-point rules, and
+`run-lume-ace3p --status <config.yaml>` to see what is already done before
+re-running.
 
 :::{important}
-The result table (`mode.output_file`) is written once, when the sweep
-completes, so a job that failed mid-sweep leaves no table for the completed
-rows. The restarted run writes a fresh table at its own `output_file`; give
-the restart a different `output_file` (or move any partial output aside) so
-you can combine the two afterward. The per-evaluation working directories from
-the failed run are preserved regardless.
+The result table (`mode.output_file`) is still written once, when the sweep
+completes, so a job that failed mid-sweep leaves no table for the rows it
+finished. That is what makes resuming the thing to do rather than combining
+partial tables: the resumed run rebuilds the *whole* table, earlier rows included,
+from the results already in the per-point workdirs.
+
+`resume` must be opted into and cannot be used with `workdir_mode: manual` (every
+point shares one directory there, so no point has state of its own). Without it,
+adjusting the swept range in `input_parameters` remains the workaround: sweeping
+`input_1` from 20 to 80 in steps of 10, if the job fails at `input_1 = 50`, edit
+that leaf's range to start at 50 and give the restart a different `output_file` to
+combine afterward.
 :::

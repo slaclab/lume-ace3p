@@ -31,7 +31,10 @@ or a module whose requirement nothing provides, is a validation error.
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys — see [](#geant4-module-keys). |
 
 An optional `name:` on any entry gives the instance a label (it defaults to the
-module type); this only affects validation-error messages and workdir naming.
+module type). It names that step's log file (`<workdir>/<name>.log`) and its entry
+in the run manifest, and is therefore what a resume identifies the step by — so it
+must be **unique** within a workflow, and declaring two modules with the same
+`name:` is a validation error.
 
 Skipping a step is expressed by simply *not listing* its module; a prebuilt
 artifact is expressed by a source module (`mesh`, `track3p_source`,
@@ -70,6 +73,7 @@ Additional `mode:` keys:
 |---------------------|-------------------------------------|--------------------|-------------|
 | `output_file`       | `single`, `parameter_sweep`         | *(none — not written)* | Path for the tab-delimited result table (written via the shared `DataFrame.to_csv` writer). For the Xopt modes it names the run log (default `sim_output.txt`). |
 | `sweep_output_file` | `gp_parameter_sweep`                | `'sweep_output.txt'` | Path for the GP posterior-mean sweep table. |
+| `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it — see [](#resume) below. |
 
 The modes are workflow-agnostic: because the objective is pulled from
 `output_parameters` and the workflow is driven only through its `evaluate` seam,
@@ -97,7 +101,7 @@ gone — they now sit on the `workflow:` module entries and the `mode:` block.
 
 | Value | Folder per evaluation | Use when |
 |---|---|---|
-| `'manual'` | `workdir` itself, shared by every point. | A single run, or a sweep whose points may overwrite each other's files. |
+| `'manual'` | `workdir` itself, shared by every point. | A single run, or a sweep whose points may overwrite each other's files. Cannot be resumed — one shared directory cannot carry per-point state (see [](#resume)). |
 | `'auto'`   | `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. | You want to read a point's inputs off its directory name. |
 | `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep. | You want a stable, collision-free point identity — and it is what the resume machinery keys on. |
 
@@ -194,10 +198,96 @@ workdir stays recognizable on a different machine and reformatting a config does
 not invalidate a campaign.
 
 Artifact paths are recorded relative to the workdir, and a solver's `job_name` is
-the results directory it actually resolved (see [](#omega3p-module)).
+the results directory it actually resolved (see [](#omega3p-module)). A module
+whose external tool was skipped on a resume also carries `"resumed": true`.
 
 The manifest is a record, not a result: it carries wall-clock timestamps, so it is
 not comparable run-to-run and is excluded from the frozen test baselines.
+
+(resume)=
+### `resume` — picking a campaign up where it stopped
+
+A sweep point cut off by a batch wall clock used to be lost entirely: the next run
+started it again from the mesh. With `resume: true` in the `mode:` block, each
+point is instead driven through the manifest above.
+
+```yaml
+workflow_parameters :
+  'workdir' : 'lume-ace3p_t3p_workdir'
+  'workdir_mode' : 'indexed'      # required: resume needs per-point directories
+
+mode :
+  type : parameter_sweep
+  resume : True
+  output_file : 't3p_sweep_output.txt'
+```
+
+Per point:
+
+| Manifest state | What happens |
+|---|---|
+| absent | The point runs normally. |
+| `config_hash` differs | The point runs from the start, and the mismatch is printed — that workdir was written for a different configuration. |
+| every module `complete`, outputs still present | No external tool runs. Every module **re-reads** its existing output and the row is rebuilt. |
+| partial, or some module `failed` | Execution restarts at the first module that is not `complete`; the ones before it re-read their output. |
+| `complete` but an output is missing | A warning names the module and what is gone, then execution restarts there. |
+
+Two things follow from that table and are worth stating plainly:
+
+- **A resumed module re-runs its parser and skips only its subprocess.** It is not
+  skipped outright. That is what keeps a resumed run's table identical to an
+  uninterrupted one — an S3P point has to re-read its frequency axis to know how
+  many rows it contributes, and a `t3p` point has to re-read `wakefield.out` to
+  report a wake at all. The parse is milliseconds; the subprocess is the hours.
+- **A module that has to re-run makes every later module re-run too**, because its
+  outputs are their inputs. This is what stops a `t3p` re-solve from being paired
+  with a skipped `acdtool postprocess transwake` step — which would report the
+  longitudinal loss factor as a kick factor, since `transwake` writes *over* T3P's
+  own `wakefield.out`.
+
+Requirements and limits:
+
+- **`workdir_mode` must not be `manual`.** Every point shares one directory there,
+  so there is one manifest for the whole sweep describing whichever point ran last.
+  `resume: true` with `manual` is refused, naming `indexed` as the fix.
+- **It is opt-in on purpose.** A sweep that silently adopted a stale workdir from a
+  different study would be worse than no resume at all. `config_hash` is the other
+  half of that guard.
+- **The Xopt modes take no `resume`** — their points are chosen by the generator as
+  the run proceeds, so there is no fixed set of points to have finished part of.
+- **`collect_training_data`** skips a sample whose `field.npz` is already stored
+  whether or not `resume` is set (that check predates the manifest and every store
+  collected so far records completion that way); `resume: true` additionally lets a
+  sample that stopped *midway through the chain* restart at its first non-complete
+  module.
+- A nonzero exit status from a solver is **not** by itself recorded as a failure —
+  no ACE3P wrapper raises on one, and never has (see [](#capture-output)). What
+  catches such a run is the missing-output check in the table above, which covers
+  every module that can name its own output.
+
+(status)=
+### `run-lume-ace3p --status` — reading a campaign without running it
+
+```console
+$ run-lume-ace3p --status t3p_sweep.yaml
+ - 9 point(s) implied by this configuration: 4 complete, 1 failed, 4 absent
+ point  cell_radius  iris_radius    status modules    next                        workdir
+     0        0.045        0.020  complete     2/2          lume-ace3p_t3p_workdir_0
+     1        0.045        0.025  complete     2/2          lume-ace3p_t3p_workdir_1
+     ...
+     4        0.050        0.025    failed     1/2     t3p  lume-ace3p_t3p_workdir_4
+     5        0.050        0.030    absent     0/2   cubit  lume-ace3p_t3p_workdir_5
+```
+
+One row per point the config implies, with the verdict its manifest supports, how
+much of the chain is recorded complete, the module a resume would start from, and
+where to look. Nothing is executed and no manifest is written, so it is safe to
+run against a campaign that is still going.
+
+The verdicts are `complete`, `partial`, `failed`, `stale` (a manifest for a
+different resolved configuration — that point will re-run from the start) and
+`absent`. `--status` covers the table modes (`single`, `parameter_sweep`), which
+are the modes `resume` applies to.
 
 (omega3p-module)=
 ### `omega3p` module
@@ -964,6 +1054,7 @@ Requires a `workflow:` list.
 | `seed`        | `int`  | `0`     | Reproducible design; also what makes a resumed run reproduce the same points. |
 | `fidelity`    | `float`| `None`  | Recorded Geant4 primary count per sample, for later multi-fidelity work. |
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
+| `resume`      | `bool` | `False` | Let a sample that stopped *midway through the chain* restart at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless — see [](#resume). |
 
 The mode enforces two correctness constraints and hard-fails otherwise: the
 `particles` module must fix `bin_edges` explicitly (length `num_bins + 1`) and
@@ -1074,19 +1165,25 @@ the result to the mode layer; you rarely construct one directly.
 Its public seams (all called by the workflow-agnostic modes, never by
 solver-specific code) are:
 
-- `Workflow.evaluate(input_scalars=None, workdir=None)` — run the ordered module
-  chain once for one input point and return `({output_name: value}, ctx)`: the
-  extracted values for the `output_parameters` spec, plus the `RunContext` that
-  produced them. `input_scalars` may be `None` (use the base inputs as-is), a
-  list aligned with `sweep_axes()` (materialize that grid point), or a
-  `{var: scalar}` mapping (variable overrides routed to their declaring bucket —
-  the shape Xopt passes; see [](#vocs_parameters)). An explicit `workdir`
-  overrides `workdir_mode` naming for that one call. Each call also writes the run
-  manifest described in [](#run-manifest).
+- `Workflow.evaluate(input_scalars=None, workdir=None, resume=False)` — run the
+  ordered module chain once for one input point and return
+  `({output_name: value}, ctx)`: the extracted values for the `output_parameters`
+  spec, plus the `RunContext` that produced them. `input_scalars` may be `None`
+  (use the base inputs as-is), a list aligned with `sweep_axes()` (materialize that
+  grid point), or a `{var: scalar}` mapping (variable overrides routed to their
+  declaring bucket — the shape Xopt passes; see [](#vocs_parameters)). An explicit
+  `workdir` overrides `workdir_mode` naming for that one call. Each call also
+  writes the run manifest described in [](#run-manifest); `resume=True` reads the
+  one already there first and skips the external tool of every module it records as
+  complete (see [](#resume)).
 - `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
 - `Workflow.point_workdir(point_index)` — the `'indexed'` name for one sweep
   point. `evaluate` deliberately takes no point index: the mode layer owns sweep
   ordering, resolves the name here, and passes the result as `workdir=`.
+- `Workflow.resolved_workdir(input_scalars=None, point_index=None)` and
+  `Workflow.point_config_hash(input_scalars=None)` — where a point *would* run and
+  the hash its manifest must carry to be resumable, both answered without running
+  anything. This is how `--status` finds and judges each point's manifest.
 - `Workflow.field_index(ctx)` / `Workflow.field(ctx)` — the shared field index
   (e.g. S3P's `('Frequency', array)`) and the structured per-run field output
   (S3P spectra, Geant4 voxel grids) that the hybrid result model keeps out of the

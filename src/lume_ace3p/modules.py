@@ -14,6 +14,11 @@ edges are deliberately additive — adding :class:`T3PModule` (``requires {mesh}
 solver will likewise slot in as ``requires {em_solution}`` / ``provides
 {track3p_particles}``.
 
+Each module also answers two questions about a *past* run, which is what makes
+resume possible: :meth:`Module.verify` says whether its output is still on disk,
+and ``run(ctx, skip_execution=True)`` re-reads that output instead of launching
+the tool again. Both are documented on :class:`Module`.
+
 The old skip-flags (``skip_cubit``/``skip_solver``/``skip_acdtool``) and the
 ``geant4_particle_file`` bypass have no place in this layer: in a declarative
 module list, "skip X" is simply "do not list module X", and a prebuilt artifact
@@ -232,7 +237,31 @@ class Module:
         self.config = dict(config) if config else {}
         self.name = name or self.type
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
+        """Run this step for the evaluation ``ctx`` describes.
+
+        ``skip_execution`` is what a **resume** passes (Phase 4 of
+        ``plans/evaluation_isolation_resume_plan.md``): this module already ran to
+        completion in this workdir, so do everything *except* launch the external
+        tool — re-read the output that is already on disk, re-record the artifacts,
+        and leave the module holding the same state a fresh run would (design
+        decision 1: *a resumed module re-runs its parser and skips only the
+        subprocess*).
+
+        Re-running the parser rather than skipping the module outright is what
+        makes the long-format and field-artifact paths need no special case at
+        all: ``field_index`` needs the parsed solver output, so a resumed S3P
+        point must still know its frequency axis. It is also cheap — the
+        subprocess is the hours, the parse is milliseconds.
+
+        It is an explicit parameter rather than a flag on the context on purpose:
+        a module reading ``ctx`` to decide whether to launch a subprocess is the
+        kind of implicit control flow this codebase has otherwise avoided.
+
+        A module with no subprocess to skip (the source modules, ``particles``)
+        accepts the parameter and ignores it, since running again *is* the cheap
+        path and is what re-records its artifact.
+        """
         raise NotImplementedError
 
     def log_file(self, ctx):
@@ -311,7 +340,13 @@ class Module:
 
 class _SourceModule(Module):
     """Shared body for the three source modules: what they have in common is
-    that they *stage* a supplied file rather than compute one."""
+    that they *stage* a supplied file rather than compute one.
+
+    None of them launches a subprocess, so ``skip_execution`` has nothing to skip:
+    each accepts it and stages anyway. Staging is a no-op when the file is already
+    in the workdir (:func:`_stage_file`), and running is what re-records the
+    artifact the modules downstream require — so on a resume this is both the
+    cheap path and the necessary one."""
 
     def verify(self, ctx):
         """``True``, always: staging is idempotent.
@@ -331,7 +366,7 @@ class MeshSourceModule(_SourceModule):
     type = 'mesh'
     provides = frozenset({MESH})
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         src = self.config.get('file')
         if src is None:
             raise ValueError("mesh source module requires a 'file'.")
@@ -349,7 +384,7 @@ class Track3PSourceModule(_SourceModule):
     type = 'track3p_source'
     provides = frozenset({TRACK3P_PARTICLES})
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         src = self.config.get('file')
         if src is None:
             raise ValueError("track3p source module requires a 'file'.")
@@ -364,7 +399,7 @@ class ParticleSourceModule(_SourceModule):
     type = 'particle_source'
     provides = frozenset({PARTICLE_SOURCE})
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         src = self.config.get('file')
         if src is None:
             raise ValueError("particle source module requires a 'file'.")
@@ -411,7 +446,7 @@ class CubitModule(Module):
         self.journal = self.config.get('journal') or self.config.get('cubit_input')
         self.meshconvert = self.config.get('meshconvert', True)
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         if self.journal is None:
             raise ValueError("cubit module requires a 'journal'.")
         if ctx.dry_run:
@@ -422,6 +457,16 @@ class CubitModule(Module):
             _append_marker(ctx, 'Dry run mode: Cubit step skipped.\n'
                                 f'Cubit journal: {self.journal}\n'
                                 f'Cubit inputs: {ctx.inputs.cubit}\n')
+            return
+        if skip_execution:
+            # Resumed: the mesh this step exported is already in the workdir. Cubit
+            # has no output *parser* to re-run — the mesh file is its whole output,
+            # and the solver downstream reads it, not this module — so naming the
+            # artifact is all a re-run would have contributed. The name comes from
+            # the journal's own export statement, the same place :meth:`verify`
+            # reads it and the same value ``cubit.exportfile`` would give, so
+            # neither the mesh built here nor the one resumed is found differently.
+            ctx.artifacts[MESH] = self._mesh_path(ctx)
             return
         ctx.ensure_workdir()
         cubit = Cubit(self.journal, workdir=ctx.workdir,
@@ -439,6 +484,19 @@ class CubitModule(Module):
             mesh = getattr(cubit, 'exportfile', None)
         ctx.artifacts[MESH] = (os.path.join(ctx.workdir, mesh) if mesh
                                else ctx.workdir)
+
+    def _mesh_path(self, ctx):
+        """The mesh this step exported, named without running Cubit.
+
+        The journal's last ``export`` statement (:func:`_journal_export`) is the
+        same source :meth:`lume_ace3p.cubit.Cubit.get_export` reads, so a resumed
+        step and a fresh one record the same path. Falls back to the recorded
+        artifact, then to the workdir, exactly as :meth:`run` does when the journal
+        names no export."""
+        mesh = _journal_export(self.journal)
+        if mesh:
+            return os.path.join(ctx.workdir or '', mesh)
+        return ctx.artifacts.get(MESH) or ctx.workdir
 
     def verify(self, ctx):
         """Whether the mesh file is still in the workdir.
@@ -502,7 +560,7 @@ class _SolverModule(Module):
         self.results_dir = self.config.get('results_dir')
         self._solver = None
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         if MESH not in ctx.artifacts:
             raise ValueError(f"module '{self.type}' requires a mesh artifact.")
         if ctx.dry_run:
@@ -529,7 +587,22 @@ class _SolverModule(Module):
                                mpi_caller=ctx.paths.get('mpi', ''),
                                log_file=self.log_file(ctx))
         solver.set_value(ctx.inputs.ace3p)
-        solver.run()
+        if skip_execution:
+            # Resumed: this solve already finished in this workdir, so read its
+            # results instead of repeating the hours that produced them.
+            # ``output_parser`` is the very call ``run()`` makes after the
+            # subprocess returns, which is what makes design decision 1 a branch
+            # rather than a restructure — and why the resumed point's ``extract``,
+            # ``field`` and ``field_index`` need no special case at all.
+            #
+            # A parser that finds nothing raises from here, which the caller
+            # records as a failure of this module. That is not a hole a resume can
+            # fall into unnoticed: :meth:`verify` gates the skip on the presence of
+            # the very file ``output_parser`` reads first (see
+            # :attr:`_results_file`), so the two cannot drift apart.
+            solver.output_parser()
+        else:
+            solver.run()
         self._solver = solver
         ctx.artifacts[self._artifact] = ctx.workdir
         ctx.job_names[self._artifact] = solver.job_name()
@@ -1350,7 +1423,7 @@ class AcdtoolModule(Module):
                 or ctx.job_names.get(self.spec.requires)
                 or self.spec.default_jobname)
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         required = self.spec.requires
         if required and required not in ctx.artifacts:
             raise ValueError(f"module 'acdtool' ({self.command}) requires a "
@@ -1379,12 +1452,27 @@ class AcdtoolModule(Module):
                           ace3p_path=ctx.paths.get('ace3p', ''),
                           mpi_caller=ctx.paths.get('mpi', ''),
                           log_file=self.log_file(ctx))
-        acdtool.run()
+        if skip_execution:
+            # Resumed: this command already ran in this workdir, so read the
+            # output it left rather than invoking acdtool again
+            # (:meth:`lume_ace3p.acdtool.Acdtool.parse_output` is ``run`` minus the
+            # subprocess).
+            acdtool.parse_output(self.command, jobname=jobname)
+        else:
+            acdtool.run()
         self._acdtool = acdtool
         ctx.artifacts[RF_POST] = ctx.workdir
         # This command rewrote its producer's output in place; have the producer
         # re-read it so downstream extraction sees the new result, not the one
         # parsed before acdtool ran.
+        #
+        # Called on the resumed path too, and it is not redundant there: the
+        # producer parsed the file *this* run, and by then it already held the
+        # previous run's acdtool result — so the value is right either way, and
+        # calling it keeps "after this module, the producer's parse reflects the
+        # file on disk" true unconditionally rather than only on the path that
+        # launched a subprocess. Skipping the re-parse instead would make the
+        # invariant depend on how the point got here.
         if self.spec.mutates and self.spec.mutates in ctx.reparse:
             ctx.reparse[self.spec.mutates]()
 
@@ -1693,7 +1781,15 @@ class ParticlesModule(Module):
         params['beta'] = effective_beta
         return params
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
+        """Weight and write the particle source.
+
+        ``skip_execution`` is accepted and ignored: there is no subprocess to
+        skip, and this module's own run state (``_filtered``, which
+        :meth:`extract` reads) exists only as a result of doing the work. The
+        weighting is pure Python over a Track3P dump, so a resumed point pays
+        milliseconds to have it rather than carrying a second, file-backed way to
+        reconstruct it."""
         if TRACK3P_PARTICLES not in ctx.artifacts:
             raise ValueError("module 'particles' requires a track3p_particles "
                              "artifact.")
@@ -1777,7 +1873,7 @@ class Geant4Module(Module):
         self.geant4_edep_output = self.config.get('geant4_edep_output')
         self.geant4_obj = None
 
-    def run(self, ctx):
+    def run(self, ctx, skip_execution=False):
         if PARTICLE_SOURCE not in ctx.artifacts:
             raise ValueError("module 'geant4' requires a particle_source "
                              "artifact.")
@@ -1848,6 +1944,16 @@ class Geant4Module(Module):
                                 f'Input overrides: {macro_inputs}\n')
             if self.geant4_obj is not None:
                 self.geant4_obj.write_input()
+            self._record_grid_artifacts(ctx)
+            return
+
+        if skip_execution:
+            # Resumed: the scoring files this step wrote are already in the
+            # workdir. Building the wrapper above *is* this module's parse — it is
+            # what reads the input file's ``output_dose`` / ``output_edep`` names —
+            # and ``extract`` / ``field`` read the grids straight off disk from
+            # there, so recording the artifacts completes the step. The input file
+            # is deliberately not rewritten: nothing is going to read it.
             self._record_grid_artifacts(ctx)
             return
 
