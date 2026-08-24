@@ -158,6 +158,47 @@ Set `capture_output: false` to turn it off entirely. Nothing is then written to
 disk and the child processes inherit the parent's file descriptors directly, which
 is the behavior of releases before this key existed.
 
+(run-manifest)=
+### The run manifest — `lume_ace3p_state.json`
+
+Alongside those logs, every evaluation writes one JSON file into its workdir
+recording what it did. There is no YAML key for it: it is always written, and
+nothing in the pipeline reads it back today.
+
+```json
+{
+  "schema": 1,
+  "point": {"axes": {"cav_radius": 100.0}},
+  "config_hash": "sha256:1f3a…",
+  "started": "2026-08-24T14:02:11",
+  "updated": "2026-08-24T14:07:56",
+  "modules": [
+    {"name": "cubit",   "type": "cubit",   "status": "complete",
+     "artifacts": {"mesh": "pillbox-rtop4.gen"}},
+    {"name": "omega3p", "type": "omega3p", "status": "complete",
+     "job_name": "omega3p_results"},
+    {"name": "acdtool", "type": "acdtool", "status": "failed",
+     "error": "ValueError: acdtool reported no 'RoverQ' section."}
+  ],
+  "outputs": {"R/Q": 108.4, "Mode_freq": 1313756106.86}
+}
+```
+
+It is updated **after each module rather than once at the end**, so the file a
+half-finished run leaves behind says how far that run got: modules are listed in
+the order they ran, and one that never started is simply absent (distinct from a
+`"failed"` one). `config_hash` covers the resolved per-point configuration — the
+module entries, the materialized input point, and the `output_parameters` spec —
+and deliberately **not** `paths`, `dry_run`, `workdir`, or comments, so the same
+workdir stays recognizable on a different machine and reformatting a config does
+not invalidate a campaign.
+
+Artifact paths are recorded relative to the workdir, and a solver's `job_name` is
+the results directory it actually resolved (see [](#omega3p-module)).
+
+The manifest is a record, not a result: it carries wall-clock timestamps, so it is
+not comparable run-to-run and is excluded from the frozen test baselines.
+
 (omega3p-module)=
 ### `omega3p` module
 
@@ -1040,7 +1081,8 @@ solver-specific code) are:
   list aligned with `sweep_axes()` (materialize that grid point), or a
   `{var: scalar}` mapping (variable overrides routed to their declaring bucket —
   the shape Xopt passes; see [](#vocs_parameters)). An explicit `workdir`
-  overrides `workdir_mode` naming for that one call.
+  overrides `workdir_mode` naming for that one call. Each call also writes the run
+  manifest described in [](#run-manifest).
 - `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
 - `Workflow.point_workdir(point_index)` — the `'indexed'` name for one sweep
   point. `evaluate` deliberately takes no point index: the mode layer owns sweep

@@ -11,12 +11,32 @@ coarser grain than the entries above them.
 
 Groundwork for sweep **resume** (a sweep point cut off by the wall clock
 currently restarts from scratch). These phases add no feature and move no
-result — they remove the per-evaluation state that lived on shared objects and
-give a sweep point a stable identity, so resume and, later, concurrent
-evaluation have somewhere to stand. The design and its verification are in
+result — they remove the per-evaluation state that lived on shared objects, give
+a sweep point a stable identity, and record what each evaluation did, so resume
+and, later, concurrent evaluation have somewhere to stand. The design and its
+verification are in
 [`plans/evaluation_isolation_resume_plan.md`](plans/evaluation_isolation_resume_plan.md).
 
 ### Added
+
+- **A run manifest, `lume_ace3p_state.json`,** written into every evaluation's
+  workdir and updated **after each module rather than once at the end** — so the
+  file a wall-clock-killed run leaves behind says how far it got: which modules
+  completed, what each produced, which one failed and with what error, and the
+  extracted outputs. It also records a `config_hash` over the resolved per-point
+  configuration (module entries, materialized input point, `output_parameters`)
+  and deliberately not over `paths`, `dry_run`, `workdir` or comments, so the same
+  workdir is recognizable on another machine and reformatting a config does not
+  invalidate a half-finished campaign. Nothing reads it back yet; resume is the
+  next phase. No YAML key — see
+  [the reference](docs/yaml_reference.md#run-manifest).
+- **`Module.verify(ctx)`**, answering `True` / `False` / `None` (unknown) for "is
+  this module's output still on disk" — the check that stops a recorded-complete
+  point whose results were deleted from being trusted. It is deliberately
+  *unknown* for an `acdtool` command that overwrites its producer's file
+  (`postprocess transwake` writes over `wakefield.out`): that file's presence is
+  no evidence the step ran, and treating it as evidence would report T3P's
+  longitudinal wake as a kick factor.
 
 - **`workflow_parameters: {workdir_mode: indexed}`** names each evaluation's
   folder `<workdir>_0`, `<workdir>_1`, … by its position in the sweep, alongside
@@ -59,6 +79,11 @@ evaluation have somewhere to stand. The design and its verification are in
   and in order, so nothing changes; it is what keeps the frame identical when a
   later phase resumes or parallelizes the loop, instead of quietly making every
   result table depend on which point finished first.
+- A solver's results subdirectory is now a class attribute
+  (`ACE3P.results_subdir`, `'OUTPUT'` for T3P only) rather than a `results_dir()`
+  override, so a caller holding the class — the module layer asking where results
+  *would* be, without instantiating a solver — gets the same answer as an
+  instance. Same paths as before.
 
 ## [0.4.0] — 2026-08-20
 

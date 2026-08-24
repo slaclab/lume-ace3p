@@ -24,6 +24,7 @@ sub-step *inside* :class:`CubitModule` and stays a per-module ``meshconvert``
 bool.
 """
 
+import glob
 import os
 import shutil
 import warnings
@@ -35,7 +36,8 @@ from lume_ace3p.cubit import Cubit
 # deliberately NOT imported, since acdtool exports one of the same name and value
 # — T3PModule tests for a monitor's missing index axis instead.
 from lume_ace3p.ace3p import (
-    ALWAYS, MONITORS, Omega3P, S3P, T3P, declared_monitors,
+    ALWAYS, MONITORS, Omega3P, S3P, T3P, declared_monitors, input_job_name,
+    results_path,
 )
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
@@ -247,6 +249,29 @@ class Module:
             return None
         return log_path(ctx.workdir, self.name)
 
+    def verify(self, ctx):
+        """Whether this module's output is still on disk in the evaluation
+        ``ctx`` describes: ``True`` (it is), ``False`` (it is not), or ``None``
+        (cannot tell — the default).
+
+        This is the second half of the resume rule (design decision 2 of
+        ``plans/evaluation_isolation_resume_plan.md``): the **manifest** is
+        authoritative for "did this module run", and the **module** for "is its
+        output still there". A workdir whose results directory was deleted or
+        truncated therefore re-runs rather than being trusted, while an
+        unanswerable case stays unanswered instead of guessing.
+
+        ``None`` is a real answer, not a failure to implement one. Where a module
+        cannot name its output without having run — a Geant4 step whose filenames
+        live in an input file it has not read yet — or where the output file is
+        *not evidence* — an acdtool command that overwrites its producer's file
+        (design decision 3) — saying so is the honest report.
+
+        Never raises: a verification that cannot read something returns ``None``.
+        It is called about a workdir that may be in any state at all, including
+        one written by a different machine."""
+        return None
+
     def extract(self, ctx, spec):
         raise NotImplementedError(
             f"module '{self.type}' exposes no extractable quantities")
@@ -284,7 +309,22 @@ class Module:
 # --------------------------------------------------------------------------- #
 
 
-class MeshSourceModule(Module):
+class _SourceModule(Module):
+    """Shared body for the three source modules: what they have in common is
+    that they *stage* a supplied file rather than compute one."""
+
+    def verify(self, ctx):
+        """``True``, always: staging is idempotent.
+
+        A source module launches no subprocess and produces nothing that can go
+        missing in a way re-running would not fix in milliseconds, so there is
+        nothing for a resume to check. It runs again either way (see design
+        decision 1 — a resumed module skips only its subprocess, and this one has
+        none), which is what re-records its artifact for the modules downstream."""
+        return True
+
+
+class MeshSourceModule(_SourceModule):
     """Provide a ``mesh`` from a prebuilt mesh file — the declarative
     replacement for ``skip_cubit`` + a supplied mesh."""
 
@@ -298,7 +338,7 @@ class MeshSourceModule(Module):
         ctx.artifacts[MESH] = _stage_file(ctx, src)
 
 
-class Track3PSourceModule(Module):
+class Track3PSourceModule(_SourceModule):
     """Provide ``track3p_particles`` from an externally-produced Track3P dump.
 
     This is a *source* module — there is no in-pipeline Track3P solver in this
@@ -316,7 +356,7 @@ class Track3PSourceModule(Module):
         ctx.artifacts[TRACK3P_PARTICLES] = _stage_file(ctx, src)
 
 
-class ParticleSourceModule(Module):
+class ParticleSourceModule(_SourceModule):
     """Provide a ``particle_source`` directly from a Geant4-format particle
     file — the declarative way to supply a prebuilt Geant4 source file directly,
     bypassing the Particles weighting step."""
@@ -334,6 +374,29 @@ class ParticleSourceModule(Module):
 # --------------------------------------------------------------------------- #
 # Cubit
 # --------------------------------------------------------------------------- #
+
+
+def _journal_export(journal):
+    """The filename the **last** ``export`` statement of a Cubit journal writes,
+    or ``None`` when the journal declares none or cannot be read.
+
+    The same statement :meth:`lume_ace3p.cubit.Cubit.get_export` finds, read
+    without constructing a :class:`Cubit` — which would create the workdir and
+    copy the journal into it, side effects a question about a *past* run must not
+    have. Used by :meth:`CubitModule.verify` to name the mesh a completed step
+    should have left behind."""
+    try:
+        with open(journal) as file:
+            lines = file.readlines()
+    except (OSError, TypeError):
+        return None
+    for line in reversed(lines):
+        words = line.split()
+        if words and words[0] == 'export':
+            for word in words:
+                if len(word) > 1 and word.startswith('"') and word.endswith('"'):
+                    return word.strip('"')
+    return None
 
 
 class CubitModule(Module):
@@ -377,6 +440,27 @@ class CubitModule(Module):
         ctx.artifacts[MESH] = (os.path.join(ctx.workdir, mesh) if mesh
                                else ctx.workdir)
 
+    def verify(self, ctx):
+        """Whether the mesh file is still in the workdir.
+
+        The mesh is named by the journal's ``export`` statement — read from the
+        journal (:func:`_journal_export`) rather than from ``ctx.artifacts``, so
+        the question can be asked *before* the step is re-run, which is when a
+        resume needs the answer. Falls back to the recorded artifact when the
+        journal names nothing.
+
+        ``None`` under dry-run: that path deliberately skips Cubit and records a
+        nominal mesh path nothing wrote, so its absence is not evidence of
+        anything."""
+        if ctx.dry_run:
+            return None
+        mesh = _journal_export(self.journal)
+        path = (os.path.join(ctx.workdir or '', mesh) if mesh
+                else ctx.artifacts.get(MESH))
+        if not path:
+            return None
+        return os.path.isfile(path)
+
 
 # --------------------------------------------------------------------------- #
 # EM solvers
@@ -398,6 +482,12 @@ class _SolverModule(Module):
     _wrapper = None
     _label = ''
     _artifact = EM_SOLUTION
+    # The one output file whose presence means this solver's results are still on
+    # disk (see :meth:`verify`) — the same file the solver's own
+    # ``output_parser`` reads first, so "verify passes" and "the results are
+    # readable" cannot drift apart. ``None`` means the check is not implemented
+    # for this solver; :class:`T3PModule` answers per monitor instead.
+    _results_file = None
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -447,6 +537,41 @@ class _SolverModule(Module):
         # re-read (the acdtool wake commands overwrite wakefield.out).
         ctx.reparse[self._artifact] = solver.output_parser
 
+    def _results_dir(self, ctx):
+        """This solver's results directory, relative to the workdir, resolved
+        **without needing the run** — which is what lets :meth:`verify` ask about
+        a workdir written by an earlier, already-finished process.
+
+        Mirrors :meth:`lume_ace3p.ace3p.ACE3P.job_name`'s resolution order: the
+        module's ``results_dir:`` override, then a ``JobName`` leaf in the input
+        file (undocumented, best-effort — see
+        :func:`lume_ace3p.ace3p.input_job_name`), then the wrapper's default. A
+        solver instance, when there is one, is asked directly: it is the same
+        answer, from the object that actually resolved it."""
+        if self._solver is not None:
+            return self._solver.results_dir()
+        job = self.results_dir
+        if not job:
+            try:
+                with open(self.input_file) as file:
+                    job = input_job_name(file.read())
+            except (OSError, TypeError, ValueError):
+                job = None
+        return results_path(job or self._wrapper.default_job_name,
+                            self._wrapper.results_subdir)
+
+    def verify(self, ctx):
+        """Whether this solver's results are still in the workdir — the presence
+        of :attr:`_results_file` under :meth:`_results_dir`.
+
+        ``None`` under dry-run (the solver was skipped, so nothing was meant to be
+        written) and for a solver that names no results file."""
+        if ctx.dry_run or not self._results_file:
+            return None
+        return os.path.isfile(os.path.join(ctx.workdir or '',
+                                           self._results_dir(ctx),
+                                           self._results_file))
+
 
 class Omega3PModule(_SolverModule):
     """The ACE3P eigensolver: requires a ``mesh``, provides an ``em_solution``.
@@ -470,6 +595,8 @@ class Omega3PModule(_SolverModule):
     type = 'omega3p'
     _wrapper = Omega3P
     _label = 'Omega3P'
+    # The eigensolve results themselves; Omega3PModule.extract reads this file.
+    _results_file = 'omega3p.out'
 
     def extract(self, ctx, spec):
         """Return an eigenmode quantity from the Omega3P solution.
@@ -557,6 +684,10 @@ class S3PModule(_SolverModule):
     type = 's3p'
     _wrapper = S3P
     _label = 'S3P'
+    # The S-parameter magnitudes. 'SParameter.out' is deliberately not checked:
+    # older ACE3P builds write none, and S3P.output_parser only warns about that
+    # — a run missing it still produced results.
+    _results_file = 'Reflection.out'
 
     def extract(self, ctx, spec):
         """Return an S-parameter quantity from the S3P solution.
@@ -909,6 +1040,56 @@ class T3PModule(_SolverModule):
                 return 't', np.asarray(data[name]['t'])
         return None
 
+    def _input_monitors(self):
+        """``[(Type, Name)]`` the input file declares, read once and cached.
+
+        The stateless route to the monitor list — :meth:`T3P.monitors` reads the
+        same thing off a solver instance, and this is what a caller with no solver
+        (a dry run, or :meth:`verify` asking about a finished run) uses instead.
+        ``()`` when the file cannot be read or declares nothing."""
+        if self._declared is None:
+            try:
+                with open(self.input_file) as file:
+                    self._declared = declared_monitors(file.read())
+            except (OSError, TypeError, ValueError):
+                self._declared = ()
+        return self._declared
+
+    def verify(self, ctx):
+        """Whether every monitor the input file declares still has its output
+        under the results directory.
+
+        This reuses the monitor table directly (:data:`lume_ace3p.ace3p.MONITORS`
+        says which files each ``Type`` writes, named after the monitor's own
+        ``Name``), so it covers a run with no wake as readily as one with several
+        power monitors — and a partially-deleted results directory fails it, which
+        is the case worth catching.
+
+        Every pattern is globbed rather than tested as a literal path: a
+        ``Volume`` monitor writes one file per dump time and declares its files as
+        a glob, and a glob-free pattern matches itself.
+
+        ``None`` under dry-run, and for a run that declares no readable monitor at
+        all — there is then nothing whose absence would mean anything."""
+        if ctx.dry_run:
+            return None
+        declared = (self._solver.monitors() if self._solver is not None
+                    else self._input_monitors())
+        results = os.path.join(ctx.workdir or '', self._results_dir(ctx))
+        checked = []
+        for monitor_type, name in declared:
+            spec = MONITORS.get(monitor_type)
+            if spec is None or not name:
+                # An undocumented Type has an unknown output shape and a nameless
+                # monitor has no filename stem, so neither is checkable. Both
+                # already warn at parse time.
+                continue
+            checked.append(any(glob.glob(os.path.join(results, pattern))
+                               for pattern in spec.filenames(name)))
+        if not checked:
+            return None
+        return all(checked)
+
     def _dry_run_axis(self):
         """The index-axis label a dry run reports.
 
@@ -919,13 +1100,7 @@ class T3PModule(_SolverModule):
         ``'s'`` when the input file cannot be read or declares nothing, which is
         what this returned unconditionally before ``examples/t3p_power_balance``
         made a wake-less dry run something a shipped example does."""
-        if self._declared is None:
-            try:
-                with open(self.input_file) as file:
-                    self._declared = declared_monitors(file.read())
-            except (OSError, TypeError, ValueError):
-                self._declared = ()
-        axes = [MONITORS[kind].axis for kind, _ in self._declared
+        axes = [MONITORS[kind].axis for kind, _ in self._input_monitors()
                 if kind in MONITORS]
         if 's' in axes:
             return 's'
@@ -1212,6 +1387,35 @@ class AcdtoolModule(Module):
         # parsed before acdtool ran.
         if self.spec.mutates and self.spec.mutates in ctx.reparse:
             ctx.reparse[self.spec.mutates]()
+
+    def verify(self, ctx):
+        """Whether this command's output file is still there — **unless the
+        command overwrites its producer's file**, in which case the answer is
+        ``None``, deliberately and permanently.
+
+        ⚠️ This is design decision 3 of
+        ``plans/evaluation_isolation_resume_plan.md``, and the reason the whole
+        resume mechanism is a manifest rather than a file-presence check.
+        ``postprocess transwake`` (and ``wake_new`` / ``wake_direct``) write their
+        result *over* ``<jobname>/OUTPUT/wakefield.out`` — the file
+        :class:`T3PModule` already wrote and parsed. That file is therefore
+        present whether or not acdtool ever ran, so its presence says **nothing**
+        about this step. Reading it as "complete" would skip the transwake step
+        and report T3P's *longitudinal* wake as a kick factor: defect 7 of
+        ``plans/acdtool_rework_plan.md``, reintroduced by the resume feature.
+
+        Do not "improve" this into a presence check. Only the manifest's record
+        that acdtool *ran* distinguishes the two states, which is what
+        :mod:`lume_ace3p.state` exists for.
+
+        ``None`` also for a command that writes no file this wrapper knows about,
+        and under dry-run."""
+        if ctx.dry_run or self.spec.mutates is not None:
+            return None
+        output = self.spec.resolve_output(self._resolve_jobname(ctx))
+        if not output:
+            return None
+        return os.path.isfile(os.path.join(ctx.workdir or '', output))
 
     def extract(self, ctx, spec):
         """Return one quantity from ``postprocess rf``'s ``rfpost.out``.
@@ -1504,6 +1708,26 @@ class ParticlesModule(Module):
         ctx.artifacts[PARTICLE_SOURCE] = os.path.join(ctx.workdir,
                                                       particles.output_file)
 
+    def verify(self, ctx):
+        """Whether the weighted particle file is still in the workdir.
+
+        Checked under dry-run too, unlike every other module here: this step is
+        pure Python, so it *always* runs and always writes its file (the Geant4
+        binary is the only thing a dry run skips).
+
+        The filename is an explicit ``output:`` when the config gives one, else
+        the name :class:`~lume_ace3p.particles.Particles` derives from the Track3P
+        dump — which is why this can only answer once the upstream source module
+        has recorded that artifact. Before then, ``None``."""
+        name = self.output_file
+        if not name:
+            source = ctx.artifacts.get(TRACK3P_PARTICLES)
+            if not source:
+                return None
+            # Mirrors Particles.__init__'s default naming.
+            name = os.path.basename(source).replace('.txt', '_modified.txt')
+        return os.path.isfile(os.path.join(ctx.workdir or '', name))
+
     def extract(self, ctx, spec):
         """Expose simple scalars off the weighted/filtered particle set.
 
@@ -1629,6 +1853,23 @@ class Geant4Module(Module):
 
         self.geant4_obj.run()
         self._record_grid_artifacts(ctx)
+
+    def verify(self, ctx):
+        """Whether the scoring files this step writes are still in the workdir.
+
+        ``None`` under dry-run (the binary was skipped), and ``None`` when the
+        filenames are not known: they normally live in the Geant4 input file
+        (``output_dose`` / ``output_edep``), which is read when the module builds
+        its :class:`~lume_ace3p.geant4.Geant4` object — so before this module has
+        run, only an explicit ``geant4_dose_output`` / ``geant4_edep_output``
+        override can name them."""
+        if ctx.dry_run:
+            return None
+        files = [name for name in self._output_files().values() if name]
+        if not files:
+            return None
+        return all(os.path.isfile(os.path.join(ctx.workdir or '', name))
+                   for name in files)
 
     def _record_grid_artifacts(self, ctx):
         files = self._output_files()

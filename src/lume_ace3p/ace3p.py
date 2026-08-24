@@ -220,6 +220,29 @@ def _format_value(value):
     return str(value)
 
 
+def results_path(job_name, results_subdir=''):
+    """``<job_name>[/<results_subdir>]`` — a solver's results directory relative
+    to its workdir.
+
+    A plain join would render an empty subdirectory as a trailing separator, and
+    the resulting ``'omega3p_results/'`` would not compare equal to the
+    ``'omega3p_results'`` every test and message uses."""
+    return (os.path.join(job_name, results_subdir) if results_subdir
+            else job_name)
+
+
+def input_job_name(text):
+    """The top-level ``JobName`` leaf of ``.ace3p`` input `text`, or ``None``.
+
+    The stateless form of :meth:`ACE3P.job_name`'s second rung, for a caller
+    holding the input file but no solver — the module layer asking where a
+    solver's results *would* be before (or without) running it. Same relationship
+    :func:`declared_monitors` has to :meth:`T3P.monitors`, and the same caveat:
+    ``JobName`` is undocumented for every solver and unexercised by any shipped
+    example, so it is a best-effort fallback rather than the mechanism."""
+    return parse_ace3p(text).get_leaf('JobName')
+
+
 class ACE3P(CommandWrapper):
 
     module_name = ''
@@ -240,6 +263,14 @@ class ACE3P(CommandWrapper):
     # ``track3p Pillbox2.3MV.track3p 2.3MV``. T3P is the one solver that leaves
     # this False; see :class:`T3P`.
     accepts_results_dir_arg = False
+
+    # Subdirectory of the job-name directory this solver writes its results
+    # into. Empty for every solver but :class:`T3P`, which writes to
+    # ``<job_name>/OUTPUT``. A class attribute rather than a ``results_dir``
+    # override so a caller holding only the *class* — the module layer asking
+    # where a solver's results would be without instantiating one — gets the same
+    # answer as the instance.
+    results_subdir = ''
 
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
                  ace3p_path=None, mpi_caller=None, results_dir=None,
@@ -374,8 +405,8 @@ class ACE3P(CommandWrapper):
     def results_dir(self):
         """The directory this solver writes results into, relative to the
         workdir. Most solvers write straight into ``<job_name>``; :class:`T3P`
-        overrides this to append its ``OUTPUT`` subdirectory."""
-        return self.job_name()
+        appends an ``OUTPUT`` subdirectory (see :attr:`results_subdir`)."""
+        return results_path(self.job_name(), self.results_subdir)
 
     def output_parser(self):
         pass
@@ -967,6 +998,11 @@ class T3P(ACE3P):
     # invocation that proves the argument.
     accepts_results_dir_arg = False
 
+    # T3P is the one solver that writes into a subdirectory of its job-name
+    # directory: everything lands under '<job_name>/OUTPUT'. See
+    # :meth:`ACE3P.job_name` for how the parent is resolved.
+    results_subdir = 'OUTPUT'
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.output_file = 't3p.out'
@@ -977,12 +1013,6 @@ class T3P(ACE3P):
             pass
 
     # ---- output locations, read from the input file ----------------------- #
-
-    def results_dir(self):
-        """The ``<job_name>/OUTPUT`` directory T3P writes results into, relative
-        to the workdir. T3P is the one solver with a subdirectory here; see
-        :meth:`ACE3P.job_name` for how the parent is resolved."""
-        return os.path.join(self.job_name(), 'OUTPUT')
 
     def monitors(self):
         """``[(Type, Name)]`` for every ``Monitor`` the input file declares, in

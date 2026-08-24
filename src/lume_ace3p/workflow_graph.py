@@ -34,6 +34,11 @@ Design notes
   hangs off that ``ctx``, so two evaluations of the same ``Workflow`` cannot read
   each other's results. ``Workflow.modules`` is a separate prototype list that is
   never run and answers config-only questions.
+* **Every evaluation records what it did.** ``evaluate`` writes a completion
+  manifest into the evaluation's workdir (:mod:`lume_ace3p.state`), updated after
+  each module, so a point cut off by the wall clock leaves behind how far it got.
+  Writing it changes nothing about the run; Phase 4 of
+  ``plans/evaluation_isolation_resume_plan.md`` is what reads it back.
 """
 
 import os
@@ -45,6 +50,10 @@ from lume_ace3p.modules import (
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
+from lume_ace3p.state import (
+    COMPLETE, FAILED, config_hash, new_state, record_module, record_outputs,
+    relative, write_state,
+)
 
 
 class WorkflowValidationError(ValueError):
@@ -364,7 +373,12 @@ class Workflow:
         produced it. The context is the per-evaluation carrier — pass it back to
         :meth:`field` / :meth:`field_index` to read *this* evaluation's results.
         It is also stashed on ``self.last_context`` as a single-run convenience,
-        which is only correct while evaluations do not overlap."""
+        which is only correct while evaluations do not overlap.
+
+        A completion manifest is written into the workdir and updated after every
+        module (:mod:`lume_ace3p.state`). It is a record only — nothing here reads
+        it — but it is written *incrementally* because the partial file is what a
+        resumed or wall-clock-killed campaign has to work from."""
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = (workdir if workdir is not None
                         else self._getworkdir(inputs, sweep_scalars))
@@ -377,8 +391,30 @@ class Workflow:
                          capture_output=self.capture_output)
         ctx.ensure_workdir()
 
+        state = new_state(
+            config_hash=config_hash(self.entries, inputs, self.output_spec),
+            point=self._point_record(inputs, sweep_scalars),
+            workdir=self.workdir)
+        # Written before the first module runs, so a point killed inside module 0
+        # still leaves its identity and config hash behind.
+        write_state(self.workdir, state)
+
         for module in ctx.modules:
-            module.run(ctx)
+            try:
+                module.run(ctx)
+            except Exception as exc:
+                # An exception is a failure of *this* module and the later ones
+                # never started, which is exactly the state a resume needs. A
+                # KeyboardInterrupt is deliberately not caught: an interrupted
+                # module is not a failed one, and leaving it unrecorded already
+                # means "not complete".
+                record_module(state, module, FAILED,
+                              error=f'{type(exc).__name__}: {exc}')
+                write_state(self.workdir, state)
+                raise
+            record_module(state, module, COMPLETE,
+                          **self._module_record(ctx, module))
+            write_state(self.workdir, state)
 
         outputs = {}
         for name, spec in self.output_spec.items():
@@ -388,8 +424,56 @@ class Workflow:
             module, cleaned = self._route_output(name, spec, ctx.modules)
             outputs[name] = module.extract(ctx, cleaned)
         ctx.outputs = outputs
+        record_outputs(state, outputs)
+        write_state(self.workdir, state)
         self.last_context = ctx
         return outputs, ctx
+
+    # ---- what an evaluation records about itself --------------------------- #
+
+    def _point_record(self, inputs, sweep_scalars):
+        """The manifest's ``point`` block — which input point this workdir holds.
+
+        In a sweep that is the swept axes and their values for this point, taken
+        from :meth:`sweep_axes` so an ACE3P leaf axis (``ace3p:FrequencyScan.Start``)
+        is named the same way the sweep table names it. A single run or an
+        optimizer point has no axes, so it records the materialized scalar knobs
+        instead.
+
+        No point *index* is recorded: ``evaluate`` takes none — the mode layer
+        owns sweep ordering and passes the full ``workdir=`` (see
+        :meth:`point_workdir`) — and the axis values identify the point anyway."""
+        if sweep_scalars is not None:
+            axes = {label: value for (label, _values, _setter), value
+                    in zip(self.sweep_axes(), sweep_scalars)}
+        else:
+            axes = {**inputs.cubit, **inputs.particles, **inputs.macro}
+        # numpy scalars and all: new_state renders the block JSON-writable.
+        return {'axes': {str(name): value for name, value in axes.items()}}
+
+    @staticmethod
+    def _module_record(ctx, module):
+        """What a completed module contributes to its manifest entry: the
+        artifacts it produced (workdir-relative, so the manifest describes its own
+        directory rather than the machine that wrote it) and the results-directory
+        name a solver resolved — the value acdtool's positional commands are given,
+        and the one a later reader needs to find the output again."""
+        artifacts = {kind: relative(ctx.artifacts[kind], ctx.workdir)
+                     for kind in sorted(module.provides)
+                     if kind in ctx.artifacts}
+        names = [ctx.job_names[kind] for kind in sorted(module.provides)
+                 if kind in ctx.job_names]
+        record = {'artifacts': artifacts}
+        # Only the solver modules register one, and they provide a single
+        # solution artifact each; the plural form exists so a future producer of
+        # two cannot silently lose one.
+        if len(names) == 1:
+            record['job_name'] = names[0]
+        elif names:
+            record['job_names'] = {kind: ctx.job_names[kind]
+                                   for kind in sorted(module.provides)
+                                   if kind in ctx.job_names}
+        return record
 
     def sweep_axes(self):
         """Delegate to the input model — the swept axes a mode iterates over."""

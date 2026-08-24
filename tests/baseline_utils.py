@@ -38,6 +38,8 @@ import tempfile
 
 import numpy as np
 
+from lume_ace3p.state import STATE_FILE
+
 
 # --------------------------------------------------------------------------- #
 # Paths
@@ -666,10 +668,24 @@ def stage_dir_for(name, meta):
     return meta.get('stage_dir', name)
 
 
+# Files that are never baseline artifacts, excluded here **explicitly** rather
+# than left to no glob happening to match them (design decision 7 of
+# plans/evaluation_isolation_resume_plan.md).
+#
+# The per-evaluation completion manifest (lume_ace3p_state.json) records
+# timestamps and the absolute workdir it was written in, so it can never be
+# stable run-to-run — and it is a record of *how* a run went, not of what it
+# computed, so there is nothing in it a numeric baseline wants. A future entry
+# whose pattern widens to a directory glob must not silently start comparing it.
+BASELINE_EXCLUDED = frozenset({STATE_FILE})
+
+
 def resolve_one(workdir, pattern):
     """Return the single file matching `pattern` (glob) under `workdir`, or
-    raise if zero / ambiguous in a way that would make the fixture unstable."""
-    matches = sorted(glob.glob(os.path.join(workdir, pattern)))
+    raise if zero / ambiguous in a way that would make the fixture unstable.
+    Files in `BASELINE_EXCLUDED` never match."""
+    matches = [path for path in sorted(glob.glob(os.path.join(workdir, pattern)))
+               if os.path.basename(path) not in BASELINE_EXCLUDED]
     if not matches:
         raise FileNotFoundError(
             f'expected output {pattern!r} not produced under {workdir}')

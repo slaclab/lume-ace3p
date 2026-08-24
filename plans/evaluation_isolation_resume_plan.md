@@ -1,6 +1,6 @@
 # Evaluation Isolation + Resume — Implementation Plan
 
-**Status: PHASES 1–2 COMPLETE** (2026-08-24); Phases 3–4 planned. Four phases.
+**Status: PHASES 1–3 COMPLETE** (2026-08-24); Phase 4 planned. Four phases.
 Phases 1–2 change no behavior and must move no baseline; Phases 3–4 add resume.
 
 This plan does **not** add concurrent evaluation. It removes the three things
@@ -408,7 +408,7 @@ best-effort query whose output is silenced on purpose, not a workflow step.
 
 ---
 
-# Phase 3 — The completion manifest
+# Phase 3 — The completion manifest — **COMPLETE** (2026-08-24)
 
 First phase to add a real feature. Still does not change any default behavior:
 the manifest is written always, read only under Phase 4's `resume: true`.
@@ -446,25 +446,92 @@ Implement it where it is cheap and unambiguous:
 | `geant4` | the dose / edep files named by `_output_files()` exist |
 | source modules | `True` — staging is idempotent |
 
-### Verification (Phase 3 done when)
+### Verification (Phase 3 done when) — all met 2026-08-24
 
-- A completed single run leaves a manifest whose `modules` list matches the DAG
-  order and whose `outputs` equal the returned dict.
-- A run whose middle module raises leaves a manifest with that module `failed`
-  and the later ones absent.
-- `config_hash` is stable across two identical runs and changes when a module
+- [x] A completed single run leaves a manifest whose `modules` list matches the
+  DAG order and whose `outputs` equal the returned dict. Pinned over a chain
+  declared **out of** DAG order (`particles` listed before `track3p_source`), so
+  the assertion is about the order the chain ran in rather than the order the YAML
+  happened to use, and over a `particles` step, whose outputs are real numbers
+  under dry run rather than the NaN sentinel a solver would give.
+- [x] A run whose middle module raises leaves a manifest with that module
+  `failed` and the later ones absent — which is also what pins that the file is
+  written *incrementally*. A second test covers the module-0 case: the manifest
+  exists, carrying the point and its `config_hash`, before anything has run.
+- [x] `config_hash` is stable across two identical runs and changes when a module
   config, an input value, or an `output_parameters` entry changes — and does
-  **not** change when `paths`, `dry_run`, or a YAML comment changes. One test
-  per clause.
-- `verify` returns `False` for a workdir whose results directory was deleted.
-- The acdtool `mutates` case returns `None` from `verify` — pinned by a test
-  that names defect 7, so nobody later "improves" it into a presence check.
-- Manifests are excluded from baseline comparison; baselines byte-identical.
+  **not** change when `paths`, `dry_run`, or a YAML comment changes. One test per
+  clause, seven in all; the `paths` / `dry_run` clauses hold *structurally* (they
+  are not passed to `config_hash` at all) rather than by a filter that could rot.
+  Two further tests pin the ordering rule the hash needs to be usable: an ACE3P
+  `Section`'s entry order is significant (the input file's semantics depend on it)
+  while a module entry's key order is not.
+- [x] `verify` returns `False` for a workdir whose results directory was deleted —
+  per solver, plus the partial case (a T3P run whose second monitor's file is
+  missing is not complete), and the "cannot tell" cases: dry run, a Geant4 step
+  whose output names live in an input file it has not read, a run declaring no
+  readable monitor.
+- [x] The acdtool `mutates` case returns `None` from `verify` — pinned by a test
+  that names defect 7, so nobody later "improves" it into a presence check. Its
+  companion asserts `postprocess rf` *does* verify from `rfpost.out`, so the
+  distinction is visible as a distinction rather than as a blanket `None`.
+- [x] Manifests are excluded from baseline comparison; baselines byte-identical.
+  `resolve_one` drops the manifest even when asked for it by name, and a test
+  asserts no registry pattern names it today either (guard, not repair). The full
+  registry (16 entries) was re-frozen and diffed against HEAD: the only differing
+  bytes are the same two Phases 1–2 recorded — the `xopt_runtime` wall-clock
+  column of `s3p_optimization/sim_output.txt` (dropped before comparison by
+  design; a zero-tolerance table comparison of every other column passes) and the
+  pre-existing `docs/` → `plans/` provenance-string drift in
+  `t3p_power_balance/manifest.json`.
 
-### Deliverables
+Three deviations from the plan as written:
 
-`state.py`, `workflow_graph.py`, `modules.py` (`verify` per module),
-`tests/test_state.py`, `baseline_utils.py` exclusion.
+1. **The manifest records no point *index*.** The schema sketched above has
+   `point: {index, axes}`, but `evaluate` takes no point index by Phase 2's
+   decision — the mode layer owns sweep ordering and passes the full `workdir=` —
+   and threading one in would mean adding an argument to `evaluate` that four test
+   doubles' signatures do not have, for a field that is decorative: `axes` already
+   identifies the point, and both resume and `--status` derive a point's workdir
+   themselves. `point: {axes: {...}}` is what is written, from `sweep_axes()` in a
+   sweep and from the materialized scalar knobs for a single/optimizer point. If
+   Phase 4 wants the index it is one line, in the layer that knows it.
+2. **`ACE3P.results_subdir` replaced `T3P.results_dir`.** `verify` has to name a
+   solver's results directory *without a solver instance*, and T3P's `OUTPUT`
+   subdirectory lived in an instance-method override. It is now a class attribute
+   (empty for every solver but T3P) read by one `ACE3P.results_dir`, so the module
+   layer asks the wrapper *class* and cannot drift from it. Same paths as before,
+   and `ace3p.input_job_name` was added for the same reason: `_SolverModule`
+   mirrors `job_name`'s resolution order (override → `JobName` leaf → default)
+   rather than assuming the default.
+3. **`docs/yaml_reference.md` gained a `run manifest` section**, though Phase 3
+   adds no YAML key. A file appearing in every workdir of every run is
+   user-visible whether or not it is configurable, and the alternative was for
+   users to find an undocumented JSON file next to their results. Docs still build
+   warning-free under `-W`.
+
+### Deliverables — as built
+
+`state.py` (new: `SCHEMA` / `STATE_FILE` / `config_hash` / `new_state` /
+`record_module` / `record_outputs` / `read_state` / `write_state`, plus
+`module_entry` and `relative` for Phase 4), `workflow_graph.py` (manifest writing
+in `evaluate`, `_point_record`, `_module_record`), `modules.py` (`Module.verify`
+plus seven implementations, `_SourceModule`, `_journal_export`,
+`_SolverModule._results_dir`, `T3PModule._input_monitors`), `ace3p.py`
+(`results_path`, `input_job_name`, `ACE3P.results_subdir`),
+`tests/test_state.py` (new, 32 tests), `tests/baseline_utils.py`
+(`BASELINE_EXCLUDED`), `docs/yaml_reference.md`, `CHANGELOG.md`.
+
+Two implementation notes worth keeping:
+
+* **`KeyboardInterrupt` is not recorded as `failed`.** `evaluate` catches
+  `Exception`, so an interrupted module stays *absent* from the manifest. An
+  interrupted step is not a broken one, and "absent" already means "not
+  complete" — which is all Phase 4 needs — while `failed` is what gets reported
+  to a user as something that went wrong.
+* **The manifest is written atomically** (`os.replace` over a sibling temp file).
+  It is rewritten after every module, so a truncated write is a real possibility,
+  and a truncated manifest is precisely what a resume would read.
 
 ---
 
@@ -490,6 +557,16 @@ otherwise avoided.
 
 Refuse `resume: true` under `workdir_mode: manual`, with an error naming
 `indexed` as the fix (decision 5).
+
+⚠️ **Per-module identity is the module's `name`, and nothing enforces that it is
+unique.** Phase 3 keys manifest entries on it, and Phase 2's logs key on it too
+(`<workdir>/<name>.log`), but a chain listing two `acdtool` steps with no `name:`
+key gives both the default name `acdtool` — so they already share one log and
+would share one manifest entry. Resuming "from the first non-complete module"
+needs the names to be distinct. Either reject duplicate names in
+`_resolve_order` (a new error for a config that today runs, with two steps
+overwriting each other's log) or make the manifest key `(name, position)`.
+Decide it in Phase 4 rather than leaving it implicit.
 
 Cross-check the recorded `outputs` against the re-extracted ones on a resumed
 point and warn on mismatch. That is a free nondeterminism detector and it costs
