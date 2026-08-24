@@ -991,17 +991,24 @@ the result to the mode layer; you rarely construct one directly.
 Its public seams (all called by the workflow-agnostic modes, never by
 solver-specific code) are:
 
-- `Workflow.evaluate(input_scalars=None)` — run the ordered module chain once
-  for one input point and return `{output_name: value}` for the
-  `output_parameters` spec. `input_scalars` may be `None` (use the base inputs
-  as-is), a list aligned with `sweep_axes()` (materialize that grid point), or a
+- `Workflow.evaluate(input_scalars=None, workdir=None)` — run the ordered module
+  chain once for one input point and return `({output_name: value}, ctx)`: the
+  extracted values for the `output_parameters` spec, plus the `RunContext` that
+  produced them. `input_scalars` may be `None` (use the base inputs as-is), a
+  list aligned with `sweep_axes()` (materialize that grid point), or a
   `{var: scalar}` mapping (variable overrides routed to their declaring bucket —
-  the shape Xopt passes; see [](#vocs_parameters)).
+  the shape Xopt passes; see [](#vocs_parameters)). An explicit `workdir`
+  overrides `workdir_mode` naming for that one call.
 - `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
-- `Workflow.field_index()` / `Workflow.field()` — the shared field index (e.g.
-  S3P's `('Frequency', array)`) and the structured per-run field output (S3P
-  spectra, Geant4 voxel grids) that the hybrid result model keeps out of the
-  flat table.
+- `Workflow.field_index(ctx)` / `Workflow.field(ctx)` — the shared field index
+  (e.g. S3P's `('Frequency', array)`) and the structured per-run field output
+  (S3P spectra, Geant4 voxel grids) that the hybrid result model keeps out of the
+  flat table. Both read the evaluation the given `ctx` describes, defaulting to
+  the most recent one (`Workflow.last_context`) when it is omitted.
+
+The `ctx` is the per-evaluation carrier: it holds that run's workdir, artifacts,
+outputs and the live module instances. `Workflow.modules` is a separate list of
+never-run prototypes, useful only for inspecting configuration.
 
 ### Input data model
 

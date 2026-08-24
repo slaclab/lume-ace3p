@@ -104,11 +104,21 @@ class RunContext:
         consumer that **overwrites** its producer's output file in place calls the
         hook so the producer re-reads it — see :class:`AcdtoolModule` for why
         ``postprocess transwake`` needs this.
+
+    ``modules``
+        the **live** module instances this evaluation runs, in resolved DAG order.
+        Module instances hold per-run state (a solver's parsed results, acdtool's
+        parsed output), so each evaluation gets its own freshly built chain and
+        the context is what carries it. ``Workflow.modules`` is a separate,
+        never-run prototype list kept for config inspection; anything that reads
+        run state — ``field``, ``field_index``, ``extract`` — must source its
+        module from here.
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
-                 dry_run=False, paths=None, stage_mode='copy'):
+                 dry_run=False, paths=None, stage_mode='copy', modules=None):
         self.workdir = workdir
+        self.modules = list(modules) if modules else []
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.artifacts = dict(artifacts) if artifacts else {}
         self.outputs = dict(outputs) if outputs else {}

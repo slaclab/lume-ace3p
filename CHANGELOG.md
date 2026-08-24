@@ -7,6 +7,35 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
+## [Unreleased]
+
+Groundwork for sweep **resume** (a sweep point cut off by the wall clock
+currently restarts from scratch). This phase adds no feature and moves no
+result — it removes the per-evaluation state that lived on shared objects, so
+resume and, later, concurrent evaluation have somewhere to stand. The design and
+its verification are in
+[`plans/evaluation_isolation_resume_plan.md`](plans/evaluation_isolation_resume_plan.md).
+
+### Changed
+
+- **`Workflow.evaluate` returns `(outputs, ctx)`** rather than `outputs` alone,
+  and accepts an explicit `workdir=` that overrides `workdir_mode` naming for one
+  call. The returned `RunContext` is the per-evaluation carrier: pass it to
+  `Workflow.field(ctx)` / `Workflow.field_index(ctx)` to read *that* evaluation's
+  results. Both still work with no argument, resolving to the most recent
+  evaluation. This is a breaking change only for code calling `evaluate`
+  directly; no YAML changes.
+- **Module instances are built per evaluation.** They hold run state (a solver's
+  parsed results, `acdtool`'s parsed output), so the chain now lives on
+  `ctx.modules` and `Workflow.modules` is a never-run prototype list used only to
+  inspect configuration. Previously one shared list meant `field()` and `extract`
+  answered for whichever point ran last — correct only because the sweep loop is
+  serial, and wrong data rather than a crash the moment it is not.
+- The sweep table's field-index label is resolved from the run it came from
+  instead of re-derived after the loop, and `collect_training_data` drives each
+  sample through `evaluate(workdir=...)` instead of assigning
+  `workflow.baseworkdir` inside its loop.
+
 ## [0.4.0] — 2026-08-20
 
 Two reworks land together: `acdtool` postprocessing gained a real command

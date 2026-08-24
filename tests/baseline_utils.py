@@ -62,9 +62,11 @@ SYNTH_FREQS = np.array([
 
 class SyntheticWorkflow:
     """Stand-in :class:`~lume_ace3p.workflow_graph.Workflow` for the generic Xopt
-    modes: exposes ``evaluate(input_dict) -> {objective_name: scalar}`` computed
-    from a deterministic, input-dependent synthetic S-parameter response, so the
-    optimizer sees signal but never touches Cubit/S3P.
+    modes: exposes ``evaluate(input_dict) -> ({objective_name: scalar}, ctx)``
+    computed from a deterministic, input-dependent synthetic S-parameter response,
+    so the optimizer sees signal but never touches Cubit/S3P. The ``ctx`` half of
+    the return is ``None`` — the Xopt modes only read the outputs, and this double
+    runs no modules to carry state for.
 
     ``output_spec`` maps each declared objective name to the
     ``(s_parameter, frequency)`` it extracts — the S-parameter knowledge lives in
@@ -83,7 +85,7 @@ class SyntheticWorkflow:
         for name, (sparam, freq) in self.output_spec.items():
             idx = list(SYNTH_FREQS).index(float(freq))
             out[name] = data[sparam][idx]
-        return out
+        return out, None
 
 
 def seed_all(seed=0):

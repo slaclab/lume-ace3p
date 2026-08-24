@@ -110,12 +110,12 @@ class _SyntheticDoseWorkflow:
         self._last_beta = None
         self._call = 0
 
-    def evaluate(self, overrides):
+    def evaluate(self, overrides, workdir=None):
         self._last_beta = np.array([overrides[n] for n in BETA_NAMES])
         self._call += 1
-        return {}
+        return {}, None
 
-    def field(self):
+    def field(self, ctx=None):
         # Deterministic per-sample noise seed so a resumed run is reproducible.
         seed = int(abs(self._last_beta.sum()) * 1000) % (2 ** 31)
         values = dose_of_beta(self._last_beta, noise=self.noise, seed=seed)

@@ -171,10 +171,10 @@ def single(workflow):
     scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
-    outputs = workflow.evaluate(None)
-    handle = _persist_field(workflow, 0)
-    rows = _rows_for_point(workflow, input_names, scalars, outputs, handle)
-    return _frame(workflow, input_names, rows)
+    outputs, ctx = workflow.evaluate(None)
+    handle = _persist_field(workflow, ctx, 0)
+    rows = _rows_for_point(workflow, ctx, input_names, scalars, outputs, handle)
+    return _frame(workflow, input_names, rows, workflow.field_index(ctx))
 
 
 def parameter_sweep(workflow):
@@ -191,31 +191,34 @@ def parameter_sweep(workflow):
     tensor = _input_tensor(axes)
 
     rows = []
+    index = None
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
-        outputs = workflow.evaluate(scalars if axes else None)
-        handle = _persist_field(workflow, i)
-        rows.extend(_rows_for_point(workflow, input_names, scalars, outputs,
+        outputs, ctx = workflow.evaluate(scalars if axes else None)
+        index = workflow.field_index(ctx)
+        handle = _persist_field(workflow, ctx, i)
+        rows.extend(_rows_for_point(workflow, ctx, input_names, scalars, outputs,
                                     handle))
-    return _frame(workflow, input_names, rows)
+    return _frame(workflow, input_names, rows, index)
 
 
-def _persist_field(workflow, point_index):
-    """Persist the just-run evaluation's structured field (if any) to a
-    ``.npz`` under the workflow's workdir and return the stored handle.
+def _persist_field(workflow, ctx, point_index):
+    """Persist the structured field (if any) of the evaluation ``ctx`` describes
+    to a ``.npz`` under its workdir, and return the stored handle.
 
     Returns ``None`` when there is no field (dry-run, or a solver that produces
     none) or in the long-format case — where the field values are exploded into
     the rows via :meth:`Workflow.field_index`, so storing a redundant artifact
     would be wrong. The per-point filename keeps rows distinct even in a shared
     (manual) workdir."""
-    if workflow.field_index() is not None:
+    if workflow.field_index(ctx) is not None:
         return None
-    field = workflow.field()
+    field = workflow.field(ctx)
     if field is None:
         return None
-    workdir = getattr(workflow, 'workdir', None) or '.'
-    path = os.path.join(workdir, f'field_{point_index}.npz')
+    # ctx.workdir, not workflow.workdir: the directory this evaluation actually
+    # wrote to, which is the same distinction the ctx itself exists to make.
+    path = os.path.join(ctx.workdir or '.', f'field_{point_index}.npz')
     return save_field(field, path)
 
 
@@ -375,8 +378,10 @@ def collect_training_data(mode_cfg, workflow):
     DOE provenance. The mesh is validated up front and re-checked per sample so a
     mid-campaign mesh edit hard-fails rather than misaligning the PCA basis.
 
-    **Resumable:** each sample runs in its own ``<store>/sample_NNNNN`` workdir;
-    a sample whose dose grid was already persisted is skipped on re-run.
+    **Resumable:** each sample runs in its own ``<store>/sample_NNNNN`` workdir
+    (passed to :meth:`Workflow.evaluate` as an explicit ``workdir``, so the
+    workflow's own ``workdir_mode`` is left untouched); a sample whose dose grid
+    was already persisted is skipped on re-run.
 
     Returns the training-store result :class:`pandas.DataFrame`."""
     beta_names, num_bins = _require_fixed_bin_edges(workflow)
@@ -394,55 +399,49 @@ def collect_training_data(mode_cfg, workflow):
     design = surrogate_data.sample_beta_doe(bounds, num_samples,
                                             sampler=sampler, seed=seed)
 
-    # Drive each sample in its own manual workdir. Save/restore the workflow's
-    # own workdir settings so this mutation is contained to the collection loop.
-    saved_mode, saved_base = workflow.workdir_mode, workflow.baseworkdir
-    workflow.workdir_mode = 'manual'
-
+    # Drive each sample into its own directory by passing the workdir straight to
+    # evaluate. That used to be done by mutating workflow.workdir_mode /
+    # baseworkdir and restoring them in a finally; the explicit argument means the
+    # collector never writes to shared workflow state at all.
     rows = []
     mesh_shape = None
-    try:
-        for i in range(num_samples):
-            beta_vec = design[i]
-            sample_dir = os.path.join(store, f'sample_{i:05d}')
-            field_path = os.path.join(sample_dir, 'field.npz')
-            overrides = {name: float(v)
-                         for name, v in zip(beta_names, beta_vec)}
+    for i in range(num_samples):
+        beta_vec = design[i]
+        sample_dir = os.path.join(store, f'sample_{i:05d}')
+        field_path = os.path.join(sample_dir, 'field.npz')
+        overrides = {name: float(v) for name, v in zip(beta_names, beta_vec)}
 
-            if os.path.isfile(field_path):
-                # Resume: the dose grid for this β was already persisted.
-                handle = field_path
-            else:
-                # Constraint #3: defend against a mid-campaign edit to the
-                # geant4 input file's scoring mesh. Re-read the fingerprint
-                # before each fresh evaluation and hard-fail on drift, so a
-                # partway mesh change is caught here rather than silently
-                # misaligning the PCA basis at train time.
-                if mesh_fingerprint is not None:
-                    current = surrogate_data.read_mesh_fingerprint(
-                        _geant4_input_path(workflow))
-                    if not surrogate_data.mesh_fingerprints_match(
-                            current, mesh_fingerprint):
-                        raise ValueError(
-                            f"dose scoring mesh changed at sample {i} "
-                            f"(was {mesh_fingerprint}, now {current}); the mesh "
-                            "must stay fixed for the whole campaign "
-                            "(constraint #3).")
-                workflow.baseworkdir = sample_dir
-                workflow.evaluate(overrides)
-                handle = save_field(workflow.field(), field_path)
+        if os.path.isfile(field_path):
+            # Resume: the dose grid for this β was already persisted.
+            handle = field_path
+        else:
+            # Constraint #3: defend against a mid-campaign edit to the geant4
+            # input file's scoring mesh. Re-read the fingerprint before each
+            # fresh evaluation and hard-fail on drift, so a partway mesh change
+            # is caught here rather than silently misaligning the PCA basis at
+            # train time.
+            if mesh_fingerprint is not None:
+                current = surrogate_data.read_mesh_fingerprint(
+                    _geant4_input_path(workflow))
+                if not surrogate_data.mesh_fingerprints_match(
+                        current, mesh_fingerprint):
+                    raise ValueError(
+                        f"dose scoring mesh changed at sample {i} "
+                        f"(was {mesh_fingerprint}, now {current}); the mesh "
+                        "must stay fixed for the whole campaign "
+                        "(constraint #3).")
+            _outputs, ctx = workflow.evaluate(overrides, workdir=sample_dir)
+            handle = save_field(workflow.field(ctx), field_path)
 
-            if handle is not None and mesh_shape is None:
-                mesh_shape = _mesh_shape(handle)
+        if handle is not None and mesh_shape is None:
+            mesh_shape = _mesh_shape(handle)
 
-            row = dict(overrides)
-            row[surrogate_data.FIDELITY_COLUMN] = (
-                float(fidelity) if fidelity is not None else np.nan)
-            if handle is not None:
-                row[FIELD_ARTIFACT_COLUMN] = handle
-            rows.append(row)
-    finally:
-        workflow.workdir_mode, workflow.baseworkdir = saved_mode, saved_base
+        row = dict(overrides)
+        row[surrogate_data.FIDELITY_COLUMN] = (
+            float(fidelity) if fidelity is not None else np.nan)
+        if handle is not None:
+            row[FIELD_ARTIFACT_COLUMN] = handle
+        rows.append(row)
 
     columns = list(beta_names) + [surrogate_data.FIDELITY_COLUMN]
     if any(FIELD_ARTIFACT_COLUMN in r for r in rows):
@@ -1052,8 +1051,9 @@ def _beta_relative_l2(surrogate, beta_vec, aligned_target):
 # --------------------------------------------------------------------------- #
 
 
-def _rows_for_point(workflow, input_names, scalars, outputs, field_handle=None):
-    """Build the result row(s) for one evaluation.
+def _rows_for_point(workflow, ctx, input_names, scalars, outputs,
+                    field_handle=None):
+    """Build the result row(s) for the one evaluation ``ctx`` describes.
 
     Wide case: a single row of ``{input: scalar, ..., output: scalar}``, plus a
     field-artifact handle column when ``field_handle`` is not ``None``.
@@ -1063,7 +1063,7 @@ def _rows_for_point(workflow, input_names, scalars, outputs, field_handle=None):
     field-artifact column; the field values already are the rows)."""
     output_names = list(workflow.output_spec.keys())
     base = dict(zip(input_names, scalars))
-    index = workflow.field_index()
+    index = workflow.field_index(ctx)
     if index is None:
         row = dict(base)
         for name in output_names:
@@ -1083,14 +1083,18 @@ def _rows_for_point(workflow, input_names, scalars, outputs, field_handle=None):
     return rows
 
 
-def _frame(workflow, input_names, rows):
+def _frame(workflow, input_names, rows, index):
     """Assemble the ordered-column DataFrame. Column order is: swept inputs,
     then the field-index label (long case only), then outputs, then an optional
     field-artifact column — matching the left-to-right layout of the legacy
     sweep tables and appending the field reference last so it never displaces a
-    baseline column."""
+    baseline column.
+
+    ``index`` is the already-resolved field index of the run(s) the rows came
+    from, passed in rather than re-derived: asking the workflow again after the
+    loop would read whichever point happened to run last, which stops being the
+    same answer as soon as points can run out of order."""
     output_names = list(workflow.output_spec.keys())
-    index = workflow.field_index()
     columns = list(input_names)
     if index is not None:
         columns.append(index[0])
@@ -1247,7 +1251,7 @@ def _objective_from_workflow(workflow, vocs, xopt_dict):
         input_dict = dict(input_dict)
         if fidelity_variable is not None and 's' in input_dict:
             input_dict[fidelity_variable] = input_dict.pop('s')
-        outputs = workflow.evaluate(input_dict)
+        outputs, _ctx = workflow.evaluate(input_dict)
         missing = [n for n in output_names if n not in outputs]
         if missing:
             raise KeyError(
