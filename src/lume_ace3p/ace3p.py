@@ -1,11 +1,12 @@
 import glob
 import os, re, shutil
-import subprocess
 import warnings
 
 import numpy as np
 
 from lume.base import CommandWrapper
+
+from lume_ace3p.logs import run_logged
 
 
 class Section:
@@ -241,8 +242,12 @@ class ACE3P(CommandWrapper):
     accepts_results_dir_arg = False
 
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
-                 ace3p_path=None, mpi_caller=None, results_dir=None, **kwargs):
+                 ace3p_path=None, mpi_caller=None, results_dir=None,
+                 log_file=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # Where this solver's stdout/stderr is teed (see lume_ace3p.logs); None
+        # inherits the parent's streams, which is the legacy behavior.
+        self.log_file = log_file
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.ace3p_tasks = ace3p_tasks
@@ -294,7 +299,8 @@ class ACE3P(CommandWrapper):
 
     def run(self):
         self.write_input()
-        subprocess.run(self.solver_command(), shell=True, cwd=self.workdir)
+        run_logged(self.solver_command(), cwd=self.workdir,
+                   log_file=self.log_file)
         self.output_parser()
 
     def load_input_file(self, *args):

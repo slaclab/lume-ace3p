@@ -86,10 +86,29 @@ gone — they now sit on the `workflow:` module entries and the `mode:` block.
 | Keyword             | Type           | Default        | Description |
 |---------------------|----------------|----------------|-------------|
 | `workdir`           | `str` / `Path` | `os.getcwd()`  | Path to the working directory in which `lume-ace3p` runs. |
-| `workdir_mode`      | `str`          | `'manual'`     | `'manual'` (single workflow folder) or `'auto'` (one auto-named folder per evaluation, suffixed with the swept scalar values). |
+| `workdir_mode`      | `str`          | `'manual'`     | How each evaluation's folder is named: `'manual'`, `'auto'`, or `'indexed'` — see [](#workdir-mode) below. |
 | `stage_mode`        | `str`          | `'copy'`       | How large static input files (prebuilt meshes, Track3P dumps, Geant4 STL geometry, prebuilt particle sources) are placed in each workdir: `'copy'`, `'symlink'`, or `'hardlink'` — see [](#stage-mode) below. |
+| `capture_output`    | `bool`         | `True`         | Tee each module's Cubit/solver/acdtool/Geant4 output to `<workdir>/<module name>.log` as well as to the terminal. `False` restores plain inherited streams (nothing written to disk) — see [](#capture-output) below. |
 | `dry_run`           | `bool`         | `False`        | If `True`, run the full Python pipeline but skip the Cubit/solver/acdtool/Geant4 binary calls (writes a `DRY_RUN.txt` marker). Auto-enabled when the relevant tool path cannot be resolved — see [](installation.md#dry-run-mode). |
 | `paths`             | `dict`         | `None`         | Mapping of executable-path overrides. Recognized keys: `ace3p`, `cubit`, `mpi`, `geant4_app_path`, `geant4_app_exe`. Each value takes highest precedence in path resolution — see [](installation.md#executable-paths). |
+
+(workdir-mode)=
+### `workdir_mode` — naming each evaluation's folder
+
+| Value | Folder per evaluation | Use when |
+|---|---|---|
+| `'manual'` | `workdir` itself, shared by every point. | A single run, or a sweep whose points may overwrite each other's files. |
+| `'auto'`   | `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. | You want to read a point's inputs off its directory name. |
+| `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep. | You want a stable, collision-free point identity — and it is what the resume machinery keys on. |
+
+`'auto'` names are usually unique but not guaranteed: two axes can render to the
+same string, and the name grows with every axis added. `'indexed'` is bounded and
+collision-free, at the cost of not showing the input values in the name. The two
+produce **identical result tables** — only the directory names differ. The point
+index is the sweep's own row order (the tensor product of the swept axes, first
+axis slowest), which is also the order rows appear in the output table.
+
+A `single` run under `'indexed'` is point 0, so it writes `<workdir>_0`.
 
 (stage-mode)=
 ### `stage_mode` — storage-efficient staging
@@ -115,6 +134,29 @@ ACE3P / Geant4 parameter merges, copy and rewrite their own input files
 separately and are unaffected by `stage_mode`). With `'symlink'`, deleting or
 moving a source file after a run leaves dangling links in the workdirs that
 referenced it.
+
+(capture-output)=
+### `capture_output` — per-evaluation logs
+
+Each module's external tool invocations (Cubit and its `meshconvert`, the ACE3P
+solvers, `acdtool`, the Geant4 application) write their output to
+`<workdir>/<module name>.log`, named after the module's **instance name** — so
+two `acdtool` steps with different `name:` keys get separate logs, while one
+module's several invocations share one.
+
+Output is **teed, not redirected**: everything still appears on the terminal, and
+`stderr` stays on `stderr`, so redirecting `2>errors` keeps working and a solver's
+failure message can never become invisible. The log is appended to, with a
+`$ <command line>` header before each invocation, so a shared (`'manual'`)
+workdir or a re-run keeps the earlier record.
+
+This is what makes a sweep point cut off by a batch wall clock legible after the
+fact: without it, point 7's solver output is interleaved with every other point's
+on one terminal and gone as soon as it scrolls.
+
+Set `capture_output: false` to turn it off entirely. Nothing is then written to
+disk and the child processes inherit the parent's file descriptors directly, which
+is the behavior of releases before this key existed.
 
 (omega3p-module)=
 ### `omega3p` module
@@ -1000,6 +1042,9 @@ solver-specific code) are:
   the shape Xopt passes; see [](#vocs_parameters)). An explicit `workdir`
   overrides `workdir_mode` naming for that one call.
 - `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
+- `Workflow.point_workdir(point_index)` — the `'indexed'` name for one sweep
+  point. `evaluate` deliberately takes no point index: the mode layer owns sweep
+  ordering, resolves the name here, and passes the result as `workdir=`.
 - `Workflow.field_index(ctx)` / `Workflow.field(ctx)` — the shared field index
   (e.g. S3P's `('Frequency', array)`) and the structured per-run field output
   (S3P spectra, Geant4 voxel grids) that the hybrid result model keeps out of the

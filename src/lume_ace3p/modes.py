@@ -49,6 +49,7 @@ writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 
 import os
 import sys
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -171,10 +172,10 @@ def single(workflow):
     scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
-    outputs, ctx = workflow.evaluate(None)
-    handle = _persist_field(workflow, ctx, 0)
-    rows = _rows_for_point(workflow, ctx, input_names, scalars, outputs, handle)
-    return _frame(workflow, input_names, rows, workflow.field_index(ctx))
+    outputs, ctx = _evaluate_point(workflow, None, 0)
+    point = _PointResult(0, scalars, outputs, workflow.field_index(ctx),
+                         _persist_field(workflow, ctx, 0))
+    return _assemble(workflow, input_names, [point])
 
 
 def parameter_sweep(workflow):
@@ -185,21 +186,45 @@ def parameter_sweep(workflow):
     In the wide/scalar case a per-row field-artifact handle is stored (see
     :func:`_persist_field`) when a module produces a structured field; the
     long-format (S3P) case carries no field-artifact column — its field values
-    already *are* the rows."""
+    already *are* the rows.
+
+    **Execution is separated from row assembly.** Each point's results are
+    collected into a list keyed by point index, and the frame is built from that
+    list in index order once the loop is done (:func:`_assemble`). Today the loop
+    is serial and in order, so this changes nothing; it is what makes the frame
+    identical when points run out of order — a resumed campaign (Phase 4) or a
+    concurrent one — instead of silently making every baseline dependent on
+    completion order."""
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
 
-    rows = []
-    index = None
+    points = []
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
-        outputs, ctx = workflow.evaluate(scalars if axes else None)
-        index = workflow.field_index(ctx)
-        handle = _persist_field(workflow, ctx, i)
-        rows.extend(_rows_for_point(workflow, ctx, input_names, scalars, outputs,
-                                    handle))
-    return _frame(workflow, input_names, rows, index)
+        outputs, ctx = _evaluate_point(workflow, scalars if axes else None, i)
+        # Everything the rows need is read out here, so the per-point ``ctx`` —
+        # and the whole parsed solver output hanging off it — is not held for the
+        # length of the sweep.
+        points.append(_PointResult(i, scalars, outputs,
+                                   workflow.field_index(ctx),
+                                   _persist_field(workflow, ctx, i)))
+    return _assemble(workflow, input_names, points)
+
+
+def _evaluate_point(workflow, input_scalars, point_index):
+    """Evaluate one sweep point, choosing its workdir.
+
+    ``workdir_mode: indexed`` is implemented **here** rather than in
+    ``Workflow``: the point index is the mode layer's own bookkeeping, so the
+    mode resolves the name and passes the full ``workdir=``, and ``Workflow``
+    stays unaware of sweep ordering. ``manual`` / ``auto`` pass no workdir at all
+    and are named by the workflow exactly as before — including for a test double
+    whose ``evaluate`` takes no ``workdir`` keyword."""
+    if getattr(workflow, 'workdir_mode', None) != 'indexed':
+        return workflow.evaluate(input_scalars)
+    return workflow.evaluate(input_scalars,
+                             workdir=workflow.point_workdir(point_index))
 
 
 def _persist_field(workflow, ctx, point_index):
@@ -1051,9 +1076,49 @@ def _beta_relative_l2(surrogate, beta_vec, aligned_target):
 # --------------------------------------------------------------------------- #
 
 
-def _rows_for_point(workflow, ctx, input_names, scalars, outputs,
+class _PointResult(NamedTuple):
+    """Everything one evaluated sweep point contributes to the result table.
+
+    Read off the evaluation's ``ctx`` as soon as the point finishes, so assembly
+    needs neither the context nor the order the points completed in — see
+    :func:`_assemble`."""
+
+    point_index: int                  # position in the sweep; the sort key
+    scalars: list                     # the swept input values for this point
+    outputs: dict                     # extracted output_parameters
+    index: object                     # this point's (label, values), or None
+    handle: object                    # persisted field artifact, or None
+
+
+def _assemble(workflow, input_names, points):
+    """Build the result DataFrame from a list of :class:`_PointResult`.
+
+    Rows go in **point-index order**, not in the order the points appear in
+    ``points``, so the frame does not depend on completion order. That is the
+    property that lets a later phase resume or parallelize the loop without
+    quietly making every baseline nondeterministic."""
+    rows = []
+    index = None
+    for point in sorted(points, key=lambda p: p.point_index):
+        # The frame's index label comes from the last point in index order, which
+        # is what the in-loop version resolved to when points ran in order. It is
+        # the same label for every point of a run; only its presence varies (a
+        # solver that produced nothing reports None).
+        index = point.index
+        rows.extend(_rows_for_point(workflow, point.index, input_names,
+                                    point.scalars, point.outputs, point.handle))
+    return _frame(workflow, input_names, rows, index)
+
+
+def _rows_for_point(workflow, index, input_names, scalars, outputs,
                     field_handle=None):
-    """Build the result row(s) for the one evaluation ``ctx`` describes.
+    """Build the result row(s) for one evaluated point.
+
+    ``index`` is that point's already-resolved field index (``('Frequency',
+    array)`` or ``None``), passed in rather than re-derived from a context for the
+    reason :func:`_frame` records: asking the workflow again reads whichever
+    evaluation ran last, which stops being the same answer once points can
+    complete out of order.
 
     Wide case: a single row of ``{input: scalar, ..., output: scalar}``, plus a
     field-artifact handle column when ``field_handle`` is not ``None``.
@@ -1063,7 +1128,6 @@ def _rows_for_point(workflow, ctx, input_names, scalars, outputs,
     field-artifact column; the field values already are the rows)."""
     output_names = list(workflow.output_spec.keys())
     base = dict(zip(input_names, scalars))
-    index = workflow.field_index(ctx)
     if index is None:
         row = dict(base)
         for name in output_names:

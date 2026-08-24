@@ -548,7 +548,8 @@ def test_omega3p_acdtool_table_indexes_on_modeid(tmp_path):
                                       if k != 'module'})
                for name, spec in output_spec.items()}
     # The result table the mode layer builds from that: one row per mode.
-    rows = _rows_for_point(wf, ctx, ['cav_radius'], [90.0], outputs)
+    rows = _rows_for_point(wf, wf.field_index(ctx), ['cav_radius'], [90.0],
+                           outputs)
     assert [r['ModeID'] for r in rows] == [0, 1]
     assert [r['R/Q'] for r in rows] == pytest.approx([250.0, 40.0])
     assert [r['E_max'] for r in rows] == pytest.approx([1.5e6, 1.5e6])

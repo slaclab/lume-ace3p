@@ -43,6 +43,7 @@ from lume_ace3p.acdtool import (
     wired_commands,
 )
 from lume_ace3p.geant4 import Geant4
+from lume_ace3p.logs import log_path
 from lume_ace3p.particles import Particles
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
 
@@ -113,12 +114,21 @@ class RunContext:
         never-run prototype list kept for config inspection; anything that reads
         run state — ``field``, ``field_index``, ``extract`` — must source its
         module from here.
+    ``capture_output``
+        whether each module's subprocess output is teed to
+        ``<workdir>/<module name>.log`` (:meth:`Module.log_file`). It defaults to
+        ``False`` — the pre-Phase-2 inherited-streams behavior — so a hand-built
+        context (a module unit test, a direct driver) is unchanged by this
+        feature; :meth:`Workflow.evaluate` passes the ``capture_output``
+        workflow parameter, which defaults to ``True``.
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
-                 dry_run=False, paths=None, stage_mode='copy', modules=None):
+                 dry_run=False, paths=None, stage_mode='copy', modules=None,
+                 capture_output=False):
         self.workdir = workdir
         self.modules = list(modules) if modules else []
+        self.capture_output = bool(capture_output)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.artifacts = dict(artifacts) if artifacts else {}
         self.outputs = dict(outputs) if outputs else {}
@@ -222,6 +232,20 @@ class Module:
 
     def run(self, ctx):
         raise NotImplementedError
+
+    def log_file(self, ctx):
+        """Where this module's subprocesses tee their output for the evaluation
+        ``ctx`` describes — ``<ctx.workdir>/<self.name>.log`` — or ``None`` when
+        capture is off (``capture_output: false``) or there is no workdir.
+
+        Keyed on the module's *instance name*, not its type, so two modules of
+        one type in a chain (two ``acdtool`` steps, say) get separate logs while
+        one module's several invocations share one — which is what makes the
+        per-evaluation log answer "what did this step do", the question a
+        wall-clock-killed sweep point leaves behind."""
+        if not ctx.capture_output:
+            return None
+        return log_path(ctx.workdir, self.name)
 
     def extract(self, ctx, spec):
         raise NotImplementedError(
@@ -340,7 +364,8 @@ class CubitModule(Module):
         cubit = Cubit(self.journal, workdir=ctx.workdir,
                       ace3p_path=ctx.paths.get('ace3p', ''),
                       cubit_path=ctx.paths.get('cubit', ''),
-                      mpi_caller=ctx.paths.get('mpi', ''))
+                      mpi_caller=ctx.paths.get('mpi', ''),
+                      log_file=self.log_file(ctx))
         if ctx.inputs.cubit:
             cubit.set_value(ctx.inputs.cubit)
         cubit.run(mcflag=self.meshconvert)
@@ -411,7 +436,8 @@ class _SolverModule(Module):
                                results_dir=self.results_dir,
                                workdir=ctx.workdir,
                                ace3p_path=ctx.paths.get('ace3p', ''),
-                               mpi_caller=ctx.paths.get('mpi', ''))
+                               mpi_caller=ctx.paths.get('mpi', ''),
+                               log_file=self.log_file(ctx))
         solver.set_value(ctx.inputs.ace3p)
         solver.run()
         self._solver = solver
@@ -1176,7 +1202,8 @@ class AcdtoolModule(Module):
                           acdtool_cores=self.cores,
                           acdtool_opts=self.opts,
                           ace3p_path=ctx.paths.get('ace3p', ''),
-                          mpi_caller=ctx.paths.get('mpi', ''))
+                          mpi_caller=ctx.paths.get('mpi', ''),
+                          log_file=self.log_file(ctx))
         acdtool.run()
         self._acdtool = acdtool
         ctx.artifacts[RF_POST] = ctx.workdir
@@ -1544,7 +1571,8 @@ class Geant4Module(Module):
                                      workdir=ctx.workdir,
                                      mpi_caller=ctx.paths.get('mpi', ''),
                                      geant4_app_path=ctx.paths.get('geant4_app_path', ''),
-                                     geant4_app_exe=ctx.paths.get('geant4_app_exe', ''))
+                                     geant4_app_exe=ctx.paths.get('geant4_app_exe', ''),
+                                     log_file=self.log_file(ctx))
             # Threads default is owned by the input file; only override when set.
             if self.geant4_threads is not None:
                 self.geant4_obj.set_value({'nthreads': self.geant4_threads})

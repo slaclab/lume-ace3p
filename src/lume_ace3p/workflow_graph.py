@@ -58,6 +58,14 @@ class WorkflowValidationError(ValueError):
 _ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
 
+# How an evaluation's working directory is named. ``manual`` shares one directory
+# across every point; ``auto`` suffixes the swept scalar values; ``indexed``
+# suffixes the point's position in the sweep — see :meth:`Workflow.point_workdir`.
+WORKDIR_MODES = ('manual', 'auto', 'indexed')
+
+# The workdir name used when no ``workdir`` is configured at all.
+DEFAULT_WORKDIR_BASE = 'lume-ace3p_workflow_output'
+
 
 def _scalar_str(value):
     """Render a scalar for a workdir-name suffix (numpy scalars unwrap; a
@@ -224,6 +232,13 @@ class Workflow:
                 "Key: 'stage_mode' must be one of "
                 f"{sorted(STAGE_MODES)}; got {self.stage_mode!r}.")
         self.baseworkdir = self.workflow_params.get('workdir', os.getcwd())
+        # Tee each module's subprocess output into <workdir>/<module name>.log.
+        # On by default: a sweep point killed by the wall clock otherwise leaves
+        # nothing behind but whatever is still on the terminal. Output is teed
+        # rather than redirected, so the terminal keeps everything it had (see
+        # lume_ace3p.logs).
+        self.capture_output = bool(
+            self.workflow_params.get('capture_output', True))
         self.paths = resolve_paths(self.workflow_params.get('paths'))
         self.dry_run = self._resolve_dry_run()
         # Single-run conveniences: the workdir and RunContext of the *most
@@ -282,14 +297,37 @@ class Workflow:
             return True
         return False
 
-    # ---- workdir naming (auto-mode suffixes the swept scalars) -----------
+    # ---- workdir naming (auto suffixes the swept scalars, indexed the
+    #      point's position; see WORKDIR_MODES) ----------------------------
+
+    def point_workdir(self, point_index):
+        """The workdir for point ``point_index`` under ``workdir_mode: indexed``:
+        ``<workdir>_0``, ``<workdir>_1``, ….
+
+        This is a pure naming helper, and the *mode layer* is what calls it —
+        ``evaluate`` takes no point index, so ``Workflow`` stays unaware of sweep
+        ordering, the same decoupling it already has from the sweep loop itself.
+
+        ``auto`` names by swept scalar value, which is usually unique but can
+        collide (two axes rendering to the same string) and grows unboundedly long
+        as axes are added. An index is stable and collision-free, which is what
+        the resume machinery needs to identify a point on a later run."""
+        base = (self.baseworkdir if self.baseworkdir is not None
+                else DEFAULT_WORKDIR_BASE)
+        return f'{base}_{int(point_index)}'
 
     def _getworkdir(self, inputs, sweep_scalars=None):
         if self.workdir_mode == 'manual':
             return self.baseworkdir
+        if self.workdir_mode == 'indexed':
+            # No point index reaches Workflow by design (see point_workdir): the
+            # mode layer passes the full workdir= for each point, so getting here
+            # means a caller drove evaluate() directly — one point, index 0.
+            return self.point_workdir(0)
         if self.workdir_mode != 'auto':
-            raise ValueError("Key: 'workdir_mode' must be either 'manual' or "
-                             "'auto'.")
+            raise ValueError("Key: 'workdir_mode' must be one of "
+                             f"{list(WORKDIR_MODES)}; got "
+                             f"{self.workdir_mode!r}.")
         if sweep_scalars is None:
             parts = []
             for value in (*inputs.cubit.values(), *inputs.particles.values()):
@@ -301,7 +339,7 @@ class Workflow:
             parts = [_scalar_str(v) for v in sweep_scalars]
         suffix = ''.join('_' + p for p in parts)
         if self.baseworkdir is None:
-            return 'lume-ace3p_workflow_output' + suffix
+            return DEFAULT_WORKDIR_BASE + suffix
         return self.baseworkdir + suffix
 
     # ---- the single seam the modes call ----------------------------------
@@ -335,7 +373,8 @@ class Workflow:
         # results once two evaluations overlap.
         ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
                          paths=self.paths, stage_mode=self.stage_mode,
-                         modules=self._build_modules())
+                         modules=self._build_modules(),
+                         capture_output=self.capture_output)
         ctx.ensure_workdir()
 
         for module in ctx.modules:

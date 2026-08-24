@@ -1,6 +1,6 @@
 # Evaluation Isolation + Resume — Implementation Plan
 
-**Status: PHASE 1 COMPLETE** (2026-08-24); Phases 2–4 planned. Four phases.
+**Status: PHASES 1–2 COMPLETE** (2026-08-24); Phases 3–4 planned. Four phases.
 Phases 1–2 change no behavior and must move no baseline; Phases 3–4 add resume.
 
 This plan does **not** add concurrent evaluation. It removes the three things
@@ -318,7 +318,7 @@ Prose only; the docs still build warning-free under `-W`.
 
 ---
 
-# Phase 2 — Point identity and deterministic assembly
+# Phase 2 — Point identity and deterministic assembly — **COMPLETE** (2026-08-24)
 
 Still no behavior change for existing configs.
 
@@ -345,20 +345,66 @@ Still no behavior change for existing configs.
    docs, or teed rather than redirected. Do not let solver failure messages
    become invisible.
 
-### Verification (Phase 2 done when)
+### Verification (Phase 2 done when) — all met 2026-08-24
 
-- Baselines byte-identical again, including under `workdir_mode: auto`.
-- A sweep run with `indexed` produces the same table as the same sweep under
-  `auto`, modulo workdir names.
-- A deliberately-failing module leaves its error in `<workdir>/<name>.log` and
-  the failure still surfaces to the caller.
-- A test asserts row order is by point index, by building rows from a
-  deliberately shuffled results list.
+- [x] **Baselines byte-identical again, including under `workdir_mode: auto`.**
+  Full registry (16 entries) re-frozen and diffed against HEAD: the only
+  differing bytes are the same two Phase 1 recorded — the `xopt_runtime`
+  wall-clock column of `s3p_optimization/sim_output.txt` (dropped before
+  comparison by design; every result column matches exactly) and the pre-existing
+  `docs/` → `plans/` provenance-string drift in
+  `t3p_power_balance/manifest.json`. `auto` is covered by
+  `geant4_track3p_beta`, whose frozen digests are per-workdir
+  (`lume-ace3p_geant4_workdir_40.0`).
+- [x] A sweep run with `indexed` produces the same table as the same sweep under
+  `auto`, modulo workdir names — `assert_frame_equal` over a `track3p_source →
+  particles` β sweep, chosen because it yields real per-point-distinct numbers
+  with no binary, so the comparison is not a vacuous NaN-to-NaN match.
+- [x] A deliberately-failing module leaves its error in `<workdir>/<name>.log`
+  and the failure still surfaces to the caller. Driven by a fake `cubit` on a
+  `paths:` override — Cubit is the one wrapper whose command line carries no
+  MPI-caller prefix, so it is the only one a real subprocess can be run through
+  with no ACE3P environment. "Surfaces" is precise about what the code does:
+  `run_logged` returns the child's exit status, and the message is on the
+  parent's **stderr** as well as in the log; nothing above it raises on a nonzero
+  exit, which is the wrappers' long-standing behavior (an ACE3P failure surfaces
+  when the parser finds no results).
+- [x] A test asserts row order is by point index, by building rows from a
+  deliberately shuffled results list — for both the wide and the long-format
+  (multi-row-per-point) shape.
 
-### Deliverables
+Two deviations from the plan as written, both in the direction it flagged:
 
-`workflow_graph.py`, `modes.py`, the four wrapper modules, `docs/yaml_reference.md`
-(`workdir_mode: indexed`, `capture_output`), tests.
+1. **The subprocess output is teed, not redirected** — the alternative the plan
+   offered — so `capture_output: true` takes nothing away from the terminal.
+   stdout and stderr stay on their own streams (`2>errors` keeps working) and
+   both interleave into the one log. Streaming, not buffered-until-exit: a
+   multi-hour solve going silent would be the same regression as redirecting it.
+2. **`RunContext.capture_output` defaults to `False`** while the
+   `workflow_parameters` key defaults to `True`. A hand-built context (every
+   module unit test, any direct driver) therefore keeps the exact pre-Phase-2
+   inherited-stream behavior, and it is `Workflow.evaluate` that opts in. Without
+   this the six `monkeypatch.setattr('subprocess.run', ...)` sites in
+   `test_modules.py` / `test_acdtool_fixtures.py` would silently stop
+   intercepting, since the tee path goes through `Popen`.
+
+### Deliverables — as built
+
+`logs.py` (new: `run_logged` / `log_path`), `workflow_graph.py`
+(`point_workdir`, `WORKDIR_MODES`, `capture_output`), `modes.py` (`_PointResult`
+/ `_assemble` / `_evaluate_point`; `_rows_for_point` now takes the resolved index
+rather than a `ctx`, which is also what keeps the per-point contexts from being
+held for the length of the sweep), `modules.py`
+(`RunContext.capture_output`, `Module.log_file`), the four wrapper modules
+(`log_file=` keyword; the now-dead `subprocess` imports dropped from three of
+them), `docs/yaml_reference.md` (`workdir_mode` subsection, `capture_output`
+subsection, `point_workdir` on the Workflow API list),
+`tests/test_evaluation_isolation.py` (sections 5–7), and the one
+`_rows_for_point` call site in `tests/test_workflow_graph.py`.
+
+No baseline change, and the `acdtool postprocess rf` template probe in
+`Acdtool._generate_sample_input` is deliberately left on `DEVNULL`: it is a
+best-effort query whose output is silenced on purpose, not a workflow step.
 
 ---
 

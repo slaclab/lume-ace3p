@@ -1,4 +1,4 @@
-"""Per-evaluation isolation of the ``Workflow`` seam (Phase 1 of
+"""Per-evaluation isolation of the ``Workflow`` seam (Phases 1-2 of
 ``plans/evaluation_isolation_resume_plan.md``).
 
 Phase 1 changes no behavior; it moves per-evaluation state off the shared
@@ -22,6 +22,19 @@ none of which held before it, and none of which any other test covers:
 4. **The mode layer never writes workflow state.** ``collect_training_data`` used
    to assign ``workflow.baseworkdir`` inside its loop; it now passes ``workdir=``
    to ``evaluate`` instead.
+
+Phase 2 adds the two things resume needs on top of that — a **stable point
+identity** and **assembly decoupled from execution order** — plus per-evaluation
+subprocess logs, the one intentional user-visible change of Phases 1-2:
+
+5. **``workdir_mode: indexed``** names points ``<base>_0``, ``<base>_1``, … so a
+   point has a collision-free identity across runs, and produces the same table
+   as the same sweep under ``auto``.
+6. **Rows go in point-index order**, not completion order, so the frame is
+   identical whether points ran in order, out of order, or were resumed.
+7. **Each module's subprocess output is teed** to ``<workdir>/<module>.log``: a
+   point killed by the wall clock leaves its solver's own message on disk, and
+   the terminal keeps everything it had — stderr included, on stderr.
 """
 
 import ast
@@ -29,6 +42,7 @@ import os
 import warnings
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import baseline_utils as bu
@@ -38,7 +52,8 @@ import baseline_utils as bu
 from test_modules import _make_s3p_solver
 from lume_ace3p import modes
 from lume_ace3p.inputs import WorkflowInputs
-from lume_ace3p.modules import MESH
+from lume_ace3p.logs import run_logged
+from lume_ace3p.modules import AcdtoolModule, MESH, RunContext
 from lume_ace3p.workflow_graph import Workflow
 
 
@@ -46,16 +61,39 @@ def _module_of(modules, module_type):
     return next(m for m in modules if m.type == module_type)
 
 
-def _s3p_workflow(tmp_path, cubit_inputs):
+def _s3p_workflow(tmp_path, cubit_inputs, workdir_mode='auto'):
     """A dry-run ``cubit -> s3p`` workflow with auto-named workdirs under
     ``tmp_path``. ``cubit_inputs`` may hold arrays (a sweep) or scalars."""
     return Workflow(
         [{'module': 'cubit', 'journal': 'x.jou'},
          {'module': 's3p', 'input': 'x.s3p'}],
         workflow_params={'workdir': str(tmp_path / 'wd'),
-                         'workdir_mode': 'auto', 'dry_run': True},
+                         'workdir_mode': workdir_mode, 'dry_run': True},
         inputs=WorkflowInputs(cubit=dict(cubit_inputs)),
         output_spec={'refl': {'module': 's3p', 'quantity': 'S(0,0)'}})
+
+
+def _particles_workflow(root, workdir_mode, betas):
+    """A ``track3p_source -> particles`` sweep over β, rooted at ``root``.
+
+    Chosen over a solver chain wherever a test needs the *table* to carry real
+    numbers: the field-emission weighting is pure Python, so it produces genuine
+    per-point values with no ACE3P binary, while a dry-run solver would make
+    every point NaN and any table comparison vacuous."""
+    source = os.path.join(bu.EXAMPLES_DIR, 'assets',
+                          'sample_track3p_particles.txt')
+    return Workflow(
+        [{'module': 'track3p_source', 'file': source},
+         {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+          'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+          'beta_input': 'beta', 'output_format': 'geant4',
+          'output': 'particles.data'}],
+        workflow_params={'workdir': str(root / 'wd'),
+                         'workdir_mode': workdir_mode, 'dry_run': True},
+        inputs=WorkflowInputs(particles={'beta': np.array(betas)}),
+        output_spec={'weight': {'module': 'particles',
+                                'quantity': 'total_weight'},
+                     'count': {'module': 'particles', 'quantity': 'count'}})
 
 
 # --------------------------------------------------------------------------- #
@@ -251,6 +289,242 @@ def test_mode_layer_never_assigns_workflow_state():
         + '; '.join(offenders)
         + ". Pass workdir= to Workflow.evaluate and read the returned ctx "
           "instead.")
+
+
+# --------------------------------------------------------------------------- #
+# 5. workdir_mode: indexed — a stable, collision-free point identity
+# --------------------------------------------------------------------------- #
+
+
+def test_indexed_sweep_produces_the_same_table_as_auto(tmp_path):
+    """The Phase-2 bar for ``indexed``: it changes *names*, not results.
+
+    Both sweeps run the same three β points through the same chain; only the
+    directory naming differs. The β chain is used rather than a dry-run solver so
+    the compared columns hold real, per-point-distinct numbers."""
+    betas = [40.0, 50.0, 60.0]
+    auto_root, indexed_root = tmp_path / 'auto', tmp_path / 'indexed'
+    auto = modes.parameter_sweep(_particles_workflow(auto_root, 'auto', betas))
+    indexed = modes.parameter_sweep(
+        _particles_workflow(indexed_root, 'indexed', betas))
+
+    pd.testing.assert_frame_equal(auto, indexed)
+    # The table is worth comparing only because it is not all NaN.
+    assert np.all(np.isfinite(auto['weight'].to_numpy()))
+    assert auto['weight'].nunique() == 3
+
+    # ...and the naming is the whole difference: 'auto' by swept value, 'indexed'
+    # by position — stable, collision-free, and bounded in length however many
+    # axes the sweep grows.
+    assert sorted(os.listdir(auto_root)) == ['wd_40.0', 'wd_50.0', 'wd_60.0']
+    assert sorted(os.listdir(indexed_root)) == ['wd_0', 'wd_1', 'wd_2']
+
+
+def test_indexed_mode_names_a_bare_evaluate_as_point_zero(tmp_path):
+    """``evaluate`` takes no point index — the mode layer owns sweep ordering and
+    passes the full ``workdir=``. A caller driving ``evaluate`` directly under
+    ``indexed`` is therefore one point, and it is point 0."""
+    wf = _s3p_workflow(tmp_path, {'cornercut': 12.0, 'rcorner2': 4.0},
+                       workdir_mode='indexed')
+    _out, ctx = wf.evaluate([12.0, 4.0])
+    assert ctx.workdir == str(tmp_path / 'wd') + '_0'
+    assert wf.point_workdir(7) == str(tmp_path / 'wd') + '_7'
+
+
+def test_an_unknown_workdir_mode_still_names_the_valid_ones(tmp_path):
+    wf = _s3p_workflow(tmp_path, {'cornercut': 12.0}, workdir_mode='index')
+    with pytest.raises(ValueError, match="'manual', 'auto', 'indexed'"):
+        wf.evaluate([12.0])
+
+
+# --------------------------------------------------------------------------- #
+# 6. Row assembly is decoupled from execution order
+# --------------------------------------------------------------------------- #
+
+
+class _OutputsOnly:
+    """The only part of the ``Workflow`` surface :func:`modes._assemble` reads."""
+
+    output_spec = {'y': 'quantity'}
+
+
+def test_rows_are_assembled_in_point_index_order():
+    """Assembly sorts by point index rather than trusting list order.
+
+    Fed a deliberately shuffled results list — which is what a resumed or
+    concurrent sweep would hand it — the frame still comes out in sweep order.
+    Without this, enabling either later would make every baseline depend on
+    completion order, silently."""
+    points = [modes._PointResult(i, [float(i)], {'y': 10.0 + i}, None, None)
+              for i in range(5)]
+    shuffled = [points[3], points[0], points[4], points[1], points[2]]
+
+    df = modes._assemble(_OutputsOnly(), ['x'], shuffled)
+    assert list(df['x']) == [0.0, 1.0, 2.0, 3.0, 4.0]
+    assert list(df['y']) == [10.0, 11.0, 12.0, 13.0, 14.0]
+
+
+def test_long_format_rows_are_assembled_in_point_index_order():
+    """The same property for the long-format (S3P/T3P) shape, where each point
+    contributes several rows: the *blocks* must stay in point order and each
+    block's index values with their own point."""
+    points = [
+        modes._PointResult(0, [1.0], {'y': np.array([10.0, 11.0])},
+                           ('Frequency', np.array([1e9, 2e9])), None),
+        modes._PointResult(1, [2.0], {'y': np.array([20.0, 21.0])},
+                           ('Frequency', np.array([1e9, 2e9])), None),
+    ]
+    df = modes._assemble(_OutputsOnly(), ['x'], list(reversed(points)))
+    assert list(df['x']) == [1.0, 1.0, 2.0, 2.0]
+    assert list(df['Frequency']) == [1e9, 2e9, 1e9, 2e9]
+    assert list(df['y']) == [10.0, 11.0, 20.0, 21.0]
+
+
+# --------------------------------------------------------------------------- #
+# 7. Per-evaluation subprocess logs
+# --------------------------------------------------------------------------- #
+
+
+# A stand-in for Cubit: writes to both streams and fails. Cubit is the one
+# wrapper whose command line carries no MPI-caller prefix, so a fake binary on a
+# ``paths: {cubit: ...}`` override is enough to exercise a *real* subprocess
+# through the module layer without an ACE3P environment.
+_FAKE_CUBIT = """#!/bin/sh
+echo "meshing $*"
+echo "ERROR: could not open the display" >&2
+exit 1
+"""
+
+_JOURNAL = '## journal\ncreate brick x 1\nexport genesis "mesh.gen" overwrite\n'
+
+posix_only = pytest.mark.skipif(os.name != 'posix',
+                                reason='the fake solver is a shell script')
+
+
+def _cubit_workflow(tmp_path, **params):
+    """A real (non-dry-run) one-step cubit workflow pointed at the fake binary.
+
+    ``ace3p`` is overridden alongside ``cubit`` only to keep path resolution from
+    falling through to its ``$HOME``-wide autodetect glob."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake = bin_dir / 'cubit'
+    fake.write_text(_FAKE_CUBIT)
+    fake.chmod(0o755)
+    (tmp_path / 'cavity.jou').write_text(_JOURNAL)
+    return Workflow(
+        [{'module': 'cubit', 'journal': 'cavity.jou', 'meshconvert': False}],
+        workflow_params={'workdir': str(tmp_path / 'wd'),
+                         'workdir_mode': 'manual', 'dry_run': False,
+                         'paths': {'cubit': str(bin_dir) + os.sep,
+                                   'ace3p': str(bin_dir) + os.sep, 'mpi': ''},
+                         **params},
+        inputs=WorkflowInputs(), output_spec={})
+
+
+@posix_only
+def test_a_failing_step_leaves_its_error_in_the_module_log(tmp_path, monkeypatch,
+                                                           capsys):
+    """A step that fails leaves the tool's own message in
+    ``<workdir>/<module>.log`` **and** on the parent's streams.
+
+    Both halves matter. The log is what a wall-clock-killed sweep point leaves
+    behind; the terminal half is why this is a tee rather than the redirect the
+    plan first considered — a redirected solver failure would become invisible
+    exactly when it matters most."""
+    monkeypatch.chdir(tmp_path)
+    wf = _cubit_workflow(tmp_path)
+    _out, ctx = wf.evaluate()
+
+    with open(os.path.join(ctx.workdir, 'cubit.log')) as f:
+        logged = f.read()
+    assert 'ERROR: could not open the display' in logged
+    assert 'meshing -nographics -nojournal -noecho cavity.jou' in logged
+    # The command line that produced it, so a log with several invocations in it
+    # says which is which.
+    assert '$ ' in logged and 'cubit -nographics' in logged
+
+    captured = capsys.readouterr()
+    assert 'ERROR: could not open the display' in captured.err
+    assert 'meshing -nographics' in captured.out
+
+
+@posix_only
+def test_capture_output_false_writes_no_log(tmp_path, monkeypatch, capfd):
+    """The documented opt-out is a real fallback, not an approximation: no log is
+    written and the child's own file descriptors are inherited, which is exactly
+    what happened before this phase. ``capfd`` (not ``capsys``) is what
+    distinguishes the two — it captures the child's fds rather than the parent's
+    Python-level streams."""
+    monkeypatch.chdir(tmp_path)
+    wf = _cubit_workflow(tmp_path, capture_output=False)
+    _out, ctx = wf.evaluate()
+
+    assert not os.path.exists(os.path.join(ctx.workdir, 'cubit.log'))
+    captured = capfd.readouterr()
+    assert 'ERROR: could not open the display' in captured.err
+
+
+def test_each_module_instance_gets_its_own_log(tmp_path):
+    """Logs are keyed on the module's *instance name*, so a chain with two
+    acdtool steps does not merge them into one file — while one module's several
+    invocations (cubit's mesher, then meshconvert) share one, since they are one
+    pipeline step."""
+    ctx = RunContext(str(tmp_path), capture_output=True)
+    rf = AcdtoolModule({'input': 'x.rfpost'}, name='rf')
+    transwake = AcdtoolModule({'command': 'postprocess transwake',
+                               'args': [0.0, 0.0, 0.0, 0.0125]},
+                              name='transwake')
+    assert rf.log_file(ctx) == os.path.join(str(tmp_path), 'rf.log')
+    assert transwake.log_file(ctx) == os.path.join(str(tmp_path),
+                                                  'transwake.log')
+
+    # A hand-built context captures nothing, so every module unit test and any
+    # direct driver keeps the pre-Phase-2 inherited-stream behavior.
+    bare = RunContext(str(tmp_path))
+    assert bare.capture_output is False
+    assert rf.log_file(bare) is None
+
+
+@posix_only
+def test_run_logged_reports_the_exit_status(tmp_path):
+    """The seam that *can* report a failure does: ``run_logged`` returns the
+    child's status. Nothing above it raises on a nonzero exit — that is the
+    wrappers' long-standing behavior, and an ACE3P failure surfaces when the
+    parser finds no results — but the status is not swallowed here."""
+    log = tmp_path / 'step.log'
+    result = run_logged('echo out; echo err 1>&2; exit 3', cwd=str(tmp_path),
+                        log_file=str(log))
+    assert result.returncode == 3
+    logged = log.read_text()
+    assert 'out' in logged and 'err' in logged
+
+
+@posix_only
+def test_run_logged_keeps_stderr_on_stderr(tmp_path, capsys):
+    """Teeing must not merge the streams: a caller redirecting ``2>errors``
+    keeps working. Both still land in the one log, which is what makes the log
+    the readable chronological record."""
+    log = tmp_path / 'step.log'
+    run_logged('echo to-stdout; echo to-stderr 1>&2', cwd=str(tmp_path),
+               log_file=str(log))
+    captured = capsys.readouterr()
+    assert 'to-stdout' in captured.out and 'to-stdout' not in captured.err
+    assert 'to-stderr' in captured.err and 'to-stderr' not in captured.out
+    logged = log.read_text()
+    assert 'to-stdout' in logged and 'to-stderr' in logged
+
+
+@posix_only
+def test_run_logged_appends_each_invocation(tmp_path):
+    """Appending, not truncating: one module may launch several subprocesses, and
+    under ``workdir_mode: manual`` every sweep point shares one workdir — so
+    truncating would keep only the last."""
+    log = tmp_path / 'cubit.log'
+    run_logged('echo first', cwd=str(tmp_path), log_file=str(log))
+    run_logged('echo second', cwd=str(tmp_path), log_file=str(log))
+    assert log.read_text().splitlines() == [
+        '$ echo first', 'first', '$ echo second', 'second']
 
 
 if __name__ == '__main__':

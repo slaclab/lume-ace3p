@@ -10,11 +10,29 @@ coarser grain than the entries above them.
 ## [Unreleased]
 
 Groundwork for sweep **resume** (a sweep point cut off by the wall clock
-currently restarts from scratch). This phase adds no feature and moves no
-result — it removes the per-evaluation state that lived on shared objects, so
-resume and, later, concurrent evaluation have somewhere to stand. The design and
-its verification are in
+currently restarts from scratch). These phases add no feature and move no
+result — they remove the per-evaluation state that lived on shared objects and
+give a sweep point a stable identity, so resume and, later, concurrent
+evaluation have somewhere to stand. The design and its verification are in
 [`plans/evaluation_isolation_resume_plan.md`](plans/evaluation_isolation_resume_plan.md).
+
+### Added
+
+- **`workflow_parameters: {workdir_mode: indexed}`** names each evaluation's
+  folder `<workdir>_0`, `<workdir>_1`, … by its position in the sweep, alongside
+  the existing `manual` and `auto`. `auto` names by swept scalar value, which is
+  usually unique but can collide and grows with every axis added; an index is
+  bounded and collision-free, which is what identifying a point across runs
+  needs. The two produce identical result tables — only the names differ.
+- **`workflow_parameters: {capture_output: true}`** (the new default) tees each
+  module's Cubit / solver / `acdtool` / Geant4 output to
+  `<workdir>/<module name>.log`. Teed, not redirected: everything still appears
+  on the terminal, `stderr` stays on `stderr`, and it streams line by line rather
+  than appearing when the process exits — so a solver failure cannot become
+  invisible and a long solve does not go silent. Without this, one sweep point's
+  output was interleaved with every other point's on one terminal and gone as
+  soon as it scrolled, which is exactly the state a wall-clock-killed run leaves
+  behind. Set it to `false` for the previous inherited-stream behavior.
 
 ### Changed
 
@@ -35,6 +53,12 @@ its verification are in
   instead of re-derived after the loop, and `collect_training_data` drives each
   sample through `evaluate(workdir=...)` instead of assigning
   `workflow.baseworkdir` inside its loop.
+- **`parameter_sweep` assembles rows by point index rather than in completion
+  order.** Each point's contribution is collected as it finishes and the frame is
+  built from that list, sorted, once the loop is done. Today the loop is serial
+  and in order, so nothing changes; it is what keeps the frame identical when a
+  later phase resumes or parallelizes the loop, instead of quietly making every
+  result table depend on which point finished first.
 
 ## [0.4.0] — 2026-08-20
 
