@@ -288,6 +288,25 @@ def config_hash(entries, inputs, output_spec):
     return 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
 
 
+def campaign_hash(entries, inputs, output_spec):
+    """``'sha256:<hex>'`` over a *campaign's* resolved configuration.
+
+    Identical machinery to :func:`config_hash` — a different name because it answers
+    a different question, and mixing the two would let a campaign hash be compared
+    against a point hash. A sweep point is identified by its own input values, so
+    :func:`config_hash` includes them. An optimization has no fixed point: the
+    generator chooses each one, so what must not change mid-campaign is everything
+    *else* — the module chain, the extraction spec, and the input leaves the
+    optimizer is **not** driving.
+
+    The caller is what makes that last distinction, by materializing the optimizer's
+    own variables to a fixed value before hashing (see
+    :meth:`~lume_ace3p.workflow_graph.Workflow.campaign_config_hash`). So editing a
+    variable's nominal starting value does not invalidate a campaign, while editing a
+    fixed input that the physics depends on does."""
+    return config_hash(entries, inputs, output_spec)
+
+
 def _canonical(value):
     """A JSON-serializable, comparison-stable rendering of a config value.
 

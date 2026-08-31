@@ -7,6 +7,10 @@
 
 workflow_parameters :
     'workdir' : 'lume-ace3p_xopt_workdir'
+    # One directory per evaluation, named by iteration: _0, _1, _2, …
+    # Without it every Xopt evaluation would overwrite the previous one's
+    # mesh, S3P results and logs in one shared directory.
+    'workdir_mode' : 'auto'
 
 workflow :
   - module : cubit

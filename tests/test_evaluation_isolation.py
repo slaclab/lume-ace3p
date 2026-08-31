@@ -331,10 +331,13 @@ def test_indexed_mode_names_a_bare_evaluate_as_point_zero(tmp_path):
     assert wf.point_workdir(7) == str(tmp_path / 'wd') + '_7'
 
 
-def test_an_unknown_workdir_mode_still_names_the_valid_ones(tmp_path):
-    wf = _s3p_workflow(tmp_path, {'cornercut': 12.0}, workdir_mode='index')
+def test_an_unknown_workdir_mode_is_rejected_at_construction(tmp_path):
+    """Naming the valid values, and failing *before* anything is built or any
+    directory created — the same point `stage_mode` has always failed at. It used to
+    surface only when `_getworkdir` happened to reach its `auto` branch, so a typo
+    ('index', 'Auto') constructed fine and died mid-evaluation."""
     with pytest.raises(ValueError, match="'manual', 'auto', 'indexed'"):
-        wf.evaluate([12.0])
+        _s3p_workflow(tmp_path, {'cornercut': 12.0}, workdir_mode='index')
 
 
 # --------------------------------------------------------------------------- #

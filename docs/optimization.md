@@ -39,14 +39,26 @@ file must include:
   - Multifidelity Bayesian — `MultiFidelityGenerator`
 - `num_random` (optional): number of random exploratory steps before
   optimization begins.
-- `num_step` (optional): fixed number of optimization steps.
-- `max_iterations` (optional): maximum number of steps after which
-  optimization must end, regardless of other stopping criteria.
-- `cost_budget` (optional): total time, in seconds, allowed for optimization
-  (used as a stopping criterion).
-- `alotted_time` (optional): total wall-clock time, expressed as
-  `HH:MM:SS`, allowed for the problem (used to determine a stopping
-  criterion).
+
+**Exactly one termination criterion is required.** These are the keys that end a
+run, and a config with none of them does nothing and says so:
+
+- `num_step`: fixed number of optimization steps.
+- `cost_budget`: total time, in seconds, allowed for optimization.
+- `alotted_time`: the same budget expressed as `HH:MM:SS`. `cost_budget` and
+  `alotted_time` select the multi-fidelity cost-limited loop.
+
+Two further keys **refine** a criterion and do nothing on their own:
+
+- `max_iterations` (optional): caps the total steps a `num_step` run may take. It
+  is read only alongside `num_step` and is **ignored without it**.
+- `tolerance` (optional): a stopping test — the run ends early once every objective
+  is at or below it — applied inside whichever criterion's loop is running. It is
+  not a criterion itself.
+
+Every one of these counts the **campaign**, not this process, so they mean the same
+thing to a run continued with `mode.resume` (see
+[](#resuming-an-interrupted-optimization)).
 - `save_model` (optional): for algorithms that train a GP (e.g.
   multifidelity Bayesian), `True` writes a `gp_parameters.txt` file
   containing the trained GP parameters so that it can be re-loaded later.
@@ -73,6 +85,56 @@ The file is the Xopt data table (all parameter tuples reached and the
 corresponding output values), overwritten each step so it always holds the
 complete trajectory.
 
+### Resuming an interrupted optimization
+
+An optimization killed by a batch wall clock at evaluation 190 of 200 used to throw
+away all 190 — worse than losing a sweep, because in an optimization the evaluations
+*are* the expensive part. Add `resume: True` to the `mode:` block and it continues:
+
+```yaml
+mode :
+    type : scalar_optimize
+    resume : True          # continue from xopt_state.yml
+```
+
+`xopt_state.yml` is written beside `sim_output.txt` after every evaluation, whether
+or not `resume` is set, and holds the optimizer's whole state — the trajectory *and*
+the generator's own internal state, so a Nelder–Mead simplex carries on rather than
+restarting on top of old data. `run-lume-ace3p --status <config.yaml>` reports what
+it holds without running anything.
+
+:::{important}
+A resumed optimization **does not reproduce the trajectory** an uninterrupted run
+would have taken. The promise is that **no evaluation is repeated and the search
+continues from the same data** — not that two `sim_output.txt` files will diff clean.
+This is weaker than the sweep modes' promise of an identical table, and deliberately
+so: an equally informed generator is not the same generator a straight-through run
+would have had.
+:::
+
+Iteration budgets (`num_random`, `num_step`, `max_iterations`, `cost_budget`) are
+totals for the campaign, so a resumed run continues to the same finish line and
+resuming a finished optimization does nothing. See
+[](#xopt-resume) for the refusal cases — a state file written for a
+different generator, objective direction or variable bounds is reported and
+discarded rather than adopted.
+
+### One directory per evaluation
+
+Set `workflow_parameters: {workdir_mode: 'auto'}` (as the shipped examples do) and
+each evaluation runs in its own directory, numbered by iteration in evaluation
+order: `<workdir>_0`, `<workdir>_1`, … matching the rows of `sim_output.txt`. So
+the mesh, solver input, results and log of evaluation 7 are the ones in
+`<workdir>_7`, and the best row of the trajectory can be traced back to the files
+that produced it.
+
+Without it — `workdir_mode` defaults to `'manual'` — every evaluation runs in the
+one `workdir`, overwriting the previous evaluation's mesh, input files, results,
+logs and run manifest; what is left on disk at the end describes only the last
+evaluation. The run prints a warning when that is about to happen. See
+[](#workdir-mode) for the full table, including why `'auto'`
+numbers by iteration here instead of naming by input value.
+
 ### S3P Nelder–Mead example
 
 This example (based on the 90-degree bend from the ACE3P tutorials, shipped as
@@ -83,6 +145,7 @@ input parameters of waveguide width and chamfer length.
 ```yaml
 workflow_parameters :
     'workdir' : 'lume-ace3p_xopt_workdir'
+    'workdir_mode' : 'auto'      # one directory per evaluation: _0, _1, _2, …
 
 workflow :
   - module : cubit
@@ -153,6 +216,7 @@ waveguide width and chamfer length:
 ```yaml
 workflow_parameters :
     'workdir' : 'lume-ace3p_xopt_workdir'
+    'workdir_mode' : 'auto'      # one directory per evaluation: _0, _1, _2, …
 
 workflow :
   - module : cubit

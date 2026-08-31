@@ -39,6 +39,7 @@ import tempfile
 import numpy as np
 
 from lume_ace3p.state import STATE_FILE
+from lume_ace3p.xopt_state import STATE_FILE as XOPT_STATE_FILE
 
 
 # --------------------------------------------------------------------------- #
@@ -677,7 +678,12 @@ def stage_dir_for(name, meta):
 # stable run-to-run — and it is a record of *how* a run went, not of what it
 # computed, so there is nothing in it a numeric baseline wants. A future entry
 # whose pattern widens to a directory glob must not silently start comparing it.
-BASELINE_EXCLUDED = frozenset({STATE_FILE})
+#
+# The Xopt resume state (xopt_state.yml) is excluded for the same reason: it holds
+# measured per-evaluation runtimes and the import path of the evaluator closure,
+# neither of which is reproducible, and what it computed is already compared as
+# sim_output.txt.
+BASELINE_EXCLUDED = frozenset({STATE_FILE, XOPT_STATE_FILE})
 
 
 def resolve_one(workdir, pattern):

@@ -802,13 +802,15 @@ def test_status_without_a_config_is_a_usage_error(monkeypatch, capsys):
     assert '--status needs a config file' in capsys.readouterr().out
 
 
-def test_status_covers_the_table_modes_only(tmp_path):
-    """An Xopt mode chooses its points as it goes, so there is no fixed set of them
-    to have finished part of — said plainly rather than reported as zero points."""
-    data = {'workflow': [{'module': 'cubit', 'journal': _JOURNAL_NAME}],
-            'mode': {'type': 'scalar_optimize'},
-            'workflow_parameters': {'dry_run': True}}
-    with pytest.raises(ValueError, match='--status covers the table modes'):
+def test_status_covers_only_the_modes_that_record_progress(tmp_path):
+    """A store-consuming mode runs no points, so there is nothing to report — said
+    plainly rather than reported as zero points.
+
+    An Xopt mode *is* covered, by the other branch of ``_report_status``: it has no
+    fixed set of points either, but it does record a campaign
+    (``xopt_state.yml``) — see ``tests/test_xopt_resume.py``."""
+    data = {'mode': {'type': 'invert_optimize'}}
+    with pytest.raises(ValueError, match='--status covers the resumable modes'):
         run_lume_ace3p._report_status(data)
 
 

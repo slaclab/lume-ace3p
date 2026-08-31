@@ -74,11 +74,31 @@ Additional `mode:` keys:
 | `output_file`       | `single`, `parameter_sweep`         | *(none — not written)* | Path for the tab-delimited result table (written via the shared `DataFrame.to_csv` writer). For the Xopt modes it names the run log (default `sim_output.txt`). |
 | `sweep_output_file` | `gp_parameter_sweep`                | `'sweep_output.txt'` | Path for the GP posterior-mean sweep table. |
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it — see [](#resume) below. |
+| `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml` instead of starting over — see [](#xopt-resume) below. A different mechanism from the table modes', with a weaker promise. |
 
 The modes are workflow-agnostic: because the objective is pulled from
 `output_parameters` and the workflow is driven only through its `evaluate` seam,
 *any* chain (S3P, Geant4, a multi-step pipeline) can be swept or optimized by the
 same code.
+
+:::{note}
+**A key nothing reads is reported.** Every block with a fixed key set — the
+top-level blocks, `mode:`, `workflow_parameters`, `vocs_parameters`,
+`xopt_parameters` — is checked against the keys the code actually consumes, and an
+unrecognized one prints a warning naming it, suggesting the near miss, and listing
+what is recognized there:
+
+```console
+Warning: 'xopt_parameters' has key that nothing reads: 'num_steps' (did you mean
+'num_step'?). Ignored. Recognized here: alotted_time, bin_edges, cost_budget, …
+```
+
+It is a **warning, not an error** — the run continues — and the sets are per block
+and per mode, so a `resume:` in a `train_surrogate` block (which does not read it) is
+reported while the same key in a `parameter_sweep` block is not. `input_parameters`
+and `output_parameters` are never checked: their keys are your own variable and
+output names.
+:::
 
 ## `workflow_parameters`
 
@@ -101,9 +121,9 @@ gone — they now sit on the `workflow:` module entries and the `mode:` block.
 
 | Value | Folder per evaluation | Use when |
 |---|---|---|
-| `'manual'` | `workdir` itself, shared by every point. | A single run, or a sweep whose points may overwrite each other's files. Cannot be resumed — one shared directory cannot carry per-point state (see [](#resume)). |
-| `'auto'`   | `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. | You want to read a point's inputs off its directory name. |
-| `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep. | You want a stable, collision-free point identity — and it is what the resume machinery keys on. |
+| `'manual'` | `workdir` itself, shared by every evaluation. | A single run, or a sweep whose points may overwrite each other's files. Cannot be resumed — one shared directory cannot carry per-point state (see [](#resume)). |
+| `'auto'`   | **Sweep:** `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. **Optimization:** `<workdir>_0`, `<workdir>_1`, … by iteration — see below. | You want to read a point's inputs off its directory name. |
+| `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep (or its iteration in an optimization). | You want a stable, collision-free point identity — and it is what the resume machinery keys on. |
 
 `'auto'` names are usually unique but not guaranteed: two axes can render to the
 same string, and the name grows with every axis added. `'indexed'` is bounded and
@@ -113,6 +133,33 @@ index is the sweep's own row order (the tensor product of the swept axes, first
 axis slowest), which is also the order rows appear in the output table.
 
 A `single` run under `'indexed'` is point 0, so it writes `<workdir>_0`.
+
+If `workdir` is not set, the per-evaluation directories are named from
+`lume-ace3p_workflow_output` **inside** the working directory
+(`lume-ace3p_workflow_output_0`, …). Only `'manual'` runs in the working directory
+itself.
+
+#### In an optimization, `'auto'` numbers by iteration
+
+The Xopt modes (`scalar_optimize`, `gp_parameter_sweep`) have no sweep grid: the
+generator proposes each point as the run proceeds. So under `'auto'` or
+`'indexed'` each *evaluation* gets its own directory, numbered by iteration in
+evaluation order — `<workdir>_0` holds the first evaluation, `<workdir>_1` the
+second, and so on, matching the row order of the `sim_output.txt` trajectory.
+
+`'auto'` numbers rather than names by value here for two reasons. An optimizer's
+proposals are full-precision floats, so value-naming produces directories like
+`lume-ace3p_workdir_14.724999999999998_1.5750000000000002` that nobody looks a run
+up by; and an index cannot collide, so two evaluations at the *same* proposed
+point — which a Nelder–Mead simplex does produce — still get two directories.
+
+:::{warning}
+Leaving `workdir_mode` at its `'manual'` default in an optimization means every
+evaluation runs in one directory, each overwriting the previous one's mesh, input
+files, solver results, logs and run manifest; only the last survives. The run
+prints a warning saying so. Set `workdir_mode: 'auto'` unless you specifically
+want one shared directory.
+:::
 
 (stage-mode)=
 ### `stage_mode` — storage-efficient staging
@@ -253,8 +300,10 @@ Requirements and limits:
 - **It is opt-in on purpose.** A sweep that silently adopted a stale workdir from a
   different study would be worse than no resume at all. `config_hash` is the other
   half of that guard.
-- **The Xopt modes take no `resume`** — their points are chosen by the generator as
-  the run proceeds, so there is no fixed set of points to have finished part of.
+- **The Xopt modes resume by a different mechanism.** Their points are chosen by the
+  generator as the run proceeds, so there is no fixed set of points to have finished
+  part of and no per-point manifest to key on. `resume: true` there restores the
+  optimizer's state instead — see [](#xopt-resume).
 - **`collect_training_data`** skips a sample whose `field.npz` is already stored
   whether or not `resume` is set (that check predates the manifest and every store
   collected so far records completion that way); `resume: true` additionally lets a
@@ -286,8 +335,104 @@ run against a campaign that is still going.
 
 The verdicts are `complete`, `partial`, `failed`, `stale` (a manifest for a
 different resolved configuration — that point will re-run from the start) and
-`absent`. `--status` covers the table modes (`single`, `parameter_sweep`), which
-are the modes `resume` applies to.
+`absent`.
+
+`--status` covers every mode `resume` applies to, and reports the two kinds
+differently because progress means two different things. The table above is the
+table modes (`single`, `parameter_sweep`). For an optimization there is no fixed set
+of points to tabulate, so it reports what is banked:
+
+```console
+$ run-lume-ace3p --status s3p_optimization.yaml
+ - scalar_optimize: 37 evaluation(s) recorded in 'xopt_state.yml'
+ - best 'reflection' = 0.00042 at cornercut=14.0312, rcorner1=1.18745
+ - a resumed run continues from this data and repeats no evaluation; it does not
+   reproduce the trajectory an uninterrupted run would have taken.
+```
+
+The store-consuming modes (`train_surrogate`, `invert_optimize`,
+`invert_bayesian`) run no points at all, so `--status` declines them.
+
+(xopt-resume)=
+### `resume` in an optimization — continuing an interrupted search
+
+An optimization killed at evaluation 190 of 200 used to throw away all 190, which is
+worse than the sweep case: in an optimization the *evaluations* are the expensive
+part. `resume: true` in an Xopt `mode:` block continues from a state file the run has
+been writing all along.
+
+```yaml
+workflow_parameters :
+  'workdir' : 'lume-ace3p_opt_workdir'
+  'workdir_mode' : 'auto'          # per-evaluation directories: _0, _1, _2, …
+
+mode :
+  type : scalar_optimize
+  resume : True                    # continue from xopt_state.yml
+```
+
+`xopt_state.yml` is written **beside the mode's `output_file`** (so next to
+`sim_output.txt` by default) and updated after every evaluation, whether or not
+`resume` is set — the decision to resume is made after the interruption, so the
+record has to already exist. It is written to a temporary and renamed, so a run
+killed mid-write leaves the previous state rather than half a file.
+
+:::{important}
+**A resumed optimization does not reproduce the trajectory an uninterrupted run
+would have taken.** The promise is narrower than the table modes', which produce an
+*identical* table: **no evaluation is repeated, and the search continues from the
+same data.** Restoring history makes the generator propose from an equally informed
+state, not from the same state a straight-through run would have been in — the
+torch/numpy RNG streams alone break that. Do not expect two `sim_output.txt` files
+to diff clean.
+:::
+
+What is restored is the optimizer's whole state — the trajectory *and* the
+generator's own internal state. That distinction is load-bearing rather than
+thorough: `sim_output.txt` alone would let the data be replayed into a fresh
+generator, which for a Bayesian generator is nearly equivalent (the GP is refit from
+data either way) but for `NelderMeadGenerator` is not. The simplex *is* the state, so
+a data-only restore restarts the search on top of old data and re-proposes points it
+already has.
+
+Other things worth knowing:
+
+- **Every iteration budget is a total for the campaign**, not for this process:
+  `num_random`, `num_step`, `max_iterations`, `max_steps` and `cost_budget` all
+  measure the whole optimization. A resumed run therefore continues to the same
+  finish line, and resuming a *finished* optimization does nothing.
+- **It works under any `workdir_mode`,** including `manual` — it restores from the
+  campaign's state file, not from per-evaluation manifests. Under `auto`/`indexed` a
+  resumed run continues the workdir numbering (`_k`, `_k+1`, …) instead of
+  overwriting the inherited evaluations' directories.
+- **A state file that disagrees with the config is refused, not adopted**, and what
+  it refused is **kept**. Four kinds of disagreement are caught: a different
+  generator, a flipped `MINIMIZE`/`MAXIMIZE`, moved variable bounds, and a changed
+  **workflow** — the module chain, the `output_parameters` spec, or any input value
+  the optimizer is *not* driving. That last one is the check the VOCS cannot make:
+  same variables and same objective over a different mesh or solver input is a
+  different campaign, and its recorded evaluations describe a different model.
+  Editing the *nominal* value of an optimized variable is not a change, since the
+  optimizer overrides it every evaluation.
+
+  When a resume is refused the existing `xopt_state.yml` and run log are renamed to
+  `.rejected` (then `.rejected.1`, …) before the fresh campaign overwrites their
+  place, and the message names them. Declining to continue a campaign must not also
+  destroy it — that would turn a correct refusal into hours of lost solves. An
+  absent, unreadable or truncated state file starts fresh rather than raising, and
+  moves nothing aside: there is nothing there.
+- **Resuming with a *smaller* budget does nothing, and says so.** The budgets are
+  campaign totals, so `num_step: 10` against a 25-evaluation record is already
+  satisfied; the run reports that rather than finishing silently.
+- **The interrupted evaluation's workdir is abandoned.** After the restore the
+  generator proposes a different point, so the half-finished directory (mesh built,
+  solve killed) is not reused. One wasted mesh per interruption.
+- **The convergence test in `gp_parameter_sweep`** (`improvement_threshold` /
+  `patience`) is a window over recent steps rather than state, so it is not carried
+  across the interruption: a resumed run gives the search at least `patience` more
+  steps before it can stop on it.
+- If the state file is gone but `sim_output.txt` survives, the data can still be
+  replayed into a fresh generator with `Xopt.add_data` — at the cost described above.
 
 (omega3p-module)=
 ### `omega3p` module

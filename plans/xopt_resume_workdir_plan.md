@@ -1,6 +1,6 @@
 # Xopt Resume + Per-Evaluation Workdirs — Implementation Plan
 
-**Status: PLANNED.** Two phases, independent of each other and both small.
+**Status: COMPLETE** — both phases (2026-08-31).
 Phase A changes where an Xopt run's files land and fixes a silent-overwrite bug;
 Phase B lets an interrupted optimization continue instead of starting over.
 
@@ -295,12 +295,29 @@ what it names.
   synthetic double, so the naming change cannot reach it — confirm rather than
   assume).
 
-### Deliverables
+### Deliverables — as built
 
-`modes.py`, `workflow_graph.py`, four example YAMLs,
-`docs/yaml_reference.md` (the `workdir_mode` table gains the override-path row),
-`docs/optimization.md`, `tests/test_resume.py` or a new
-`tests/test_workdirs.py`, `CHANGELOG.md`.
+`modes.py` (`_iteration_workdir`, `_require_own_workdirs`, `_xopt_evaluations`,
+`_objective_from_workflow(first_index=)`), `workflow_graph.py` (`_point_base`,
+`_workdir_configured`), the four example YAMLs, `docs/yaml_reference.md`,
+`docs/optimization.md`, `tests/test_workdirs.py` (new, 15 tests, importing the
+fake-ACE3P harness from `test_resume` and swapping in an Omega3P stand-in that
+reports the `FrequencyScan.Start` leaf it was given), `CHANGELOG.md`. Baselines
+unchanged; `tests/test_run_xopt_compat.py` untouched. 12 of the 15 new tests fail
+against the pre-change tree.
+
+### Deviations from the plan as written
+
+1. **Decision 2's premise is wrong: all four shipped Xopt examples *do* set
+   `workdir:`,** as does every shipped example that uses `auto`. The cwd-sibling
+   hazard was therefore latent rather than the common case. The fallback was still
+   implemented, for both the override path and `auto` sweeps (the "fix both"
+   option), and nothing shipped changes location.
+
+2. **The `manual` warning counts evaluations from a lower bound** for the Xopt modes
+   (`_xopt_evaluations`), because the cost-limited path terminates on measured
+   runtimes rather than on a count. "At least the seeding plus a step" is enough to
+   know more than one evaluation is coming, which is all the warning needs.
 
 ---
 
@@ -375,11 +392,96 @@ evaluations recorded and the best objective so far rather than the per-point tab
   `tests/baseline_utils.py`) — it carries timestamps and an absolute evaluator path.
 - The docs state decision 4 (no trajectory reproduction) next to the key.
 
-### Deliverables
+One promise deliberately **not** made: `gp_parameter_sweep`'s convergence test
+(`improvement_threshold` / `patience`) is a window over recent steps rather than
+state, so it is not carried across the interruption — a resumed exploration gets at
+least `patience` more steps before it can stop on it. Said in the docstring and the
+reference rather than reconstructed, since the history it needs is not in `X.data`.
 
-`xopt_state.py` (new), `modes.py`, `run_lume_ace3p.py`,
-`tests/baseline_utils.py` (`BASELINE_EXCLUDED`), `tests/test_xopt_resume.py` (new),
-`docs/yaml_reference.md`, `docs/optimization.md`, `CHANGELOG.md`.
+### Deliverables — as built
+
+`xopt_state.py` (new: `xopt_state_path`, `write_xopt_state`, `read_xopt_state`,
+`restore_xopt`, `evaluation_count`, `generator_name`, `objective_names`,
+`best_point`), `modes.py` (`_objectives_for`, `_resume_xopt`, `_evaluated`,
+`xopt_status`, `_log_xopt(state_file=)`, `resume=` on both Xopt modes),
+`run_lume_ace3p.py` (`TABLE_STATUS_MODES` / `XOPT_STATUS_MODES`, two branches of
+`_report_status`), `tests/baseline_utils.py`, `tests/test_xopt_resume.py` (new, 28
+tests), one updated test in `tests/test_resume.py` (`--status` no longer refuses the
+Xopt modes), `docs/yaml_reference.md`, `docs/optimization.md`, `CHANGELOG.md`. No
+example YAML changed: `resume` is opt-in and the shipped optimizations do not set it.
+
+All three decision-3 experiments were re-run against the installed `xopt 3.0.0`
+first, as the plan suggested; the full-state continuation reproduced the quoted
+trajectory (`0.35, 0.2, 0.275`) exactly, and the data-only route again re-proposed a
+point it already had.
+
+### Deviations from the plan as written
+
+1. **Two more `xopt 3.0.0` quirks had to be worked around**, neither anticipated:
+
+   * `VOCS.model_validate(mapping)` **pops the `type` discriminator out of the
+     mapping in place**, so validating a state's own dict leaves it unvalidatable on
+     the second call. `restore_xopt` compares the VOCS and then rebuilds from it, and
+     `--status` reads it twice more, so every read is against a deep copy. Missing
+     this degraded resume to a silent "state unusable, starting from scratch".
+   * `Xopt(**mapping)` **fails for `MultiFidelityGenerator`** — its own vocs
+     validator reaches for VOCS attributes on whatever it is handed. `restore_xopt`
+     therefore passes a pre-built `VOCS` object in `generator['vocs']` for every
+     generator.
+
+2. **⚠️ The objective closure must be built *before* the generator.**
+   `MultiFidelityGenerator.validate_vocs` mutates the VOCS object it is given,
+   adding the fidelity axis `s` as a variable *and* an objective. The closure
+   snapshots `vocs.output_names`, so building it after the generator makes it demand
+   an `s` output no workflow produces and none can declare. Restructuring
+   `scalar_optimize` for resume moved that line and broke the multi-fidelity path;
+   the ordering now lives in `_objectives_for` with the reason attached, and is
+   pinned by a test. No existing test caught it — the shipped MF path is the one the
+   suite cannot exercise (see 4).
+
+3. **`--status` must skip the fidelity axis** when picking which objective to report,
+   for the same reason: `s` sorts before a real objective, so "the first objective"
+   would have reported the fidelity as the best point.
+
+4. **Multi-fidelity resume is tested through `num_step`, not `cost_budget`.** The
+   cost loop terminates on *measured* runtimes, which for a synthetic objective are
+   microseconds, so it is unrunnable in a test — the same reason those tests were
+   deleted in 2026-08. The restore path is identical either way, and the fidelity
+   rename reaching the workflow is asserted.
+
+5. **The observables fallback in `objective_names` was dropped as dead code.** An
+   `observables`-only VOCS cannot produce a state file at all:
+   `BayesianExplorationGenerator` refuses to construct without an objective, so the
+   legacy shape `gp_parameter_sweep` still nominally accepts cannot get far enough to
+   write one.
+
+6. **Four hardening changes were added after a footgun review**, on top of the plan:
+
+   * **A refused resume now sets the campaign aside** (`xopt_state.yml.rejected`,
+     `sim_output.txt.rejected`, then `.rejected.1`, …) instead of letting the fresh
+     run overwrite it. As first written, declining to continue a campaign *destroyed*
+     it — verified: 8 recorded evaluations became 2 after a moved variable bound was
+     correctly refused. A correct refusal must not cost the user hours of solves.
+   * **The state records a campaign configuration hash** (`Workflow.campaign_config_hash`
+     / `state.campaign_hash`) and refuses a mismatch. Without it the VOCS check let
+     the same variables and objective resume across a *different* mesh, solver input
+     or extraction spec — verified mixing two geometries into one table. The
+     optimizer's own variables are materialized to a fixed value before hashing, so
+     editing a variable's nominal starting value does not invalidate a campaign while
+     editing a fixed input does.
+   * **`workdir_mode` is validated in `Workflow.__init__`**, beside `stage_mode`,
+     rather than wherever `_getworkdir` happens to reach its `auto` branch. One
+     existing test moved with it (the failure is now at construction).
+   * **A dump failure warns once per path**, not once per evaluation, and a resume
+     with a budget the record already covers says "nothing to do" rather than
+     finishing silently.
+
+7. **`stopping_condition` was not adopted** (the plan's closing suggestion). The
+   budgets are read as campaign totals directly in the loop — `iteration_index`
+   starts at `len(X.data)`, the seeding loop runs `num_random - iteration_index`
+   times and the step loop to `num_random + num_step` — which is a three-line change
+   and keeps the cost-budget and convergence paths, which `stopping_condition` does
+   not model, on the same footing.
 
 ---
 

@@ -55,6 +55,7 @@ dict ``sweep_data`` tuple-keyed structure and the hand-rolled ``tools.py``
 writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 """
 
+import itertools
 import os
 import sys
 from typing import NamedTuple
@@ -66,7 +67,12 @@ from lume_ace3p.results import (
     write_table, save_field, FIELD_ARTIFACT_COLUMN,
 )
 from lume_ace3p import surrogate_data
+from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.state import point_status, read_state
+from lume_ace3p.xopt_state import (
+    best_point, evaluation_count, read_xopt_state, restore_xopt, set_aside,
+    write_xopt_state, xopt_state_path,
+)
 
 
 # Modes that consume an on-disk store / saved model rather than driving the
@@ -75,6 +81,48 @@ from lume_ace3p.state import point_status, read_state
 # collected data. Every other mode requires a workflow to drive.
 STORE_CONSUMING_MODES = frozenset({'train_surrogate', 'invert_optimize',
                                    'invert_bayesian'})
+
+
+# ``type``/``mode`` (the legacy alias) name the mode itself, so every block has them.
+_COMMON_MODE_KEYS = frozenset({'type', 'mode'})
+
+# Every key each mode reads out of its own ``mode:`` block, for the unrecognized-key
+# warning (:func:`lume_ace3p.config.warn_unrecognized`). **Per mode, not a union**,
+# which is the point: a ``resume:`` in a ``train_surrogate`` block does nothing, and
+# only a per-mode set can say so. Kept beside the dispatcher that consumes the block
+# — extend it when a mode learns a key, or the mode's own new key will warn.
+MODE_KEYS = {
+    'single': frozenset({'output_file', 'sweep_output_file', 'resume'}),
+    'parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
+    'scalar_optimize': frozenset({'output_file', 'resume'}),
+    'gp_parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
+    'collect_training_data': frozenset({
+        'store', 'output_dir', 'num_samples', 'sampler', 'seed', 'fidelity',
+        'variables', 'resume'}),
+    'train_surrogate': frozenset({
+        'store', 'output_dir', 'variance', 'num_components', 'seed', 'model_dir',
+        'holdout', 'dose_transform', 'floor', 'n_jobs'}),
+    'invert_optimize': frozenset({
+        'store', 'model_dir', 'target', 'bounds', 'num_starts', 'seed',
+        'output_file', 'identifiability', 'identifiability_file'}),
+    'invert_bayesian': frozenset({
+        'store', 'model_dir', 'target', 'bounds', 'seed', 'output_file',
+        'summary_file', 'identifiability', 'num_warmup', 'num_samples',
+        'num_chains', 'dose_sigma'}),
+}
+
+# Every key the two Xopt modes read out of ``xopt_parameters``. One set for both:
+# they share ``_mc_noise_guards``, ``_build_generator`` and the objective, and a
+# config that moves between them should not have to be rewritten.
+XOPT_KEYS = frozenset({
+    'generator', 'generator_options', 'num_random', 'num_step', 'max_iterations',
+    'max_steps', 'tolerance', 'cost_budget', 'alotted_time', 'cost_function',
+    'fidelity_variable', 'save_model', 'mc_noisy_objective', 'bin_edges',
+    'improvement_threshold', 'patience'})
+
+# Every key ``_make_vocs`` and the GP sweep read out of ``vocs_parameters``.
+VOCS_KEYS = frozenset({'variables', 'objectives', 'constraints', 'observables',
+                       'constants'})
 
 
 def mode_type_of(mode_cfg):
@@ -117,10 +165,14 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     Xopt and (for the GP sweep) sweep configuration blocks are passed through
     ``vocs`` / ``xopt`` / ``sweep``. These return the :class:`xopt.Xopt` object.
 
-    ``resume: true`` (table modes only) picks each point up from its completion
-    manifest instead of re-running it from scratch — see :func:`parameter_sweep`.
-    The Xopt modes take no ``resume``: their points are chosen by the generator as
-    it goes, so there is no fixed set of them to have finished part of.
+    ``resume: true`` means "continue rather than start over" in every mode that
+    takes it, but by two different mechanisms, because the two kinds of campaign
+    have different notions of "already done". A table mode picks each point up from
+    its completion manifest (:func:`parameter_sweep`) and produces an identical
+    table. An Xopt mode's points are chosen by the generator as it goes, so there is
+    no fixed set of them; it restores the optimizer's whole state instead
+    (:mod:`lume_ace3p.xopt_state`) and promises only that no evaluation is repeated
+    and the search continues from the same data.
 
     ``output_spec`` is accepted for API symmetry but is informational only — the
     workflow already carries its ``output_parameters`` (``workflow.output_spec``)
@@ -131,6 +183,9 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
             "Rename it to 'type:' — the 'mode' alias will be removed in a future "
             "release.")
     mode_type = str(mode_cfg.get('type') or mode_cfg.get('mode')).lower()
+    if mode_type in MODE_KEYS:
+        warn_unrecognized(f"mode '{mode_type}'", mode_cfg,
+                          MODE_KEYS[mode_type] | _COMMON_MODE_KEYS)
     resume = bool(mode_cfg.get('resume', False))
     if mode_type == 'single':
         df = single(workflow, resume=resume)
@@ -147,12 +202,14 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     elif mode_type == 'scalar_optimize':
         return scalar_optimize(
             workflow, vocs, xopt,
-            log_file=mode_cfg.get('output_file') or 'sim_output.txt')
+            log_file=mode_cfg.get('output_file') or 'sim_output.txt',
+            resume=resume)
     elif mode_type == 'gp_parameter_sweep':
         return gp_parameter_sweep(
             workflow, sweep, vocs, xopt,
             log_file=mode_cfg.get('output_file') or 'sim_output.txt',
-            sweep_file=mode_cfg.get('sweep_output_file') or 'sweep_output.txt')
+            sweep_file=mode_cfg.get('sweep_output_file') or 'sweep_output.txt',
+            resume=resume)
     else:
         raise ValueError(
             f"mode '{mode_type}' is not handled by the mode layer "
@@ -227,6 +284,7 @@ def parameter_sweep(workflow, resume=False):
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
+    _require_own_workdirs(workflow, tensor.shape[0])
 
     points = []
     for i in range(tensor.shape[0]):
@@ -269,10 +327,66 @@ def _evaluate_point(workflow, input_scalars, point_index, resume=False):
     mode resolves the name and passes the full ``workdir=``, and ``Workflow``
     stays unaware of sweep ordering. ``manual`` / ``auto`` pass no workdir at all
     and are named by the workflow exactly as before — including for a test double
-    whose ``evaluate`` takes no ``workdir`` keyword."""
+    whose ``evaluate`` takes no ``workdir`` keyword.
+
+    ``auto`` therefore still names a *sweep* point by its swept scalar values,
+    which are the point's identity. On the override path (the Xopt modes) there are
+    no axis scalars to name it by, so ``auto`` means the iteration index instead —
+    see :func:`_iteration_workdir`."""
     workdir = (workflow.point_workdir(point_index)
                if getattr(workflow, 'workdir_mode', None) == 'indexed' else None)
     return _evaluate(workflow, input_scalars, workdir=workdir, resume=resume)
+
+
+def _iteration_workdir(workflow, iteration):
+    """The workdir for evaluation ``iteration`` on the **override** path, or
+    ``None`` to leave the naming to the workflow.
+
+    The override path is the one the Xopt modes drive: ``evaluate`` is handed an
+    input *dict* rather than axis scalars, so there is no sweep grid and no point
+    index of the kind :func:`_evaluate_point` uses — the identity of an evaluation
+    is simply which one it is. Under ``auto`` or ``indexed`` that iteration number
+    names its directory (:meth:`Workflow.point_workdir`); under ``manual`` every
+    evaluation shares one directory, which is what
+    :func:`_require_own_workdirs` warns about.
+
+    ``auto`` is included deliberately rather than left to
+    :meth:`Workflow._getworkdir`. Its value-based naming is unusable for an
+    optimizer — ``lume-ace3p_workdir_14.724999999999998_1.5750000000000002`` — and
+    on this path it was also *wrong*: it reads only the ``cubit`` and ``particles``
+    buckets, so an optimization over an ACE3P or Geant4 knob got one unchanging
+    name and every evaluation overwrote the previous one's files. An index cannot
+    collide whatever bucket the variable lives in.
+
+    The ``getattr`` is load-bearing: several test doubles expose ``evaluate`` with
+    no ``workdir`` keyword and carry no ``workdir_mode``, and this keeps them
+    valid (``_evaluate`` omits an argument that is ``None``)."""
+    if getattr(workflow, 'workdir_mode', None) in ('auto', 'indexed'):
+        return workflow.point_workdir(iteration)
+    return None
+
+
+def _require_own_workdirs(workflow, evaluations):
+    """Warn once when a multi-evaluation run is about to do every evaluation in
+    one shared directory.
+
+    ``workdir_mode: manual`` is the default and stays the default: flipping it
+    would silently relocate the output of every config that omits the key. It is
+    also legal and occasionally deliberate — a single run, or a sweep whose points
+    genuinely may overwrite each other. What it must not be is *silent*, because
+    with N evaluations in one directory each one overwrites the previous one's
+    mesh, input files, solver results, logs and run manifest, and the surviving
+    files describe whichever evaluation happened to finish last."""
+    if not evaluations or evaluations <= 1:
+        return
+    if getattr(workflow, 'workdir_mode', None) != 'manual':
+        return
+    print(f"Warning: workdir_mode is 'manual' and this run performs "
+          f"{evaluations} evaluations, so all of them share the directory "
+          f"'{workflow.baseworkdir}' — each one overwrites the previous one's "
+          "mesh, input files, solver results, logs and run manifest, and only "
+          "the last survives. Set workflow_parameters: {workdir_mode: auto} "
+          "(or 'indexed') to give each evaluation its own directory.")
 
 
 def _evaluate(workflow, input_scalars, workdir=None, resume=False):
@@ -375,6 +489,48 @@ def _print_status(df):
                         if key in counts)
     print(f" - {len(df)} point(s) implied by this configuration: {summary}")
     print(df.to_string(index=False))
+
+
+def xopt_status(mode_cfg):
+    """Report what an Xopt campaign's resume state records, and return it.
+
+    The Xopt half of ``--status``. There is no per-point table to print here — the
+    generator chose the points as it went, so "point 5 of 8" does not exist — and
+    what a user actually wants to know about a half-finished optimization is how
+    many evaluations are in the bank and how good the best one is. Both come from
+    the state file the run has been writing all along
+    (:mod:`lume_ace3p.xopt_state`); nothing is executed and nothing is written.
+
+    Returns the state mapping, or ``None`` when there is no usable state — an
+    optimization that has not started yet, or one whose state file was lost."""
+    mode_type = mode_type_of(mode_cfg)
+    state_file = xopt_state_path(mode_cfg.get('output_file') or 'sim_output.txt')
+    state = read_xopt_state(state_file)
+    if state is None:
+        print(f" - {mode_type}: no resume state at '{state_file}' — this "
+              "optimization has not recorded any evaluation yet.")
+        return None
+
+    count = evaluation_count(state)
+    print(f" - {mode_type}: {count} evaluation(s) recorded in '{state_file}'")
+    best = best_point(state)
+    if best is None:
+        print(" - no finite objective value recorded yet.")
+    else:
+        name, value, variables = best
+        at = ', '.join(f'{key}={_number(item)}' for key, item in variables.items())
+        print(f" - best '{name}' = {_number(value)}" + (f' at {at}' if at else ''))
+    print(" - a resumed run continues from this data and repeats no evaluation; it "
+          "does not reproduce the trajectory an uninterrupted run would have taken.")
+    return state
+
+
+def _number(value):
+    """A short, readable rendering of a reported number (``--status`` only)."""
+    try:
+        return f'{float(value):.6g}'
+    except (TypeError, ValueError):
+        return str(value)
 
 
 # --------------------------------------------------------------------------- #
@@ -1344,12 +1500,24 @@ def _sample(value, j):
 # --------------------------------------------------------------------------- #
 
 
-def _log_xopt(filename, xopt_obj):
-    """Log an Xopt run's data table through the shared result writer. ``X.data``
-    is already a pandas DataFrame, so this routes straight to
+def _log_xopt(filename, xopt_obj, state_file=None, config_hash=None):
+    """Log an Xopt run's data table through the shared result writer, and persist
+    its resume state beside it.
+
+    ``X.data`` is already a pandas DataFrame, so the table routes straight to
     :func:`lume_ace3p.results.write_table` — the same code path the sweep modes
-    use. Overwrites each call so the file always holds the full trajectory."""
+    use. Overwrites each call so the file always holds the full trajectory.
+
+    The resume state (:func:`lume_ace3p.xopt_state.write_xopt_state`) goes out from
+    here because this already runs after every evaluation, which is the granularity
+    resume needs; keeping the two together is what stops a state file from being one
+    write behind its table. Written whether or not ``resume`` is set, for the same
+    reason the run manifest is: the decision to resume is made *after* the
+    interruption, so the record has to already exist. ``config_hash`` is recorded
+    with it so a later resume can tell whether it is the same campaign."""
     write_table(xopt_obj.data, filename)
+    if state_file:
+        write_xopt_state(state_file, xopt_obj, config_hash=config_hash)
 
 
 def _mc_noise_guards(xopt_dict):
@@ -1376,15 +1544,27 @@ def _mc_noise_guards(xopt_dict):
     return mc_noisy
 
 
+# The generators ``_build_generator`` knows, named for the error it raises on a
+# misspelling. ``BayesianExplorationGenerator`` is not here because it is not
+# selectable: ``gp_parameter_sweep`` constructs it unconditionally.
+SUPPORTED_GENERATORS = (
+    'NelderMeadGenerator', 'ExpectedImprovementGenerator',
+    'MultiFidelityGenerator', 'UpperConfidenceBoundGenerator',
+    'ExpectedHypervolumeImprovementGenerator')
+
+
 def _build_generator(vocs, vocs_dict, xopt_dict, mc_noisy):
     """Construct the Xopt generator named by ``xopt_dict['generator']``.
 
     Preserves the six generators supported today with their behavior unchanged
     (NelderMead, ExpectedImprovement, MultiFidelity, UpperConfidenceBound,
     ExpectedHypervolumeImprovement/MOBO, and — via
-    :func:`gp_parameter_sweep` — BayesianExploration). Returns ``None`` with a
-    printed message for an unsupported generator (matching the legacy contract).
-    """
+    :func:`gp_parameter_sweep` — BayesianExploration).
+
+    **Raises** ``ValueError`` for an unsupported generator, and for MOBO without a
+    ``reference_point``. It used to print and return ``None``, which the CLI then
+    ignored — so a misspelled generator name produced a job that exited 0 having done
+    nothing, which in a batch queue is indistinguishable from success."""
     name = xopt_dict['generator']
     if name == 'NelderMeadGenerator':
         from xopt.generators.sequential.neldermead import NelderMeadGenerator
@@ -1419,14 +1599,15 @@ def _build_generator(vocs, vocs_dict, xopt_dict, mc_noisy):
             MOBOGenerator as ExpectedHypervolumeImprovementGenerator)
         options = xopt_dict.get('generator_options', {})
         if 'reference_point' not in options:
-            print("Error: 'reference_point' is required for Multi-Objective "
-                  "optimization.")
-            return None
+            raise ValueError(
+                "'ExpectedHypervolumeImprovementGenerator' requires a "
+                "'reference_point' in 'generator_options' — the point in objective "
+                "space hypervolume is measured from. Multi-objective optimization "
+                "has no meaning without it.")
         return ExpectedHypervolumeImprovementGenerator(vocs=vocs, **options)
-    print("That generator is not supported. Ensure that the generator name "
-          "specified in the yaml file matches exactly with the Xopt generator "
-          "name of choice. Exiting the program.")
-    return None
+    raise ValueError(
+        f"'{name}' is not a supported Xopt generator. The name must match an Xopt "
+        f"generator exactly; supported here are: {', '.join(SUPPORTED_GENERATORS)}.")
 
 
 def _make_vocs(vocs_dict):
@@ -1439,6 +1620,7 @@ def _make_vocs(vocs_dict):
     ``constraints`` / ``observables`` / ``constants``), NOT the legacy
     S-parameter/frequency triple."""
     from xopt.vocs import VOCS
+    warn_unrecognized("'vocs_parameters'", vocs_dict, VOCS_KEYS)
     kwargs = {'variables': vocs_dict['variables']}
     for key in ('objectives', 'constraints', 'observables', 'constants'):
         if vocs_dict.get(key):
@@ -1446,7 +1628,7 @@ def _make_vocs(vocs_dict):
     return VOCS(**kwargs)
 
 
-def _objective_from_workflow(workflow, vocs, xopt_dict):
+def _objective_from_workflow(workflow, vocs, xopt_dict, first_index=0):
     """Return an Xopt evaluator function that drives ``workflow.evaluate`` and
     returns the VOCS output scalars, generically.
 
@@ -1454,15 +1636,27 @@ def _objective_from_workflow(workflow, vocs, xopt_dict):
     observables) out of the workflow's returned outputs — no solver-specific
     parsing. When a fidelity variable is configured (MultiFidelity), the Xopt
     fidelity axis ``s`` is renamed to the user's variable name before being
-    handed to the workflow (unchanged from the legacy driver)."""
+    handed to the workflow (unchanged from the legacy driver).
+
+    Each call is counted, and the count names the evaluation's workdir
+    (:func:`_iteration_workdir`) so an optimization's evaluations do not overwrite
+    each other. ``first_index`` is where the numbering starts — 0 for a fresh run;
+    a resumed one continues past the evaluations it inherited rather than
+    reoccupying their directories. Counting *calls* is only a faithful iteration
+    index while evaluations are serial, which they are today
+    (``Evaluator(function=...)`` runs with ``max_workers = 1``); concurrent
+    evaluation will have to assign the index at proposal time instead."""
     output_names = list(vocs.output_names)
     fidelity_variable = xopt_dict.get('fidelity_variable')
+    iterations = itertools.count(first_index)
 
     def sim_function(input_dict):
         input_dict = dict(input_dict)
         if fidelity_variable is not None and 's' in input_dict:
             input_dict[fidelity_variable] = input_dict.pop('s')
-        outputs, _ctx = workflow.evaluate(input_dict)
+        outputs, _ctx = _evaluate(
+            workflow, input_dict,
+            workdir=_iteration_workdir(workflow, next(iterations)))
         missing = [n for n in output_names if n not in outputs]
         if missing:
             raise KeyError(
@@ -1471,6 +1665,148 @@ def _objective_from_workflow(workflow, vocs, xopt_dict):
         return {n: outputs[n] for n in output_names}
 
     return sim_function
+
+
+def _evaluated(X):
+    """How many evaluations an :class:`xopt.Xopt` already holds.
+
+    ``X.data`` is ``None`` on a freshly constructed one — not an empty frame — so
+    every campaign-total budget below reads the count through here."""
+    return 0 if X.data is None else len(X.data)
+
+
+def _objectives_for(workflow, vocs, xopt_dict, state_file, resume):
+    """Everything a run needs decided **before** its generator is built:
+    ``(state, fresh_objective, resumed_objective)``.
+
+    The ordering is load-bearing, not stylistic. ``MultiFidelityGenerator``'s VOCS
+    validator *mutates the VOCS object it is handed*, adding the fidelity axis ``s``
+    as both a variable and an objective (``xopt 3.0.0``). The objective closure
+    snapshots ``vocs.output_names`` when it is created, so building it after the
+    generator would make it demand an ``s`` output the workflow does not produce and
+    cannot declare. Both closures are therefore built here, up front.
+
+    Two of them because the iteration counter differs: a fresh run numbers its
+    workdirs from 0, a resumed one from the count of evaluations it inherits, so it
+    does not reoccupy ``_0…_k-1``. That count has to come from the state *mapping*,
+    since the objective must exist before there is an ``Xopt`` to restore it into.
+
+    ``resume: false`` reads nothing at all — not even to report on it."""
+    state = read_xopt_state(state_file) if resume else None
+    fresh = _objective_from_workflow(workflow, vocs, xopt_dict)
+    inherited = evaluation_count(state) if state is not None else 0
+    resumed = (fresh if not inherited
+               else _objective_from_workflow(workflow, vocs, xopt_dict,
+                                             first_index=inherited))
+    return state, fresh, resumed
+
+
+def _campaign_hash(workflow, vocs, xopt_dict):
+    """The resolved-configuration hash for this campaign, or ``None`` when the
+    workflow cannot produce one.
+
+    Every name the optimizer *drives* is excluded from the hash, so editing a
+    variable's nominal starting value does not invalidate a campaign: that is the
+    VOCS variables plus the fidelity variable, which reaches the workflow under the
+    user's own name via the rename in :func:`_objective_from_workflow`.
+
+    ⚠️ Must be called **before** the generator is built, for the reason
+    :func:`_objectives_for` records — ``MultiFidelityGenerator`` adds ``s`` to the
+    VOCS in place, and the hash has to be computed from the same variable list on
+    the write and the read.
+
+    ``None`` covers the test doubles, which expose ``evaluate`` and nothing else —
+    the same ``getattr`` gate :func:`_iteration_workdir` uses, and for the same
+    reason. A campaign driven by one records no hash and is not checked against one,
+    so the doubles stay valid unedited."""
+    resolve = getattr(workflow, 'campaign_config_hash', None)
+    if resolve is None:
+        return None
+    driven = list(vocs.variable_names)
+    fidelity = xopt_dict.get('fidelity_variable')
+    if fidelity:
+        driven.append(fidelity)
+    return resolve(driven)
+
+
+def _resume_xopt(state, objective, generator, state_file, log_file,
+                 config_hash=None):
+    """Restore an interrupted optimization from ``state``, or ``None`` to start
+    fresh — after saying why, which :func:`~lume_ace3p.xopt_state.restore_xopt`
+    does for every refusal.
+
+    A **refused** state is moved aside rather than left to be overwritten. The run is
+    about to start a fresh campaign in the same place, and the files it would
+    overwrite are the trajectory and state the user explicitly asked to continue:
+    declining to resume must not also destroy what was being resumed. "No state
+    found" is not a refusal and moves nothing — there is nothing there."""
+    if state is None:
+        return None
+    X = restore_xopt(state, objective, generator=generator,
+                     config_hash=config_hash)
+    if X is None:
+        moved = set_aside([state_file, log_file])
+        if moved:
+            kept = ', '.join(f"'{was}' -> '{now}'" for was, now in moved)
+            print(f" - the refused campaign is kept: {kept}. This run starts a "
+                  "fresh one; move them back to inspect or recover it.")
+        return None
+    print(f" - resuming from '{state_file}': {_evaluated(X)} evaluation(s) already "
+          "recorded. Budgets are campaign totals, so this run continues to the "
+          "same finish line. Note a resumed search does not reproduce the "
+          "trajectory an uninterrupted run would have taken — it continues from "
+          "the same data, and repeats no evaluation.")
+    return X
+
+
+def _xopt_evaluations(xopt_dict):
+    """How many evaluations a :func:`scalar_optimize` config will perform, as a
+    **lower bound**.
+
+    Only used to decide whether :func:`_require_own_workdirs` has something to warn
+    about, so a lower bound is the right shape: the cost-limited (multi-fidelity)
+    path stops on a measured runtime budget rather than a count, and "at least the
+    seeding plus a step" is enough to know that more than one evaluation is
+    coming."""
+    count = (int(xopt_dict.get('num_random', 0) or 0)
+             + int(xopt_dict.get('num_step', 0) or 0))
+    if 'max_iterations' in xopt_dict:
+        count = max(count, int(xopt_dict['max_iterations']))
+    if 'cost_budget' in xopt_dict or 'alotted_time' in xopt_dict:
+        count = max(count, int(xopt_dict.get('num_random', 2) or 2) + 1)
+    return count
+
+
+# The keys that make an optimization stop, split by what they actually do. A
+# *criterion* is what ends the loop and one is required; a *refinement* narrows a
+# criterion and does nothing on its own — ``tolerance`` is only tested inside the
+# ``num_step`` / ``cost_budget`` loops (``check_tols``), and ``max_iterations`` is read
+# only inside the ``num_step`` branch. The old message called ``tolerance`` a
+# criterion, which sent a user who had supplied exactly that round in a circle.
+_TERMINATION_CRITERIA = ('num_step', 'cost_budget', 'alotted_time')
+_TERMINATION_REFINEMENTS = {
+    'max_iterations': ("caps the total steps a 'num_step' run may take, and is "
+                       "ignored without it"),
+    'tolerance': ("is a stopping test applied inside whichever criterion's loop is "
+                  "running, so it needs a loop to be inside"),
+}
+
+
+def _no_criterion_message(xopt_dict):
+    """What to say when ``xopt_parameters`` has nothing that would end the run.
+
+    Names the refinement the config *did* supply, and says what it actually does,
+    because "you gave me ``max_iterations`` but no ``num_step``" is the mistake and is
+    more use than a list of keys. The old message named ``tolerance`` as a criterion,
+    which sent a user who had supplied exactly that round in a circle."""
+    message = ("No termination criterion in 'xopt_parameters', so this optimization "
+               "would never end. Provide one of: "
+               + ', '.join(f"'{key}'" for key in _TERMINATION_CRITERIA)
+               + " ('cost_budget'/'alotted_time' are the multi-fidelity form).")
+    for key, does in _TERMINATION_REFINEMENTS.items():
+        if key in xopt_dict:
+            message += f" '{key}' is set, but it is not a criterion — it {does}."
+    return message
 
 
 def _tolerances(xopt_dict, targets):
@@ -1487,7 +1823,8 @@ def _tolerances(xopt_dict, targets):
     return {t: tol for t in targets}
 
 
-def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
+def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt',
+                    resume=False):
     """Drive an Xopt scalar optimization of ``workflow`` (Phase 4).
 
     Workflow-agnostic: the objective scalar(s) are whatever ``vocs_dict``
@@ -1499,25 +1836,57 @@ def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
     Supports all six generators with their fidelity-variable rename,
     cost-function logic, and termination criteria; the objective is extracted
     generically from the workflow outputs and logged via the shared result
-    writer. Returns the :class:`xopt.Xopt` object."""
+    writer. Returns the :class:`xopt.Xopt` object.
+
+    **``resume``** (``mode: {resume: true}``) continues an interrupted campaign
+    from ``xopt_state.yml`` instead of starting over — the optimizer's data *and*
+    its generator's own state, so a Nelder-Mead simplex carries on rather than
+    restarting on top of old data (see :mod:`lume_ace3p.xopt_state`). The promise
+    is **no evaluation is repeated and the search continues from the same data**;
+    unlike the table modes, a resumed run does *not* reproduce the trajectory an
+    uninterrupted one would have taken. Unlike them it also works under any
+    ``workdir_mode``, since it restores from the campaign's state file rather than
+    from per-evaluation manifests. When the state cannot be used the run says why
+    and starts fresh.
+
+    Every iteration budget below — ``num_random``, ``num_step``,
+    ``max_iterations``, ``cost_budget`` — is a total for the **campaign** rather
+    than for this process, so a resumed run continues to the same finish line and
+    resuming a *finished* optimization does nothing. That is the same contract the
+    sweep has, where a completed campaign resumed re-runs nothing."""
     import torch
     from xopt.vocs import random_inputs as vocs_random_inputs
     from xopt.evaluator import Evaluator
     from xopt import Xopt
 
+    warn_unrecognized("'xopt_parameters'", xopt_dict, XOPT_KEYS)
     mc_noisy = _mc_noise_guards(xopt_dict)
+    _require_own_workdirs(workflow, _xopt_evaluations(xopt_dict))
     vocs = _make_vocs(vocs_dict)
     targets = list(vocs.objective_names)
     tols = _tolerances(xopt_dict, targets)
 
-    sim_function = _objective_from_workflow(workflow, vocs, xopt_dict)
+    # Both before _build_generator, which for MultiFidelity mutates ``vocs`` — see
+    # _objectives_for and _campaign_hash.
+    state_file = xopt_state_path(log_file)
+    campaign_hash = _campaign_hash(workflow, vocs, xopt_dict)
+    state, fresh, resumed = _objectives_for(workflow, vocs, xopt_dict, state_file,
+                                            resume)
     generator = _build_generator(vocs, vocs_dict, xopt_dict, mc_noisy)
-    if generator is None:
-        return None
-    evaluator = Evaluator(function=sim_function)
-    X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+    X = _resume_xopt(state, resumed, generator, state_file, log_file,
+                     config_hash=campaign_hash)
+    inherited = None if X is None else _evaluated(X)
+    if X is None:
+        X = Xopt(evaluator=Evaluator(function=fresh), generator=generator,
+                 vocs=vocs)
 
-    iteration_index = 0
+    # Not 0: on a resumed run the inherited evaluations already count against every
+    # budget below, which is what makes resume idempotent. Reading a *row count* into
+    # a counter the loops then increment per step is exact only while a step produces
+    # one row, which is the same one-evaluation-at-a-time property the objective's
+    # iteration index relies on (see _objective_from_workflow). A batch generator
+    # would need both to move to per-row accounting.
+    iteration_index = _evaluated(X)
     tol_achieved = False
 
     def check_tols():
@@ -1530,24 +1899,27 @@ def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
                 achieved = False
         return achieved
 
-    # Initial random evaluations to seed the model.
-    if 'num_random' in xopt_dict:
-        for _ in range(xopt_dict['num_random']):
-            X.random_evaluate()
-            _log_xopt(log_file, X)
-            iteration_index += 1
+    # Initial random evaluations to seed the model. Skipped to the extent the
+    # restored data already covers them (on a fresh run this is the whole count).
+    num_random = int(xopt_dict.get('num_random', 0) or 0)
+    for _ in range(max(0, num_random - iteration_index)):
+        X.random_evaluate()
+        _log_xopt(log_file, X, state_file, campaign_hash)
+        iteration_index += 1
 
     if 'num_step' in xopt_dict:
-        for _ in range(xopt_dict['num_step']):
+        # The seeding plus the steps, as a campaign total.
+        step_budget = num_random + int(xopt_dict['num_step'])
+        while iteration_index < step_budget:
             X.step()
-            _log_xopt(log_file, X)
+            _log_xopt(log_file, X, state_file, campaign_hash)
             iteration_index += 1
         if 'max_iterations' in xopt_dict:
             while iteration_index < xopt_dict['max_iterations'] and not tol_achieved:
                 X.step()
                 if tols:
                     tol_achieved = check_tols()
-                _log_xopt(log_file, X)
+                _log_xopt(log_file, X, state_file, campaign_hash)
                 iteration_index += 1
 
     # Cost-limited (multi-fidelity) termination: run until a cost budget or the
@@ -1560,17 +1932,25 @@ def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
             hours, minutes, seconds = xopt_dict.get('alotted_time').split(':')
             cost_budget = float(hours) * 3600 + float(minutes) * 60 + float(seconds)
 
-        num_random = xopt_dict.get('num_random', 2)
-        random_pts = vocs_random_inputs(vocs, num_random)
-        init_fidelity = np.linspace(0, 1, num_random)
-        for it in range(len(random_pts)):
-            random_pts[it]['s'] = init_fidelity[it]
-        X.evaluate_data(pd.DataFrame(random_pts))
-        _log_xopt(log_file, X)
+        # This branch seeds its own fidelity ladder, on top of whatever the
+        # 'num_random' loop above contributed (which is how it has always worked:
+        # a config with num_random: 3 seeds 3 random points and then 3 more along
+        # the ladder). On a resume, ``seeded`` is how much of the ladder the
+        # restored data already holds, so only the remainder is evaluated.
+        ladder = xopt_dict.get('num_random', 2)
+        seeded = max(0, min(ladder, iteration_index - num_random))
+        if seeded < ladder:
+            random_pts = vocs_random_inputs(vocs, ladder - seeded)
+            init_fidelity = np.linspace(0, 1, ladder)
+            for it in range(len(random_pts)):
+                random_pts[it]['s'] = init_fidelity[seeded + it]
+            X.evaluate_data(pd.DataFrame(random_pts))
+            _log_xopt(log_file, X, state_file, campaign_hash)
+            iteration_index = _evaluated(X)
 
         cost_function = xopt_dict.get('cost_function', 'exponential')
         if cost_function.lower() == 'exponential':
-            p1 = X.data['xopt_runtime'][num_random - 1] / X.data['xopt_runtime'][0]
+            p1 = X.data['xopt_runtime'][ladder - 1] / X.data['xopt_runtime'][0]
 
             def cost_func(x):
                 val = X.data['xopt_runtime'][0] * torch.exp(
@@ -1595,41 +1975,64 @@ def scalar_optimize(workflow, vocs_dict, xopt_dict, log_file='sim_output.txt'):
                                        dtype=torch.float32).view(-1, 1, 1)
             X.generator.cost_function = cost_func
         else:
-            print("Cost function type: '" + cost_function + "' not supported.")
-            return None
+            raise ValueError(
+                f"cost_function '{cost_function}' is not supported; use "
+                "'exponential' (an explicit exponential cost-vs-fidelity "
+                "relationship) or 'gaussian_process' (learned from the measured "
+                "runtimes).")
 
-        iteration_index += num_random
+        # The budget is the campaign's total measured cost, so the runtimes inherited
+        # from a resumed run count against it exactly as this process's own do.
         while X.data['xopt_runtime'].sum() < cost_budget and not tol_achieved:
             X.step()
             if tols:
                 tol_achieved = check_tols()
-            _log_xopt(log_file, X)
+            _log_xopt(log_file, X, state_file, campaign_hash)
             iteration_index += 1
     else:
-        print("No termination criteria specified for Xopt. Provide a criterion "
-              "such as 'num_step', 'tolerance', or 'cost_budget' (for "
-              "multi-fidelity).")
-        return None
+        raise ValueError(_no_criterion_message(xopt_dict))
 
+    if inherited is not None and _evaluated(X) == inherited:
+        # Correct (the budgets are campaign totals) but silent otherwise, and a
+        # resumed run that prints nothing after "resuming…" reads like a hang.
+        print(f" - nothing to do: the {inherited} recorded evaluation(s) already "
+              "cover this configuration's budget. Raise 'num_step' / "
+              "'max_iterations' / 'cost_budget' to continue the campaign further.")
     _save_model(X, xopt_dict)
     return X
 
 
 def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
                        log_file='sim_output.txt',
-                       sweep_file='sweep_output.txt'):
+                       sweep_file='sweep_output.txt',
+                       resume=False):
     """Drive an Xopt Bayesian-exploration loop over ``workflow`` and emit a
     GP-posterior-mean sweep over the ``sweep_parameters`` grid (Phase 4).
 
     Workflow-agnostic in the same way as :func:`scalar_optimize`: the explored
     quantities are the VOCS objectives (declared 'explore'), pulled from
-    ``workflow.evaluate``. Returns the :class:`xopt.Xopt` object."""
+    ``workflow.evaluate``. Returns the :class:`xopt.Xopt` object.
+
+    **``resume``** continues an interrupted exploration from ``xopt_state.yml``
+    exactly as :func:`scalar_optimize` does, with the same promise and the same
+    caveat. ``num_random`` and ``max_steps`` are campaign totals. The
+    convergence test (``improvement_threshold`` / ``patience``) is *not* carried
+    across the interruption — it is a window over recent steps, not state — so a
+    resumed run gives the search at least ``patience`` more steps before it can
+    stop on it. The GP posterior-mean sweep is recomputed from the restored model
+    either way."""
     import torch
     from xopt.evaluator import Evaluator
     from xopt import Xopt
     from xopt.generators.bayesian import BayesianExplorationGenerator
 
+    warn_unrecognized("'xopt_parameters'", xopt_dict, XOPT_KEYS)
+    warn_unrecognized("'vocs_parameters'", vocs_dict, VOCS_KEYS)
     _mc_noise_guards(xopt_dict)
+    # At least the random seeding plus the first step; the loop's real length is
+    # decided by convergence (see the improvement/patience check below).
+    _require_own_workdirs(workflow,
+                          int(xopt_dict.get('num_random', 5) or 0) + 1)
 
     # xopt 3.0.0's BayesianExplorationGenerator requires 'explore'-type
     # objectives; support the target quantities declared under 'objectives'
@@ -1642,24 +2045,33 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
     else:
         targets = list(vocs_dict.get('observables', []))
         vocs = VOCS(variables=vocs_dict['variables'], observables=targets)
+    state_file = xopt_state_path(log_file)
+    campaign_hash = _campaign_hash(workflow, vocs, xopt_dict)
+    state, fresh, resumed = _objectives_for(workflow, vocs, xopt_dict, state_file,
+                                            resume)
     generator = BayesianExplorationGenerator(vocs=vocs)
-
-    sim_function = _objective_from_workflow(workflow, vocs, xopt_dict)
-    evaluator = Evaluator(function=sim_function)
-    X = Xopt(evaluator=evaluator, generator=generator, vocs=vocs)
+    X = _resume_xopt(state, resumed, generator, state_file, log_file,
+                     config_hash=campaign_hash)
+    if X is None:
+        X = Xopt(evaluator=Evaluator(function=fresh), generator=generator,
+                 vocs=vocs)
 
     num_random = xopt_dict.get('num_random', 5)
-    for _ in range(num_random):
+    # Logged inside the loop, not after it: without this a run killed during
+    # seeding lost all of it, since the first write only came after the first step.
+    for _ in range(max(0, num_random - _evaluated(X))):
         X.random_evaluate()
+        _log_xopt(log_file, X, state_file, campaign_hash)
 
     improvement = xopt_dict.get('improvement_threshold', 0.01)
     patience = xopt_dict.get('patience', 5)
     prev_bests = []
-    steps = 0
+    # A campaign total, so 'max_steps' means the same thing to a resumed run.
+    steps = max(0, _evaluated(X) - num_random)
     hit_max_steps = False
     while not hit_max_steps:
         X.step()
-        _log_xopt(log_file, X)
+        _log_xopt(log_file, X, state_file, campaign_hash)
         steps += 1
         if 'max_steps' in xopt_dict and steps > xopt_dict['max_steps']:
             hit_max_steps = True

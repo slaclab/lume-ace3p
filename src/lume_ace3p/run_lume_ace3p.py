@@ -1,17 +1,22 @@
 import sys
 
 from lume_ace3p import __version__
-from lume_ace3p.inputs import load_yaml
+from lume_ace3p.config import warn_unrecognized
+from lume_ace3p.inputs import TOP_LEVEL_KEYS, load_yaml
 from lume_ace3p.workflow_graph import Workflow
 from lume_ace3p.modes import (
-    is_store_consuming, mode_type_of, run_mode, status,
+    is_store_consuming, mode_type_of, run_mode, status, xopt_status,
 )
 
 
-# The modes ``--status`` can walk: the ones whose points are a fixed, knowable set
-# and the ones resume applies to. An Xopt mode's points are chosen by the generator
-# as it goes, and a store-consuming mode has none.
-STATUS_MODES = ('single', 'parameter_sweep')
+# The modes ``--status`` can report on — the ones resume applies to. The two kinds
+# report differently (see :func:`_report_status`), because their campaigns have
+# different notions of progress: a table mode's points are a fixed, knowable set, an
+# Xopt mode's are whatever the generator proposed. A store-consuming mode runs no
+# points at all.
+TABLE_STATUS_MODES = ('single', 'parameter_sweep')
+XOPT_STATUS_MODES = ('scalar_optimize', 'gp_parameter_sweep')
+STATUS_MODES = TABLE_STATUS_MODES + XOPT_STATUS_MODES
 
 
 def _run_declarative(lume_ace3p_data):
@@ -30,8 +35,8 @@ def _run_declarative(lume_ace3p_data):
     model and never drive the module chain, so no ``workflow:`` block is built (or
     required) for them — their config declares only what they actually read.
 
-    A ``resume: true`` in the ``mode:`` block reaches the table modes from here
-    through :func:`~lume_ace3p.modes.run_mode`; ``--status`` (see
+    A ``resume: true`` in the ``mode:`` block reaches the table modes and the Xopt
+    modes from here through :func:`~lume_ace3p.modes.run_mode`; ``--status`` (see
     :func:`_report_status`) is the read-only counterpart and does not come through
     this function at all."""
     mode_cfg = lume_ace3p_data.get('mode') or {}
@@ -55,19 +60,30 @@ def _run_declarative(lume_ace3p_data):
 
 
 def _report_status(lume_ace3p_data):
-    """Print the per-point completion status a config's workdirs already record.
+    """Print what a config's campaign has already recorded about itself.
 
-    Reads only the run manifests (:mod:`lume_ace3p.state`) — nothing is executed
-    and nothing is written — so it is safe to run against a campaign that is still
-    going, and it is how a half-finished one is made legible: which points are
-    done, which broke and where, which never started."""
-    mode_type = mode_type_of(lume_ace3p_data.get('mode'))
-    if mode_type not in STATUS_MODES:
+    Reads only what earlier runs wrote — the per-point run manifests
+    (:mod:`lume_ace3p.state`) for a table mode, the campaign's resume state
+    (:mod:`lume_ace3p.xopt_state`) for an Xopt one. Nothing is executed and nothing
+    is written, so it is safe to run against a campaign that is still going, and it
+    is how a half-finished one is made legible.
+
+    Two branches because progress means two different things. A table mode has a
+    fixed set of points, so the report is a table of them: which are done, which
+    broke and where, which never started. An optimization does not — its points were
+    chosen as it went — so the report is how many evaluations are banked and what the
+    best one is."""
+    mode_cfg = lume_ace3p_data.get('mode') or {}
+    mode_type = mode_type_of(mode_cfg)
+    if mode_type in XOPT_STATUS_MODES:
+        return xopt_status(mode_cfg)
+    if mode_type not in TABLE_STATUS_MODES:
         raise ValueError(
-            f"--status covers the table modes {list(STATUS_MODES)}, and this "
-            f"config's mode is '{mode_type}'. The Xopt modes choose their points "
-            "as they go, so there is no fixed set of points to have finished part "
-            "of, and the store-consuming modes run no points at all.")
+            f"--status covers the resumable modes {list(STATUS_MODES)}, and this "
+            f"config's mode is '{mode_type}'. The store-consuming modes "
+            "(train_surrogate, invert_optimize, invert_bayesian) run no points at "
+            "all, and collect_training_data records its progress as the samples "
+            "already in its store.")
     return status(Workflow.from_config(lume_ace3p_data))
 
 
@@ -108,10 +124,11 @@ def main():
               "Runs a LUME-ACE3P workflow from a declarative YAML config (a "
               "'workflow:' list of modules plus a 'mode:' block). See the "
               "examples/ directory and docs/yaml_reference.md.\n\n"
-              "--status runs nothing: it reads the run manifest each point's "
-              "workdir already holds and prints a per-point completion table, "
-              "which is what a campaign resumed with 'mode: {resume: true}' will "
-              "pick up from.")
+              "--status runs nothing: it reports what a campaign resumed with "
+              "'mode: {resume: true}' would pick up from. For a sweep that is a "
+              "per-point completion table read from each workdir's run manifest; "
+              "for an optimization it is the evaluations and best objective "
+              "recorded in its xopt_state.yml.")
         # Exit non-zero when no input file was given (a usage error), zero for -h.
         sys.exit(0 if args else 1)
 
@@ -155,6 +172,12 @@ def main():
         print(_legacy_removal_notice())
         sys.exit(1)
 
+    # Checked here rather than in Workflow.from_config so --status sees it too, and
+    # *after* the two legacy-format rejections above: a pre-refactor config is about
+    # to be refused with a message that explains the whole problem, and a list of
+    # unrecognized keys on top of it would be noise.
+    warn_unrecognized(f"'{input_file}'", lume_ace3p_data, TOP_LEVEL_KEYS)
+
     if report_status:
         try:
             _report_status(lume_ace3p_data)
@@ -163,7 +186,20 @@ def main():
             sys.exit(1)
         return
 
-    _run_declarative(lume_ace3p_data)
+    try:
+        _run_declarative(lume_ace3p_data)
+    except ValueError as exc:
+        # A configuration error — an unsupported generator, no termination criterion,
+        # a missing 'bin_edges' for an MC-noisy objective, an unvalidatable workflow
+        # (WorkflowValidationError is a ValueError). These used to be printed and then
+        # *ignored*, so the process exited 0 having done nothing: in a batch queue,
+        # a job that reports success, consumes its allocation and writes no output.
+        #
+        # Deliberately not `except Exception`: a solver crash, a parse failure or a
+        # bug should still produce a traceback. Flattening those into one line would
+        # trade the diagnosis for tidiness.
+        print(f'Error: {exc}')
+        sys.exit(1)
 
 
 if __name__ == '__main__':

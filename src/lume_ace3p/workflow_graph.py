@@ -55,10 +55,11 @@ from lume_ace3p.modules import (
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
+from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.state import (
-    COMPLETE, FAILED, config_hash, is_complete, module_entry, new_state,
-    read_state, record_module, record_outputs, recorded_output, relative,
-    write_state,
+    COMPLETE, FAILED, campaign_hash, config_hash, is_complete, module_entry,
+    new_state, read_state, record_module, record_outputs, recorded_output,
+    relative, write_state,
 )
 
 
@@ -77,6 +78,14 @@ _GEANT4_TYPES = frozenset({'geant4'})
 # across every point; ``auto`` suffixes the swept scalar values; ``indexed``
 # suffixes the point's position in the sweep — see :meth:`Workflow.point_workdir`.
 WORKDIR_MODES = ('manual', 'auto', 'indexed')
+
+# Every key ``Workflow.__init__`` reads out of ``workflow_parameters``, for the
+# unrecognized-key warning. Kept here because this is where they are read — the
+# solver/file settings that used to live in this block moved onto the module entries
+# and the ``mode:`` block in the refactor, so one of those spelled here is exactly the
+# mistake worth catching.
+WORKFLOW_PARAM_KEYS = frozenset({'workdir', 'workdir_mode', 'stage_mode',
+                                 'capture_output', 'dry_run', 'paths'})
 
 # The workdir name used when no ``workdir`` is configured at all.
 DEFAULT_WORKDIR_BASE = 'lume-ace3p_workflow_output'
@@ -245,6 +254,8 @@ class Workflow:
     def __init__(self, entries, workflow_params=None, inputs=None,
                  output_spec=None):
         self.workflow_params = dict(workflow_params) if workflow_params else {}
+        warn_unrecognized("'workflow_parameters'", self.workflow_params,
+                          WORKFLOW_PARAM_KEYS)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.output_spec = dict(output_spec) if output_spec else {}
 
@@ -263,12 +274,25 @@ class Workflow:
         self.module_types = {m.type for m in self.modules}
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
+        if self.workdir_mode not in WORKDIR_MODES:
+            # Validated here rather than where the name is resolved, so a typo
+            # ('Auto', 'index') fails before anything is built or any directory is
+            # created — the same point 'stage_mode' below has always failed at.
+            raise ValueError("Key: 'workdir_mode' must be one of "
+                             f"{list(WORKDIR_MODES)}; got "
+                             f"{self.workdir_mode!r}.")
         self.stage_mode = self.workflow_params.get('stage_mode', 'copy')
         if self.stage_mode not in STAGE_MODES:
             raise ValueError(
                 "Key: 'stage_mode' must be one of "
                 f"{sorted(STAGE_MODES)}; got {self.stage_mode!r}.")
         self.baseworkdir = self.workflow_params.get('workdir', os.getcwd())
+        # Whether 'workdir' was *set*, which is not recoverable from
+        # ``baseworkdir`` afterwards (its default is the cwd, and a config may
+        # legitimately name the cwd). The per-evaluation naming needs to know: it
+        # appends to the base, and appending to the cwd names siblings of the
+        # working directory rather than directories inside it. See _point_base.
+        self._workdir_configured = 'workdir' in self.workflow_params
         # Tee each module's subprocess output into <workdir>/<module name>.log.
         # On by default: a sweep point killed by the wall clock otherwise leaves
         # nothing behind but whatever is still on the terminal. Output is teed
@@ -334,24 +358,44 @@ class Workflow:
             return True
         return False
 
-    # ---- workdir naming (auto suffixes the swept scalars, indexed the
-    #      point's position; see WORKDIR_MODES) ----------------------------
+    # ---- workdir naming: for a sweep, auto suffixes the swept scalars and
+    #      indexed the point's position; on the override path (the Xopt modes)
+    #      both number by iteration. See WORKDIR_MODES. -------------------
+
+    def _point_base(self):
+        """The base name a *per-evaluation* directory is suffixed onto.
+
+        ``manual`` runs in ``baseworkdir`` itself, whose default (the cwd) is
+        exactly right for "run here". Every other mode **appends** to the base, and
+        appending to the cwd names *siblings* of the working directory
+        (``/path/to/run_0`` beside ``/path/to``) rather than subdirectories of it —
+        which is not what "no workdir configured" should mean. So when ``workdir``
+        was not set the per-evaluation base is the relative
+        :data:`DEFAULT_WORKDIR_BASE`, and the directories land inside the cwd."""
+        if self._workdir_configured and self.baseworkdir is not None:
+            return self.baseworkdir
+        return DEFAULT_WORKDIR_BASE
 
     def point_workdir(self, point_index):
-        """The workdir for point ``point_index`` under ``workdir_mode: indexed``:
-        ``<workdir>_0``, ``<workdir>_1``, ….
+        """The workdir for evaluation ``point_index``: ``<workdir>_0``,
+        ``<workdir>_1``, ….
 
         This is a pure naming helper, and the *mode layer* is what calls it —
         ``evaluate`` takes no point index, so ``Workflow`` stays unaware of sweep
-        ordering, the same decoupling it already has from the sweep loop itself.
+        or iteration ordering, the same decoupling it already has from the sweep
+        loop itself. It backs ``workdir_mode: indexed`` for a sweep and, on the
+        *override* path (the Xopt modes, which pass ``evaluate`` an input dict
+        rather than axis scalars), both ``indexed`` and ``auto`` — an optimizer's
+        proposals are 17-digit floats that nobody looks a directory up by, so the
+        iteration number is the point's identity there.
 
-        ``auto`` names by swept scalar value, which is usually unique but can
-        collide (two axes rendering to the same string) and grows unboundedly long
-        as axes are added. An index is stable and collision-free, which is what
-        the resume machinery needs to identify a point on a later run."""
-        base = (self.baseworkdir if self.baseworkdir is not None
-                else DEFAULT_WORKDIR_BASE)
-        return f'{base}_{int(point_index)}'
+        For a sweep ``auto`` names by swept scalar value instead, which is usually
+        unique but can collide (two axes rendering to the same string) and grows
+        unboundedly long as axes are added. An index is stable and collision-free,
+        which is what the resume machinery needs to identify a point on a later
+        run — and what keeps two evaluations at the *same* proposed point (which a
+        Nelder-Mead simplex does produce) in two directories."""
+        return f'{self._point_base()}_{int(point_index)}'
 
     def _getworkdir(self, inputs, sweep_scalars=None):
         if self.workdir_mode == 'manual':
@@ -361,11 +405,19 @@ class Workflow:
             # mode layer passes the full workdir= for each point, so getting here
             # means a caller drove evaluate() directly — one point, index 0.
             return self.point_workdir(0)
-        if self.workdir_mode != 'auto':
-            raise ValueError("Key: 'workdir_mode' must be one of "
-                             f"{list(WORKDIR_MODES)}; got "
-                             f"{self.workdir_mode!r}.")
+        # Only 'auto' is left — the value is validated in __init__.
         if sweep_scalars is None:
+            # No swept axes, so the name comes from the input values themselves —
+            # and only from the ``cubit`` and ``particles`` buckets, NOT ``ace3p``
+            # or ``geant4``. That is reached by a ``single`` run under ``auto``,
+            # where it is at worst incomplete. It used to be reached by the
+            # *override* path too (the Xopt modes, which pass ``evaluate`` an input
+            # dict rather than axis scalars), and there it was a bug: an
+            # optimization over an ACE3P or Geant4 knob produced one unchanging
+            # name, so every evaluation silently overwrote the last one's mesh,
+            # results and logs while the directory *looked* per-point. That path now
+            # names each evaluation by its iteration index instead (see
+            # point_workdir), so it no longer comes through here at all.
             parts = []
             for value in (*inputs.cubit.values(), *inputs.particles.values()):
                 if isinstance(value, (list, tuple, np.ndarray)):
@@ -375,9 +427,7 @@ class Workflow:
         else:
             parts = [_scalar_str(v) for v in sweep_scalars]
         suffix = ''.join('_' + p for p in parts)
-        if self.baseworkdir is None:
-            return DEFAULT_WORKDIR_BASE + suffix
-        return self.baseworkdir + suffix
+        return self._point_base() + suffix
 
     # ---- the single seam the modes call ----------------------------------
 
@@ -569,6 +619,26 @@ class Workflow:
         without running anything."""
         inputs, _sweep_scalars = self._materialize(input_scalars)
         return config_hash(self.entries, inputs, self.output_spec)
+
+    def campaign_config_hash(self, variables=()):
+        """The hash an *optimization* over ``variables`` must match to be resumable
+        — the Xopt counterpart of :meth:`point_config_hash`.
+
+        An optimization has no fixed input point to identify it by, so what this
+        covers is everything the generator is *not* choosing: the module entries, the
+        ``output_parameters`` spec, and every input leaf that is not an optimizer
+        variable. ``variables`` (the VOCS variable names) are materialized to a fixed
+        ``0.0`` first, so their nominal starting values fall out of the hash while
+        every other configured value stays in it.
+
+        That is what makes the check useful rather than merely present: an
+        optimization whose Cubit journal, solver input, extraction spec or *fixed*
+        inputs changed is a different campaign, and continuing it would optimize
+        against evaluations of a different model. A name in ``variables`` that routes
+        nowhere lands in the ``cubit`` bucket as ``0.0`` (the documented fallback),
+        which is stable run-to-run and so harmless here."""
+        inputs, _sweep = self._materialize({str(name): 0.0 for name in variables})
+        return campaign_hash(self.entries, inputs, self.output_spec)
 
     def resolved_workdir(self, input_scalars=None, point_index=None):
         """The workdir a point *would* run in, resolved without running it.
