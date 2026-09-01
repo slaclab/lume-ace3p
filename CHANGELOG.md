@@ -7,7 +7,7 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
-## [Unreleased]
+## [0.5.0] — 2026-09-01
 
 **Resume.** A campaign cut off by a batch wall clock used to be lost
 entirely — the next run rebuilt its mesh and re-solved from scratch, so a 2-hour
@@ -22,6 +22,18 @@ will stand on. The designs and their verification are in
 [`plans/evaluation_isolation_resume_plan.md`](plans/evaluation_isolation_resume_plan.md)
 and
 [`plans/xopt_resume_workdir_plan.md`](plans/xopt_resume_workdir_plan.md).
+
+**Alongside it, the Xopt modes stopped being quiet about being misconfigured** — a
+silently shared workdir, a typo'd key, an optimization with nothing that would ever
+terminate it. See
+[`plans/xopt_config_validation_plan.md`](plans/xopt_config_validation_plan.md).
+
+⚠️ **Behaviour change:** `run-lume-ace3p` now exits **non-zero** when a config
+cannot run (an unsupported generator, no termination criterion, an unsupported
+`cost_function`, MOBO without a `reference_point`). It previously printed a message
+and exited 0, so a batch job that did nothing reported success. No shipped batch
+script branches on the exit status, but a local wrapper that does will start seeing
+failures it did not see before — which is the point.
 
 ### Added
 
