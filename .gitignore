@@ -134,3 +134,29 @@ dmypy.json
 
 # Editor / IDE
 .vscode/
+
+# LUME-ACE3P run artifacts. A run leaves these wherever it is invoked, so running an
+# example inside a checkout otherwise fills `git status` with output files — which is
+# how test debris nearly got committed. The test suite itself runs in pytest's
+# tmp_path; these cover a run started by hand.
+sim_output.txt
+sweep_output.txt
+xopt_state.yml
+*.rejected
+*.rejected.[0-9]*
+DRY_RUN.txt
+lume_ace3p_state.json
+gp_parameters.txt
+Binary_gp_model.pt
+inversion_result.txt
+identifiability.txt
+posterior_samples.txt
+posterior_summary.txt
+train_report.txt
+lume-ace3p_*workdir*/
+lume-ace3p_workflow_output*/
+
+# ...but the frozen baselines are these same filenames, committed on purpose. Without
+# this, re-freezing a baseline whose output is named `sim_output.txt` would silently
+# skip it on `git add`.
+!tests/baseline/**

@@ -25,6 +25,18 @@ from lume_ace3p.inputs import TOP_LEVEL_KEYS, build_inputs, load_yaml
 from lume_ace3p.workflow_graph import WORKFLOW_PARAM_KEYS, Workflow
 
 
+@pytest.fixture(autouse=True)
+def isolated(tmp_path, monkeypatch):
+    """Run every test in its own directory.
+
+    Several of these drive a real mode, and a mode writes where it is told to —
+    `sim_output.txt`, `xopt_state.yml`, `DRY_RUN.txt` and a run manifest all land in
+    the working directory by default. Without this the suite littered the repository
+    root, which is how the debris nearly got committed. The example configs are
+    resolved from `baseline_utils.EXAMPLES_DIR` (absolute), so chdir is safe."""
+    monkeypatch.chdir(tmp_path)
+
+
 # --------------------------------------------------------------------------- #
 # The check itself
 # --------------------------------------------------------------------------- #
