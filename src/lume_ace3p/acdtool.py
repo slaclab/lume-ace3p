@@ -68,6 +68,7 @@ from lume.base import CommandWrapper
 # (postprocessor -> solver). Imported here so ``acdtool.parse_column_file``
 # keeps resolving.
 from lume_ace3p.ace3p import parse_column_file
+from lume_ace3p.logs import run_logged
 
 
 # --------------------------------------------------------------------------- #
@@ -890,8 +891,14 @@ class Acdtool(CommandWrapper):
     def __init__(self, *args, ace3p_path=None, mpi_caller=None,
                  acdtool_command=None, acdtool_args=None, jobname=None,
                  acdtool_tasks=None, acdtool_cores=None, acdtool_opts='',
-                 **kwargs):
+                 log_file=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # Where this step's stdout/stderr is teed (see lume_ace3p.logs); None
+        # inherits the parent's streams, which is the legacy behavior. The
+        # ``sample.rfpost`` probe in _generate_sample_input is deliberately left
+        # out of it: that one is a best-effort template query whose output is
+        # silenced on purpose, not a step of the workflow.
+        self.log_file = log_file
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.acdtool_command = acdtool_command
@@ -1009,8 +1016,32 @@ class Acdtool(CommandWrapper):
 
         self._spec = spec
         self.output_file = spec.resolve_output(jobname)
-        subprocess.run(self._command_line(name, operands, spec),
-                       shell=True, cwd=self.workdir)
+        run_logged(self._command_line(name, operands, spec),
+                   cwd=self.workdir, log_file=self.log_file)
+        if spec.parses:
+            self.load_output()
+        return self.output_data
+
+    def parse_output(self, command=None, jobname=None):
+        """Read a *previous* invocation's output without invoking anything.
+
+        Everything :meth:`run` does after the subprocess returns, and nothing it
+        does before: resolve the command, resolve where its output landed, and
+        parse it. This is the seam a **resumed** workflow step uses (design
+        decision 1 of ``plans/evaluation_isolation_resume_plan.md`` — a resumed
+        module re-runs its parser and skips only the subprocess), matching what
+        :meth:`lume_ace3p.ace3p.ACE3P.output_parser` already gave the solvers.
+
+        Deliberately does *not* call :meth:`write_input`: nothing is going to read
+        that file, and rewriting it would be the one side effect a question about a
+        finished run must not have.
+
+        Returns ``output_data``, like :meth:`run`.
+        """
+        name, spec = self.resolve(command)
+        self._spec = spec
+        self.output_file = spec.resolve_output(
+            jobname or self.jobname or spec.default_jobname)
         if spec.parses:
             self.load_output()
         return self.output_data

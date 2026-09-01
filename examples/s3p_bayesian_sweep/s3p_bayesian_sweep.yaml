@@ -9,6 +9,10 @@
 
 workflow_parameters :
     'workdir' : 'lume-ace3p_mf_workdir'
+    # One directory per evaluation, named by iteration: _0, _1, _2, …
+    # The exploration loop evaluates repeatedly; one shared directory would
+    # keep only the last evaluation's mesh and S3P results.
+    'workdir_mode' : 'auto'
 
 workflow :
   - module : cubit

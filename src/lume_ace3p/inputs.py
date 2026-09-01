@@ -162,6 +162,16 @@ class WorkflowInputs:
 # to one WorkflowInputs bucket (geant4 -> macro).
 _INPUT_BUCKETS = ('cubit', 'ace3p', 'geant4', 'particles')
 
+# Every top-level block a LUME-ACE3P config may carry, for the unrecognized-key
+# warning. Closed, and a typo in one is silent otherwise: an 'output_parameter'
+# (singular) block is simply never read, so the run extracts nothing and says nothing.
+TOP_LEVEL_KEYS = frozenset({
+    'workflow', 'workflow_parameters', 'mode', 'input_parameters',
+    'output_parameters', 'vocs_parameters', 'xopt_parameters', 'sweep_parameters',
+    # Deprecated flat aliases, still honored by build_inputs below.
+    'cubit_input_parameters', 'ace3p_input_parameters',
+    'geant4_input_parameters', 'particles_input_parameters'})
+
 
 def load_yaml(path):
     """Load a LUME-ACE3P YAML, returning the raw mapping.
@@ -195,6 +205,29 @@ def _is_nested_input_parameters(block):
         key in _INPUT_BUCKETS for key in block)
 
 
+def _warn_partial_buckets(block):
+    """Warn when an ``input_parameters:`` block looks like the nested bucket notation
+    but has an unrecognized bucket name.
+
+    :func:`_is_nested_input_parameters` requires *every* key to be a bucket, so one
+    typo ('qubit:') silently reinterprets the **whole block** as the legacy flat cubit
+    block — every bucket name becomes a Cubit variable and every real parameter is
+    dropped. That is the most destructive silent misroute in the config surface, and
+    it is invisible: the run proceeds with no parameters applied."""
+    if not isinstance(block, dict) or not block:
+        return
+    unknown = [str(key) for key in block if str(key) not in _INPUT_BUCKETS]
+    if not unknown or len(unknown) == len(block):
+        # All buckets (fine), or none of them (the legacy flat cubit block, which is
+        # a documented shape rather than a mistake).
+        return
+    print(f"Warning: 'input_parameters' mixes bucket names with "
+          f"{', '.join(repr(key) for key in sorted(unknown))}, which is not a "
+          f"recognized bucket ({', '.join(_INPUT_BUCKETS)}). The whole block is "
+          "therefore read as the legacy flat cubit block, so the bucket names become "
+          "Cubit variables and their contents are dropped. Fix the spelling.")
+
+
 def build_inputs(yaml_data):
     """Translate a loaded YAML mapping into a WorkflowInputs.
 
@@ -216,6 +249,7 @@ def build_inputs(yaml_data):
     particles = {}
 
     input_params = yaml_data.get('input_parameters')
+    _warn_partial_buckets(input_params)
     if _is_nested_input_parameters(input_params):
         _collect_scalar_block(input_params.get('cubit'), cubit)
         _collect_scalar_block(input_params.get('geant4'), macro)

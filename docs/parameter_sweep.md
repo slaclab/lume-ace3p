@@ -155,8 +155,52 @@ If no output dict is specified, the parameter sweep still runs but
 `rfpost.out` data will not be parsed or tabulated (useful when only the
 per-combination output folders are wanted).
 
-`lume-ace3p` does not currently support checkpointing, and each workflow
-evaluation is run serially. Future versions may allow concurrent evaluations.
+Each workflow evaluation is run serially. Future versions may allow concurrent
+evaluations.
+
+(resuming-a-sweep)=
+## Resuming a sweep that was cut off
+
+A sweep of long solves rarely fits in one allocation, and a point interrupted
+partway used to be lost entirely — the next run rebuilt its mesh and re-solved
+from scratch. Two additions change that: every evaluation records what it did in a
+[run manifest](#run-manifest) in its own workdir, and
+`mode: {resume: true}` reads that record back.
+
+```yaml
+workflow_parameters :
+  'workdir' : 'lume-ace3p_omega3p_workdir'
+  'workdir_mode' : 'indexed'      # per-point directories: _0, _1, _2, …
+
+mode :
+  type : parameter_sweep
+  resume : True
+  output_file : 'omega3p_sweep_output.txt'
+```
+
+Re-run the same command after a job dies and the sweep picks up where it stopped:
+finished points contribute their rows without launching a single solver, a point
+that died halfway restarts at the step that did not finish, and points that never
+started run normally. **The result table is the same table it would have been**, so
+resuming is not a different kind of run — it is the same sweep, minus the work
+already done.
+
+Before re-running, `--status` shows what is there:
+
+```console
+$ run-lume-ace3p --status omega3p_sweep.yaml
+ - 32 point(s) implied by this configuration: 19 complete, 1 failed, 12 absent
+```
+
+Two requirements. `workdir_mode` must not be `manual` (points must have their own
+directories to have their own state — `resume: true` with `manual` is refused,
+naming `indexed`), and `resume` is opt-in: a sweep that silently adopted whatever
+was lying in its workdirs would be worse than no resume at all. Each point's
+manifest also carries a hash of the resolved configuration, so a point whose module
+settings or input values have changed since is re-run, and says so.
+
+The full per-point rules, including what happens when a completed point's output
+files have been deleted, are in [](#resume).
 
 ## S3P parameter sweep example
 

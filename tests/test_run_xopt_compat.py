@@ -62,8 +62,8 @@ class SynthWorkflow:
     """A stand-in :class:`Workflow` for the generic Xopt modes.
 
     Exposes the single seam the modes use — ``evaluate(input_dict) ->
-    {objective_name: scalar}`` — computed from the same deterministic synthetic
-    S-parameter response the Phase-0.5 baselines were frozen with
+    ({objective_name: scalar}, ctx)`` — computed from the same deterministic
+    synthetic S-parameter response the Phase-0.5 baselines were frozen with
     (``baseline_utils.SyntheticWorkflow``). ``output_spec`` maps each declared
     objective name to the ``(s_parameter, frequency)`` it extracts, standing in
     for a real workflow's ``output_parameters`` + ``S3PModule.extract``. This
@@ -81,7 +81,7 @@ class SynthWorkflow:
         for name, (sparam, freq) in self.output_spec.items():
             idx = list(bu.SYNTH_FREQS).index(float(freq))
             out[name] = data[sparam][idx]
-        return out
+        return out, None
 
 
 def _single_obj_workflow():
@@ -161,7 +161,7 @@ def test_generic_geant4_objective_dry_run(tmp_path):
                       output_spec={'weight': {'module': 'particles',
                                               'quantity': 'total_weight'}})
         # evaluate -> objective returns a real scalar under dry-run.
-        out = wf.evaluate({'beta': 50.0})
+        out, _ctx = wf.evaluate({'beta': 50.0})
         assert np.isfinite(out['weight']) and out['weight'] > 0
         return modes.scalar_optimize(
             wf, {'variables': {'beta': [40.0, 60.0]},

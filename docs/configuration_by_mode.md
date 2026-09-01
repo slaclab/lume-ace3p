@@ -85,9 +85,13 @@ grid point.
 
 **Required:** `workflow:`, `mode:`, and an `input_parameters` block containing at
 least one array-valued leaf (a list or a `min/max/num` mapping).
-**Optional:** `output_parameters`, `mode.output_file`. Array leaves across
-different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all multiply
-into the same tensor grid.
+**Optional:** `output_parameters`, `mode.output_file`, `mode.resume`. Array leaves
+across different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all
+multiply into the same tensor grid.
+
+`mode.resume: True` (with `workflow_parameters: {workdir_mode: indexed}`) re-runs
+only the points and steps a previous run did not finish — see
+[](#resuming-a-sweep).
 
 ```yaml
 workflow :
@@ -122,6 +126,15 @@ Within `xopt_parameters`, `generator` is required and — for `scalar_optimize` 
 at least one termination criterion (`num_step`, `cost_budget`, or `alotted_time`).
 **Optional but recommended:** `input_parameters` (declares variable routing; see
 note ³ above).
+**Optional:** `mode.output_file` (the Xopt run log, default `sim_output.txt`),
+`mode.resume`, and `workflow_parameters.workdir_mode` — set it to `'auto'` so each
+evaluation gets its own directory rather than overwriting the previous one's files.
+
+`mode.resume: True` continues an interrupted optimization from the `xopt_state.yml`
+written beside the run log, instead of starting over. Unlike a resumed sweep it does
+**not** reproduce the trajectory an uninterrupted run would have taken — it promises
+only that no evaluation is repeated and the search continues from the same data. See
+[](#xopt-resume).
 
 ```yaml
 workflow :
@@ -174,8 +187,10 @@ posterior mean on a dense grid.
 **Required:** everything `scalar_optimize` requires (`vocs_parameters`,
 `xopt_parameters`, referenced `output_parameters`), **plus** a `sweep_parameters`
 block defining the posterior-mean grid.
-**Optional:** `input_parameters` (routing), `mode.output_file` (Xopt run log) and
-`mode.sweep_output_file` (posterior-mean table, default `sweep_output.txt`).
+**Optional:** `input_parameters` (routing), `mode.output_file` (Xopt run log),
+`mode.sweep_output_file` (posterior-mean table, default `sweep_output.txt`) and
+`mode.resume` (as for `scalar_optimize`; its `improvement_threshold`/`patience`
+convergence window is not carried across the interruption).
 
 ```yaml
 mode :

@@ -321,7 +321,11 @@ class _FakeWorkflow:
     """Minimal Workflow surface the collection loop drives: a particles module
     with fixed bin_edges, and evaluate/field that emit a synthetic dose grid
     which is a deterministic function of β (so the loader's β↔dose alignment is
-    checkable). Records evaluate() calls to prove resume skips re-evaluation."""
+    checkable). Records evaluate() calls to prove resume skips re-evaluation.
+
+    ``evaluate`` mirrors the real seam: it accepts the per-sample ``workdir`` and
+    returns ``(outputs, ctx)``. The ``ctx`` is ``None`` because this double runs
+    no modules; the collector only passes it back to ``field``."""
 
     def __init__(self):
         self.modules = [_FakeModule()]
@@ -331,12 +335,12 @@ class _FakeWorkflow:
         self._last_beta = None
         self.eval_calls = []
 
-    def evaluate(self, overrides):
+    def evaluate(self, overrides, workdir=None):
         self._last_beta = np.array([overrides[n] for n in BETA_NAMES])
         self.eval_calls.append(dict(overrides))
-        return {}
+        return {}, None
 
-    def field(self):
+    def field(self, ctx=None):
         # A 4-voxel dose grid whose values encode the β sum, so each sample's
         # stored grid is distinct and recoverable.
         s = float(self._last_beta.sum())
@@ -415,7 +419,7 @@ class _DriftingMeshWorkflow(_FakeWorkflow):
     sample while the voxel *count* stays 4 — the exact same-count/different-mesh
     case that a shape-only check would miss."""
 
-    def field(self):
+    def field(self, ctx=None):
         s = float(self._last_beta.sum())
         n = len(self.eval_calls)
         if n <= 1:

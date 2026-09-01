@@ -25,8 +25,25 @@ Design notes
   {track3p_particles}`` slots in the same way, with no rule change: it simply
   becomes the producer that satisfies ``particles``.
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
-  input point and returns the structured output dict. Sweep / Xopt loops (the
-  mode layer) are Phase 3+; they call ``evaluate``/``sweep_axes`` from outside.
+  input point and returns ``(outputs, ctx)`` — the structured output dict plus the
+  :class:`~lume_ace3p.modules.RunContext` that produced it. Sweep / Xopt loops
+  (the mode layer) are Phase 3+; they call ``evaluate``/``sweep_axes`` from
+  outside.
+* **The context is the per-evaluation carrier.** Every piece of run state — the
+  artifacts, the extracted outputs, and the live module instances themselves —
+  hangs off that ``ctx``, so two evaluations of the same ``Workflow`` cannot read
+  each other's results. ``Workflow.modules`` is a separate prototype list that is
+  never run and answers config-only questions.
+* **Every evaluation records what it did.** ``evaluate`` writes a completion
+  manifest into the evaluation's workdir (:mod:`lume_ace3p.state`), updated after
+  each module, so a point cut off by the wall clock leaves behind how far it got.
+* **...and can pick up where the last one stopped.** ``evaluate(resume=True)``
+  reads that manifest and skips the *subprocess* of every module it records as
+  complete, re-running their parsers so the row is rebuilt exactly as an
+  uninterrupted run would have (design decision 1 of
+  ``plans/evaluation_isolation_resume_plan.md``). It is opt-in, per point, and
+  keyed on a ``config_hash`` of the resolved configuration, so a workdir left by a
+  different study is re-run rather than mistaken for this one's.
 """
 
 import os
@@ -38,6 +55,12 @@ from lume_ace3p.modules import (
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
+from lume_ace3p.config import warn_unrecognized
+from lume_ace3p.state import (
+    COMPLETE, FAILED, campaign_hash, config_hash, is_complete, module_entry,
+    new_state, read_state, record_module, record_outputs, recorded_output,
+    relative, write_state,
+)
 
 
 class WorkflowValidationError(ValueError):
@@ -50,6 +73,22 @@ class WorkflowValidationError(ValueError):
 # matching environment is absent, mirroring the legacy per-workflow behavior.
 _ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
+
+# How an evaluation's working directory is named. ``manual`` shares one directory
+# across every point; ``auto`` suffixes the swept scalar values; ``indexed``
+# suffixes the point's position in the sweep — see :meth:`Workflow.point_workdir`.
+WORKDIR_MODES = ('manual', 'auto', 'indexed')
+
+# Every key ``Workflow.__init__`` reads out of ``workflow_parameters``, for the
+# unrecognized-key warning. Kept here because this is where they are read — the
+# solver/file settings that used to live in this block moved onto the module entries
+# and the ``mode:`` block in the refactor, so one of those spelled here is exactly the
+# mistake worth catching.
+WORKFLOW_PARAM_KEYS = frozenset({'workdir', 'workdir_mode', 'stage_mode',
+                                 'capture_output', 'dry_run', 'paths'})
+
+# The workdir name used when no ``workdir`` is configured at all.
+DEFAULT_WORKDIR_BASE = 'lume-ace3p_workflow_output'
 
 
 def _scalar_str(value):
@@ -135,7 +174,8 @@ def _resolve_order(modules):
     """Validate the module list and return it topologically ordered.
 
     Raises :class:`WorkflowValidationError` (with the offending artifact/module
-    named) on a duplicate producer, an unmet requirement, or a cycle."""
+    named) on a duplicate producer, a duplicate module *name*, an unmet
+    requirement, or a cycle."""
     if not modules:
         raise WorkflowValidationError('workflow contains no modules.')
 
@@ -159,6 +199,27 @@ def _resolve_order(modules):
                 raise WorkflowValidationError(
                     f"module '{m.name}' requires artifact '{kind}' but no "
                     f"module in the workflow provides it.")
+
+    # Unique names. A module's name is its identity in three places outside the
+    # DAG — its log file (``<workdir>/<name>.log``), its entry in the run manifest,
+    # and the "resume from the first non-complete module" decision that reads that
+    # entry — and none of the three can tell two identically-named steps apart.
+    #
+    # Asked *after* the two rules above, which is what keeps the more specific
+    # diagnosis: two modules of one type collide on their artifact as well as on
+    # their name, and "you have two mesh producers" is the more useful of the two
+    # things to be told. What is left for this to catch is two entries of different
+    # types given the same explicit ``name:`` — which validates today, and leaves
+    # the two steps overwriting each other's log.
+    seen = {}
+    for m in modules:
+        if m.name in seen:
+            raise WorkflowValidationError(
+                f"two modules are named '{m.name}' (types '{seen[m.name]}' and "
+                f"'{m.type}'); a module's name identifies its log file and its "
+                "entry in the run manifest, so it must be unique within a "
+                "workflow. Give one of them a different 'name:'.")
+        seen[m.name] = m.type
 
     deps = {i: {producer[k] for k in m.requires} for i, m in enumerate(modules)}
 
@@ -186,31 +247,84 @@ class Workflow:
 
     Build it with :meth:`from_config` (from a loaded YAML) or directly from a
     list of module entries. ``evaluate(input_scalars)`` runs the chain once for
-    one input point and returns ``{output_name: value}``; it is deliberately
-    free of any sweep/optimize loop (that is the Phase 3+ mode layer)."""
+    one input point and returns ``({output_name: value}, ctx)``; it is
+    deliberately free of any sweep/optimize loop (that is the Phase 3+ mode
+    layer)."""
 
     def __init__(self, entries, workflow_params=None, inputs=None,
                  output_spec=None):
         self.workflow_params = dict(workflow_params) if workflow_params else {}
+        warn_unrecognized("'workflow_parameters'", self.workflow_params,
+                          WORKFLOW_PARAM_KEYS)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.output_spec = dict(output_spec) if output_spec else {}
 
-        self.modules = _resolve_order([_build_entry(e) for e in entries])
+        self.entries = list(entries)
+        # Deprecated output specs already warned about, shared across every
+        # module list this workflow builds: the dedup is per-*config*, not
+        # per-*run*, so a sweep of N points warns once rather than N times. See
+        # test_modules.py "...warns once per spec...".
+        self._warned_specs = set()
+        # The prototype list: built once, never run. It is what answers config
+        # questions (module types, a module's declared params) and what makes a
+        # bad command fail in the constructor rather than mid-sweep, since
+        # AcdtoolModule.__init__ resolves its command. Every *evaluation* gets
+        # its own list on the RunContext (see :meth:`evaluate`).
+        self.modules = self._build_modules()
         self.module_types = {m.type for m in self.modules}
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
+        if self.workdir_mode not in WORKDIR_MODES:
+            # Validated here rather than where the name is resolved, so a typo
+            # ('Auto', 'index') fails before anything is built or any directory is
+            # created — the same point 'stage_mode' below has always failed at.
+            raise ValueError("Key: 'workdir_mode' must be one of "
+                             f"{list(WORKDIR_MODES)}; got "
+                             f"{self.workdir_mode!r}.")
         self.stage_mode = self.workflow_params.get('stage_mode', 'copy')
         if self.stage_mode not in STAGE_MODES:
             raise ValueError(
                 "Key: 'stage_mode' must be one of "
                 f"{sorted(STAGE_MODES)}; got {self.stage_mode!r}.")
         self.baseworkdir = self.workflow_params.get('workdir', os.getcwd())
+        # Whether 'workdir' was *set*, which is not recoverable from
+        # ``baseworkdir`` afterwards (its default is the cwd, and a config may
+        # legitimately name the cwd). The per-evaluation naming needs to know: it
+        # appends to the base, and appending to the cwd names siblings of the
+        # working directory rather than directories inside it. See _point_base.
+        self._workdir_configured = 'workdir' in self.workflow_params
+        # Tee each module's subprocess output into <workdir>/<module name>.log.
+        # On by default: a sweep point killed by the wall clock otherwise leaves
+        # nothing behind but whatever is still on the terminal. Output is teed
+        # rather than redirected, so the terminal keeps everything it had (see
+        # lume_ace3p.logs).
+        self.capture_output = bool(
+            self.workflow_params.get('capture_output', True))
         self.paths = resolve_paths(self.workflow_params.get('paths'))
         self.dry_run = self._resolve_dry_run()
+        # Single-run conveniences: the workdir and RunContext of the *most
+        # recent* evaluate. They are not safe to read across overlapping
+        # evaluations — a concurrent or interleaved caller must use the ``ctx``
+        # that ``evaluate`` returned instead.
         self.workdir = None
         self.last_context = None
 
     # ---- construction ----------------------------------------------------
+
+    def _build_modules(self):
+        """Instantiate and topologically order a fresh module list from the
+        declared entries.
+
+        Called once at construction for the prototype list and once per
+        :meth:`evaluate` for the live list, so per-run module state (a solver's
+        parsed results, acdtool's parsed output) cannot leak between
+        evaluations. Validation is deterministic, so re-resolving is a repeat of
+        the same answer rather than a second chance to disagree."""
+        modules = _resolve_order([_build_entry(e) for e in self.entries])
+        for module in modules:
+            if module.type == 'acdtool':
+                module._warned = self._warned_specs
+        return modules
 
     @classmethod
     def from_config(cls, yaml_data):
@@ -244,15 +358,66 @@ class Workflow:
             return True
         return False
 
-    # ---- workdir naming (auto-mode suffixes the swept scalars) -----------
+    # ---- workdir naming: for a sweep, auto suffixes the swept scalars and
+    #      indexed the point's position; on the override path (the Xopt modes)
+    #      both number by iteration. See WORKDIR_MODES. -------------------
+
+    def _point_base(self):
+        """The base name a *per-evaluation* directory is suffixed onto.
+
+        ``manual`` runs in ``baseworkdir`` itself, whose default (the cwd) is
+        exactly right for "run here". Every other mode **appends** to the base, and
+        appending to the cwd names *siblings* of the working directory
+        (``/path/to/run_0`` beside ``/path/to``) rather than subdirectories of it —
+        which is not what "no workdir configured" should mean. So when ``workdir``
+        was not set the per-evaluation base is the relative
+        :data:`DEFAULT_WORKDIR_BASE`, and the directories land inside the cwd."""
+        if self._workdir_configured and self.baseworkdir is not None:
+            return self.baseworkdir
+        return DEFAULT_WORKDIR_BASE
+
+    def point_workdir(self, point_index):
+        """The workdir for evaluation ``point_index``: ``<workdir>_0``,
+        ``<workdir>_1``, ….
+
+        This is a pure naming helper, and the *mode layer* is what calls it —
+        ``evaluate`` takes no point index, so ``Workflow`` stays unaware of sweep
+        or iteration ordering, the same decoupling it already has from the sweep
+        loop itself. It backs ``workdir_mode: indexed`` for a sweep and, on the
+        *override* path (the Xopt modes, which pass ``evaluate`` an input dict
+        rather than axis scalars), both ``indexed`` and ``auto`` — an optimizer's
+        proposals are 17-digit floats that nobody looks a directory up by, so the
+        iteration number is the point's identity there.
+
+        For a sweep ``auto`` names by swept scalar value instead, which is usually
+        unique but can collide (two axes rendering to the same string) and grows
+        unboundedly long as axes are added. An index is stable and collision-free,
+        which is what the resume machinery needs to identify a point on a later
+        run — and what keeps two evaluations at the *same* proposed point (which a
+        Nelder-Mead simplex does produce) in two directories."""
+        return f'{self._point_base()}_{int(point_index)}'
 
     def _getworkdir(self, inputs, sweep_scalars=None):
         if self.workdir_mode == 'manual':
             return self.baseworkdir
-        if self.workdir_mode != 'auto':
-            raise ValueError("Key: 'workdir_mode' must be either 'manual' or "
-                             "'auto'.")
+        if self.workdir_mode == 'indexed':
+            # No point index reaches Workflow by design (see point_workdir): the
+            # mode layer passes the full workdir= for each point, so getting here
+            # means a caller drove evaluate() directly — one point, index 0.
+            return self.point_workdir(0)
+        # Only 'auto' is left — the value is validated in __init__.
         if sweep_scalars is None:
+            # No swept axes, so the name comes from the input values themselves —
+            # and only from the ``cubit`` and ``particles`` buckets, NOT ``ace3p``
+            # or ``geant4``. That is reached by a ``single`` run under ``auto``,
+            # where it is at worst incomplete. It used to be reached by the
+            # *override* path too (the Xopt modes, which pass ``evaluate`` an input
+            # dict rather than axis scalars), and there it was a bug: an
+            # optimization over an ACE3P or Geant4 knob produced one unchanging
+            # name, so every evaluation silently overwrote the last one's mesh,
+            # results and logs while the directory *looked* per-point. That path now
+            # names each evaluation by its iteration index instead (see
+            # point_workdir), so it no longer comes through here at all.
             parts = []
             for value in (*inputs.cubit.values(), *inputs.particles.values()):
                 if isinstance(value, (list, tuple, np.ndarray)):
@@ -262,13 +427,11 @@ class Workflow:
         else:
             parts = [_scalar_str(v) for v in sweep_scalars]
         suffix = ''.join('_' + p for p in parts)
-        if self.baseworkdir is None:
-            return 'lume-ace3p_workflow_output' + suffix
-        return self.baseworkdir + suffix
+        return self._point_base() + suffix
 
     # ---- the single seam the modes call ----------------------------------
 
-    def evaluate(self, input_scalars=None):
+    def evaluate(self, input_scalars=None, workdir=None, resume=False):
         """Run the ordered module chain once for one input point.
 
         ``input_scalars`` selects the input point:
@@ -278,25 +441,262 @@ class Workflow:
           * a mapping — treated as cubit-parameter overrides (the shape Xopt's
             objective function passes).
 
-        Returns ``{output_name: extracted_value}`` for the ``output_parameters``
-        spec. The populated :class:`RunContext` is kept on ``self.last_context``
-        so callers can reach ``artifacts``/``outputs`` after the run."""
+        ``workdir`` overrides the ``workdir_mode`` naming entirely, which is how
+        a caller that already owns a per-point directory layout (the
+        training-data collector) drives one point into a directory of its choosing
+        without mutating the workflow.
+
+        ``resume`` reads the completion manifest already in the workdir and
+        **skips the external tool of every module it records as complete**,
+        re-running only their parsers (:meth:`Module.run`'s ``skip_execution``);
+        execution restarts at the first module the manifest does not record as
+        complete, or at the first whose :meth:`Module.verify` says its output is
+        gone. It is off by default and the mode layer is what turns it on
+        (``mode: {resume: true}``): a sweep that silently picked up a stale
+        workdir from a different study would be worse than no resume at all, which
+        is what ``config_hash`` and this default together prevent.
+
+        Returns ``(outputs, ctx)``: ``{output_name: extracted_value}`` for the
+        ``output_parameters`` spec, and the populated :class:`RunContext` that
+        produced it. The context is the per-evaluation carrier — pass it back to
+        :meth:`field` / :meth:`field_index` to read *this* evaluation's results.
+        It is also stashed on ``self.last_context`` as a single-run convenience,
+        which is only correct while evaluations do not overlap.
+
+        A completion manifest is written into the workdir and updated after every
+        module (:mod:`lume_ace3p.state`), *incrementally*, because the partial file
+        is what a resumed or wall-clock-killed campaign has to work from. A
+        resumed run rewrites it from scratch, recording the modules it reused as
+        complete before it runs the ones it did not — so being killed again is not
+        a loss of the record."""
         inputs, sweep_scalars = self._materialize(input_scalars)
-        self.workdir = self._getworkdir(inputs, sweep_scalars)
+        self.workdir = (workdir if workdir is not None
+                        else self._getworkdir(inputs, sweep_scalars))
+        # A fresh module list per evaluation: module instances hold run state, so
+        # sharing them across points is what would let row i report row j's
+        # results once two evaluations overlap.
         ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
-                         paths=self.paths, stage_mode=self.stage_mode)
+                         paths=self.paths, stage_mode=self.stage_mode,
+                         modules=self._build_modules(),
+                         capture_output=self.capture_output)
         ctx.ensure_workdir()
 
-        for module in self.modules:
-            module.run(ctx)
+        current_hash = config_hash(self.entries, inputs, self.output_spec)
+        # Read before the new manifest overwrites it.
+        previous = self._resume_state(current_hash) if resume else None
+
+        state = new_state(config_hash=current_hash,
+                          point=self._point_record(inputs, sweep_scalars),
+                          workdir=self.workdir)
+        # Written before the first module runs, so a point killed inside module 0
+        # still leaves its identity and config hash behind.
+        write_state(self.workdir, state)
+
+        # Stays True only while every module so far was recorded complete and
+        # still verifies; once one has to run, so does everything downstream of
+        # it — its inputs have just changed.
+        reusing = previous is not None
+        for module in ctx.modules:
+            if reusing:
+                reusing = self._reusable(previous, module, ctx)
+            try:
+                # The keyword is passed only when it is True, so the ordinary path
+                # is the call it has always been — including for a caller or test
+                # double whose run() takes ctx alone.
+                module.run(ctx, **({'skip_execution': True} if reusing else {}))
+            except Exception as exc:
+                # An exception is a failure of *this* module and the later ones
+                # never started, which is exactly the state a resume needs. A
+                # KeyboardInterrupt is deliberately not caught: an interrupted
+                # module is not a failed one, and leaving it unrecorded already
+                # means "not complete".
+                record_module(state, module, FAILED,
+                              error=f'{type(exc).__name__}: {exc}')
+                write_state(self.workdir, state)
+                raise
+            record_module(state, module, COMPLETE,
+                          **self._module_record(ctx, module),
+                          **({'resumed': True} if reusing else {}))
+            write_state(self.workdir, state)
 
         outputs = {}
         for name, spec in self.output_spec.items():
-            module, cleaned = self._route_output(name, spec)
+            # ctx.modules, never self.modules: a prototype's extract returns the
+            # dry-run NaN sentinel rather than raising, so mis-resolving here
+            # would yield silently wrong numbers.
+            module, cleaned = self._route_output(name, spec, ctx.modules)
             outputs[name] = module.extract(ctx, cleaned)
         ctx.outputs = outputs
+        if previous is not None:
+            self._compare_recorded_outputs(previous, outputs)
+        record_outputs(state, outputs)
+        write_state(self.workdir, state)
         self.last_context = ctx
-        return outputs
+        return outputs, ctx
+
+    # ---- resume (Phase 4) -------------------------------------------------- #
+
+    def _resume_state(self, current_hash):
+        """The manifest a resume may reuse in this workdir, or ``None``.
+
+        ``None`` covers every reason not to trust one: there is no manifest, it is
+        unreadable or of another schema (:func:`~lume_ace3p.state.read_state`
+        already degrades those to ``None``), or it was written for a *different*
+        resolved configuration. The last is the case worth saying out loud, since
+        the user asked to resume and is about to watch the point run from the
+        start anyway."""
+        previous = read_state(self.workdir)
+        if previous is None:
+            return None
+        if previous.get('config_hash') != current_hash:
+            print(f" - resume: '{self.workdir}' was written for a different "
+                  "configuration (its config_hash does not match this one), so "
+                  "this point is re-run from the start. The hash covers the "
+                  "module entries, the input point and output_parameters — not "
+                  "paths, dry_run or comments.")
+            return None
+        return previous
+
+    def _reusable(self, previous, module, ctx):
+        """Whether ``module``'s external tool may be skipped on this resume.
+
+        Two questions, in the order design decision 2 sets: the **manifest** is
+        authoritative for "did it run" and the **module** for "is its output still
+        there". Either answering no re-runs this module — and, because the caller
+        stops asking once this returns ``False``, everything after it.
+
+        Asked lazily, one module at a time, rather than planned up front: by the
+        time this is asked about module *k*, modules 0..*k*-1 have re-recorded
+        their artifacts and job names on ``ctx``, which is exactly what
+        ``particles`` needs to name its output file and what an ``acdtool`` step
+        needs to name its jobname. Asked before any of them had run, both would
+        have to answer "cannot tell"."""
+        entry = module_entry(previous, module.name)
+        if not is_complete(previous, module.name):
+            if entry is None:
+                why = 'no record of it running'
+            else:
+                why = str(entry.get('status'))
+                if entry.get('error'):
+                    why += ': ' + str(entry['error'])
+            print(f" - resume: '{self.workdir}' re-runs from '{module.name}' "
+                  f"({why}).")
+            return False
+        if module.verify(ctx) is False:
+            where = recorded_output(entry) or 'its output'
+            print(f" - resume: '{module.name}' is recorded complete in "
+                  f"'{self.workdir}' but {where} is missing, so it and every "
+                  "later step are re-run.")
+            return False
+        return True
+
+    @staticmethod
+    def _compare_recorded_outputs(previous, outputs):
+        """Warn when a resumed point re-extracts a different value than the one
+        its own manifest recorded.
+
+        A free nondeterminism detector: the parsers ran again over the same files,
+        so the two numbers must agree. When they do not, either the results on
+        disk changed under us or an extraction is not reproducible — both worth
+        one line, neither worth refusing the point over, since the freshly
+        extracted value is the one actually backed by the files present now."""
+        recorded = (previous.get('outputs') or {})
+        drifted = sorted(name for name, value in outputs.items()
+                         if name in recorded
+                         and not _same_output(recorded[name], value))
+        if drifted:
+            print('Warning: resumed point re-extracted ' + str(drifted)
+                  + ' differently than its manifest recorded. The re-extracted '
+                    'values are the ones reported; the recorded ones are in '
+                    'lume_ace3p_state.json.')
+
+    # ---- what a point is, without running it ------------------------------- #
+
+    def point_config_hash(self, input_scalars=None):
+        """The :func:`~lume_ace3p.state.config_hash` this configuration produces
+        for one input point — what a manifest in that point's workdir must match
+        to be resumable. Used by the ``--status`` walk, which reads manifests
+        without running anything."""
+        inputs, _sweep_scalars = self._materialize(input_scalars)
+        return config_hash(self.entries, inputs, self.output_spec)
+
+    def campaign_config_hash(self, variables=()):
+        """The hash an *optimization* over ``variables`` must match to be resumable
+        — the Xopt counterpart of :meth:`point_config_hash`.
+
+        An optimization has no fixed input point to identify it by, so what this
+        covers is everything the generator is *not* choosing: the module entries, the
+        ``output_parameters`` spec, and every input leaf that is not an optimizer
+        variable. ``variables`` (the VOCS variable names) are materialized to a fixed
+        ``0.0`` first, so their nominal starting values fall out of the hash while
+        every other configured value stays in it.
+
+        That is what makes the check useful rather than merely present: an
+        optimization whose Cubit journal, solver input, extraction spec or *fixed*
+        inputs changed is a different campaign, and continuing it would optimize
+        against evaluations of a different model. A name in ``variables`` that routes
+        nowhere lands in the ``cubit`` bucket as ``0.0`` (the documented fallback),
+        which is stable run-to-run and so harmless here."""
+        inputs, _sweep = self._materialize({str(name): 0.0 for name in variables})
+        return campaign_hash(self.entries, inputs, self.output_spec)
+
+    def resolved_workdir(self, input_scalars=None, point_index=None):
+        """The workdir a point *would* run in, resolved without running it.
+
+        The same choice :meth:`evaluate` makes for the same arguments, which is
+        what lets ``--status`` find each point's manifest. ``point_index`` is only
+        consulted under ``workdir_mode: indexed`` — the mode layer owns sweep
+        ordering, and this mirrors how it passes ``workdir=``."""
+        if self.workdir_mode == 'indexed' and point_index is not None:
+            return self.point_workdir(point_index)
+        inputs, sweep_scalars = self._materialize(input_scalars)
+        return self._getworkdir(inputs, sweep_scalars)
+
+    # ---- what an evaluation records about itself --------------------------- #
+
+    def _point_record(self, inputs, sweep_scalars):
+        """The manifest's ``point`` block — which input point this workdir holds.
+
+        In a sweep that is the swept axes and their values for this point, taken
+        from :meth:`sweep_axes` so an ACE3P leaf axis (``ace3p:FrequencyScan.Start``)
+        is named the same way the sweep table names it. A single run or an
+        optimizer point has no axes, so it records the materialized scalar knobs
+        instead.
+
+        No point *index* is recorded: ``evaluate`` takes none — the mode layer
+        owns sweep ordering and passes the full ``workdir=`` (see
+        :meth:`point_workdir`) — and the axis values identify the point anyway."""
+        if sweep_scalars is not None:
+            axes = {label: value for (label, _values, _setter), value
+                    in zip(self.sweep_axes(), sweep_scalars)}
+        else:
+            axes = {**inputs.cubit, **inputs.particles, **inputs.macro}
+        # numpy scalars and all: new_state renders the block JSON-writable.
+        return {'axes': {str(name): value for name, value in axes.items()}}
+
+    @staticmethod
+    def _module_record(ctx, module):
+        """What a completed module contributes to its manifest entry: the
+        artifacts it produced (workdir-relative, so the manifest describes its own
+        directory rather than the machine that wrote it) and the results-directory
+        name a solver resolved — the value acdtool's positional commands are given,
+        and the one a later reader needs to find the output again."""
+        artifacts = {kind: relative(ctx.artifacts[kind], ctx.workdir)
+                     for kind in sorted(module.provides)
+                     if kind in ctx.artifacts}
+        names = [ctx.job_names[kind] for kind in sorted(module.provides)
+                 if kind in ctx.job_names]
+        record = {'artifacts': artifacts}
+        # Only the solver modules register one, and they provide a single
+        # solution artifact each; the plural form exists so a future producer of
+        # two cannot silently lose one.
+        if len(names) == 1:
+            record['job_name'] = names[0]
+        elif names:
+            record['job_names'] = {kind: ctx.job_names[kind]
+                                   for kind in sorted(module.provides)
+                                   if kind in ctx.job_names}
+        return record
 
     def sweep_axes(self):
         """Delegate to the input model — the swept axes a mode iterates over."""
@@ -305,36 +705,45 @@ class Workflow:
     def output_modules(self):
         """Return ``{output_name: module}`` — the module that extracts each
         declared output. Lets a mode ask a module for its field index
-        (:meth:`Module.field_index`) without solver-specific code."""
-        return {name: self._route_output(name, spec)[0]
+        (:meth:`Module.field_index`) without solver-specific code.
+
+        These are the never-run *prototypes*, so only their configuration is
+        meaningful (callers use this to read ``m.type``). Anything needing run
+        state must go through the ``ctx`` an :meth:`evaluate` returned."""
+        return {name: self._route_output(name, spec, self.modules)[0]
                 for name, spec in self.output_spec.items()}
 
-    def field_index(self):
+    def field_index(self, ctx=None):
         """Return ``(label, values)`` for the shared field index (e.g. S3P's
-        ``('Frequency', array)``) after an :meth:`evaluate`, or ``None`` if no
-        module exposes one. Scans all modules — the field index is a property of
-        the solver in the chain, independent of which ``output_parameters`` were
-        requested (so an S3P sweep with no declared outputs still goes
-        long-format). Reads from ``self.last_context``."""
-        if self.last_context is None:
+        ``('Frequency', array)``) of the evaluation ``ctx`` describes, or ``None``
+        if no module exposes one. Scans all of that evaluation's modules — the
+        field index is a property of the solver in the chain, independent of which
+        ``output_parameters`` were requested (so an S3P sweep with no declared
+        outputs still goes long-format).
+
+        ``ctx`` defaults to ``self.last_context``, the most recent evaluation."""
+        ctx = self.last_context if ctx is None else ctx
+        if ctx is None:
             return None
-        for module in self.modules:
-            idx = module.field_index(self.last_context)
+        for module in ctx.modules:
+            idx = module.field_index(ctx)
             if idx is not None:
                 return idx
         return None
 
-    def field(self):
-        """Return the structured *field* output of the just-run evaluation
-        (:meth:`Module.field`), or ``None`` if no module in the chain produces
-        one. Scans the modules like :meth:`field_index`; reads from
-        ``self.last_context``. The mode layer persists this per row as a field
-        artifact (see :mod:`lume_ace3p.results`) — the hybrid model's structured
-        half — instead of flattening it into the scalar table."""
-        if self.last_context is None:
+    def field(self, ctx=None):
+        """Return the structured *field* output of the evaluation ``ctx``
+        describes (:meth:`Module.field`), or ``None`` if no module in the chain
+        produces one. Scans that evaluation's modules like :meth:`field_index`,
+        and defaults to ``self.last_context`` the same way. The mode layer
+        persists this per row as a field artifact (see
+        :mod:`lume_ace3p.results`) — the hybrid model's structured half — instead
+        of flattening it into the scalar table."""
+        ctx = self.last_context if ctx is None else ctx
+        if ctx is None:
             return None
-        for module in self.modules:
-            fld = module.field(self.last_context)
+        for module in ctx.modules:
+            fld = module.field(ctx)
             if fld is not None:
                 return fld
         return None
@@ -353,23 +762,56 @@ class Workflow:
         scalars = list(input_scalars)
         return self.inputs.materialize(scalars), scalars
 
-    def _route_output(self, name, spec):
-        """Return the ``(module, cleaned_spec)`` that extracts ``spec``.
+    def _route_output(self, name, spec, modules):
+        """Return the ``(module, cleaned_spec)`` that extracts ``spec``, selected
+        from ``modules``.
 
         An explicit ``module`` key in a mapping spec wins; otherwise the spec
-        shape is used to infer the target module type (legacy bare specs)."""
+        shape is used to infer the target module type (legacy bare specs).
+
+        ``modules`` is passed rather than defaulted precisely because the two
+        callers want different lists: :meth:`evaluate` must resolve against
+        ``ctx.modules`` (the live instances holding this run's results), while
+        :meth:`output_modules` asks a config-only question and the prototypes are
+        the right answer there."""
         if isinstance(spec, dict) and 'module' in spec:
             module_type = str(spec['module']).lower()
             cleaned = {k: v for k, v in spec.items() if k != 'module'}
         else:
             module_type = _infer_output_module(spec)
             cleaned = spec
-        candidates = [m for m in self.modules if m.type == module_type]
+        candidates = [m for m in modules if m.type == module_type]
         if not candidates:
             raise WorkflowValidationError(
                 f"output '{name}' targets module type '{module_type}' but no "
                 f"such module is in the workflow.")
         return candidates[-1], cleaned
+
+
+def _same_output(recorded, value):
+    """Whether a manifest's recorded output value and a freshly extracted one
+    agree.
+
+    Numeric first — a recorded value has been through JSON, so an array is a list
+    and a numpy scalar a float, and ``NaN`` must compare *equal* to ``NaN`` since a
+    dry run or an unavailable quantity legitimately produces one, and every such
+    output would otherwise read as drift on every resumed point.
+
+    A non-numeric value (a Geant4 ``peak_index`` tuple, a wake type) falls back to
+    equality rather than being called a difference by the numeric comparison
+    failing. **Never raises**: it is asked about two values of unknown shape, and a
+    comparison that cannot be made is a difference worth reporting, not an error
+    worth failing the point over."""
+    try:
+        return bool(np.allclose(np.asarray(recorded, dtype=float),
+                                np.asarray(value, dtype=float),
+                                rtol=1e-9, atol=0.0, equal_nan=True))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return bool(np.all(np.asarray(recorded) == np.asarray(value)))
+    except (TypeError, ValueError):
+        return False
 
 
 def _build_entry(entry):

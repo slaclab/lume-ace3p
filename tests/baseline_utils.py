@@ -38,6 +38,9 @@ import tempfile
 
 import numpy as np
 
+from lume_ace3p.state import STATE_FILE
+from lume_ace3p.xopt_state import STATE_FILE as XOPT_STATE_FILE
+
 
 # --------------------------------------------------------------------------- #
 # Paths
@@ -62,9 +65,11 @@ SYNTH_FREQS = np.array([
 
 class SyntheticWorkflow:
     """Stand-in :class:`~lume_ace3p.workflow_graph.Workflow` for the generic Xopt
-    modes: exposes ``evaluate(input_dict) -> {objective_name: scalar}`` computed
-    from a deterministic, input-dependent synthetic S-parameter response, so the
-    optimizer sees signal but never touches Cubit/S3P.
+    modes: exposes ``evaluate(input_dict) -> ({objective_name: scalar}, ctx)``
+    computed from a deterministic, input-dependent synthetic S-parameter response,
+    so the optimizer sees signal but never touches Cubit/S3P. The ``ctx`` half of
+    the return is ``None`` — the Xopt modes only read the outputs, and this double
+    runs no modules to carry state for.
 
     ``output_spec`` maps each declared objective name to the
     ``(s_parameter, frequency)`` it extracts — the S-parameter knowledge lives in
@@ -83,7 +88,7 @@ class SyntheticWorkflow:
         for name, (sparam, freq) in self.output_spec.items():
             idx = list(SYNTH_FREQS).index(float(freq))
             out[name] = data[sparam][idx]
-        return out
+        return out, None
 
 
 def seed_all(seed=0):
@@ -664,10 +669,29 @@ def stage_dir_for(name, meta):
     return meta.get('stage_dir', name)
 
 
+# Files that are never baseline artifacts, excluded here **explicitly** rather
+# than left to no glob happening to match them (design decision 7 of
+# plans/evaluation_isolation_resume_plan.md).
+#
+# The per-evaluation completion manifest (lume_ace3p_state.json) records
+# timestamps and the absolute workdir it was written in, so it can never be
+# stable run-to-run — and it is a record of *how* a run went, not of what it
+# computed, so there is nothing in it a numeric baseline wants. A future entry
+# whose pattern widens to a directory glob must not silently start comparing it.
+#
+# The Xopt resume state (xopt_state.yml) is excluded for the same reason: it holds
+# measured per-evaluation runtimes and the import path of the evaluator closure,
+# neither of which is reproducible, and what it computed is already compared as
+# sim_output.txt.
+BASELINE_EXCLUDED = frozenset({STATE_FILE, XOPT_STATE_FILE})
+
+
 def resolve_one(workdir, pattern):
     """Return the single file matching `pattern` (glob) under `workdir`, or
-    raise if zero / ambiguous in a way that would make the fixture unstable."""
-    matches = sorted(glob.glob(os.path.join(workdir, pattern)))
+    raise if zero / ambiguous in a way that would make the fixture unstable.
+    Files in `BASELINE_EXCLUDED` never match."""
+    matches = [path for path in sorted(glob.glob(os.path.join(workdir, pattern)))
+               if os.path.basename(path) not in BASELINE_EXCLUDED]
     if not matches:
         raise FileNotFoundError(
             f'expected output {pattern!r} not produced under {workdir}')

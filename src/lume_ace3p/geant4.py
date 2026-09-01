@@ -1,15 +1,19 @@
 import os, shutil
-import subprocess
 
 from lume.base import CommandWrapper
+
+from lume_ace3p.logs import run_logged
 
 
 class Geant4(CommandWrapper):
 
     def __init__(self, *args, geant4_threads=1, geant4_opts='',
                  mpi_caller=None, geant4_app_path=None, geant4_app_exe=None,
-                 **kwargs):
+                 log_file=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # Where this step's stdout/stderr is teed (see lume_ace3p.logs); None
+        # inherits the parent's streams, which is the legacy behavior.
+        self.log_file = log_file
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.GEANT4_APP_PATH = geant4_app_path if geant4_app_path is not None else os.environ.get('GEANT4_APP_PATH', '')
         self.GEANT4_APP_EXE = geant4_app_exe if geant4_app_exe is not None else os.environ.get('GEANT4_APP_EXE', '')
@@ -118,7 +122,7 @@ class Geant4(CommandWrapper):
         cmd = (self.MPI_CALLER + ' -n 1 -c ' + str(self.geant4_threads) + ' '
                + self.geant4_opts + ' '
                + exe + ' ' + self.input_file)
-        subprocess.run(cmd, shell=True, cwd=self.workdir)
+        run_logged(cmd, cwd=self.workdir, log_file=self.log_file)
 
     def configure(self):
         return 'Not implemented.'

@@ -233,6 +233,31 @@ def test_two_mesh_sources():
         Workflow(entries, workflow_params={'dry_run': True})
 
 
+def test_two_modules_sharing_a_name_are_rejected():
+    """A module's ``name`` is its identity in three places outside the DAG — its
+    log file, its entry in the run manifest, and the resume decision that reads
+    that entry — and none of them can tell two identically-named steps apart.
+
+    This is a new error for a config that *ran* before (with the two steps
+    overwriting each other's log), and it is only reachable with an explicit
+    ``name:``: two modules of one type collide on their artifact first."""
+    entries = [{'module': 'cubit', 'name': 'step', 'journal': 'x.jou'},
+               {'module': 't3p', 'name': 'step', 'input': 'x.t3p'}]
+    with pytest.raises(WorkflowValidationError,
+                       match="two modules are named 'step'"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
+def test_the_duplicate_producer_diagnosis_wins_over_the_duplicate_name():
+    """Two modules of one type collide both ways, and "you have two mesh
+    producers" is the more useful of the two things to be told — so the name check
+    is asked last and this message is unchanged from before it existed."""
+    entries = [{'module': 'cubit', 'journal': 'a.jou'},
+               {'module': 'cubit', 'journal': 'b.jou'}]
+    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+        Workflow(entries, workflow_params={'dry_run': True})
+
+
 def test_output_targets_absent_module(tmp_path):
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 's3p', 'input': 'x.s3p'}]
@@ -274,7 +299,7 @@ def test_s3p_chain_evaluate(tmp_path):
                       inputs=inputs,
                       output_spec={'refl': {'module': 's3p',
                                             'quantity': 'S(0,0)'}})
-        out = wf.evaluate([12.0, 4.0])
+        out, ctx = wf.evaluate([12.0, 4.0])
 
         # Mesh + em_solution artifacts present at the final step.
         assert MESH in wf.last_context.artifacts
@@ -307,7 +332,7 @@ def test_t3p_chain_evaluate(tmp_path):
                       inputs=inputs,
                       output_spec={'k_loss': {'module': 't3p',
                                               'quantity': 'loss_factor'}})
-        out = wf.evaluate([0.05, 0.025])
+        out, ctx = wf.evaluate([0.05, 0.025])
 
         assert MESH in wf.last_context.artifacts
         assert TD_SOLUTION in wf.last_context.artifacts
@@ -366,7 +391,7 @@ def test_t3p_monitor_spec_reaches_the_solver_under_dry_run(tmp_path):
                                    'Ez': {'module': 't3p', 'monitor': 'point',
                                           'quantity': 'Ez',
                                           'at': {'t': 1.0e-9}}})
-        out = wf.evaluate([0.05, 0.025])
+        out, ctx = wf.evaluate([0.05, 0.025])
 
         assert np.isnan(out['P_in']).all()
         assert np.isnan(out['Ez']).all()
@@ -416,7 +441,7 @@ def test_omega3p_chain_evaluate(tmp_path):
                       workflow_params={'workdir': 'lume-ace3p_omega3p_workdir',
                                        'workdir_mode': 'auto', 'dry_run': True},
                       inputs=inputs, output_spec=output_spec)
-        out = wf.evaluate([90.0, 0.5])
+        out, ctx = wf.evaluate([90.0, 0.5])
 
         assert _types(wf.modules) == ['cubit', 'omega3p', 'acdtool']
         assert {MESH, EM_SOLUTION, RF_POST} <= set(wf.last_context.artifacts)
@@ -432,8 +457,14 @@ def test_omega3p_chain_evaluate(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def _acdtool_of(wf):
-    return next(m for m in wf.modules if m.type == 'acdtool')
+def _module_of(modules, module_type):
+    """The one module of ``module_type`` in a module list.
+
+    Callers that go on to *set* run state (a parsed solver / acdtool result) must
+    pass the live ``ctx.modules``, not ``wf.modules`` — the latter is the
+    never-run prototype list, and the workflow reads run state only off the
+    context's own instances."""
+    return next(m for m in modules if m.type == module_type)
 
 
 def test_acdtool_output_specs_route_to_acdtool():
@@ -495,22 +526,21 @@ def test_s3p_acdtool_table_indexes_on_s3p_frequency(tmp_path):
                   output_spec={'S11': {'module': 's3p', 'quantity': 'S(0,0)'},
                                'R/Q': {'module': 'acdtool', 'section': 'RoverQ',
                                        'quantity': 'RoQ'}})
-    wf.evaluate()
+    _outputs, ctx = wf.evaluate()
     assert _types(wf.modules) == ['cubit', 's3p', 'acdtool']
 
     # Give both modules real parsed results (the dry-run above ran no binary).
-    s3p = next(m for m in wf.modules if m.type == 's3p')
-    s3p._solver = _make_s3p_solver(wf.workdir)
-    acdtool = _acdtool_of(wf)
-    acdtool._acdtool = _make_acdtool(wf.workdir)
+    _module_of(ctx.modules, 's3p')._solver = _make_s3p_solver(ctx.workdir)
+    acdtool = _module_of(ctx.modules, 'acdtool')
+    acdtool._acdtool = _make_acdtool(ctx.workdir)
 
-    label, values = wf.field_index()
+    label, values = wf.field_index(ctx)
     assert label == 'Frequency'
     assert len(values) == 3                       # the three swept frequencies
     # acdtool's own axis is ModeID, and it is NOT the table's...
-    assert acdtool.field_index(wf.last_context)[0] == 'ModeID'
+    assert acdtool.field_index(ctx)[0] == 'ModeID'
     # ...so the per-mode data is reachable as a field artifact instead.
-    assert 'RoverQ' in acdtool.field(wf.last_context)
+    assert 'RoverQ' in acdtool.field(ctx)
 
 
 def test_omega3p_acdtool_table_indexes_on_modeid(tmp_path):
@@ -531,19 +561,20 @@ def test_omega3p_acdtool_table_indexes_on_modeid(tmp_path):
                   workflow_params={'workdir': str(tmp_path / 'wd'),
                                    'dry_run': True},
                   output_spec=output_spec)
-    wf.evaluate()
-    acdtool = _acdtool_of(wf)
-    acdtool._acdtool = _make_acdtool(wf.workdir)
+    _outputs, ctx = wf.evaluate()
+    acdtool = _module_of(ctx.modules, 'acdtool')
+    acdtool._acdtool = _make_acdtool(ctx.workdir)
 
-    label, ids = wf.field_index()
+    label, ids = wf.field_index(ctx)
     assert label == 'ModeID'
     assert list(ids) == [0, 1]
-    outputs = {name: acdtool.extract(wf.last_context,
+    outputs = {name: acdtool.extract(ctx,
                                      {k: v for k, v in spec.items()
                                       if k != 'module'})
                for name, spec in output_spec.items()}
     # The result table the mode layer builds from that: one row per mode.
-    rows = _rows_for_point(wf, ['cav_radius'], [90.0], outputs)
+    rows = _rows_for_point(wf, wf.field_index(ctx), ['cav_radius'], [90.0],
+                           outputs)
     assert [r['ModeID'] for r in rows] == [0, 1]
     assert [r['R/Q'] for r in rows] == pytest.approx([250.0, 40.0])
     assert [r['E_max'] for r in rows] == pytest.approx([1.5e6, 1.5e6])
@@ -568,7 +599,7 @@ def test_t3p_transwake_chain_evaluate(tmp_path):
                   workflow_params={'workdir': str(tmp_path / 'wd'),
                                    'dry_run': True},
                   output_spec={'K': {'module': 't3p', 'quantity': 'kick_factor'}})
-    out = wf.evaluate()
+    out, ctx = wf.evaluate()
 
     assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
     assert {MESH, TD_SOLUTION, RF_POST} <= set(wf.last_context.artifacts)

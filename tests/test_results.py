@@ -265,7 +265,11 @@ def test_geant4_sweep_records_loadable_field_artifacts(tmp_path):
     class StubWorkflow:
         """Minimal Workflow surface the sweep modes use, with two grid points
         and a fixed Geant4 field (the binary is absent, so we reuse the parsed
-        grid for each point)."""
+        grid for each point).
+
+        ``evaluate`` returns ``(outputs, ctx)`` like the real seam; the ctx is a
+        bare :class:`RunContext` because the mode layer reads its ``workdir`` to
+        place the per-point field artifact."""
         output_spec = {}
 
         def __init__(self):
@@ -276,13 +280,13 @@ def test_geant4_sweep_records_loadable_field_artifacts(tmp_path):
                 pass
             return [('p', np.array([1.0, 2.0]), setter)]
 
-        def evaluate(self, scalars):
-            return {}
+        def evaluate(self, scalars, workdir=None):
+            return {}, RunContext(wd)
 
-        def field_index(self):
+        def field_index(self, ctx=None):
             return None
 
-        def field(self):
+        def field(self, ctx=None):
             return expected
 
     df = modes.parameter_sweep(StubWorkflow())

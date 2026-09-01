@@ -1,15 +1,22 @@
 import os, shutil
-import subprocess
 
 from lume.base import CommandWrapper
 
+from lume_ace3p.logs import run_logged
+
 class Cubit(CommandWrapper):
 
-    def __init__(self, *args, ace3p_path=None, cubit_path=None, mpi_caller=None, **kwargs):
+    def __init__(self, *args, ace3p_path=None, cubit_path=None, mpi_caller=None,
+                 log_file=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.CUBIT_PATH = cubit_path if cubit_path is not None else os.environ.get('CUBIT_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
+        # Where this step's subprocess output is teed (see lume_ace3p.logs).
+        # None inherits the parent's streams, which is the legacy behavior. Both
+        # the mesher and meshconvert append to it: they are two invocations of one
+        # pipeline step, so one log describes the step.
+        self.log_file = log_file
         if self.workdir is None:
             self.workdir = os.getcwd()
         if not os.path.exists(self.workdir):
@@ -104,8 +111,8 @@ class Cubit(CommandWrapper):
                 
     def run(self, mcflag=True):
         self.write_input()
-        subprocess.run(self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
-                        shell=True, cwd=self.workdir)
+        run_logged(self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
+                   cwd=self.workdir, log_file=self.log_file)
         if mcflag:
             self.meshconvert()
                         
@@ -115,8 +122,8 @@ class Cubit(CommandWrapper):
         else:
             self.get_export()
         if self.exportfile is not None:
-            subprocess.run(self.MPI_CALLER + ' --nodes=1 --ntasks=1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + self.exportfile,
-                            shell=True, cwd=self.workdir)
+            run_logged(self.MPI_CALLER + ' --nodes=1 --ntasks=1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + self.exportfile,
+                       cwd=self.workdir, log_file=self.log_file)
         
     def configure(self):
         return 'Not implemented.'
