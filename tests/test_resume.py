@@ -50,6 +50,7 @@ import pytest
 
 from lume_ace3p import modes, run_lume_ace3p, state
 from lume_ace3p.inputs import WorkflowInputs
+from lume_ace3p.results import FIELD_ARTIFACT_COLUMN, load_field
 from lume_ace3p.workflow_graph import Workflow
 
 
@@ -319,7 +320,17 @@ def test_a_resumed_sweep_matches_the_uninterrupted_one(staged):
 
     resumed = modes.parameter_sweep(_workflow(staged, radii), resume=True)
 
-    pd.testing.assert_frame_equal(uninterrupted, resumed)
+    # The one output is narrowed to a scalar, so each point is one wide row with
+    # its mode arrays persisted beside it; the artifact paths differ only by the
+    # root the two sweeps ran under, so they are compared by content below.
+    pd.testing.assert_frame_equal(
+        uninterrupted.drop(columns=FIELD_ARTIFACT_COLUMN),
+        resumed.drop(columns=FIELD_ARTIFACT_COLUMN))
+    for reference_handle, handle in zip(uninterrupted[FIELD_ARTIFACT_COLUMN],
+                                        resumed[FIELD_ARTIFACT_COLUMN]):
+        assert os.path.dirname(handle).startswith(str(staged / 'wd'))
+        assert np.array_equal(load_field(handle)['Frequency'],
+                              load_field(reference_handle)['Frequency'])
     # Worth comparing only because the columns hold real, per-point numbers.
     assert resumed['f0'].tolist() == radii
 
@@ -447,10 +458,12 @@ def test_a_completed_transwake_point_resumes_to_the_same_kick_factor(staged):
     needs no special case and why the acdtool step's re-parse hook is called on the
     resumed path too."""
     first = modes.parameter_sweep(_transwake_workflow(staged, [100.0, 101.0]))
-    # T3P is long-format over the wake coordinate 's', so the per-run scalar
-    # repeats down each point's block of rows (two samples per point here).
-    assert list(first.columns) == ['radius', 's', 'K']
-    assert first['K'].tolist() == [200.0, 200.0, 202.0, 202.0]
+    # T3P's table axis is the wake coordinate 's', but the only declared output
+    # is the per-run scalar, so nothing rides on the axis: each point is one
+    # wide row, with the wake arrays persisted as its field artifact rather than
+    # the scalar repeated down a block of 's' rows.
+    assert list(first.columns) == ['radius', 'K', FIELD_ARTIFACT_COLUMN]
+    assert first['K'].tolist() == [200.0, 202.0]
 
     resumed = modes.parameter_sweep(_transwake_workflow(staged, [100.0, 101.0]),
                                     resume=True)

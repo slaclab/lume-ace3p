@@ -468,9 +468,14 @@ scalar — the form an Xopt objective needs, mirroring S3P's `at: {frequency: �
 Without it you get the full array, which is what a dispersion curve or an HOM
 catalog wants: for an eigensolve you often do not know the mode count in advance.
 
-`ModeID` is Omega3P's **field index**, so a `parameter_sweep` emits a long-format
-table with one row per `(grid point, mode)` — as an S3P sweep goes long over
-`Frequency`. In a dry run there are no modes yet, so the table stays wide.
+`ModeID` is Omega3P's **field index**. When an output asks for the whole mode
+axis (no `at:`), a `parameter_sweep` emits a long-format table with one row per
+`(grid point, mode)` — as an S3P sweep goes long over `Frequency`. When every
+declared output is narrowed with `at: {mode: n}`, nothing rides on the axis and
+the table stays **wide**, one row per grid point, with the per-mode arrays
+persisted as that row's field artifact (see [](#results)); repeating the
+scalars once per mode would only label the copies with modes they were not
+sampled at. In a dry run there are no modes yet, so the table is wide as well.
 
 **`results_dir:`** names the directory the run writes into (default
 `omega3p_results`). That directory is chosen on the solver's **command line**, not
@@ -527,7 +532,11 @@ existing spec and every frozen baseline is unaffected. Adding
 `at: {frequency: <f>}` to a mapping spec reduces any of these arrays to the scalar
 at that frequency (an exact match against the scan; an unmatched frequency reports
 and yields `NaN`). `Frequency` is S3P's **field index**, so a `parameter_sweep`
-emits a long-format table with one row per `(grid point, frequency)`.
+emits a long-format table with one row per `(grid point, frequency)` whenever an
+output spans the scan — or when no outputs are declared at all, in which case the
+table carries the swept inputs and `Frequency` only. If every declared output is
+narrowed with `at: {frequency: …}`, the table is wide (one row per grid point)
+and the spectrum is persisted as the row's field artifact.
 
 Older ACE3P builds write no `SParameter.out`. That is a warning naming what is
 unavailable, not an error: the magnitudes are still read, and asking for a
@@ -628,7 +637,9 @@ returning `NaN`.
 
 T3P exposes a **field index**, so a sweep over a T3P workflow emits a long-format
 table — one row per `(grid point, index)`, exactly as an S3P sweep goes long over
-`Frequency`. Which index:
+`Frequency` — as long as at least one declared output is an array over that
+index (a sweep declaring only `loss_factor` stays wide, with the wake persisted
+as each row's field artifact). Which index:
 
 * `s` when the run produced a wake;
 * `t` otherwise, from the first time-series monitor;
@@ -1358,14 +1369,19 @@ written through to the matching input file unchanged. During optimization,
 each VOCS variable is routed to the bucket where it is declared (see
 [](#vocs_parameters)).
 
+(results)=
 ### Results
 
 The table modes (`single`, `parameter_sweep`) return a pandas `DataFrame` — one
-row per evaluation (or one row per `(grid-point, frequency)` for a field-indexed
-solver like S3P) — routed through the single shared writer
-{py:func}`~lume_ace3p.results.write_table` (a tab-delimited `to_csv`) when
-`mode.output_file` is set. Structured field outputs are persisted separately as
-`.npz` and referenced by a field-artifact column. The Xopt modes return the
+row per evaluation, or one row per `(grid-point, index)` when a field-indexed
+solver's axis (S3P's `Frequency`, Omega3P's `ModeID`, T3P's `s`/`t`) is spanned
+by at least one declared output or no outputs are declared at all — routed
+through the single shared writer {py:func}`~lume_ace3p.results.write_table` (a
+tab-delimited `to_csv`) when `mode.output_file` is set. Structured field outputs
+of a wide row (an Omega3P run whose outputs are all narrowed to one mode, a
+Geant4 dose grid) are persisted separately as `.npz` and referenced by a
+`field_artifact` column; load one with
+{py:func}`~lume_ace3p.results.load_field`. The Xopt modes return the
 {py:class}`xopt.Xopt` object and log its `X.data` table through the same writer.
 
 For full class- and method-level documentation, see the

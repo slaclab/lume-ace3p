@@ -252,14 +252,20 @@ In this example `cornercut` and `rcorner2` are length 5 and 3, giving 5 × 3 =
 
 S3P exposes a frequency field index, so its sweep table is emitted in
 **long format**: one row per `(grid-point, frequency)` rather than one row per
-grid point. `output_parameters` are optional here — even with none declared, the
-per-frequency S-parameters are tabulated because the frequency index alone
-drives the long-format rows.
+grid point. `output_parameters` are optional here — with none declared the
+frequency index alone drives the rows, and the table carries the swept inputs
+and `Frequency` only; the S-parameters stay in each workdir's
+`s3p_results/SParameter.out`. Declare an output such as
+`{module: s3p, quantity: 'S(0,0)'}` per S-parameter you want as a column.
 
 In the example, S3P scans 13 frequencies for each of the 15 workflow
-evaluations, giving 195 rows in `output_file`. Each row has `cornercut`,
-`rcorner2`, and `Frequency`, followed by the four S-parameters of the 2-port
-system (`S(0,0)`, `S(0,1)`, `S(1,0)`, `S(1,1)`).
+evaluations, giving 195 rows in `output_file`, each with `cornercut`,
+`rcorner2` and `Frequency`.
+
+The long format is used only while an output rides on the index (or none is
+declared). If every declared output is narrowed to a scalar — `at: {frequency:
+…}` for S3P, `at: {mode: n}` for Omega3P — the table is wide again, one row per
+grid point, and the solver's arrays are persisted as that row's field artifact.
 
 ### S3P parameter sweep with no separate ACE3P file
 

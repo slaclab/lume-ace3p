@@ -35,7 +35,9 @@ variable names + the extracted scalar outputs. Two shapes:
 * **long / tidy** (S3P) — a module that exposes a shared field index
   (:meth:`Module.field_index`, e.g. ``('Frequency', array)``) emits one row per
   ``(grid-point, frequency)``; each S-parameter output becomes a column aligned
-  to that index.
+  to that index. The axis is used only when an output rides on it (or none is
+  declared); a run whose every output is narrowed to a scalar stays wide — see
+  :func:`_table_index`.
 
 Per-run *field* outputs (S-parameter vectors, dose/edep voxel grids) are NOT
 exploded into the scalar table — they stay structured. For the wide/scalar
@@ -249,8 +251,9 @@ def single(workflow, resume=False):
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
     outputs, ctx = _evaluate_point(workflow, None, 0, resume=resume)
-    point = _PointResult(0, scalars, outputs, workflow.field_index(ctx),
-                         _persist_field(workflow, ctx, 0))
+    index = _table_index(workflow, ctx, outputs)
+    point = _PointResult(0, scalars, outputs, index,
+                         _persist_field(workflow, ctx, 0, index))
     return _assemble(workflow, input_names, [point])
 
 
@@ -294,9 +297,9 @@ def parameter_sweep(workflow, resume=False):
         # Everything the rows need is read out here, so the per-point ``ctx`` —
         # and the whole parsed solver output hanging off it — is not held for the
         # length of the sweep.
-        points.append(_PointResult(i, scalars, outputs,
-                                   workflow.field_index(ctx),
-                                   _persist_field(workflow, ctx, i)))
+        index = _table_index(workflow, ctx, outputs)
+        points.append(_PointResult(i, scalars, outputs, index,
+                                   _persist_field(workflow, ctx, i, index)))
     return _assemble(workflow, input_names, points)
 
 
@@ -405,16 +408,49 @@ def _evaluate(workflow, input_scalars, workdir=None, resume=False):
     return workflow.evaluate(input_scalars, **kwargs)
 
 
-def _persist_field(workflow, ctx, point_index):
+def _table_index(workflow, ctx, outputs):
+    """The field index this point's rows are exploded over, or ``None`` for a
+    single wide row.
+
+    A module's field index is a property of its parsed output — Omega3P's mode
+    list, S3P's frequency scan — not of what ``output_parameters`` asked for. It
+    becomes the table's axis only when something rides on it: when at least one
+    extracted output is an array (aligned to the axis, the long-format case), or
+    when no outputs were declared at all (an S3P sweep with none still tabulates
+    its frequency scan). When every declared output was narrowed to a scalar
+    (``at: {mode: 0}`` on each of an Omega3P run's outputs), exploding the point
+    into one row per index value would only repeat the scalars and label the
+    copies with an index they were not sampled at — a ``ModeID = 1`` row
+    carrying mode 0's frequency — so the point stays one wide row and the
+    structured field is persisted beside it instead (:func:`_persist_field`).
+
+    Under dry-run the S3P/T3P sentinel axis has one value and their ``extract``
+    returns a one-element array, so dry-run tables keep their index column."""
+    index = workflow.field_index(ctx)
+    if index is None or not outputs:
+        return index
+    if any(_is_array(value) for value in outputs.values()):
+        return index
+    return None
+
+
+def _is_array(value):
+    """True for an index-aligned array output (as opposed to a scalar)."""
+    if isinstance(value, np.ndarray):
+        return value.ndim > 0
+    return isinstance(value, (list, tuple))
+
+
+def _persist_field(workflow, ctx, point_index, index):
     """Persist the structured field (if any) of the evaluation ``ctx`` describes
     to a ``.npz`` under its workdir, and return the stored handle.
 
+    ``index`` is the point's resolved table index (:func:`_table_index`).
     Returns ``None`` when there is no field (dry-run, or a solver that produces
     none) or in the long-format case — where the field values are exploded into
-    the rows via :meth:`Workflow.field_index`, so storing a redundant artifact
-    would be wrong. The per-point filename keeps rows distinct even in a shared
-    (manual) workdir."""
-    if workflow.field_index(ctx) is not None:
+    the rows, so storing a redundant artifact would be wrong. The per-point
+    filename keeps rows distinct even in a shared (manual) workdir."""
+    if index is not None:
         return None
     field = workflow.field(ctx)
     if field is None:
