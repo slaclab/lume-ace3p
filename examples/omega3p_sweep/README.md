@@ -42,5 +42,10 @@ The inputs are local to this folder (not in `../assets`):
 run-lume-ace3p omega3p_sweep.yaml
 ```
 
-This example ships no batch scripts — run it locally. For cluster submission see
-the sibling examples, which carry Perlmutter and S3DF `sbatch` scripts.
+On SLAC S3DF, submit the batch script:
+
+```bash
+sbatch run_lume-ace3p_omega3p_sweep_s3df.batch
+```
+
+For NERSC Perlmutter, adapt a `*_perlmutter.batch` script from a sibling example.

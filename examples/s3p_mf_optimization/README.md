@@ -47,6 +47,7 @@ On a cluster, submit the batch script:
 
 ```bash
 sbatch run_lume-ace3p_s3p_mf_optimization_perlmutter.batch   # NERSC Perlmutter
+sbatch run_lume-ace3p_s3p_mf_optimization_s3df.batch         # SLAC S3DF
 ```
 
 Only a Perlmutter script ships with this example; adapt it for other clusters.

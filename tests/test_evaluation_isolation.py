@@ -530,5 +530,44 @@ def test_run_logged_appends_each_invocation(tmp_path):
         '$ echo first', 'first', '$ echo second', 'second']
 
 
+@posix_only
+def test_a_refused_solver_launch_is_named_in_the_no_results_error(tmp_path,
+                                                                  capsys):
+    """When the MPI launcher itself refuses the step (srun's "More processors
+    requested than permitted" is the real case), the solver never runs and the
+    parser finds nothing. The resulting "no results" error must say the launch
+    failed rather than blame the input file for lacking a WakeField monitor —
+    which is exactly what it did before the exit status was recorded."""
+    from lume_ace3p.ace3p import T3P
+    from lume_ace3p.modules import T3PModule, RunContext
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    fake_srun = bin_dir / 'srun'
+    fake_srun.write_text('#!/bin/sh\necho "srun: error: More processors requested '
+                         'than permitted" 1>&2\nexit 1\n')
+    fake_srun.chmod(0o755)
+    source = tmp_path / 'model.t3p'
+    source.write_text('ModelInfo: { File: ./m.ncdf }\n'
+                      'Monitor: { Type: WakeField  Name: wakefield }\n')
+    workdir = tmp_path / 'wd'
+    workdir.mkdir()
+    t3p = T3P(str(source), workdir=str(workdir), ace3p_tasks=16,
+              ace3p_cores=16, mpi_caller=str(fake_srun), ace3p_path='')
+    t3p.run()
+    assert t3p.returncode == 1
+    assert 'exited with status 1' in capsys.readouterr().err
+    assert 'exited with status 1' in t3p.exit_status_note()
+
+    module = T3PModule({'module': 't3p', 'input': str(source)})
+    module._solver = t3p
+    ctx = RunContext(workdir=str(workdir), dry_run=False)
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'quantity': 'loss_factor'})
+    message = str(excinfo.value)
+    assert 'no T3P wakefield results' in message
+    assert 'exited with status 1' in message
+    assert 'probably never ran' in message
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

@@ -1,5 +1,5 @@
 import glob
-import os, re, shutil
+import os, re, shutil, sys
 import warnings
 
 import numpy as np
@@ -287,6 +287,7 @@ class ACE3P(CommandWrapper):
         self._results_dir = results_dir
         self.output_file = None
         self.output_data = {}
+        self.returncode = 0
         if self.workdir is None:
             self.workdir = os.getcwd()
         if self.ace3p_opts is None:
@@ -330,9 +331,28 @@ class ACE3P(CommandWrapper):
 
     def run(self):
         self.write_input()
-        run_logged(self.solver_command(), cwd=self.workdir,
-                   log_file=self.log_file)
+        completed = run_logged(self.solver_command(), cwd=self.workdir,
+                               log_file=self.log_file)
+        self.returncode = completed.returncode
+        if self.returncode:
+            # Not raised, matching the wrappers' long-standing behavior (see
+            # :func:`lume_ace3p.logs.run_logged`), but said out loud: when the
+            # launcher itself refuses the step (e.g. srun's "More processors
+            # requested than permitted"), the solver never ran and the "no
+            # results" error that follows would otherwise blame the input file.
+            print(self.exit_status_note(), file=sys.stderr)
         self.output_parser()
+
+    def exit_status_note(self):
+        """One line describing a nonzero solver exit status, or ``''`` when
+        the last :meth:`run` exited cleanly (or has not run). Appended to the
+        "no results" errors so a launch failure is named as the cause."""
+        code = getattr(self, 'returncode', 0)
+        if not code:
+            return ''
+        return (f"{self.module_name} exited with status {code} (command: "
+                f"{self.solver_command().strip()}); the solver probably never "
+                f"ran — check {self.log_file or 'its output above'}.")
 
     def load_input_file(self, *args):
         if args:

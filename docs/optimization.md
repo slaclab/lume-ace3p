@@ -153,7 +153,7 @@ workflow :
   - module : s3p
     input : 'bend-90degree.s3p'
     tasks : 16
-    cores : 8
+    cores : 4
     opts : '--cpu-bind=cores'
 
 mode :
@@ -224,7 +224,7 @@ workflow :
   - module : s3p
     input : 'bend-90degree_mf.s3p'
     tasks : 16
-    cores : 8
+    cores : 4
     opts : '--cpu-bind=cores'
 
 mode :
@@ -290,7 +290,7 @@ workflow :
   - module : omega3p
     input : 'pillbox-rtop.omega3p'
     tasks : 16
-    cores : 8
+    cores : 4
   - module : acdtool
     input : 'pillbox-rtop.rfpost'
 

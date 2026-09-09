@@ -24,7 +24,7 @@ workflow :
   - module : t3p
     input : 'pillboxwg2-closed.t3p'
     tasks : 16
-    cores : 16
+    cores : 4
     opts : '--cpu-bind=cores'
   - module : acdtool
     command : 'postprocess transwake'

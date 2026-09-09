@@ -693,7 +693,7 @@ class Omega3PModule(_SolverModule):
                 f"no Omega3P eigenmode results to extract '{quantity}' from. "
                 f"Expected {os.path.join(solver.results_dir(), solver.output_file)} "
                 f"under {ctx.workdir}; set 'results_dir' on the omega3p module "
-                "if the run used a different job name.")
+                f"if the run used a different job name. {solver.exit_status_note()}".rstrip())
         if quantity == 'Modes' or quantity not in data:
             raise ValueError(
                 "Unknown quantity '" + str(quantity) + "' in Omega3P output "
@@ -1071,7 +1071,7 @@ class T3PModule(_SolverModule):
                     "monitor, e.g.\n"
                     "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
                     f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
-                    f"under {ctx.workdir}.")
+                    f"under {ctx.workdir}. {solver.exit_status_note()}".rstrip())
             name = solver.wake_monitor_name() or 'wakefield'
             return name, found[name][0], 's'
 

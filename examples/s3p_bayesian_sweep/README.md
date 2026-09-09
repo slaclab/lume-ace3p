@@ -42,5 +42,5 @@ Both inputs are local to this directory (shared with
 run-lume-ace3p s3p_bayesian_sweep.yaml
 ```
 
-No batch scripts ship with this example; run it directly or adapt one from a
-sibling such as [`../s3p_mf_optimization`](../s3p_mf_optimization).
+On SLAC S3DF, submit `run_lume-ace3p_s3p_bayesian_sweep_s3df.batch`; for NERSC
+Perlmutter, adapt the script in [`../s3p_mf_optimization`](../s3p_mf_optimization).

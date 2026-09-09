@@ -56,7 +56,7 @@ workflow :
   - module : omega3p
     input : 'pillbox-rtop.omega3p'
     tasks : 16
-    cores : 16
+    cores : 4
     opts : '--cpu-bind=cores'
   - module : acdtool
     input : 'pillbox-rtop.rfpost'
@@ -69,7 +69,7 @@ mode :
 `workflow_parameters` holds only directory settings here: workflows are run in
 separate sub-directories (`workdir_mode: auto`, auto-named from input values).
 Each module entry names its own input file and, for the solver, its MPI settings
-(16 tasks × 16 cores/task with `--cpu-bind=cores`). The `mode` block enables the
+(16 tasks × 4 cores/task with `--cpu-bind=cores`; `tasks × cores` must fit inside the job allocation, e.g. 120 CPUs on an S3DF milano node). The `mode` block enables the
 result table written to `output_file`. See [](yaml_reference.md) for full
 details.
 

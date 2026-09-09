@@ -37,5 +37,5 @@ Only one input file is present, and that is deliberate:
 run-lume-ace3p s3p_sweep_no_s3p_file.yaml
 ```
 
-No batch scripts ship with this example; run it directly or adapt one of the
-scripts in [`../s3p_sweep`](../s3p_sweep).
+On SLAC S3DF, submit `run_lume-ace3p_s3p_sweep_no_s3p_file_s3df.batch`; for
+NERSC Perlmutter, adapt the script in [`../s3p_sweep`](../s3p_sweep).
