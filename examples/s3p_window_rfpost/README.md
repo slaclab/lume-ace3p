@@ -65,10 +65,13 @@ converts it to the `window.ncdf` the `.s3p` file references.
 The journal **joins the tutorial's two** (`step1-Make-window.jou` builds the solid
 and exports `window.sat`; `step2-Mesh-window.jou` imports it and meshes it),
 because a `cubit` module plays exactly one journal. The ACIS round-trip is
-dropped. What makes that safe is the `compress ids` before the meshing half: it
-renumbers the surviving entities contiguously, which is the same numbering an
-export/import pair produces, so the surface IDs the meshing half names still
-resolve.
+dropped, and with it the surface numbering the tutorial's meshing half relied
+on, so the joined journal selects the ports and symmetry planes **by position**
+(`surface with z_coord < ...`, `x_coord`, `y_coord`) rather than by ID, and
+excludes merged interior surfaces from every boundary sideset. (The first
+version named surfaces by ID; on S3DF that put a vacuum/ceramic interface into
+a symmetry sideset, `acdtool meshconvert` flagged a bad Euler characteristic,
+and S3P aborted.)
 
 ## Running
 
