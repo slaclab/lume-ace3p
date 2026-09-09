@@ -17,6 +17,7 @@ scoring files are pre-placed in the workdir.
 """
 
 import os
+import subprocess
 import shutil
 import warnings
 
@@ -105,7 +106,9 @@ maxFieldsOnSurface
 # rfpost.out with parseable RoverQ / kickFactor / maxFieldsOnSurface blocks.
 # [RoverQ] carries TWO modes so a mapping spec with no 'at:' has an axis longer
 # than one row; [kickFactor] carries one, as a run whose modeID range differs
-# would (the blocks are narrowed independently).
+# would (the blocks are narrowed independently). [maxFieldsOnSurface] follows
+# the real layout (tests/fixtures/acdtool/rfpost_outputs/pillbox-rtop-
+# maxfields.rfpost.out): colon-separated, a unit after the value, a ModeID line.
 RFPOST_OUTPUT = """\
 [RoverQ]
 Results for RoverQ:

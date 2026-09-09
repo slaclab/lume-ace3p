@@ -186,12 +186,14 @@ def test_fixture_inventory():
         'rfpost_inputs/pillbox-rtop+coax.rfpost',
         'rfpost_inputs/window.rfpost',
         'rfpost_inputs/coaxport-multiline.rfpost',
+        'rfpost_inputs/pillbox-rtop-maxfields.rfpost',
         'rfpost_outputs/pillbox+recWG.rfpost.out',
         'rfpost_outputs/pillbox+recWG+load.rfpost.out',
         'rfpost_outputs/pillbox-rtop.rfpost.out',
         'rfpost_outputs/pillbox-rtop+coax.rfpost.out',
         'rfpost_outputs/dlwg-pbc.rfpost.out',
         'rfpost_outputs/window.rfpost.out',
+        'rfpost_outputs/pillbox-rtop-maxfields.rfpost.out',
         'curves/field1_0', 'curves/field1_0.ec', 'curves/field1_0.bc',
         'curves/field1_1', 'curves/field1_1.ec', 'curves/field1_1.bc',
         'acdtool_inputs/Pillbox.acdtool',
@@ -581,6 +583,35 @@ def test_vfft_printgroup_nterm_is_rejected_by_name(tmp_path):
     assert 'VFFT' not in acd.output_data
 
 
+def test_maxfields_values_from_real_output(tmp_path):
+    """``[maxFieldsOnSurface]`` as acdtool really writes it -- the fixture is
+    the ``rfpost.out`` of ``examples/omega3p_sweep`` at (cav_radius 90,
+    ellipticity 0.5) run on S3DF, 2026-09-09. It closed the COVERAGE.md gap:
+    the block is colon-separated (``Emax :  3.94377e+07 (V.m)   at (...)``),
+    carries a unit after the value and a ``ModeID`` line for the single mode
+    ``RFField`` names. The reader written against the assumed ``Emax = ...``
+    layout found nothing here, and the example's ``E_max`` output failed with
+    "surface 6 reported no 'Emax'"."""
+    acd = _acdtool(tmp_path,
+                   os.path.join(RFPOST_IN, 'pillbox-rtop-maxfields.rfpost'),
+                   os.path.join(RFPOST_OUT,
+                                'pillbox-rtop-maxfields.rfpost.out'))
+    assert set(acd.output_data) == {'RoverQ', 'maxFieldsOnSurface', 'scaling'}
+    surface = acd.output_data['maxFieldsOnSurface']
+    assert surface['SurfaceIDs'] == ['6']
+    assert surface['6'] == {
+        'ModeID': 0.0,
+        'Emax': 3.94377e7,
+        'Emax_location': {'x': 4.2896e-2, 'y': 0.0, 'z': -4.5724e-2},
+        'Hmax': 6.10809e4,
+        'Hmax_location': {'x': 3.5190e-2, 'y': 5.5237e-2, 'z': 4.5000e-2}}
+    # The unit is dropped, not mistaken for the imaginary part of a complex.
+    assert 'Emax_imag' not in surface['6']
+    # The same run's [RoverQ] still reads as before.
+    assert acd.output_data['RoverQ']['ModeIDs'] == ['0', '1']
+    assert acd.output_data['RoverQ']['0']['RoQ'] == 109.912
+
+
 def test_surface_scalars_split_a_complex_power(tmp_path):
     """``powerThroughSurface``'s power is complex [W], the real part being the
     average flow from the complex Poynting vector -- so it gets the same
@@ -664,9 +695,9 @@ def test_section_table_covers_the_documented_block_surface():
         'dFSlater', 'VFFT', 'ALLFieldAtPoint', 'coaxPort'}
     assert {n for n, s in SECTIONS.items() if s.shape == SURFACE} == {
         'maxFieldsOnSurface', 'powerThroughSurface'}
-    # Only three shapes have a real acdtool output behind them -- COVERAGE.md.
+    # Only four blocks have a real acdtool output behind them -- COVERAGE.md.
     assert {n for n, s in SECTIONS.items() if s.validated} == {
-        'RoverQ', 'ALLFieldOnLine', 'scaling'}
+        'RoverQ', 'ALLFieldOnLine', 'scaling', 'maxFieldsOnSurface'}
     # Every curve/grid block names the files it writes, and the schemes differ.
     for name, section in SECTIONS.items():
         if section.shape in (CURVE, GRID):
