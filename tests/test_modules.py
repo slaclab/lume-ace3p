@@ -124,10 +124,11 @@ ModeID Frequency Qext Ks V_r V_i absV
 }
 
 [maxFieldsOnSurface]
-surfaceID : 6
-header line
-Emax = 1.500000e6 at (0.1, 0.2, 0.3)
-Hmax = 2.500000e3 at (0.4, 0.5, 0.6)
+{
+   surfaceID :   6
+      ModeID :   0
+        Emax :  1.500000e+06 (V.m)      at ( 1.0000e-01,  2.0000e-01,  3.0000e-01)
+        Hmax :  2.500000e+03 (A/m)      at ( 4.0000e-01,  5.0000e-01,  6.0000e-01)
 }
 """
 
@@ -1524,8 +1525,13 @@ def test_acdtool_injects_the_producers_jobname(tmp_path, monkeypatch):
     value the user repeats. A T3P module with ``results_dir: custom_results``
     therefore moves acdtool's argument with it."""
     commands = []
-    monkeypatch.setattr('subprocess.run',
-                        lambda cmd, **kw: commands.append(cmd))
+
+    def fake_run(cmd, **kw):
+        # The solver wrapper records the exit status, so the stub must return
+        # a CompletedProcess rather than None.
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr('subprocess.run', fake_run)
     wd = str(tmp_path / 'wd')
     os.makedirs(wd, exist_ok=True)
     _write(os.path.join(wd, 'model.t3p'), T3P_INPUT)
@@ -1569,6 +1575,7 @@ def test_transwake_reparses_the_producer(tmp_path, monkeypatch):
         os.makedirs(os.path.dirname(wake), exist_ok=True)
         _write(wake, T3P_WAKEFIELD_TRANSVERSE
                if 'acdtool postprocess transwake' in cmd else T3P_WAKEFIELD)
+        return subprocess.CompletedProcess(cmd, 0)
     monkeypatch.setattr('subprocess.run', fake_run)
 
     ctx = RunContext(wd, artifacts={MESH: wd},
