@@ -109,9 +109,9 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ### Sweeps (short, do these first)
 
-- [ ] `s3p_sweep_no_s3p_file`
-- [ ] `s3p_window_rfpost`
-- [ ] `omega3p_sweep` (new S3DF batch script — first S3DF run ever)
+- [x] `s3p_sweep_no_s3p_file` — job 37561378, 6m13s, 15 points, 195 rows, no NaNs; SParameter.out sane (|S|≤1, |S11|²+|S21|²≈1). Note: like `s3p_sweep`, the YAML declares no `output_parameters`, so the table is only `cornercut, rcorner2, Frequency` (design choice, not a bug).
+- [x] `s3p_window_rfpost` — job 37563164, 1m40s, 3 points, 48 rows, no NaNs; |S11|²+|S21|²=1, best match at the 3 mm design (|S11|=0.019 @ 2.556 GHz), acdtool `field1_*` curves present, m_factor=1. First attempt 37562352 failed: the joined `window.jou` named surfaces by tutorial ID, which put a merged ceramic/vacuum face into a symmetry sideset (bad Euler characteristic, S3P aborted in ParMETIS). Fixed by selecting ports/symmetry planes by coordinate.
+- [x] `omega3p_sweep` — run 3 (job 37568528, 3m59s): 16 wide rows + `field_artifact` (both modes in the .npz), no NaNs, f falls with radius (1.41→1.03 GHz), R/Q 96–148 Ω, E_max ~3.7–3.95e7 V/m at 20 MV/m gradient. Two repo bugs found and fixed: (1) run 1 (37563717) — acdtool parser expected `Emax = …`, real output is `Emax : value (unit) at (…)` → 9698d62, real fixture added; (2) run 2 (37565335) — 32 rows: ModeID axis exploded although every output was narrowed to mode 0, mode-1 rows carried mode-0 values → 888f558 (table stays wide when no output spans the index).
 - [ ] `omega3p_ace3p_param_sweep`
 - [ ] `omega3p_dispersion_sweep`
 - [ ] `t3p_transwake` (mode `single`; includes `acdtool postprocess transwake`)
@@ -134,7 +134,7 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ### Python-only (run directly on iana, no sbatch)
 
-- [ ] `track3p_particle_weight`
+- [x] `track3p_particle_weight` — ran on iana 2026-09-09 (19 s, exit 0): 3284 particles filtered, 8 bins with beta [50..65..50], 19-column weighted dump written, `Bin` 0–7 and `ParticleWeight` 0–8.7e6, no NaNs. No table (mode `single`, no `output_file`), as designed.
 
 ### Not runnable
 
@@ -147,7 +147,12 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
   `conda activate lume-ace3p-dev && python -m pytest -q tests/` in tmux (or
   `-x --durations=10` to find the slow ones) and record the result here. The
   new test alone passes (`-k refused_solver_launch`).
-- [ ] Consider a note in `docs/installation.md` (S3DF section) about
+- [ ] Decide whether `s3p_sweep` / `s3p_sweep_no_s3p_file` should declare
+  `output_parameters` (S(0,0), S(0,1), …). With none declared the table is only
+  `inputs + Frequency`; the docs used to promise S-parameter columns (corrected
+  in 888f558 to describe actual behavior). Adding outputs to the YAMLs would
+  move the dry-run baselines (new NaN columns) → re-freeze. User's call.
+- [x] Note added to `docs/installation.md` (S3DF section) about
   `tasks × cores ≤ 120` and the `source ace3p.sh` → `conda activate` order.
 
 ## Finish

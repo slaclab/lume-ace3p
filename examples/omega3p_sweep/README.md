@@ -17,7 +17,10 @@ point into `omega3p_sweep_output.txt`. Each `output_parameters` entry names the
 module it comes from and what it wants: `R/Q` from the acdtool `RoverQ` block at
 mode 0, `E_max` and its `loc_x/loc_y/loc_z` location from `maxFieldsOnSurface` on
 surface 6, and `Mode_freq` from **Omega3P's own eigenmode output** — no acdtool
-block is needed for a frequency.
+block is needed for a frequency. Because every output is narrowed to one mode,
+the table stays one row per grid point; the run's full per-mode arrays (both
+eigenfrequencies, Q, stored energy) are kept beside it in a per-row
+`field_artifact` `.npz`, loadable with `lume_ace3p.results.load_field`.
 
 This is the baseline of the trio. [`../omega3p_ace3p_param_sweep`](../omega3p_ace3p_param_sweep)
 adds an ACE3P `Sigma` axis on top of the same two Cubit axes (32 runs), and
