@@ -96,8 +96,19 @@ To run the examples from an S3DF iana terminal:
 2. Run the ACE3P setup script: `source sdf-ace3p.sh` (required to run ACE3P on
    S3DF). The file is located in `/sdf/group/rfar/ace3p/`.
 3. Activate the `lume-ace3p` conda environment (if not already active).
+   Do this **after** sourcing the ACE3P (or Geant4) setup script: those scripts
+   reset `PATH`, so activating conda first leaves the shell without
+   `run-lume-ace3p`.
 4. Submit a batch job from one of the *S3DF* examples with `sbatch`.
 5. View results in the folder the job was run from.
+
+**Sizing a solver step for a milano node.** The S3DF batch scripts request one
+node with `--ntasks-per-node=120` (a milano node exposes 120 usable cores, no
+hyperthreading). A solver module's `tasks × cores` must stay **≤ 120** — e.g.
+`tasks: 16, cores: 4` or `tasks: 12, cores: 8` — or `srun` refuses the step
+with `More processors requested than permitted` and the run fails on its first
+point. The Perlmutter scripts, sized for 256 logical CPUs, use larger products;
+do not copy their `tasks`/`cores` onto S3DF unchanged.
 
 (executable-paths)=
 ## Executable paths
