@@ -93,8 +93,8 @@ To activate the environment on an S3DF **iana node**:
 To run the examples from an S3DF iana terminal:
 
 1. Copy the `/sdf/group/rfar/lume-ace3p/examples` folder to a desired location.
-2. Run the ACE3P setup script: `source sdf-ace3p.sh` (required to run ACE3P on
-   S3DF). The file is located in `/sdf/group/rfar/ace3p/`.
+2. Run the ACE3P setup script: `source /sdf/group/rfar/ace3p/ace3p.sh`
+   (required to run ACE3P on S3DF).
 3. Activate the `lume-ace3p` conda environment (if not already active).
    Do this **after** sourcing the ACE3P (or Geant4) setup script: those scripts
    reset `PATH`, so activating conda first leaves the shell without
