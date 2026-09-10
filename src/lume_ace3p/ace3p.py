@@ -361,9 +361,16 @@ class ACE3P(CommandWrapper):
         code = getattr(self, 'returncode', 0)
         if not code:
             return ''
+        # Two very different causes share this line: the launcher refused the
+        # step (srun's "More processors requested than permitted" -- nothing
+        # ran) or the solver itself died (S3P's SIGFPE on a 2.6k-element mesh
+        # over 16 ranks, seen on S3DF). The log tells them apart; say so
+        # rather than guessing.
         return (f"{self.module_name} exited with status {code} (command: "
-                f"{self.solver_command().strip()}); the solver probably never "
-                f"ran — check {self.log_file or 'its output above'}.")
+                f"{self.solver_command().strip()}); either the launcher "
+                f"refused the step or the solver crashed — check "
+                f"{self.log_file or 'its output above'} (a solver that ran "
+                f"leaves its own messages there; a refused step only srun's).")
 
     def load_input_file(self, *args):
         if args:

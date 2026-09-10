@@ -349,7 +349,7 @@ workflow :
     journal : 'bend-90degree_mf.jou'
   - module : s3p
     input : 'bend-90degree_mf.s3p'
-    tasks : 16
+    tasks : 8        # the coarsest fidelity's ~2.6k-element mesh crashes S3P over 16 ranks
     cores : 4
     opts : '--cpu-bind=cores'
 

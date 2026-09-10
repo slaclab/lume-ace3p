@@ -566,7 +566,7 @@ def test_a_refused_solver_launch_is_named_in_the_no_results_error(tmp_path,
     message = str(excinfo.value)
     assert 'no T3P wakefield results' in message
     assert 'exited with status 1' in message
-    assert 'probably never ran' in message
+    assert 'refused the step or the solver crashed' in message
 
 
 if __name__ == '__main__':
