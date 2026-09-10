@@ -9,20 +9,32 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.5.1] — 2026-09-10
+
 **Every example run for real on SLAC S3DF.** Until now most examples had only
 ever run in dry-run mode or on NERSC Perlmutter; several had never met a real
 solver at all. Running each one through `sbatch` on S3DF milano nodes found
-five defects that dry runs cannot see — a parser written against an assumed
+six defects that dry runs cannot see: a parser written against an assumed
 output layout, an eigenmode silently dropped when Omega3P wrote its sections in
 an unusual order, a table that repeated its scalars once per eigenmode, an
-optimization objective declared at a frequency its own scan never visits, and a
-Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
-mismatch between Perlmutter and milano nodes, a solver that cannot split a
-2.6k-element mesh over 16 ranks, and Geant4 batch scripts that set no Geant4
-environment. Every example under `examples/` (17, excluding `incomplete/`) now
-has a recorded real run with plausible, NaN-free output. The checklist and job
-records are in
+optimization objective declared at a frequency its own scan never visits, a
+Cubit journal whose sidesets pointed at the wrong surfaces, and a solver that
+cannot split a 2.6k-element mesh over 16 ranks. It also found the sizing
+mismatch between Perlmutter and milano nodes and Geant4 batch scripts that set
+no Geant4 environment. Every example under `examples/` (17, excluding
+`incomplete/`) now has a recorded real run with plausible, NaN-free output, and
+the four S3P bend examples were run again after their scan and outputs changed.
+The checklist and job records are in
 [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
+
+**The two S3P sweep demos tabulate their S-parameters again**, so the bundled
+sweep plotter has columns to draw, and `gp_parameter_sweep` honours `max_steps`
+exactly. **The documentation was tightened throughout**: every `docs/` page and
+example README was rewritten for concision without moving sections or dropping
+facts, refactor history was removed from user-facing pages, and about fifteen
+statements that no longer matched the code were corrected.
 
 ⚠️ **Behaviour change:** a `parameter_sweep` / `single` table is emitted
 long-format over a solver's field index (`Frequency`, `ModeID`, `s`) **only when
