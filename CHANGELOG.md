@@ -42,6 +42,15 @@ evaluation rather than after its whole budget.
 - **`examples/s3p_optimization` minimizes reflection at 11.924 GHz**, a point
   of its 9.424–12.424 GHz / 0.25 GHz scan. It asked for 12.0 GHz, which is not,
   and on S3DF spent 25 real S3P runs optimizing `NaN` while exiting 0.
+- **`examples/s3p_mf_optimization` and `examples/s3p_bayesian_sweep` run S3P
+  on 8 ranks instead of 16.** Their coarsest fidelity meshes the bend at 4 mm
+  (~2.6k elements), and S3P dies with a floating-point exception when that is
+  split over 16 ranks; 8 and 4 ranks complete the scan. The multi-fidelity
+  optimization reached fidelity 0 in its first random batch on S3DF and the
+  campaign failed there.
+- **The nonzero-exit note no longer claims the solver "probably never ran".**
+  It was written for a refused `srun` step; a solver that ran and crashed
+  exits nonzero too. The note now names both and points at the log.
 - **Solver steps in the examples fit an S3DF milano node.** The T3P and
   optimization examples asked for `16 × 16` or `16 × 8` tasks × cores, sized for
   Perlmutter's 256 logical CPUs; a milano node exposes 120 usable cores and the
