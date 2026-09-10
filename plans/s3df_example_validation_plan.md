@@ -127,7 +127,7 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ### Geant4 (needs `/sdf/group/rfar/geant4/example/dose-npass/sim` — exists)
 
-- [ ] `geant4_dose_single`
+- [x] `geant4_dose_single` — job 37732311, 1m54s: Geant4 ran with 120 threads on 144640 macro-particles; total_dose 60.85, peak_dose 0.505, total_edep 1.54e16, no NaNs; `field_0.npz` holds dose/edep grids (2641 non-zero dose voxels). Needed a fix first: the S3DF Geant4 batch scripts set no Geant4 environment (G4*DATA), so all three now source `/sdf/group/rfar/cho/geant4/geant4.sh` while preserving the conda PATH/PYTHONPATH.
 - [ ] `geant4_track3p_beta`
 - [ ] `geant4_beta_surrogate` (mode `invert_bayesian`; reads a store — check its
   README for what must exist first; may depend on `geant4_track3p_beta` output)
