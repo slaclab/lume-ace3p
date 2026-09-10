@@ -7,6 +7,63 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
+## [Unreleased]
+
+**Every example run for real on SLAC S3DF.** Until now most examples had only
+ever run in dry-run mode or on NERSC Perlmutter; several had never met a real
+solver at all. Running each one through `sbatch` on S3DF milano nodes found
+three defects that dry runs cannot see — a parser written against an assumed
+output layout, a table that repeated its scalars once per eigenmode, and a
+Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
+mismatch between Perlmutter and milano nodes. The checklist and job records are
+in [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
+
+⚠️ **Behaviour change:** a `parameter_sweep` / `single` table is emitted
+long-format over a solver's field index (`Frequency`, `ModeID`, `s`) **only when
+a declared output spans that index** — or when no outputs are declared. A run
+whose every output is narrowed with `at:` now yields one row per grid point (the
+solver's arrays are persisted in that row's `field_artifact` `.npz`) instead of
+one row per index value with the scalars duplicated. Every shipped example that
+requests an array output (`s3p_window_rfpost`, `omega3p_dispersion_sweep`,
+`t3p_sweep`, `t3p_transwake`, `t3p_power_balance`) and every frozen dry-run
+baseline is unaffected; `omega3p_sweep` and `omega3p_ace3p_param_sweep` now
+produce the 16- and 32-row tables their READMEs always described.
+
+### Changed
+
+- **Solver steps in the examples fit an S3DF milano node.** The T3P and
+  optimization examples asked for `16 × 16` or `16 × 8` tasks × cores, sized for
+  Perlmutter's 256 logical CPUs; a milano node exposes 120 usable cores and the
+  S3DF batch headers allocate exactly that, so `srun` refused the step and the
+  sweep died on its first point. All now use `16 × 4`. The installation guide's
+  S3DF section states the `tasks × cores ≤ 120` rule, the actual path of the
+  ACE3P setup script, and that conda must be activated *after* sourcing it.
+- **A nonzero solver exit is now named.** The ACE3P wrapper records the
+  solver's exit status, prints `<solver> exited with status N (command: …)` to
+  stderr, and the T3P/Omega3P "no results" errors append it, instead of
+  blaming the input file for a launch that never happened.
+
+### Fixed
+
+- **`acdtool`'s `maxFieldsOnSurface` block is now read.** The reader assumed
+  `Emax = value at (x, y, z)`; acdtool writes `Emax :  3.94e+07 (V.m)  at (…)`
+  — colon-separated, with a unit, preceded by a `ModeID :` line — so
+  `examples/omega3p_sweep` failed with "surface 6 reported no 'Emax'" on its
+  first real run. The surface and point readers accept both separators and drop
+  the unit; the run's `rfpost.out` is the block's first real fixture, closing
+  the gap `tests/fixtures/acdtool/COVERAGE.md` had recorded since Phase 3
+  (`kickFactor` remains the one block without real output).
+- **`examples/s3p_window_rfpost/window.jou` selects its ports and symmetry
+  planes by position.** The journal joined the ACE3P tutorial's two window
+  journals but kept the meshing half's hard-coded surface IDs; one of them
+  resolved to a merged ceramic/vacuum interface, which landed in a symmetry
+  sideset. `acdtool meshconvert` reported a surface Euler characteristic of 3
+  and S3P aborted inside ParMETIS. Coordinate selectors (`with z_coord < …`,
+  `not is_merged`) fix it; the 3-point sweep now completes with
+  `|S11|² + |S21|² = 1` and its best match at the 3 mm design thickness.
+- **Two `test_modules.py` stubs** returned `None` from a fake `subprocess.run`
+  and broke when the wrapper started reading the exit status.
+
 ## [0.5.0] — 2026-09-01
 
 **Resume.** A campaign cut off by a batch wall clock used to be lost

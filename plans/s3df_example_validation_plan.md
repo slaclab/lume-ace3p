@@ -142,11 +142,14 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ## Other open items
 
-- [ ] Full `pytest` on iana: was started 2026-09-09 ~14:55 with the new
-  regression test and had not finished after 20 min. Re-run
-  `conda activate lume-ace3p-dev && python -m pytest -q tests/` in tmux (or
-  `-x --durations=10` to find the slow ones) and record the result here. The
-  new test alone passes (`-k refused_solver_launch`).
+- [~] Full `pytest` on iana: run started 2026-09-09 15:59 (source state = after
+  9698d62, before 888f558): **661 passed, 2 skipped in 52m41s**. It is slow
+  because `tests/test_bayesian.py` (6 tests, ~20 min total, up to 353 s each)
+  and `tests/test_inversion.py` (~10 min) fit GPs / run MCMC; it also uses ~9
+  cores on iana while doing so. Two stale stubs in `test_modules.py` broke on
+  66c8e2a's exit-status recording and were fixed in 9a73b48. **Re-run once more
+  after the last code change** (`python -m pytest -q tests/ -p no:cacheprovider`,
+  ~55 min; `--deselect tests/test_bayesian.py` for a 30-min version).
 - [ ] Decide whether `s3p_sweep` / `s3p_sweep_no_s3p_file` should declare
   `output_parameters` (S(0,0), S(0,1), …). With none declared the table is only
   `inputs + Frequency`; the docs used to promise S-parameter columns (corrected
