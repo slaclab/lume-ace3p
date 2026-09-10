@@ -395,6 +395,17 @@ _T3P_MONITOR = ('Phase 3 of plans/t3p_monitor_plan.md (2026-08-19). First freeze
                 "example whose field index is 't' rather than 's'/'Frequency', "
                 'which is what makes the axis label worth checking here.')
 
+# Provenance for the two S3P bend sweeps after the S3DF validation.
+_S3P_SWEEP_OUTPUTS = (
+    _PHASE_05 + ' Re-frozen 2026-09-10 after the S3DF validation: the two sweep '
+    'YAMLs had declared no output_parameters, so their tables held only the '
+    'inputs and Frequency, and plotting/s3p_sweep_plot.py had no S-parameter '
+    'columns to draw. They now declare the four S(m,n) spectra and a scalar '
+    "'reflection_12GHz' (S(0,0) at 12.0 GHz), and the FrequencyScan moved from "
+    '9.424-12.424 GHz to 9.5-12.5 GHz (still 13 points) so 12.0 GHz is a scan '
+    'point shared with s3p_optimization. Under dry-run the five new columns are '
+    'NaN; the input grid and the Frequency sentinel are unchanged.')
+
 EXAMPLES = {
     's3p_sweep': {
         'kind': 'sweep',
@@ -403,10 +414,11 @@ EXAMPLES = {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
         },
         'digests': {},
-        'frozen': _PHASE_05,
+        'frozen': _S3P_SWEEP_OUTPUTS,
         'checkable': ('NUMERIC: swept input grid (cornercut x rcorner2) and '
                       'Frequency column. Solver outputs absent (dry-run), so '
-                      'the S-parameter values are reachability-only.'),
+                      'the four S(m,n) columns and reflection_12GHz are NaN '
+                      '(reachability-only).'),
     },
     's3p_sweep_no_s3p_file': {
         'kind': 'sweep',
@@ -415,10 +427,10 @@ EXAMPLES = {
             's3p_sweep_output.txt': ('s3p_sweep_output.txt', 'table'),
         },
         'digests': {},
-        'frozen': _PHASE_05,
+        'frozen': _S3P_SWEEP_OUTPUTS,
         'checkable': ('NUMERIC: swept input grid + Frequency column, with the '
-                      'ACE3P settings supplied inline. Reachability for the '
-                      '(absent) solver step.'),
+                      'ACE3P settings supplied inline. The S(m,n) and '
+                      'reflection_12GHz columns are NaN (reachability-only).'),
     },
     't3p_sweep': {
         'kind': 'sweep',

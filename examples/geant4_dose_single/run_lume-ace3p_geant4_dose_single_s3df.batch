@@ -23,4 +23,13 @@
 #SBATCH --mem=480gb
 #SBATCH --time=0-00:30:00
 
+# Geant4 reads its data-directory variables (G4LEDATA, G4ENSDFSTATEDATA, ...)
+# from the environment, so source the group's setup script. It also resets PATH
+# and PYTHONPATH, which would hide the conda environment run-lume-ace3p lives
+# in; keep those as the submitting shell had them.
+_path=$PATH; _pypath=${PYTHONPATH-__unset__}
+source /sdf/group/rfar/cho/geant4/geant4.sh
+export PATH=$_path:$PATH
+if [ "$_pypath" = "__unset__" ]; then unset PYTHONPATH; else export PYTHONPATH=$_pypath; fi
+
 run-lume-ace3p geant4_dose_single.yaml

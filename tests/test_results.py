@@ -299,6 +299,62 @@ def test_geant4_sweep_records_loadable_field_artifacts(tmp_path):
                                expected[section]['values'])
 
 
+def test_scalar_only_outputs_keep_the_table_wide(tmp_path):
+    """A real Omega3P run reports a ModeID axis, but when every declared output
+    is narrowed to one mode (``at: {mode: 0}``) nothing rides on that axis.
+    Exploding the point would repeat the scalars once per mode and label the
+    copies with a mode they were not sampled at (seen on S3DF: a 16-point
+    omega3p_sweep came out as 32 rows whose ModeID = 1 rows carried mode 0's
+    frequency). Such a point stays one wide row, and the mode arrays are
+    persisted as its field artifact instead. An array-valued output, or no
+    declared outputs at all, still goes long."""
+    wd = str(tmp_path / 'wd')
+    os.makedirs(wd, exist_ok=True)
+    modes_axis = np.array([0, 1])
+    field = {'ModeID': modes_axis, 'Frequency': np.array([1.4e9, 2.3e9])}
+
+    class StubWorkflow:
+        def __init__(self, output_spec, outputs):
+            self.workdir = wd
+            self.output_spec = output_spec
+            self._outputs = outputs
+
+        def sweep_axes(self):
+            return [('r', np.array([90.0, 100.0]), lambda m, v: None)]
+
+        def evaluate(self, scalars, workdir=None):
+            return dict(self._outputs), RunContext(wd)
+
+        def field_index(self, ctx=None):
+            return 'ModeID', modes_axis
+
+        def field(self, ctx=None):
+            return field
+
+    # Every output narrowed to a scalar: wide, one row per point, field kept.
+    df = modes.parameter_sweep(StubWorkflow(
+        {'f0': {}, 'RoQ': {}}, {'f0': 1.4e9, 'RoQ': 109.9}))
+    assert list(df.columns) == ['r', 'f0', 'RoQ', FIELD_ARTIFACT_COLUMN]
+    assert len(df) == 2
+    assert list(df['f0']) == [1.4e9, 1.4e9]
+    loaded = load_field(df[FIELD_ARTIFACT_COLUMN][0])
+    assert np.array_equal(loaded['Frequency'], field['Frequency'])
+
+    # One array output rides on the axis: long, one row per (point, mode).
+    df = modes.parameter_sweep(StubWorkflow(
+        {'f': {}, 'RoQ0': {}},
+        {'f': np.array([1.4e9, 2.3e9]), 'RoQ0': 109.9}))
+    assert list(df.columns) == ['r', 'ModeID', 'f', 'RoQ0']
+    assert len(df) == 4
+    assert list(df['f']) == [1.4e9, 2.3e9, 1.4e9, 2.3e9]
+    assert list(df['RoQ0']) == [109.9] * 4
+
+    # No declared outputs: the axis is the only result, so it is tabulated.
+    df = modes.parameter_sweep(StubWorkflow({}, {}))
+    assert list(df.columns) == ['r', 'ModeID']
+    assert len(df) == 4
+
+
 def test_s3p_long_format_has_no_field_artifact_column(tmp_path):
     """The S3P long-format sweep explodes its field into rows (via
     field_index), so it must NOT also carry a field-artifact column."""

@@ -365,12 +365,15 @@ def test_t3p_out_echo_normalizes_keys_the_input_wrote_with_spaces():
 
 
 def test_t3p_out_banner_does_not_break_the_echo():
-    """Same hazard as ``omega3p.out``: the leading ``/* ... */`` block comment
-    and the trailing license banner are absorbed into key names, because
-    ``_tokenize`` strips only ``//`` comments. Garbage, and harmless — ``Input``
-    is still reachable, which is all Phase 1 needs. Do not 'clean it up'."""
+    """Same layout as ``omega3p.out``: a leading ``/* ... */`` block comment
+    and a trailing license banner. The tokenizer strips the block comment (it
+    once absorbed it into the first key's name, which cost Omega3P a ``Mode``
+    section when that came first -- see ``test_omega3p_header_comment_is_
+    stripped``), so the first key is clean; the banner inside ``Version`` still
+    parses to garbage leaves, and ``Input`` is reachable either way."""
     with open(os.path.join(T3P_OUT, 'BPM.t3p.out')) as f:
         tree = parse_ace3p(f.read())
 
-    assert 'KVC syntax' in tree.entries[0][0]      # banner swallowed into a key
+    assert tree.entries[0][0] == 'AMRLevel'
+    assert 'KVC syntax' not in tree.entries[0][0]
     assert tree.find('Input') is not None

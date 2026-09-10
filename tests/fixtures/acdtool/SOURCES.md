@@ -23,12 +23,14 @@ re-copy from CW23 and update this file.
 |---|---|---|
 | `pillbox-rtop+coax.rfpost` | `omega3p/pillbox-rtop+coax/pillbox-rtop+coax.rfpost` | The full 19-block Omega3P template. Only `RoverQ` has `ionoff = 1`; the other 17 postprocess blocks are `ionoff = 0`. Carries the empty list form `portID = {  }`. |
 | `window.rfpost` | `s3p/window/window.rfpost` | The 2-block S3P case: `RFField` (`ResultDir = s3p_results`, `FreqScanID = 2`, `gradient = -1`) plus `ALLFieldOnLine` with `ionoff = 1`. |
+| `pillbox-rtop-maxfields.rfpost` | **S3DF run, not CW23** — copy of `examples/omega3p_sweep/pillbox-rtop.rfpost` (2026-09-09) | The Omega3P template with `RoverQ` **and** `maxFieldsOnSurface` (`surfaceID = 6`) enabled; the input behind `rfpost_outputs/pillbox-rtop-maxfields.rfpost.out`. |
 | `coaxport-multiline.rfpost` | **SYNTHETIC** — hand-written | Derived from the `coaxPort` block of `pillbox-rtop+coax.rfpost` with `portID`/`porta`/`portb` filled in the natural multi-line way. CW23 never ships them filled, so no real file exposes defect 1; this is the minimum fixture that does. Provenance is also stated in a header comment inside the file. |
 
 ## `rfpost_outputs/` — `rfpost.out`, the `postprocess rf` output
 
 Renamed `<example>.rfpost.out` so provenance survives being in one flat
 directory. All six `rfpost.out` files in CW23 (excluding the `a3pi/` subtree)
+plus one from an S3DF run (marked below)
 are here.
 
 | File | Source | Covers |
@@ -37,6 +39,7 @@ are here.
 | `pillbox+recWG+load.rfpost.out` | `omega3p/pillbox+recWG+load/rfpost.out` | `[RoverQ]` **two** modes — the multi-row table shape. |
 | `pillbox-rtop.rfpost.out` | `omega3p/pillbox-rtop/rfpost.out` | `[RoverQ]` two modes, lossless (`Qext = 0.00000e+00`). |
 | `pillbox-rtop+coax.rfpost.out` | `omega3p/pillbox-rtop+coax/rfpost.out` | `[RoverQ]` single mode with a port (`Qext = 1.02424e+06`); complex mode frequency in the summary banner. |
+| `pillbox-rtop-maxfields.rfpost.out` | **S3DF run, not CW23** — `rfpost.out` of `examples/omega3p_sweep` at (cav_radius 90, ellipticity 0.5), milano job 37563717, 2026-09-09; ACE3P source date 2026-08-21 | The only real `[maxFieldsOnSurface]` output: `surfaceID : 6`, `ModeID : 0`, `Emax`/`Hmax` with units and `at (x, y, z)` locations. Also `[RoverQ]` two modes, lossless. Note acdtool echoes the `RFField` input block twice. |
 | `dlwg-pbc.rfpost.out` | `omega3p/dlwg-pbc/rfpost.out` | Periodic-boundary case; **negative** `Qext` (`-8.58381e+16`), which is what makes it worth keeping — it pins that the parser does not assume a positive Q. |
 | `window.rfpost.out` | `s3p/window/rfpost.out` | The only S3P-sourced one. Two things nothing else has: the **point-scaled** `[scaling]` variant (`Ez from O3P` / `Ez scaled to` / `m_factor`, emitted because `gradient < 0`) and an **unclosed** `[scaling]` block — no `}` before the next section. That is defect 3. |
 
@@ -97,6 +100,7 @@ or S3P fixtures should look here.
 |---|---|---|
 | `omega3p/pillbox.omega3p.out` | `omega3p/pillbox/omega3p_results/omega3p.out` | **Real** eigenvalues: 2 `Mode` sections with scalar `Frequency` and `QualityFactor`, no `ExternalQ`. Top-level order is `Version, Environment, Input, Timestamp, Timestamp, Mode, Mode, AMRLevel`. |
 | `omega3p/pillbox-rtop+coax.omega3p.out` | `omega3p/pillbox-rtop+coax/omega3p_results/omega3p.out` | **Complex** eigenvalues: 1 `Mode` with `Frequency = '1313756106.8639 , 641.33468780722'`, `TotalEnergy` likewise a pair, plus `ExternalQ`. Top-level order is `AMRLevel, Mode, Timestamp, Timestamp, Environment, Version, Input` — i.e. **different from the file above**, which is why Phase 1 must search sections by name and never by position. |
+| `omega3p/pillbox-rtop-mode-first.omega3p.out` | **S3DF run, not CW23** — `omega3p_results/omega3p.out` of `examples/omega3p_ace3p_param_sweep` at (cav_radius 100, ellipticity 0.5, Sigma 5.8e7), milano job 37571138, 2026-09-09 | **Real** eigenvalues, 2 `Mode` sections, top-level order `Mode, Mode, AMRLevel, Timestamp, Timestamp, Environment, Version, Input` — `Mode` **first**, directly after the `/* ... */` header. Pins that the tokenizer strips block comments: before it did, the header was glued onto the first key and this file parsed as one mode. |
 | `s3p_90DegreeBend/Reflection.out` | `s3p/90DegreeBend/s3p_results/Reflection.out` | 13 frequencies × 16 S-parameters, **magnitudes** \|S\|. Read into the `S(m,n)` keys, which Phase 5 left untouched. |
 | `s3p_90DegreeBend/SParameter.out` | same directory | The same matrix as `( real,  imag )` pairs. Read by **Phase 5** into `S(m,n)_real` / `_imag` / `_phase_deg`. Kept in full (19 lines) because the `abs(S_complex) == S_magnitude` cross-check across every frequency is the load-bearing test — these two files are the *only* specification of either format, the S3P reference documenting no output files at all. Agreement is to ~1e-8 relative, which is all 9 significant digits allow. |
 | `s3p_90DegreeBend/PortRef7_0.out` | same directory | Port 7 mode 0 field profile: `%`-commented header, columns `x y Ex Ey Hx Hy`, 58 data rows. Read by **Phase 5** through `parse_column_file`, as a field artifact rather than a table column (58 positions against a 13-point scan). The `%` marker is why that reader accepts both comment characters. |

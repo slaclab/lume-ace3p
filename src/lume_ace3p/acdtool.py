@@ -385,7 +385,7 @@ SECTIONS = {
                         note='absent from the reference; ships in the tutorial '
                              'template only'),
     # ---- surface-indexed scalars -> rfpost.out ---------------------------- #
-    'maxFieldsOnSurface': Section(SURFACE),
+    'maxFieldsOnSurface': Section(SURFACE, validated=True),
     'powerThroughSurface': Section(
         SURFACE, note='the power is complex [W], the real part being the '
                       'average flow from the complex Poynting vector'),
@@ -448,6 +448,10 @@ _NUMBER = re.compile(r'[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?')
 _PAREN = re.compile(r'\(([^()]*)\)')
 _ASSIGNMENT = re.compile(r'([A-Za-z]\w*)\s*=\s*(\([^()]*\)|[-+]?[.\d][^\s,)]*)')
 _AT = re.compile(r'\bat\b')
+# 'name = rest' or 'name : rest' -- the separator acdtool uses differs between
+# its input dialect ('=') and its scalar output blocks (':').
+_ASSIGNMENT_LINE = re.compile(r'\s*([A-Za-z]\w*)\s*[=:]\s*(.*)$')
+_UNIT = re.compile(r'\(\s*[A-Za-z][^()]*\)')
 
 
 def _floats(text):
@@ -596,27 +600,45 @@ def read_mode_table(body, section='?'):
     return data
 
 
+def _is_assignment(text):
+    """True for a ``name = value`` or ``name : value`` line.
+
+    acdtool's scalar blocks use ``:`` (``Emax :  3.94e+07 (V.m)  at (...)``,
+    seen in a real ``[maxFieldsOnSurface]``); the ``=`` form is the input
+    dialect and the one the readers were first written against. Both are read.
+    """
+    return bool(_ASSIGNMENT_LINE.match(text))
+
+
 def _store_assignment(target, line):
-    """Store one ``name = value`` line from a scalar block into `target`.
+    """Store one ``name = value`` / ``name : value`` line from a scalar block
+    into `target`.
 
-    Three value forms, all seen in acdtool output:
+    Value forms, all seen in acdtool output:
 
-    * ``Emax = 1.5e6 at (0.1, 0.2, 0.3)`` -> ``Emax`` plus an ``Emax_location``
-      ``{x, y, z}`` dict;
+    * ``Emax :  3.94377e+07 (V.m)      at ( 4.2896e-02,  0.0000e+00, -4.5724e-02)``
+      -> ``Emax`` plus an ``Emax_location`` ``{x, y, z}`` dict. This is the real
+      ``[maxFieldsOnSurface]`` layout (fixture
+      ``rfpost_outputs/pillbox-rtop-maxfields.rfpost.out``): colon separator
+      and a parenthesised unit after the number, which is dropped;
+    * ``Emax = 1.5e6 at (0.1, 0.2, 0.3)`` -> the same, in the ``=`` form the
+      reader originally assumed;
     * ``Power = ( 1.0, 2.0)`` -> ``Power`` (real) plus ``Power_imag``, the same
       split :func:`lume_ace3p.ace3p.parse_omega3p_output` gives a complex
       eigenfrequency — ``powerThroughSurface`` is complex-valued;
     * ``ga = 1.6e2`` -> a plain float.
     """
-    name, _, rest = line.partition('=')
-    name = name.strip()
-    if not name:
+    match = _ASSIGNMENT_LINE.match(line.strip())
+    if not match:
         return
-    rest = rest.strip()
+    name, rest = match.group(1), match.group(2).strip()
     location = None
     at = _AT.search(rest)
     if at:
         location, rest = rest[at.end():], rest[:at.start()]
+    # A unit such as '(V.m)' or '(A/m)' is not a value; a complex value's
+    # parentheses start with a number, so only letter-led groups are dropped.
+    rest = _UNIT.sub('', rest)
     numbers = _floats(rest)
     if '(' in rest and len(numbers) >= 2:
         target[name], target[name + '_imag'] = numbers[0], numbers[1]
@@ -641,10 +663,14 @@ def read_surface_scalars(body, section='?'):
     them — which is why design decision 2 makes ``ModeID`` acdtool's only table
     axis and requires ``at: {surface: n}`` here.
 
-    **Neither surface block has a real-output fixture** (see ``COVERAGE.md``), so
-    this reads whatever assignments the file carries rather than assuming line
-    offsets; the previous reader took ``Emax`` from a fixed two lines below the
-    ``surfaceID``.
+    ``maxFieldsOnSurface`` is validated against a real S3DF run (fixture
+    ``rfpost_outputs/pillbox-rtop-maxfields.rfpost.out``): after ``surfaceID``
+    the block carries a ``ModeID`` line (the one mode ``RFField`` names -- the
+    block has no ``modeID1``/``modeID2`` of its own) and then ``Emax``/``Hmax``
+    with a unit and an ``at (x, y, z)`` location, all colon-separated. The
+    reader takes the assignments wherever they appear rather than at fixed line
+    offsets. ``powerThroughSurface`` still has no real-output fixture (see
+    ``COVERAGE.md``).
     """
     data = {}
     surface_ids = []
@@ -663,7 +689,7 @@ def read_surface_scalars(body, section='?'):
                 surface_ids.append(surface_id)
             current = data[surface_id]
             continue
-        if current is None or '=' not in text or text.startswith('{'):
+        if current is None or text.startswith('{') or not _is_assignment(text):
             continue
         _store_assignment(current, text)
     if not surface_ids:
@@ -687,7 +713,7 @@ def read_point_scalars(body, section='?'):
     data = {}
     for line in body:
         text = line.strip()
-        if not text or text.startswith('{') or '=' not in text:
+        if not text or text.startswith('{') or not _is_assignment(text):
             continue
         _store_assignment(data, text)
     if not data:

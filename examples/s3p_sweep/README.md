@@ -13,9 +13,14 @@ waveguide bend from the journal, then S3P computes its scattering parameters.
 `parameter_sweep` takes the tensor product of the swept Cubit inputs —
 `cornercut` (5 values, 12-16) and `rcorner2` (3 values, 4-16), so 15 geometries.
 
-Because S3P exposes a `Frequency` field index, the result table is emitted
-**long-format**: one row per `(cornercut, rcorner2, Frequency)` across the S3P
-`FrequencyScan` (9.424-12.424 GHz), written to `s3p_sweep_output.txt`.
+The four declared outputs `S(0,0)`, `S(0,1)`, `S(1,0)` and `S(1,1)` span S3P's
+`Frequency` index, so the result table is **long-format**: one row per
+`(cornercut, rcorner2, Frequency)` across the `FrequencyScan` (9.5-12.5 GHz in
+0.25 GHz steps, 13 points), written to `s3p_sweep_output.txt`. That is the
+shape `plotting/s3p_sweep_plot.py` reads. A fifth output, `reflection_12GHz`,
+is `S(0,0)` picked `at: {frequency: 12.0e+09}`; it is one number per geometry
+and repeats down that geometry's rows. The `at:` frequency must be a scan
+point or the run raises.
 
 Unlike [`../s3p_sweep_no_s3p_file`](../s3p_sweep_no_s3p_file) — which runs the
 same sweep with the ACE3P settings inlined and no `.s3p` file — this example

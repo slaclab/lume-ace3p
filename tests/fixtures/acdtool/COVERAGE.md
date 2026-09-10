@@ -39,7 +39,7 @@ Legend for **Real output**:
 
 | Block | Real output | Parser today | Fixture |
 |---|---|---|---|
-| `maxFieldsOnSurface` | **input only** | `read_surface_scalars`; reads the assignments wherever they appear instead of at fixed line offsets, but still **UNVALIDATED** | `rfpost_inputs/pillbox-rtop+coax.rfpost` |
+| `maxFieldsOnSurface` | **yes** (S3DF run, 2026-09-09) | `read_surface_scalars`; colon-separated `name : value (unit) at (x, y, z)` lines plus a `ModeID` line, read wherever they appear | `rfpost_outputs/pillbox-rtop-maxfields.rfpost.out`, `rfpost_inputs/pillbox-rtop-maxfields.rfpost` |
 | `powerThroughSurface` | input only | `read_surface_scalars`, with the complex-power real/imag split | `rfpost_inputs/pillbox-rtop+coax.rfpost` |
 
 ## Column curve files → separate files
@@ -77,31 +77,37 @@ Phase 3 defers binary/mesh parsing for these regardless of coverage.
 
 ---
 
-## The two gaps — still open after Phase 3
+## The two gaps after Phase 3, one closed
 
-**`kickFactor` and `maxFieldsOnSurface` have no real-output fixture.** No CW23
-run enabled either one — grepping every `.out` in the archive for section
-headers yields only `[scaling]` and `[RoverQ]`. Both nevertheless have a parser,
-originally written against an assumed format and tested only with hand-written
-fixtures (`tests/test_modules.py::RFPOST_OUTPUT`, whose header rows are invented
-— e.g. `Emax = 1.500000e6 at (0.1, 0.2, 0.3)`).
+**`maxFieldsOnSurface` — closed 2026-09-09.** Running `examples/omega3p_sweep`
+on S3DF produced the first real `[maxFieldsOnSurface]` output
+(`rfpost_outputs/pillbox-rtop-maxfields.rfpost.out`). The assumed layout was
+wrong in two ways: acdtool separates name and value with `:` (not `=`) and
+prints a unit after the value (`Emax :  3.94377e+07 (V.m)      at (...)`); it
+also emits a `ModeID :` line for the one mode `RFField` names. The Phase-3
+reader found no `Emax` at all and the example failed. `read_surface_scalars`
+and `read_point_scalars` now accept both separators and drop a letter-led
+parenthesised unit; `test_acdtool_fixtures.py::test_maxfields_values_from_real_output`
+pins the real values and the synthetic block in `test_modules.py::RFPOST_OUTPUT`
+follows the real layout.
+
+**`kickFactor` still has no real-output fixture.** No CW23 run enabled it —
+grepping every `.out` in the archive for section headers yields only `[scaling]`
+and `[RoverQ]`. Its parser was written against an assumed format and is tested
+only with the hand-written rows in `tests/test_modules.py::RFPOST_OUTPUT`.
 
 **`examples/omega3p_sweep` depends on `maxFieldsOnSurface`** for its `E_max`
-output parameter (`['maxFieldsOnSurface', '6', 'Emax']`), and
-`tests/baseline/omega3p_sweep/` freezes that path. So a shipped example and a
-frozen baseline both rest on an unverified format.
+output parameter, and `tests/baseline/omega3p_sweep/` freezes that path. Since
+2026-09-09 that block is backed by real output, so the example and its baseline
+no longer rest on an unverified format.
 
-**How Phase 3 handled this, and what is still owed.** No cluster run was
-available, so neither parser was "cleaned up" against its assumed layout. Both
-were instead made *less* dependent on one: `kickFactor` takes its column names
-from the file's own `ModeID` header row rather than from a fixed order, and
-`maxFieldsOnSurface` reads `name = value [at (x,y,z)]` lines wherever they appear
-rather than at a fixed offset below the `surfaceID`. Both produce **byte-identical
-values** on the synthetic fixture (pinned by `test_modules.py::test_acdtool_extract`
-and `test_acdtool_field_returns_curves_not_table_columns`). That widens the range
-of real formats they would read correctly but does not verify either one — a real
-run with those two blocks at `ionoff = 1` is still the only thing that closes this,
-and remains a prerequisite for treating their column names as documented.
+**What is still owed.** `kickFactor` was made less dependent on an assumed
+layout (its column names come from the file's own `ModeID` header row rather
+than a fixed order) and produces byte-identical values on the synthetic fixture
+(pinned by `test_modules.py::test_acdtool_extract` and
+`test_acdtool_field_returns_curves_not_table_columns`). That widens the range of
+real formats it would read but does not verify one. A real run with
+`kickFactor` enabled is the only thing that closes this gap.
 
 ## Blocks with no fixture at all
 

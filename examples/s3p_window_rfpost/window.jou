@@ -6,10 +6,11 @@ reset
 ## step1-Make-window.jou (build the solid, export window.sat) and
 ## step2-Mesh-window.jou (import it, mesh, set sidesets, export window.gen).
 ## LUME-ACE3P plays ONE journal per cubit module, so the two are joined here and
-## the ACIS round-trip is dropped. The 'compress ids' below is what makes that
-## safe: it renumbers the surviving entities contiguously, which is the same
-## numbering an export/import pair would have produced, so the surface IDs the
-## meshing half references still resolve.
+## the ACIS round-trip is dropped. The tutorial's meshing half named surfaces by
+## ID (the numbering its export/import pair produced); the joined journal gets a
+## different numbering, so ports and symmetry planes are selected by position
+## instead. Every selector also excludes merged (interior) surfaces so that a
+## vacuum/ceramic interface can never land in a boundary sideset.
 
 ## --- geometry (was step1-Make-window.jou) ---------------------------------- #
 
@@ -57,10 +58,13 @@ mesh volume all
 smooth vol all
 smooth surface all
 
-group "port7" add surface 16
-group "port8" add surface 2
-group "sym1"  add surface 5 11 17
-group "sym2"  add surface 1 9 14
+## Ports are the guide ends at z = -/+ wlengthz; the symmetry planes are x = 0
+## (sideset 1, magnetic for TE10) and y = 0 (sideset 2, electric). The quarter
+## model may sit on either side of each plane, so test the centroid both ways.
+group "port7" add surface with z_coord < {-wlengthz+0.01} and not is_merged
+group "port8" add surface with z_coord > { wlengthz-0.01} and not is_merged
+group "sym1"  add surface with x_coord > -0.01 and x_coord < 0.01 and not is_merged
+group "sym2"  add surface with y_coord > -0.01 and y_coord < 0.01 and not is_merged
 
 group "ss6" add surface all
 

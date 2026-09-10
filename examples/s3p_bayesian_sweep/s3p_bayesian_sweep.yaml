@@ -19,7 +19,11 @@ workflow :
     journal : 'bend-90degree_mf.jou'
   - module : s3p
     input : 'bend-90degree_mf.s3p'
-    tasks : 16
+    # 8 ranks, not 16: at mesh_fidelity 0 the journal's 4 mm element size gives
+    # a ~2.6k-element mesh, and S3P dies with a floating-point exception when
+    # that is split over 16 ranks (8 and 4 ranks complete the scan; verified on
+    # S3DF). The meshes are small at every fidelity, so 8 ranks cost nothing.
+    tasks : 8
     cores : 4
     opts : '--cpu-bind=cores'
 
@@ -57,4 +61,5 @@ vocs_parameters :
         'S(1,1)_12.0e+09' : 'explore'
 
 xopt_parameters :
-    num_step : 3
+    num_random : 5      # random seeds before the GP-guided steps (default 5)
+    max_steps : 3       # GP-guided exploration steps; the improvement/patience test may stop it sooner

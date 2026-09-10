@@ -693,7 +693,7 @@ class Omega3PModule(_SolverModule):
                 f"no Omega3P eigenmode results to extract '{quantity}' from. "
                 f"Expected {os.path.join(solver.results_dir(), solver.output_file)} "
                 f"under {ctx.workdir}; set 'results_dir' on the omega3p module "
-                "if the run used a different job name.")
+                f"if the run used a different job name. {solver.exit_status_note()}".rstrip())
         if quantity == 'Modes' or quantity not in data:
             raise ValueError(
                 "Unknown quantity '" + str(quantity) + "' in Omega3P output "
@@ -774,7 +774,9 @@ class S3PModule(_SolverModule):
           * a string ``'S(0,0)'`` — the full frequency-indexed array,
           * a single-element list ``['S(0,0)']`` — same, first element used,
           * a mapping ``{'quantity': 'S(0,0)', 'at': {'frequency': f}}`` — the
-            scalar value at frequency ``f`` (the objective form the Xopt driver
+            scalar value at scan frequency ``f`` (matched to 1e-9 relative; a
+            frequency that is not on the scan raises, naming the nearest scan
+            points — the objective form the Xopt driver
             needs).
 
         The port mode profiles and the ``IndexMap`` are *not* extractable: they
@@ -802,13 +804,25 @@ class S3PModule(_SolverModule):
                 "this module's field(), alongside the full spectrum.")
         if frequency is None:
             return values
-        freqs = list(data['Frequency'])
-        try:
-            idx = freqs.index(float(frequency))
-        except ValueError:
-            print('Inputted frequency to be optimized is not in frequency sweep.')
-            return float('nan')
-        return values[idx]
+        freqs = np.asarray(data['Frequency'], dtype=float)
+        hits = np.flatnonzero(np.isclose(freqs, float(frequency),
+                                         rtol=1e-9, atol=0.0))
+        if len(hits) == 0:
+            # Loud, not NaN: an Xopt objective on an off-grid frequency used to
+            # print a line and return NaN, and the optimizer then spent its whole
+            # budget on NaNs (examples/s3p_optimization asked for 12.0 GHz of a
+            # 9.424 + k*0.25 GHz scan; 25 solver runs, no result). Xopt runs
+            # strict by default, so raising stops the campaign at its first
+            # evaluation, naming the grid the input file actually declares.
+            nearest = freqs[np.argsort(np.abs(freqs - float(frequency)))[:2]]
+            raise ValueError(
+                'at: {frequency: ' + repr(float(frequency)) + '} is not a point '
+                "of this S3P run's frequency scan (" + repr(float(freqs[0]))
+                + ' to ' + repr(float(freqs[-1])) + ' Hz in ' + str(len(freqs))
+                + ' steps; nearest ' + ', '.join(repr(float(f)) for f in
+                                                sorted(nearest))
+                + "). Pick a scan point, or change the FrequencyScan block.")
+        return values[int(hits[0])]
 
     @staticmethod
     def _parse_spec(spec):
@@ -1071,7 +1085,7 @@ class T3PModule(_SolverModule):
                     "monitor, e.g.\n"
                     "  Monitor: { Type: WakeField  Name: wakefield ... }\n"
                     f"Expected file: {os.path.join(solver.results_dir(), 'wakefield.out')} "
-                    f"under {ctx.workdir}.")
+                    f"under {ctx.workdir}. {solver.exit_status_note()}".rstrip())
             name = solver.wake_monitor_name() or 'wakefield'
             return name, found[name][0], 's'
 

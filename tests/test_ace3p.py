@@ -870,6 +870,18 @@ def _make_omega3p(tmp_path, fixture=None, job_name=None, results_dir=None):
     return omega3p
 
 
+def test_parse_omega3p_mode_first_output():
+    """Regression for the S3DF run whose ``omega3p.out`` listed its two ``Mode``
+    sections before everything else: the un-stripped ``/* ... */`` header used
+    to swallow the first one, so the run reported a single 2.22 GHz mode and
+    the sweep table's ``Mode_freq`` (``at: {mode: 0}``) was the wrong mode."""
+    data = parse_omega3p_output(_fixture('pillbox-rtop-mode-first'))
+
+    assert len(data['Modes']) == 2
+    assert np.allclose(data['Frequency'], [1253557698.2822, 2222549020.1792])
+    assert np.allclose(data['QualityFactor'], [28077.108073287, 25977.712213633])
+
+
 def test_parse_omega3p_real_eigenvalues():
     """The lossless case (tutorial omega3p/pillbox): 2 modes, real
     eigenvalues, a Q per mode and no ExternalQ."""

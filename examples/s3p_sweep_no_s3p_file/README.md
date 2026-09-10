@@ -9,8 +9,9 @@ workflow:  cubit -> s3p
 mode:      parameter_sweep
 ```
 
-The sweep itself is identical — a tensor product over `cornercut` (5 values,
-12-16) and `rcorner2` (3 values, 4-16), long-format output (one row per
+The sweep and its outputs are identical — a tensor product over `cornercut`
+(5 values, 12-16) and `rcorner2` (3 values, 4-16), the four `S(m,n)` spectra
+and the scalar `reflection_12GHz`, long-format output (one row per
 `(cornercut, rcorner2, Frequency)`) to `s3p_sweep_output.txt`. The difference
 is purely how S3P is configured: the `s3p` module lists **no `input:` file**,
 and its ACE3P settings come entirely from the `input_parameters.ace3p` block.
@@ -37,5 +38,5 @@ Only one input file is present, and that is deliberate:
 run-lume-ace3p s3p_sweep_no_s3p_file.yaml
 ```
 
-No batch scripts ship with this example; run it directly or adapt one of the
-scripts in [`../s3p_sweep`](../s3p_sweep).
+On SLAC S3DF, submit `run_lume-ace3p_s3p_sweep_no_s3p_file_s3df.batch`; for
+NERSC Perlmutter, adapt the script in [`../s3p_sweep`](../s3p_sweep).

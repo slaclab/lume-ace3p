@@ -11,7 +11,8 @@ mode:      scalar_optimize
 An Xopt `NelderMeadGenerator` loop drives the two-step `cubit -> s3p` chain,
 adjusting the waveguide-bend geometry to minimize reflection. The objective
 `reflection` is an `output_parameters` name — defined as S3P quantity `S(0,0)`
-evaluated `at` frequency `12.0e+09` — so the Xopt driver never parses
+evaluated `at` frequency `12.0e+09`, a point of the `.s3p` frequency scan
+(9.5–12.5 GHz in 0.25 GHz steps) — so the Xopt driver never parses
 S-parameters itself; extraction is a workflow concern.
 
 The two optimization knobs, `cornercut` (bounds `[14, 17]`) and `rcorner1`
@@ -31,7 +32,8 @@ Both inputs are local to this directory:
 - `bend-90degree.jou` — the Cubit journal that builds and meshes the bent
   waveguide; `cornercut` and `rcorner1` are the journal variables Xopt drives.
 - `bend-90degree.s3p` — the S3P/ACE3P config (order-2 curved elements, two
-  waveguide ports, and the `FrequencyScan` covering 12 GHz).
+  waveguide ports, and the `FrequencyScan` 9.5–12.5 GHz in 0.25 GHz steps;
+  the objective's `at:` frequency must be one of its points).
 
 ## Running
 

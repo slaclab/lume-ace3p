@@ -1,45 +1,41 @@
 # YAML configuration reference
 
-`lume-ace3p` is driven by a YAML configuration file. The task chain is declared
-by a top-level **`workflow:`** list of modules and driven by a **`mode:`**
-block; `input_parameters` and `output_parameters` configure the swept knobs and
-the extracted scalars. For an optimization problem, `vocs_parameters` and
-`xopt_parameters` are added. The `workflow_parameters` block holds only
-directory- and path-level settings — the solver/file settings that used to live
-there now sit on the individual `workflow:` module entries.
+`lume-ace3p` is driven by a YAML configuration file. A top-level **`workflow:`**
+list declares the module chain and a **`mode:`** block drives it.
+`input_parameters` and `output_parameters` declare the swept inputs and the
+extracted scalars. An optimization adds `vocs_parameters` and `xopt_parameters`.
+`workflow_parameters` holds directory and path settings; solver and file settings
+live on the `workflow:` module entries.
 
 ## `workflow:`
 
-An ordered list of module entries; each entry is a mapping with a `module` key
-naming the module type plus that module's own keys. The list order is only a
-tiebreaker — the real run order is computed by resolving each module's
-artifact dependencies into a DAG (mesh before solver, solver before acdtool,
-particle source before Geant4, …). Declaring two producers of the same artifact,
-or a module whose requirement nothing provides, is a validation error.
+A list of module entries, each a mapping with a `module` key naming the module
+type plus that module's own keys. List order is only a tiebreaker: run order
+comes from resolving each module's artifact dependencies into a DAG (mesh before
+solver, solver before acdtool, particle source before Geant4, …). Two producers
+of the same artifact, or a requirement nothing provides, is a validation error.
 
 | Module type       | Provides            | Requires           | Key config keys |
 |-------------------|---------------------|--------------------|-----------------|
 | `cubit`           | mesh                | —                  | `journal:` (Cubit `.jou`); `meshconvert:` (bool, default `True`). |
-| `mesh`            | mesh                | —                  | `file:` — a prebuilt mesh file (declarative replacement for the old `skip_cubit` + supplied mesh). |
-| `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Exposes the eigensolve's own mode results — see [](#omega3p-module). |
-| `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. The S-parameter (frequency-scan) solver, magnitude **and** phase — see [](#s3p-module). |
-| `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. The time-domain (wakefield) solver — see [](#t3p-module). |
-| `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Owns extraction of the `RoverQ`/`kickFactor`/`maxFieldsOnSurface` scalars — see [](#acdtool-module). |
-| `track3p_source`  | track3p_particles   | —                  | `file:` — an externally-produced Track3P dump (there is no in-pipeline Track3P solver). |
-| `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys — see [](#particles-module-keys). |
-| `particle_source` | particle_source     | —                  | `file:` — a prebuilt Geant4-format source file (bypasses the `particles` weighting step). |
-| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys — see [](#geant4-module-keys). |
+| `mesh`            | mesh                | —                  | `file:`, a prebuilt mesh file. |
+| `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Eigensolver; see [](#omega3p-module). |
+| `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
+| `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
+| `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
+| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. There is no in-pipeline Track3P solver. |
+| `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys; see [](#particles-module-keys). |
+| `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `particles` weighting step. |
+| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys; see [](#geant4-module-keys). |
 
-An optional `name:` on any entry gives the instance a label (it defaults to the
-module type). It names that step's log file (`<workdir>/<name>.log`) and its entry
-in the run manifest, and is therefore what a resume identifies the step by — so it
-must be **unique** within a workflow, and declaring two modules with the same
-`name:` is a validation error.
+An optional `name:` labels the instance (default: the module type). It names
+the step's log file (`<workdir>/<name>.log`) and its run-manifest entry, which is
+how a resume identifies the step. Two modules with the same `name:` is a
+validation error.
 
-Skipping a step is expressed by simply *not listing* its module; a prebuilt
-artifact is expressed by a source module (`mesh`, `track3p_source`,
-`particle_source`). The old `skip_cubit` / `skip_solver` / `skip_acdtool` /
-`geant4_particle_file` flags no longer exist.
+To skip a step, omit its module. To supply a prebuilt artifact, use a source
+module (`mesh`, `track3p_source`, `particle_source`). The old `skip_cubit` /
+`skip_solver` / `skip_acdtool` / `geant4_particle_file` flags are not read.
 
 ## `mode:`
 
@@ -47,174 +43,152 @@ Selects how the workflow is driven. One `type` is required.
 
 | `type`                | Extra sections required | Behavior |
 |-----------------------|-------------------------|----------|
-| `single`              | —                       | Run the workflow once (base inputs must be scalar-valued). Returns a one-row result table (or one-row-per-field-index for a field-indexed solver like S3P). |
+| `single`              | —                       | Run the workflow once; base inputs must be scalar-valued. Returns a one-row result table, or one row per field index for a field-indexed solver like S3P. |
 | `parameter_sweep`     | `input_parameters` (any of its `cubit:`/`ace3p:`/`geant4:`/`particles:` sub-blocks) | Tensor-product sweep over every array-valued input leaf; one row per grid point. |
-| `scalar_optimize`     | `vocs_parameters`, `xopt_parameters` | Drives an Xopt optimization loop. The objective is a name in `output_parameters` referenced from the VOCS. |
-| `gp_parameter_sweep`  | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration sweep — fits a Gaussian Process to the explored objective(s), then samples the GP posterior mean on the `sweep_parameters` tensor grid. |
-| `collect_training_data` | mode `variables:` | Scatters a design-of-experiments (Sobol/LHS) over the per-bin field-enhancement vector and persists a `(beta, dose_grid)` training pair per sample into a resumable store. Drives the full chain — requires a `workflow:`. See [](#surrogate-modes). |
-| `train_surrogate`     | *(none — reads a store)* | Fits the reduced-basis PCA-GP forward surrogate `beta -> dose profile` from a collected store. **Store-consuming: needs no `workflow:`.** |
-| `invert_optimize`     | *(none — reads a store/model)* | Inverts a target dose profile to estimate the beta that produced it, against the cheap saved surrogate. **Store-consuming: needs no `workflow:`.** |
-| `invert_bayesian`     | *(none — reads a store/model)* | Same inversion, returning a **posterior** over beta (NUTS) instead of a point estimate — the mode that answers the non-uniqueness rather than reporting it. **Store-consuming: needs no `workflow:`.** |
+| `scalar_optimize`     | `vocs_parameters`, `xopt_parameters` | Xopt optimization loop. The objective is an `output_parameters` name referenced from the VOCS. |
+| `gp_parameter_sweep`  | `sweep_parameters`, `vocs_parameters`, `xopt_parameters` | Bayesian-exploration sweep: fits a Gaussian Process to the explored objective(s), then samples the GP posterior mean on the `sweep_parameters` tensor grid. |
+| `collect_training_data` | mode `variables:` | Scatters a design-of-experiments (Sobol/LHS) over the per-bin field-enhancement vector and persists a `(beta, dose_grid)` training pair per sample into a resumable store. Requires a `workflow:`. See [](#surrogate-modes). |
+| `train_surrogate`     | *(none; reads a store)* | Fits the reduced-basis PCA-GP forward surrogate `beta -> dose profile` from a collected store. Needs no `workflow:`. |
+| `invert_optimize`     | *(none; reads a store/model)* | Inverts a target dose profile to estimate the beta that produced it, against the saved surrogate. Needs no `workflow:`. |
+| `invert_bayesian`     | *(none; reads a store/model)* | Same inversion, returning a posterior over beta (NUTS) instead of a point estimate. Needs no `workflow:`. |
 
 ### Store-consuming modes
 
 `train_surrogate`, `invert_optimize` and `invert_bayesian` read an on-disk store
-or saved model and
-never drive the module chain, so a config for one of them **omits the
-`workflow:` block entirely** — it declares only what the mode actually reads.
-(`workflow_parameters` and `input_parameters` are likewise unnecessary: the
-store's `manifest.json` already carries the pinned `bin_edges` and scoring-mesh
-invariants.) Every other mode, including `collect_training_data`, does require a
-`workflow:` list. See `examples/geant4_beta_surrogate/` for both shapes.
+or saved model and never drive the module chain, so their configs omit
+`workflow:`, `workflow_parameters` and `input_parameters`; the store's
+`manifest.json` carries the pinned `bin_edges` and scoring-mesh invariants. Every
+other mode, including `collect_training_data`, requires a `workflow:` list. See
+`examples/geant4_beta_surrogate/` for both shapes.
 
 Additional `mode:` keys:
 
 | Keyword             | Applies to                          | Default            | Description |
 |---------------------|-------------------------------------|--------------------|-------------|
-| `output_file`       | `single`, `parameter_sweep`         | *(none — not written)* | Path for the tab-delimited result table (written via the shared `DataFrame.to_csv` writer). For the Xopt modes it names the run log (default `sim_output.txt`). |
+| `output_file`       | `single`, `parameter_sweep`         | *(none; not written)* | Path for the tab-delimited result table (`DataFrame.to_csv`). For the Xopt modes it names the run log (default `sim_output.txt`). |
 | `sweep_output_file` | `gp_parameter_sweep`                | `'sweep_output.txt'` | Path for the GP posterior-mean sweep table. |
-| `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it — see [](#resume) below. |
-| `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml` instead of starting over — see [](#xopt-resume) below. A different mechanism from the table modes', with a weaker promise. |
+| `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
+| `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
 
-The modes are workflow-agnostic: because the objective is pulled from
-`output_parameters` and the workflow is driven only through its `evaluate` seam,
-*any* chain (S3P, Geant4, a multi-step pipeline) can be swept or optimized by the
-same code.
+The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
+can be swept or optimized, since the objective is an `output_parameters` name.
 
 :::{note}
-**A key nothing reads is reported.** Every block with a fixed key set — the
+**A key nothing reads is reported.** Every block with a fixed key set (the
 top-level blocks, `mode:`, `workflow_parameters`, `vocs_parameters`,
-`xopt_parameters` — is checked against the keys the code actually consumes, and an
-unrecognized one prints a warning naming it, suggesting the near miss, and listing
-what is recognized there:
+`xopt_parameters`) is checked against the keys the code consumes. An unrecognized
+key prints a warning naming it, the nearest match, and the recognized keys:
 
 ```console
 Warning: 'xopt_parameters' has key that nothing reads: 'num_steps' (did you mean
 'num_step'?). Ignored. Recognized here: alotted_time, bin_edges, cost_budget, …
 ```
 
-It is a **warning, not an error** — the run continues — and the sets are per block
-and per mode, so a `resume:` in a `train_surrogate` block (which does not read it) is
-reported while the same key in a `parameter_sweep` block is not. `input_parameters`
-and `output_parameters` are never checked: their keys are your own variable and
-output names.
+The run continues. The recognized sets are per block and per mode, so a
+`resume:` in a `train_surrogate` block is reported while the same key in a
+`parameter_sweep` block is not. `input_parameters` and `output_parameters` are
+never checked: their keys are your own variable and output names.
 :::
 
 ## `workflow_parameters`
 
-Directory management and executable-path settings. The solver/file settings
+Directory and executable-path settings. The old solver/file keys
 (`mode`, `module`, `cubit_input`, `ace3p_input`, `rfpost_input`, `ace3p_tasks`,
-`sweep_output`, the `skip_*` flags, …) that lived here before the refactor are
-gone — they now sit on the `workflow:` module entries and the `mode:` block.
+`sweep_output`, the `skip_*` flags, …) are not read here; use the `workflow:`
+module entries and the `mode:` block.
 
 | Keyword             | Type           | Default        | Description |
 |---------------------|----------------|----------------|-------------|
-| `workdir`           | `str` / `Path` | `os.getcwd()`  | Path to the working directory in which `lume-ace3p` runs. |
-| `workdir_mode`      | `str`          | `'manual'`     | How each evaluation's folder is named: `'manual'`, `'auto'`, or `'indexed'` — see [](#workdir-mode) below. |
-| `stage_mode`        | `str`          | `'copy'`       | How large static input files (prebuilt meshes, Track3P dumps, Geant4 STL geometry, prebuilt particle sources) are placed in each workdir: `'copy'`, `'symlink'`, or `'hardlink'` — see [](#stage-mode) below. |
-| `capture_output`    | `bool`         | `True`         | Tee each module's Cubit/solver/acdtool/Geant4 output to `<workdir>/<module name>.log` as well as to the terminal. `False` restores plain inherited streams (nothing written to disk) — see [](#capture-output) below. |
-| `dry_run`           | `bool`         | `False`        | If `True`, run the full Python pipeline but skip the Cubit/solver/acdtool/Geant4 binary calls (writes a `DRY_RUN.txt` marker). Auto-enabled when the relevant tool path cannot be resolved — see [](installation.md#dry-run-mode). |
-| `paths`             | `dict`         | `None`         | Mapping of executable-path overrides. Recognized keys: `ace3p`, `cubit`, `mpi`, `geant4_app_path`, `geant4_app_exe`. Each value takes highest precedence in path resolution — see [](installation.md#executable-paths). |
+| `workdir`           | `str` / `Path` | `os.getcwd()`  | Working directory in which `lume-ace3p` runs. |
+| `workdir_mode`      | `str`          | `'manual'`     | How each evaluation's folder is named: `'manual'`, `'auto'`, or `'indexed'`; see [](#workdir-mode). |
+| `stage_mode`        | `str`          | `'copy'`       | How large static input files (prebuilt meshes, Track3P dumps, Geant4 STL geometry, prebuilt particle sources) are placed in each workdir: `'copy'`, `'symlink'`, or `'hardlink'`; see [](#stage-mode). |
+| `capture_output`    | `bool`         | `True`         | Tee each module's Cubit/solver/acdtool/Geant4 output to `<workdir>/<module name>.log` as well as the terminal. `False` inherits the parent's streams and writes nothing to disk; see [](#capture-output). |
+| `dry_run`           | `bool`         | `False`        | Run the full Python pipeline but skip the Cubit/solver/acdtool/Geant4 binary calls, writing a `DRY_RUN.txt` marker. Auto-enabled when the relevant tool path cannot be resolved; see [](installation.md#dry-run-mode). |
+| `paths`             | `dict`         | `None`         | Executable-path overrides. Recognized keys: `ace3p`, `cubit`, `mpi`, `geant4_app_path`, `geant4_app_exe`. Each takes highest precedence in path resolution; see [](installation.md#executable-paths). |
 
 (workdir-mode)=
 ### `workdir_mode` — naming each evaluation's folder
 
 | Value | Folder per evaluation | Use when |
 |---|---|---|
-| `'manual'` | `workdir` itself, shared by every evaluation. | A single run, or a sweep whose points may overwrite each other's files. Cannot be resumed — one shared directory cannot carry per-point state (see [](#resume)). |
-| `'auto'`   | **Sweep:** `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. **Optimization:** `<workdir>_0`, `<workdir>_1`, … by iteration — see below. | You want to read a point's inputs off its directory name. |
-| `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep (or its iteration in an optimization). | You want a stable, collision-free point identity — and it is what the resume machinery keys on. |
+| `'manual'` | `workdir` itself, shared by every evaluation. | A single run, or a sweep whose points may overwrite each other's files. Cannot be resumed (see [](#resume)). |
+| `'auto'`   | **Sweep:** `<workdir>_<value>_<value>…`, suffixed with the swept scalar values. **Optimization:** `<workdir>_0`, `<workdir>_1`, … by iteration (see below). | You want to read a point's inputs off its directory name. |
+| `'indexed'` | `<workdir>_0`, `<workdir>_1`, … by the point's position in the sweep, or its iteration in an optimization. | You want a stable, collision-free point identity. Resume keys on this. |
 
-`'auto'` names are usually unique but not guaranteed: two axes can render to the
-same string, and the name grows with every axis added. `'indexed'` is bounded and
-collision-free, at the cost of not showing the input values in the name. The two
-produce **identical result tables** — only the directory names differ. The point
-index is the sweep's own row order (the tensor product of the swept axes, first
-axis slowest), which is also the order rows appear in the output table.
+`'auto'` names are not guaranteed unique (two axes can render to the same string)
+and grow with every axis. `'indexed'` is bounded and collision-free but does not
+show the input values. Both produce identical result tables. The point index is
+the sweep's row order (tensor product of the swept axes, first axis slowest),
+matching the output table.
 
 A `single` run under `'indexed'` is point 0, so it writes `<workdir>_0`.
 
-If `workdir` is not set, the per-evaluation directories are named from
-`lume-ace3p_workflow_output` **inside** the working directory
-(`lume-ace3p_workflow_output_0`, …). Only `'manual'` runs in the working directory
-itself.
+If `workdir` is not set, the per-evaluation directories are named
+`lume-ace3p_workflow_output_0`, … inside the working directory. Only `'manual'`
+runs in the working directory itself.
 
 #### In an optimization, `'auto'` numbers by iteration
 
-The Xopt modes (`scalar_optimize`, `gp_parameter_sweep`) have no sweep grid: the
-generator proposes each point as the run proceeds. So under `'auto'` or
-`'indexed'` each *evaluation* gets its own directory, numbered by iteration in
-evaluation order — `<workdir>_0` holds the first evaluation, `<workdir>_1` the
-second, and so on, matching the row order of the `sim_output.txt` trajectory.
+The Xopt modes (`scalar_optimize`, `gp_parameter_sweep`) have no sweep grid; the
+generator proposes each point as the run proceeds. Under `'auto'` or `'indexed'`
+each evaluation gets its own directory numbered in evaluation order
+(`<workdir>_0`, `<workdir>_1`, …), matching the row order of `sim_output.txt`.
 
-`'auto'` numbers rather than names by value here for two reasons. An optimizer's
-proposals are full-precision floats, so value-naming produces directories like
-`lume-ace3p_workdir_14.724999999999998_1.5750000000000002` that nobody looks a run
-up by; and an index cannot collide, so two evaluations at the *same* proposed
-point — which a Nelder–Mead simplex does produce — still get two directories.
+`'auto'` numbers rather than names by value here: optimizer proposals are
+full-precision floats (`lume-ace3p_workdir_14.724999999999998_1.5750000000000002`),
+and two evaluations at the same proposed point (which Nelder-Mead does produce)
+still get separate directories.
 
 :::{warning}
-Leaving `workdir_mode` at its `'manual'` default in an optimization means every
-evaluation runs in one directory, each overwriting the previous one's mesh, input
+Leaving `workdir_mode` at its `'manual'` default in an optimization runs every
+evaluation in one directory. Each overwrites the previous one's mesh, input
 files, solver results, logs and run manifest; only the last survives. The run
-prints a warning saying so. Set `workdir_mode: 'auto'` unless you specifically
-want one shared directory.
+prints a warning. Set `workdir_mode: 'auto'` unless you want one shared directory.
 :::
 
 (stage-mode)=
 ### `stage_mode` — storage-efficient staging
 
 Source modules (`mesh`, `track3p_source`, `particle_source`) and the `geant4`
-module bring externally-supplied files into each run's workdir under their bare
-basename, so the tool resolves them with `cwd=workdir`. By default these files
-are **copied**, which duplicates large static assets (e.g. a ~60 MB Track3P dump,
-multi-MB STL meshes) into every workdir — once per evaluation in an `'auto'`
-sweep, and once per DOE sample in `collect_training_data`. `stage_mode` chooses
-the staging strategy instead:
+module stage externally supplied files into each run's workdir under their bare
+basename (the tool runs with `cwd=workdir`). By default they are copied, which duplicates large static assets (a
+~60 MB Track3P dump, multi-MB STL meshes) into every workdir, once per evaluation
+or DOE sample. `stage_mode` chooses the strategy:
 
 | Value        | Behavior | Use when |
 |--------------|----------|----------|
-| `'copy'`     | Independent copy in each workdir (default; unchanged legacy behavior). | Workdirs must be self-contained/archival, or may live on a different filesystem than the source. |
-| `'symlink'`  | Absolute symlink to the source file. | You want the storage savings and the source files stay in place for the run's lifetime. Works across filesystems. |
-| `'hardlink'` | Hard link sharing the source's bytes; falls back to a copy (with a warning) when the link fails (e.g. cross-device `EXDEV`). | You want deduplication that survives the source being moved, **and** each workdir is on the same filesystem as the source. |
+| `'copy'`     | Independent copy in each workdir (default). | Workdirs must be self-contained/archival, or may live on a different filesystem than the source. |
+| `'symlink'`  | Absolute symlink to the source file. | The source files stay in place for the run's lifetime. Works across filesystems. |
+| `'hardlink'` | Hard link sharing the source's bytes. Falls back to a copy, with a warning, when the link fails (e.g. cross-device `EXDEV`). | Deduplication that survives the source being moved; each workdir must be on the same filesystem as the source. |
 
-Staged files are treated as **read-only** — `symlink`/`hardlink` share bytes with
-the source, so an in-place edit would corrupt the original. The pipeline never
-writes back to staged inputs (modules that mutate an input file, such as Cubit /
-ACE3P / Geant4 parameter merges, copy and rewrite their own input files
-separately and are unaffected by `stage_mode`). With `'symlink'`, deleting or
-moving a source file after a run leaves dangling links in the workdirs that
-referenced it.
+Staged files are read-only: `symlink`/`hardlink` share bytes with the source, so
+an in-place edit would corrupt the original. The pipeline never writes back to
+staged inputs; modules that mutate an input file (Cubit / ACE3P / Geant4
+parameter merges) rewrite their own copies and are unaffected by `stage_mode`.
+With `'symlink'`, deleting or moving a source file after a run leaves dangling
+links in the workdirs.
 
 (capture-output)=
 ### `capture_output` — per-evaluation logs
 
 Each module's external tool invocations (Cubit and its `meshconvert`, the ACE3P
 solvers, `acdtool`, the Geant4 application) write their output to
-`<workdir>/<module name>.log`, named after the module's **instance name** — so
-two `acdtool` steps with different `name:` keys get separate logs, while one
-module's several invocations share one.
+`<workdir>/<module name>.log`, named after the module's instance name, so two
+`acdtool` steps with different `name:` keys get separate logs.
 
-Output is **teed, not redirected**: everything still appears on the terminal, and
-`stderr` stays on `stderr`, so redirecting `2>errors` keeps working and a solver's
-failure message can never become invisible. The log is appended to, with a
-`$ <command line>` header before each invocation, so a shared (`'manual'`)
+Output is teed, not redirected: everything still appears on the terminal, and
+`stderr` stays on `stderr`, so `2>errors` keeps working. The log is appended to,
+with a `$ <command line>` header before each invocation, so a shared (`'manual'`)
 workdir or a re-run keeps the earlier record.
 
-This is what makes a sweep point cut off by a batch wall clock legible after the
-fact: without it, point 7's solver output is interleaved with every other point's
-on one terminal and gone as soon as it scrolls.
-
-Set `capture_output: false` to turn it off entirely. Nothing is then written to
-disk and the child processes inherit the parent's file descriptors directly, which
-is the behavior of releases before this key existed.
+`capture_output: false` turns it off; the child processes then inherit the
+parent's file descriptors and nothing is written to disk.
 
 (run-manifest)=
 ### The run manifest — `lume_ace3p_state.json`
 
-Alongside those logs, every evaluation writes one JSON file into its workdir
-recording what it did. There is no YAML key for it: it is always written, and
-nothing in the pipeline reads it back today.
+Every evaluation writes one JSON file into its workdir recording what it did. It
+is always written (there is no YAML key); `resume` and `--status` read it back.
 
 ```json
 {
@@ -235,28 +209,25 @@ nothing in the pipeline reads it back today.
 }
 ```
 
-It is updated **after each module rather than once at the end**, so the file a
-half-finished run leaves behind says how far that run got: modules are listed in
-the order they ran, and one that never started is simply absent (distinct from a
-`"failed"` one). `config_hash` covers the resolved per-point configuration — the
-module entries, the materialized input point, and the `output_parameters` spec —
-and deliberately **not** `paths`, `dry_run`, `workdir`, or comments, so the same
-workdir stays recognizable on a different machine and reformatting a config does
-not invalidate a campaign.
+It is updated after each module, so a half-finished run's file says how far it
+got. Modules are listed in the order they ran; one that never started is absent,
+which is distinct from `"failed"`. `config_hash` covers the module entries, the
+materialized input point, and the `output_parameters` spec. It does not cover
+`paths`, `dry_run`, `workdir`, or comments, so a workdir stays recognizable on a
+different machine and reformatting a config does not invalidate a campaign.
 
-Artifact paths are recorded relative to the workdir, and a solver's `job_name` is
-the results directory it actually resolved (see [](#omega3p-module)). A module
-whose external tool was skipped on a resume also carries `"resumed": true`.
+Artifact paths are relative to the workdir. A solver's `job_name` is the results
+directory it resolved (see [](#omega3p-module)). A module whose external tool was
+skipped on a resume also carries `"resumed": true`.
 
-The manifest is a record, not a result: it carries wall-clock timestamps, so it is
-not comparable run-to-run and is excluded from the frozen test baselines.
+The manifest carries wall-clock timestamps, so it is not comparable run-to-run
+and is excluded from the frozen test baselines.
 
 (resume)=
 ### `resume` — picking a campaign up where it stopped
 
-A sweep point cut off by a batch wall clock used to be lost entirely: the next run
-started it again from the mesh. With `resume: true` in the `mode:` block, each
-point is instead driven through the manifest above.
+With `resume: true` in the `mode:` block, each point is driven through the
+manifest above instead of restarting from the mesh.
 
 ```yaml
 workflow_parameters :
@@ -274,45 +245,38 @@ Per point:
 | Manifest state | What happens |
 |---|---|
 | absent | The point runs normally. |
-| `config_hash` differs | The point runs from the start, and the mismatch is printed — that workdir was written for a different configuration. |
-| every module `complete`, outputs still present | No external tool runs. Every module **re-reads** its existing output and the row is rebuilt. |
+| `config_hash` differs | The point runs from the start and the mismatch is printed: that workdir was written for a different configuration. |
+| every module `complete`, outputs present | No external tool runs. Every module re-reads its existing output and the row is rebuilt. |
 | partial, or some module `failed` | Execution restarts at the first module that is not `complete`; the ones before it re-read their output. |
 | `complete` but an output is missing | A warning names the module and what is gone, then execution restarts there. |
 
-Two things follow from that table and are worth stating plainly:
+Two consequences:
 
-- **A resumed module re-runs its parser and skips only its subprocess.** It is not
-  skipped outright. That is what keeps a resumed run's table identical to an
-  uninterrupted one — an S3P point has to re-read its frequency axis to know how
-  many rows it contributes, and a `t3p` point has to re-read `wakefield.out` to
-  report a wake at all. The parse is milliseconds; the subprocess is the hours.
-- **A module that has to re-run makes every later module re-run too**, because its
-  outputs are their inputs. This is what stops a `t3p` re-solve from being paired
-  with a skipped `acdtool postprocess transwake` step — which would report the
-  longitudinal loss factor as a kick factor, since `transwake` writes *over* T3P's
-  own `wakefield.out`.
+- **A resumed module re-runs its parser and skips only its subprocess**, so a
+  resumed run's table is identical to an uninterrupted one (an S3P point re-reads
+  its frequency axis; a `t3p` point re-reads `wakefield.out`).
+- **A module that re-runs makes every later module re-run too.** This stops a
+  `t3p` re-solve from being paired with a skipped `acdtool postprocess transwake`
+  step, which would report the longitudinal loss factor as a kick factor
+  (`transwake` writes over T3P's own `wakefield.out`).
 
 Requirements and limits:
 
-- **`workdir_mode` must not be `manual`.** Every point shares one directory there,
-  so there is one manifest for the whole sweep describing whichever point ran last.
-  `resume: true` with `manual` is refused, naming `indexed` as the fix.
-- **It is opt-in on purpose.** A sweep that silently adopted a stale workdir from a
-  different study would be worse than no resume at all. `config_hash` is the other
-  half of that guard.
+- **`workdir_mode` must not be `manual`.** One shared directory has one manifest,
+  describing whichever point ran last. `resume: true` with `manual` is refused,
+  naming `indexed` as the fix.
+- **It is opt-in.** `config_hash` guards against adopting a stale workdir from a
+  different study.
 - **The Xopt modes resume by a different mechanism.** Their points are chosen by the
-  generator as the run proceeds, so there is no fixed set of points to have finished
-  part of and no per-point manifest to key on. `resume: true` there restores the
-  optimizer's state instead — see [](#xopt-resume).
+  generator as the run proceeds, so there is no per-point manifest to key on.
+  `resume: true` there restores the optimizer's state instead; see [](#xopt-resume).
 - **`collect_training_data`** skips a sample whose `field.npz` is already stored
-  whether or not `resume` is set (that check predates the manifest and every store
-  collected so far records completion that way); `resume: true` additionally lets a
-  sample that stopped *midway through the chain* restart at its first non-complete
-  module.
-- A nonzero exit status from a solver is **not** by itself recorded as a failure —
-  no ACE3P wrapper raises on one, and never has (see [](#capture-output)). What
-  catches such a run is the missing-output check in the table above, which covers
-  every module that can name its own output.
+  whether or not `resume` is set. `resume: true` additionally lets a sample that
+  stopped midway through the chain restart at its first non-complete module.
+- A nonzero exit status from a solver is not by itself recorded as a failure; no
+  ACE3P wrapper raises on one (see [](#capture-output)). Such a run is caught by
+  the missing-output check above, which covers every module that can name its own
+  output.
 
 (status)=
 ### `run-lume-ace3p --status` — reading a campaign without running it
@@ -328,19 +292,18 @@ $ run-lume-ace3p --status t3p_sweep.yaml
      5        0.050        0.030    absent     0/2   cubit  lume-ace3p_t3p_workdir_5
 ```
 
-One row per point the config implies, with the verdict its manifest supports, how
-much of the chain is recorded complete, the module a resume would start from, and
-where to look. Nothing is executed and no manifest is written, so it is safe to
-run against a campaign that is still going.
+One row per point the config implies: verdict, how much of the chain is
+complete, the module a resume would start from, and the workdir. Nothing is
+executed and no manifest is written, so it is safe to run against a campaign that
+is still going.
 
 The verdicts are `complete`, `partial`, `failed`, `stale` (a manifest for a
-different resolved configuration — that point will re-run from the start) and
+different resolved configuration; that point will re-run from the start) and
 `absent`.
 
-`--status` covers every mode `resume` applies to, and reports the two kinds
-differently because progress means two different things. The table above is the
-table modes (`single`, `parameter_sweep`). For an optimization there is no fixed set
-of points to tabulate, so it reports what is banked:
+`--status` covers every mode `resume` applies to. The table above is for `single`
+and `parameter_sweep`. An optimization has no fixed set of points, so it reports
+what is banked:
 
 ```console
 $ run-lume-ace3p --status s3p_optimization.yaml
@@ -351,15 +314,13 @@ $ run-lume-ace3p --status s3p_optimization.yaml
 ```
 
 The store-consuming modes (`train_surrogate`, `invert_optimize`,
-`invert_bayesian`) run no points at all, so `--status` declines them.
+`invert_bayesian`) run no points, so `--status` declines them.
 
 (xopt-resume)=
 ### `resume` in an optimization — continuing an interrupted search
 
-An optimization killed at evaluation 190 of 200 used to throw away all 190, which is
-worse than the sweep case: in an optimization the *evaluations* are the expensive
-part. `resume: true` in an Xopt `mode:` block continues from a state file the run has
-been writing all along.
+`resume: true` in an Xopt `mode:` block continues an interrupted optimization from
+a state file the run writes all along.
 
 ```yaml
 workflow_parameters :
@@ -371,86 +332,69 @@ mode :
   resume : True                    # continue from xopt_state.yml
 ```
 
-`xopt_state.yml` is written **beside the mode's `output_file`** (so next to
+`xopt_state.yml` is written beside the mode's `output_file` (next to
 `sim_output.txt` by default) and updated after every evaluation, whether or not
-`resume` is set — the decision to resume is made after the interruption, so the
-record has to already exist. It is written to a temporary and renamed, so a run
-killed mid-write leaves the previous state rather than half a file.
+`resume` is set. It is written to a temporary file and renamed, so a run killed
+mid-write leaves the previous state rather than half a file.
 
 :::{important}
 **A resumed optimization does not reproduce the trajectory an uninterrupted run
-would have taken.** The promise is narrower than the table modes', which produce an
-*identical* table: **no evaluation is repeated, and the search continues from the
-same data.** Restoring history makes the generator propose from an equally informed
-state, not from the same state a straight-through run would have been in — the
-torch/numpy RNG streams alone break that. Do not expect two `sim_output.txt` files
-to diff clean.
+would have taken.** No evaluation is repeated, and the search continues from the
+same data, but the generator proposes from an equally informed state, not the
+same state; the torch/numpy RNG streams alone break that. Do not expect two
+`sim_output.txt` files to diff clean.
 :::
 
-What is restored is the optimizer's whole state — the trajectory *and* the
-generator's own internal state. That distinction is load-bearing rather than
-thorough: `sim_output.txt` alone would let the data be replayed into a fresh
-generator, which for a Bayesian generator is nearly equivalent (the GP is refit from
-data either way) but for `NelderMeadGenerator` is not. The simplex *is* the state, so
-a data-only restore restarts the search on top of old data and re-proposes points it
-already has.
+Both the trajectory and the generator's internal state are restored. Replaying
+`sim_output.txt` alone into a fresh generator is nearly equivalent for a Bayesian
+generator (the GP is refit from data) but not for `NelderMeadGenerator`, whose
+simplex is the state; a data-only restore re-proposes points it already has.
 
-Other things worth knowing:
+Other points:
 
-- **Every iteration budget is a total for the campaign**, not for this process:
-  `num_random`, `num_step`, `max_iterations`, `max_steps` and `cost_budget` all
-  measure the whole optimization. A resumed run therefore continues to the same
-  finish line, and resuming a *finished* optimization does nothing.
-- **It works under any `workdir_mode`,** including `manual` — it restores from the
-  campaign's state file, not from per-evaluation manifests. Under `auto`/`indexed` a
-  resumed run continues the workdir numbering (`_k`, `_k+1`, …) instead of
-  overwriting the inherited evaluations' directories.
-- **A state file that disagrees with the config is refused, not adopted**, and what
-  it refused is **kept**. Four kinds of disagreement are caught: a different
+- **Every iteration budget is a total for the campaign**: `num_random`, `num_step`,
+  `max_iterations`, `max_steps` and `cost_budget` all measure the whole
+  optimization. A resumed run continues to the same finish line, and resuming a
+  finished optimization does nothing.
+- **It works under any `workdir_mode`,** including `manual`, because it restores
+  from the state file rather than per-evaluation manifests. Under `auto`/`indexed`
+  a resumed run continues the workdir numbering (`_k`, `_k+1`, …).
+- **A state file that disagrees with the config is refused, not adopted**, and the
+  refused file is kept. Four kinds of disagreement are caught: a different
   generator, a flipped `MINIMIZE`/`MAXIMIZE`, moved variable bounds, and a changed
-  **workflow** — the module chain, the `output_parameters` spec, or any input value
-  the optimizer is *not* driving. That last one is the check the VOCS cannot make:
-  same variables and same objective over a different mesh or solver input is a
-  different campaign, and its recorded evaluations describe a different model.
-  Editing the *nominal* value of an optimized variable is not a change, since the
-  optimizer overrides it every evaluation.
+  workflow (the module chain, the `output_parameters` spec, or any input value the
+  optimizer is not driving). Editing the nominal value of an optimized variable is
+  not a change, since the optimizer overrides it every evaluation.
 
-  When a resume is refused the existing `xopt_state.yml` and run log are renamed to
-  `.rejected` (then `.rejected.1`, …) before the fresh campaign overwrites their
-  place, and the message names them. Declining to continue a campaign must not also
-  destroy it — that would turn a correct refusal into hours of lost solves. An
-  absent, unreadable or truncated state file starts fresh rather than raising, and
-  moves nothing aside: there is nothing there.
-- **Resuming with a *smaller* budget does nothing, and says so.** The budgets are
-  campaign totals, so `num_step: 10` against a 25-evaluation record is already
-  satisfied; the run reports that rather than finishing silently.
-- **The interrupted evaluation's workdir is abandoned.** After the restore the
-  generator proposes a different point, so the half-finished directory (mesh built,
-  solve killed) is not reused. One wasted mesh per interruption.
+  On refusal, the existing `xopt_state.yml` and run log are renamed to
+  `.rejected` (then `.rejected.1`, …) and the message names them. An absent,
+  unreadable or truncated state file starts fresh without raising, and moves
+  nothing aside.
+- **Resuming with a smaller budget does nothing, and says so.** `num_step: 10`
+  against a 25-evaluation record is already satisfied.
+- **The interrupted evaluation's workdir is abandoned.** The generator proposes a
+  different point after the restore, so the half-finished directory is not reused.
 - **The convergence test in `gp_parameter_sweep`** (`improvement_threshold` /
-  `patience`) is a window over recent steps rather than state, so it is not carried
-  across the interruption: a resumed run gives the search at least `patience` more
-  steps before it can stop on it.
+  `patience`) is a window over recent steps and is not carried across the
+  interruption. A resumed run gets at least `patience` more steps before it can
+  stop on it.
 - If the state file is gone but `sim_output.txt` survives, the data can still be
-  replayed into a fresh generator with `Xopt.add_data` — at the cost described above.
+  replayed into a fresh generator with `Xopt.add_data`, at the cost described above.
 
 (omega3p-module)=
 ### `omega3p` module
 
-Omega3P is the ACE3P **eigensolver**. It requires only a `mesh`, so the minimal
+Omega3P is the ACE3P eigensolver. It requires only a `mesh`, so the minimal
 workflow is `cubit → omega3p`.
 
-**Its mode results come from the solver itself.** A run writes
-`<results_dir>/omega3p.out`, whose top-level `Mode` sections carry one
-eigenmode each; these are parsed directly, so a mode frequency or Q needs **no**
-`acdtool` postprocess step. `examples/omega3p_dispersion_sweep` is the chain that
-falls out of that — `cubit → omega3p` with no postprocessor at all. (The older
-route, an `acdtool` `RoverQ` block, still works and returns the same number; the
-shipped examples now take a frequency from this module and keep acdtool for the
-quantities only it produces, such as R/Q and the peak surface fields.)
+A run writes `<results_dir>/omega3p.out`, whose top-level `Mode` sections carry
+one eigenmode each. These are parsed directly, so a mode frequency or Q needs no
+`acdtool` step; `examples/omega3p_dispersion_sweep` is `cubit → omega3p` alone.
+An `acdtool` `RoverQ` block returns the same frequency; the shipped examples use
+acdtool only for what it alone produces, such as R/Q and peak surface fields.
 
 `output_parameters` quantities are the `Mode` leaf names Omega3P writes. Because
-those names overlap other modules', **name the module explicitly**:
+those names overlap other modules', name the module explicitly:
 `{module: omega3p, quantity: Frequency}`.
 
 | Quantity | Shape | Meaning |
@@ -463,117 +407,107 @@ those names overlap other modules', **name the module explicitly**:
 | `PowerLoss` | array over `ModeID` | Surface power loss, W. |
 | `ModeID` | array | The mode index itself. |
 
-Adding `at: {mode: <n>}` to a mapping spec reduces an array to that mode's
-scalar — the form an Xopt objective needs, mirroring S3P's `at: {frequency: …}`.
-Without it you get the full array, which is what a dispersion curve or an HOM
-catalog wants: for an eigensolve you often do not know the mode count in advance.
+`at: {mode: <n>}` reduces an array to that mode's scalar, the form an Xopt
+objective needs, mirroring S3P's `at: {frequency: …}`. Without it you get the
+full array, for a dispersion curve or an HOM catalog.
 
-`ModeID` is Omega3P's **field index**, so a `parameter_sweep` emits a long-format
-table with one row per `(grid point, mode)` — as an S3P sweep goes long over
-`Frequency`. In a dry run there are no modes yet, so the table stays wide.
+`ModeID` is Omega3P's field index. When an output asks for the whole mode axis
+(no `at:`), a `parameter_sweep` emits a long-format table with one row per
+`(grid point, mode)`. When every declared output is narrowed with
+`at: {mode: n}`, the table stays wide (one row per grid point) and the per-mode
+arrays are persisted as that row's field artifact (see [](#results)). A dry run
+has no modes, so its table is wide as well.
 
-**`results_dir:`** names the directory the run writes into (default
-`omega3p_results`). That directory is chosen on the solver's **command line**, not
-in the input file, so this module key is the supported way to override it:
-`lume-ace3p` passes it to the solver as the second positional argument, exactly
-as a batch script would (`omega3p SRFCell.omega3p omega3p_results`). Setting it
-therefore moves both where the solver writes *and* where `lume-ace3p` reads.
+`results_dir:` names the directory the run writes into (default
+`omega3p_results`). `lume-ace3p` passes it to the solver as the second positional
+argument, as a batch script would (`omega3p SRFCell.omega3p omega3p_results`), so
+it moves both where the solver writes and where `lume-ace3p` reads.
 
-A top-level `JobName` in the `.omega3p` file is also honored as a fallback, but no
-ACE3P reference documents that key for any solver — do not rely on it. It is not
-forwarded on the command line, because the solver is already reading the file that
-sets it.
+A top-level `JobName` in the `.omega3p` file is honored as a fallback, but no
+ACE3P reference documents that key for any solver, so do not rely on it. It is
+not forwarded on the command line.
 
 ```{warning}
 The `t3p` module is the exception: its `results_dir:` steers only where
-`lume-ace3p` **reads**. No ACE3P reference documents a solver command line, and
-of the T3P invocations in the CW23 tutorials none passes a second positional
-argument, so nothing establishes that `t3p` accepts one — and T3P writes to
-`<results_dir>/OUTPUT` rather than straight into the directory. Setting
-`results_dir:` on a `t3p` module only makes sense when the run is already writing
-there, via a `JobName` leaf in the `.t3p` file. See [](t3p_reference.md).
+`lume-ace3p` reads. No ACE3P reference documents a solver command line, and none
+of the T3P invocations in the CW23 tutorials passes a second positional argument,
+so nothing establishes that `t3p` accepts one. T3P also writes to
+`<results_dir>/OUTPUT` rather than into the directory itself. Set `results_dir:`
+on a `t3p` module only when the run is already writing there via a `JobName` leaf
+in the `.t3p` file. See [](t3p_reference.md).
 ```
 
-A missing `omega3p.out` (a failed or interrupted run) is not a crash; the error
-surfaces only if a workflow asks for a mode quantity, and it names the path that
-was searched.
+A missing `omega3p.out` (a failed or interrupted run) raises only if a workflow
+asks for a mode quantity; the error names the path searched.
 
 (s3p-module)=
 ### `s3p` module
 
-S3P is the ACE3P **S-parameter** (frequency-scan) solver. It requires only a
-`mesh`, so the minimal workflow is `cubit → s3p`.
+S3P is the ACE3P S-parameter (frequency-scan) solver. It requires only a `mesh`,
+so the minimal workflow is `cubit → s3p`.
 
 Its results are read from three files in `<results_dir>` (default `s3p_results`,
-overridable with the same `results_dir:` key `omega3p` takes). All of them are
-**undocumented** by the ACE3P S3P reference, so the formats come from frozen real
-fixtures rather than from a specification.
+overridable with `results_dir:` as for `omega3p`). None is documented by the
+ACE3P S3P reference, so the formats come from frozen real fixtures.
 
 | Quantity | Shape | Meaning |
 |---|---|---|
 | `Frequency` | array | The frequency scan, in Hz. Every S-parameter aligns to it. |
-| `S(m,n)` | array over `Frequency` | The S-parameter **magnitude** \|S\|, from `Reflection.out`. |
+| `S(m,n)` | array over `Frequency` | The S-parameter magnitude \|S\|, from `Reflection.out`. |
 | `S(m,n)_real`, `S(m,n)_imag` | array over `Frequency` | Real and imaginary parts, from `SParameter.out`. |
 | `S(m,n)_phase_deg` | array over `Frequency` | Phase in degrees, in `(-180, 180]`. |
 
-`m` and `n` are S-matrix indices, not port numbers: the `IndexMap` in the output
-maps each index to its `(Port, Mode, Type, Cutoff)`. For Omega3P `ModeID` means an
-eigenmode; for S3P it means a **port mode** (excitation), ordered by port then
-mode.
+`m` and `n` are S-matrix indices, not port numbers; the output's `IndexMap` maps
+each index to its `(Port, Mode, Type, Cutoff)`. For S3P, `ModeID` means a port
+mode (excitation), ordered by port then mode.
 
-`S(m,n)` is the magnitude and keeps that meaning — the complex data is *added*
-alongside it under the three suffixes rather than redefining it, so every
-existing spec and every frozen baseline is unaffected. Adding
-`at: {frequency: <f>}` to a mapping spec reduces any of these arrays to the scalar
-at that frequency (an exact match against the scan; an unmatched frequency reports
-and yields `NaN`). `Frequency` is S3P's **field index**, so a `parameter_sweep`
-emits a long-format table with one row per `(grid point, frequency)`.
+`at: {frequency: <f>}` reduces any of these arrays to the scalar at that
+frequency. `<f>` must be a point of the scan (matched to 1e-9 relative); an
+off-grid frequency raises, naming the scan's range and the nearest points, so an
+optimization stops at its first evaluation instead of spending its budget on
+`NaN`. `Frequency` is S3P's field index, so a `parameter_sweep` emits a
+long-format table with one row per `(grid point, frequency)` whenever an output
+spans the scan, or when no outputs are declared (the table then carries the swept
+inputs and `Frequency` only). If every declared output is narrowed with
+`at: {frequency: …}`, the table is wide and the spectrum is persisted as the row's
+field artifact.
 
-Older ACE3P builds write no `SParameter.out`. That is a warning naming what is
-unavailable, not an error: the magnitudes are still read, and asking for a
-`_real` / `_imag` / `_phase_deg` quantity then fails naming the key. A missing
-`Reflection.out`, by contrast, raises — a run that did not write it produced
-nothing.
+Older ACE3P builds write no `SParameter.out`. That is a warning, not an error: the
+magnitudes are still read, and asking for a `_real` / `_imag` / `_phase_deg`
+quantity then fails naming the key. A missing `Reflection.out` raises.
 
-**Port mode field profiles** (`PortRef<n>_<m>.out`, columns `x y Ex Ey Hx Hy`) are
-read too, one per file, keyed by the file's stem (`PortRef7_0`). They are indexed
-by *position*, not by frequency, so they are **not** `output_parameters`
-quantities — they ride in the per-run field artifact with the rest of the
-spectrum, the same route acdtool's curve files take, and asking for one as a table
-column raises an error saying so.
+Port mode field profiles (`PortRef<n>_<m>.out`, columns `x y Ex Ey Hx Hy`) are
+read too, keyed by the file's stem (`PortRef7_0`). They are indexed by position,
+not frequency, so they are not `output_parameters` quantities; they ride in the
+per-run field artifact, and asking for one as a table column raises.
 
 (t3p-module)=
 ### `t3p` module
 
-T3P is the ACE3P **time-domain** solver, used for wakefield calculations. It takes
-the same MPI keys as `omega3p`/`s3p` (`input:`, `tasks:`, `cores:`, `opts:`) and
-requires only a `mesh`, so the minimal workflow is `cubit → t3p`. See
-`examples/t3p_sweep`.
+T3P is the ACE3P time-domain (wakefield) solver. It takes the same MPI keys as
+`omega3p`/`s3p` (`input:`, `tasks:`, `cores:`, `opts:`) and requires only a
+`mesh`, so the minimal workflow is `cubit → t3p`. See `examples/t3p_sweep`.
 
-**It provides `td_solution`, not `em_solution`.** That is deliberate: `acdtool`'s
-`postprocess rf` requires `em_solution`, so listing *that command* after a T3P
-solver is a validation error rather than RF postprocessing silently pointed at
-time-domain output. acdtool's time-domain commands (`postprocess transwake` /
-`coaxsignal` / `volmontomode`) require `td_solution` instead and chain after T3P
-normally — see [](#acdtool-module). A workflow may list both `s3p` and `t3p`
-(they provide different artifacts); two `t3p` entries is a duplicate-producer
-error like any other.
+It provides `td_solution`, not `em_solution`, so listing `acdtool`'s
+`postprocess rf` (which requires `em_solution`) after a T3P solver is a validation
+error. acdtool's time-domain commands (`postprocess transwake` / `coaxsignal` /
+`volmontomode`) require `td_solution` and chain after T3P; see
+[](#acdtool-module). A workflow may list both `s3p` and `t3p`; two `t3p` entries
+is a duplicate-producer error.
 
-**Output locations are resolved, not assumed.** T3P writes under
-`<results_dir>/OUTPUT` (default `t3p_results`) and names each monitor's files
-after that monitor's `Name`, which is read from the parsed `.t3p`.
+T3P writes under `<results_dir>/OUTPUT` (default `t3p_results`) and names each
+monitor's files after that monitor's `Name`, read from the parsed `.t3p`.
 
-`results_dir:` is accepted here but, uniquely among the solver modules, it is
-**read-only**: it tells `lume-ace3p` where to look without telling `t3p` where to
-write. See the warning under [](#omega3p-module) for why, and prefer leaving it
-unset unless a `JobName` leaf in the `.t3p` file already moves the run's output.
+`results_dir:` is accepted but, uniquely among the solver modules, read-only: it
+tells `lume-ace3p` where to look without telling `t3p` where to write (see the
+warning under [](#omega3p-module)). Leave it unset unless a `JobName` leaf in the
+`.t3p` file already moves the run's output.
 
 #### Monitors: `Name` selects, `Type` supplies the shape
 
 A `.t3p` file may declare any number of `Monitor` blocks of six documented
-`Type`s, and **all of them are read** — not just the wake. What each type writes,
-and which have real output behind them, is in [](t3p_reference.md); the quantity
-names are:
+`Type`s, and all of them are read. What each type writes, and which have real
+output behind them, is in [](t3p_reference.md). The quantity names are:
 
 | `Monitor` `Type` | Quantities | Axis | Units |
 |---|---|---|---|
@@ -582,14 +516,14 @@ names are:
 | `Power` | `t`, `P` | `t` | s, W |
 | `SurfacePowerLoss` | `t`, `P` | `t` | s, W |
 | `ModeVoltage` | `t`, `V` | `t` | s, V |
-| `Volume` | **none** — netCDF field dumps | — | — |
+| `Volume` | none (netCDF field dumps) | — | — |
 | — `Bunch0` | `t`, `I` | `t` | s, A |
 
 `Bunch0` is not a monitor: T3P writes `Bunch0.out` on every run and no input block
 declares it. It is addressable by that name like any other series.
 
-**A run may declare several monitors of one type**, so `Type` cannot address one —
-`Name` is the selector, and it is also the output filename stem:
+A run may declare several monitors of one type, so `Name` is the selector; it is
+also the output filename stem:
 
 ```yaml
 output_parameters :
@@ -600,13 +534,12 @@ output_parameters :
 ```
 
 A `monitor:` key routes the spec to `t3p` on its own, so `module: t3p` is
-optional alongside it. See `examples/t3p_power_balance`, which is three `Power`
-monitors on one run.
+optional alongside it. See `examples/t3p_power_balance` (three `Power` monitors
+on one run).
 
-**`monitor:` is omittable when it is unambiguous** — when exactly one monitor
-provides the named quantity, or when the quantity is one of the five wakefield
-names above. So every wakefield spec keeps its short form, and none of them is
-deprecated:
+`monitor:` may be omitted when exactly one monitor provides the named quantity,
+or when the quantity is one of the five wakefield names above. Wakefield specs
+keep their short form; none is deprecated:
 
 ```yaml
   'k_loss'    : {module: t3p, quantity: loss_factor}
@@ -615,20 +548,19 @@ deprecated:
 ```
 
 Where several monitors could answer a bare quantity, the error names all the
-candidates rather than picking one. The monitor quantities are **not** routable
-bare, though — `P`, `V` and `t` are too generic to claim as T3P's — so write
-`module: t3p` or `monitor:` for those.
+candidates. The monitor quantities (`P`, `V`, `t`) are too generic to route bare,
+so write `module: t3p` or `monitor:` for those.
 
-A wake run reports **either** a loss factor (longitudinal) or a kick factor
-(transverse), depending on the beam offset and the monitor contour. Asking for
-the wrong one raises an error naming what is actually available rather than
-returning `NaN`.
+A wake run reports either a loss factor (longitudinal) or a kick factor
+(transverse), depending on the beam offset and the monitor contour. Asking for the
+wrong one raises an error naming what is available.
 
 #### One index axis per module, `s` before `t`
 
-T3P exposes a **field index**, so a sweep over a T3P workflow emits a long-format
-table — one row per `(grid point, index)`, exactly as an S3P sweep goes long over
-`Frequency`. Which index:
+T3P exposes a field index, so a sweep over a T3P workflow emits a long-format
+table (one row per `(grid point, index)`) as long as at least one declared output
+is an array over that index. A sweep declaring only `loss_factor` stays wide, with
+the wake persisted as each row's field artifact. Which index:
 
 * `s` when the run produced a wake;
 * `t` otherwise, from the first time-series monitor;
@@ -636,44 +568,39 @@ table — one row per `(grid point, index)`, exactly as an S3P sweep goes long o
   (a `WakeField` monitor means `s`), so a swept table still gets one row per grid
   point.
 
-The two axes are incompatible — tens of wake samples against thousands of
-timesteps — so a run declaring both keeps `s` and **everything on the other axis
-must be narrowed to a scalar** with `at:`. Requesting an off-axis array raises an
-error naming both axes; the full arrays are still there, in the per-run field
-artifact (see [](plotting.md)), together with a `Volume` monitor's filenames.
+The two axes are incompatible (tens of wake samples against thousands of
+timesteps), so a run declaring both keeps `s`, and everything on the `t` axis
+must be narrowed to a scalar with `at:`. Requesting an off-axis array raises an
+error naming both axes. The full arrays remain in the per-run field artifact (see
+[](plotting.md)), together with a `Volume` monitor's filenames.
 
-`at: {s: <position>}` and `at: {t: <seconds>}` both take the **nearest** sample
-rather than requiring an exact match: unlike an S3P frequency scan, both T3P grids
-are consequences of `TimeStepping: DT` rather than something you specify. Per-run
-scalars like `loss_factor` repeat down each run's block of rows.
+`at: {s: <position>}` and `at: {t: <seconds>}` both take the nearest sample, since
+both T3P grids follow from `TimeStepping: DT`. Per-run scalars like `loss_factor`
+repeat down each run's block of rows.
 
 :::{note}
 **Volume monitors are written as your input file asks.** A `Volume` monitor
-writes a full field dump per sampled timestep — tens to hundreds of MB per run,
+writes a full field dump per sampled timestep: tens to hundreds of MB per run,
 multiplied by every point in a sweep. LUME-ACE3P does not prune or rewrite your
 monitors; widen the monitor's `TimeStep` or remove the block if you do not need
 the dumps. It is netCDF despite the `.out` extension, so its filenames are
-recorded and never parsed, and asking a `Volume` monitor for a quantity raises
-saying so.
+recorded and never parsed, and asking a `Volume` monitor for a quantity raises.
 
-**A declared monitor that wrote nothing warns, naming itself.** One monitor of six
-failing to write does not fail the run — the other five are still results — but
-the hole is not silent either (`T3POutputWarning`, naming the monitor and the path
-looked for).
+**A declared monitor that wrote nothing warns, naming itself.** One monitor
+failing to write does not fail the run (`T3POutputWarning`, naming the monitor
+and the path looked for).
 
-**`CheckPoint` is passed through but restarts are not orchestrated.** A
-`CheckPoint` section works like any other input section and T3P will write
-`t3p_results/CHECKPOINT`, but LUME-ACE3P will not detect an existing checkpoint
-or set `Action: restart`. A sweep point that exceeds its wall time restarts from
-scratch on re-run.
+**`CheckPoint` is passed through but restarts are not orchestrated.** T3P will
+write `t3p_results/CHECKPOINT`, but LUME-ACE3P will not detect an existing
+checkpoint or set `Action: restart`. A sweep point that exceeds its wall time
+restarts from scratch on re-run.
 :::
 
 (acdtool-module)=
 ### `acdtool` module
 
-`acdtool` is ACE3P's shared postprocessing utility — every solver reference ends
-with *"Refer to acdtool command syntax for postprocessing capabilities"* — and it
-exposes **19 commands**, not one. Which command runs is explicit:
+`acdtool` is ACE3P's shared postprocessing utility and exposes 19 commands. Which
+command runs is explicit:
 
 ```yaml
 workflow :
@@ -688,13 +615,13 @@ workflow :
 
 | Key | Meaning |
 |---|---|
-| `command:` | The acdtool command. Omitting it infers `postprocess rf` from a `.rfpost` `input:`, so configs written before the command surface opened up run unchanged. |
+| `command:` | The acdtool command. Omitting it infers `postprocess rf` from a `.rfpost` `input:`. |
 | `input:` | The input file, for the commands that take one (`postprocess rf` takes a `.rfpost`). |
-| `args:` | The command's positional arguments, **excluding** the jobname. `postprocess transwake` takes `[x1, y1, x2, y2]`; `coaxsignal` / `volmontomode` take none. |
+| `args:` | The command's positional arguments, excluding the jobname. `postprocess transwake` takes `[x1, y1, x2, y2]`; `coaxsignal` / `volmontomode` take none. |
 | `jobname:` | Override the injected results-directory name (see below). Rarely needed. |
-| `tasks:`, `cores:`, `opts:` | MPI settings, as for the solvers. Only `postprocess rf` and `postprocess volmontomode` run in parallel; every other command is pinned to **one rank** with a warning. `cores:` is not pinned — the tutorial runs the serial `transwake` as `srun -n 1 -c 256`. |
+| `tasks:`, `cores:`, `opts:` | MPI settings, as for the solvers. Only `postprocess rf` and `postprocess volmontomode` run in parallel; every other command is pinned to one rank with a warning. `cores:` is not pinned (the tutorial runs the serial `transwake` as `srun -n 1 -c 256`). |
 
-**Commands usable as a workflow step**, and what each requires:
+Commands usable as a workflow step, and what each requires:
 
 | `command:` | Requires | Notes |
 |---|---|---|
@@ -707,26 +634,25 @@ The three time-domain commands chain after `t3p`; see
 `examples/t3p_transwake` for the `transwake` case and
 `examples/s3p_window_rfpost` for `postprocess rf` against an S3P solution.
 
-The other 15 commands are recognized — an unknown command raises listing the
-known ones — but not available as a workflow step; each raises an error naming
-why. `postprocess track3p` needs the KVC `:` input dialect this wrapper does not
-parse; `mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a second
-mesh producer; `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
+The other 15 commands are recognized (an unknown command raises listing the known
+ones) but not available as a workflow step; each raises an error naming why:
+`postprocess track3p` needs the KVC `:` input dialect this wrapper does not parse,
+`mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a second mesh
+producer, and `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
 module to attach to. The dispatchable ones can still be invoked directly through
 `lume_ace3p.acdtool.Acdtool`. [](acdtool_reference.md) has the full 19-command
-table with each command's argument form and status.
+table with argument forms and status.
 
-**The jobname is injected, not configured.** Every positional `postprocess`
-command's first argument is the producing solver's *job name* — a name, not a
-path (`t3p_results`, `omega3p_results`, …). It is taken from whatever the
-producing solver module actually resolved, so a `t3p` step with
-`results_dir: custom_results` moves acdtool's argument with it automatically.
+The jobname is injected, not configured. Every positional `postprocess` command's
+first argument is the producing solver's job name (`t3p_results`,
+`omega3p_results`, …), taken from what that solver module resolved, so a `t3p`
+step with `results_dir: custom_results` moves acdtool's argument with it.
 
 :::{important}
-**`postprocess transwake` overwrites T3P's own wakefield output**, at
-`<jobname>/OUTPUT/wakefield.out` — that is by design, and the transverse result
-is read by **`t3p`**, not by `acdtool`. So the output spec for a
-`[cubit, t3p, acdtool(transwake)]` chain names `t3p`:
+**`postprocess transwake` overwrites T3P's own wakefield output** at
+`<jobname>/OUTPUT/wakefield.out`, and the transverse result is read by `t3p`, not
+by `acdtool`. So the output spec for a `[cubit, t3p, acdtool(transwake)]` chain
+names `t3p`:
 
 ```yaml
 output_parameters :
@@ -734,10 +660,10 @@ output_parameters :
 ```
 
 Because acdtool rewrites a file its producer already parsed, the `acdtool` step
-asks `t3p` to re-read it afterwards. Without that the workflow would report the
-*longitudinal* loss factor computed before acdtool ran — a wrong-but-plausible
-number. The same applies to `wake_new` / `wake_direct` when they land.
-`coaxsignal` writes a new file and is unaffected.
+makes `t3p` re-read it afterwards; otherwise the workflow would report the
+longitudinal loss factor computed before acdtool ran. The same applies to
+`wake_new` / `wake_direct` when they land. `coaxsignal` writes a new file and is
+unaffected.
 :::
 
 `output_parameters` for `postprocess rf` are documented under
@@ -745,63 +671,56 @@ number. The same applies to `wake_new` / `wake_direct` when they land.
 
 #### What `postprocess rf` reads out of its output
 
-The `.rfpost` format has **24 blocks**, and they fall into a handful of output
-shapes rather than 24 formats. [](acdtool_reference.md) lists all 24 with their
-per-block output filenames, real-output coverage, and the input semantics that are
-not guessable from the files; the summary below is what you need to write an
-output spec. Which blocks a run reports is set by `ionoff = 1`
-in the input file; each enabled block is read by the reader for its shape:
+The `.rfpost` format has 24 blocks in a handful of output shapes.
+[](acdtool_reference.md) lists all 24 with output filenames, real-output coverage,
+and input semantics; the summary below is enough to write an output spec. A block
+is reported when `ionoff = 1` in the input file, and read by the reader for its
+shape:
 
 | Shape | Blocks | Lands in |
 |---|---|---|
-| Mode-indexed table | the `modeID1`/`modeID2` blocks — `RoverQ`, `RoverQT`, `kickFactor`, `VFFT`, `ALLFieldAtPoint`, `coaxPort`, … | `output_data[block][mode_id][column]`, plus a `ModeIDs` list |
+| Mode-indexed table | the `modeID1`/`modeID2` blocks: `RoverQ`, `RoverQT`, `kickFactor`, `VFFT`, `ALLFieldAtPoint`, `coaxPort`, … | `output_data[block][mode_id][column]`, plus a `ModeIDs` list |
 | Surface-indexed scalars | `maxFieldsOnSurface`, `powerThroughSurface` | `output_data[block][surface_id][name]`, plus `SurfaceIDs` |
-| Single-mode scalars | `FieldAtPoint` (no index axis: it evaluates only `RFField`'s `ModeID`) | `output_data[block][name]` |
-| Column curves | the `filename` blocks — `ALLFieldOnLine`, `FieldOnLine`, `Multipole`, `GBZFFT`, … | separate files, read into `{filename: {column: array}}` |
-| Field maps | `FieldMap`, `IMPACTMap`, `OpenPMD_IMPACT`, `fieldOnSurface`, `fieldOn2DBoundary` | separate files; **filenames recorded, contents not parsed** |
+| Single-mode scalars | `FieldAtPoint` (no index axis; evaluates only `RFField`'s `ModeID`) | `output_data[block][name]` |
+| Column curves | the `filename` blocks: `ALLFieldOnLine`, `FieldOnLine`, `Multipole`, `GBZFFT`, … | separate files, read into `{filename: {column: array}}` |
+| Field maps | `FieldMap`, `IMPACTMap`, `OpenPMD_IMPACT`, `fieldOnSurface`, `fieldOn2DBoundary` | separate files; filenames recorded, contents not parsed |
 
-Column names come from the file — the header row of a column table, the
-`name = value` lines of a scalar block — not from a per-block list of column
-positions, so a build that adds or reorders a column is still read correctly. A
-complex value (`powerThroughSurface`'s power, in W) is split into `name` and
-`name_imag`, the same way Omega3P reports a complex eigenfrequency.
+Column names come from the file (a column table's header row, a scalar block's
+`name = value` lines), so a build that adds or reorders a column is still read
+correctly. A complex value (`powerThroughSurface`'s power, in W) is split into
+`name` and `name_imag`.
 
-Two things worth knowing:
+Two further points:
 
 - **`[scaling]` is always read**, even though no input block declares it. It
   carries `m_factor`, the normalized-to-physical field conversion, which nothing
-  else in ACE3P's output reports — and which is what reconciles the two curve
-  scalings (`FieldOnLine` output is scaled to `RFField`'s `gradient`,
-  `ALLFieldOnLine` output carries the raw eigenmode normalization). Its
-  `Variant` is `gradient` normally and `point` when `gradient = -1` selects "no
-  scaling".
+  else in ACE3P's output reports. `FieldOnLine` output is scaled to `RFField`'s
+  `gradient`, while `ALLFieldOnLine` output carries the raw eigenmode
+  normalization. Its `Variant` is `gradient` normally and `point` when
+  `gradient = -1` selects "no scaling".
 - **Curve and grid output is a field artifact, not a table column.** Curves are
-  per-position arrays, so they are exposed through the module's `field()` — the
-  structured half of the hybrid model — rather than flattened into
+  per-position arrays, exposed through the module's `field()` rather than
   `output_parameters`. The same applies to `postprocess coaxsignal`'s
   `signal.out`, whose three columns (`t`, `V`, `I`) are unlabeled in the file and
   named from the reference.
 
 A block whose output cannot be read warns naming itself
-(`lume_ace3p.acdtool.AcdtoolOutputWarning`) rather than silently vanishing from
-the result — an unknown block from a newer build, a curve block that wrote no
-files, or `VFFT` with `printGroup = nterm`, which groups its results by multipole
-component instead of by mode and so is not a mode-indexed table.
+(`lume_ace3p.acdtool.AcdtoolOutputWarning`): an unknown block from a newer build,
+a curve block that wrote no files, or `VFFT` with `printGroup = nterm`, which
+groups results by multipole component instead of by mode.
 
 :::{note}
-`kickFactor` and `maxFieldsOnSurface` have **no real acdtool output** behind
-them: no tutorial run ever enabled either block, and the reference documents
-inputs only. Their readers are driven by the file rather than by an assumed
-layout, but the layouts themselves remain unverified — see
+`kickFactor` and `maxFieldsOnSurface` have no real acdtool output behind them: no
+tutorial run enabled either block, and the reference documents inputs only. Their
+readers are driven by the file, but the layouts remain unverified; see
 `tests/fixtures/acdtool/COVERAGE.md`.
 :::
 
 (output-specs-for-postprocess-rf)=
 #### Output specs for `postprocess rf`
 
-An acdtool output spec names the **block**, the **quantity** (a column of that
-block, or one of its `name = value` scalars), and — for the indexed shapes —
-which index it wants:
+An acdtool output spec names the block, the quantity (a column or `name = value`
+scalar of that block), and, for the indexed shapes, which index:
 
 ```yaml
 output_parameters :
@@ -817,34 +736,30 @@ output_parameters :
 
 | Key | Meaning |
 |---|---|
-| `section:` | The `.rfpost` block, spelled as acdtool spells it (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, `powerThroughSurface`, `FieldAtPoint`, `scaling`, …). Naming a block is what routes the spec to `acdtool`, so `module: acdtool` is optional. |
-| `quantity:` | The column or scalar name, as it appears in the output — `RoQ`, `Frequency`, `Qext`, `V_r`, `V_i`, `absV` for `RoverQ`; `Ks` and the same complex-voltage set for `kickFactor`; `Emax` / `Hmax` / `Emax_location` / `Hmax_location` for `maxFieldsOnSurface`; `m_factor` for `scaling`. An unknown name raises listing what the run *did* report. |
+| `section:` | The `.rfpost` block, spelled as acdtool spells it (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, `powerThroughSurface`, `FieldAtPoint`, `scaling`, …). Naming a block routes the spec to `acdtool`, so `module: acdtool` is optional. |
+| `quantity:` | The column or scalar name as it appears in the output: `RoQ`, `Frequency`, `Qext`, `V_r`, `V_i`, `absV` for `RoverQ`; `Ks` and the same complex-voltage set for `kickFactor`; `Emax` / `Hmax` / `Emax_location` / `Hmax_location` for `maxFieldsOnSurface`; `m_factor` for `scaling`. An unknown name raises listing what the run did report. |
 | `at:` | Which index. `{mode: n}` for a mode-indexed block, `{surface: n}` for a surface-indexed one. |
 | `component:` | `x` / `y` / `z` of a location vector (`Emax_location`). |
 
-**Omitting `at:` on a mode-indexed block asks for every mode**, and the result
-table then carries one row per mode with `ModeID` as its index column — the shape
-a dispersion curve, an HOM catalog or a mode spectrum wants, and the reason the
-mode index is an *axis* rather than a selector (`modeID2 = -1` in the `.rfpost`
-input already means "every mode the solver produced"). Narrowing with
-`at: {mode: n}` gives the scalar for one mode.
+Omitting `at:` on a mode-indexed block asks for every mode: the result table
+carries one row per mode with `ModeID` as its index column, for a dispersion
+curve, HOM catalog or mode spectrum (`modeID2 = -1` in the `.rfpost` input already
+means "every mode the solver produced"). `at: {mode: n}` gives the scalar for one
+mode.
 
-`ModeID` is acdtool's **only** table axis. Surface-indexed blocks therefore
-*require* `at: {surface: n}` and always resolve to a scalar; omitting it raises an
-error naming the surfaces the run reported. This follows the data — the input
-block pins the surface it evaluates (`maxFieldsOnSurface { surfaceID = 6 }`), so
-surfaces are few and enumerable, while modes are many and unknown before the
-solve.
+`ModeID` is acdtool's only table axis. Surface-indexed blocks require
+`at: {surface: n}` and always resolve to a scalar; omitting it raises an error
+naming the surfaces the run reported. The input block pins the surface it
+evaluates (`maxFieldsOnSurface { surfaceID = 6 }`).
 
-When another module in the chain owns the table axis — `[cubit, s3p, acdtool]`,
-where S3P's `Frequency` wins because it comes first in resolved DAG order — a
-per-mode array cannot be a column of that table, so it is exposed as a **field
-artifact** instead (see [](#results)).
+When another module in the chain owns the table axis (`[cubit, s3p, acdtool]`,
+where S3P's `Frequency` comes first in resolved DAG order), a per-mode array is
+exposed as a field artifact instead of a table column (see [](#results)).
 
 :::{note}
 **The positional list form is deprecated.** `['RoverQ', '0', 'RoQ']` still works
 and returns the same value, but emits a `DeprecationWarning` naming its mapping
-replacement. The translation is mechanical:
+replacement:
 
 | List form | Mapping form |
 |---|---|
@@ -853,20 +768,18 @@ replacement. The translation is mechanical:
 | `['maxFieldsOnSurface', '6', 'Emax']` | `{module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}` |
 | `['maxFieldsOnSurface', '6', 'Emax_location', 'x']` | `{module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}` |
 
-The list cannot express the whole-axis case (no `at:`), which is why it is being
-retired rather than kept as an equal alternative.
+The list cannot express the whole-axis case (no `at:`).
 :::
 
 (particles-module-keys)=
 ### `particles` module keys
 
 The `particles` module (field-emission weighting) accepts the keys documented
-under [](#particle_parameters) directly on its `workflow:` entry — `impact_order`,
+under [](#particle_parameters) directly on its `workflow:` entry: `impact_order`,
 `impact_face_id`, `work_function`, `dt`, `beta` / `beta_input` / `beta_inputs`,
-`num_bins`, `bin_edges`, `output_format`, and `output` (the output filename;
-defaults to `<input>_modified.txt`). Note the module defaults `output_format` to
-`'geant4'` (the 10-column Geant4 source file); set `output_format: 'track3p'`
-explicitly for the weighted-Track3P dump.
+`num_bins`, `bin_edges`, `output_format`, and `output` (default
+`<input>_modified.txt`). `output_format` defaults to `'geant4'` (the 10-column
+Geant4 source file); set `'track3p'` explicitly for the weighted-Track3P dump.
 
 (geant4-module-keys)=
 ### `geant4` module keys
@@ -875,129 +788,112 @@ Used on a `geant4` `workflow:` entry.
 
 | Keyword                   | Type   | Default                | Description |
 |---------------------------|--------|------------------------|-------------|
-| `geant4_input`            | `str`  | `None`                 | Path to the Geant4 input file (plain `key = value` text, `#` comments) used as the simulation input. |
-| `geant4_threads`          | `int`  | `None`                 | If set, overrides the `nthreads` key in the input file. When unset (the default) the input file's own `nthreads` value is left untouched. |
+| `geant4_input`            | `str`  | `None`                 | Path to the Geant4 input file (plain `key = value` text, `#` comments). |
+| `geant4_threads`          | `int`  | `None`                 | If set, overrides the `nthreads` key in the input file; otherwise the file's value is left untouched. |
 | `geant4_opts`             | `str`  | `''`                   | Additional `mpirun`/`srun` arguments when launching the Geant4 application. |
-| `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename (the executable auto-derives the event count from the particle file). |
-| `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, *in addition to* the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
-| `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read for the `dose` output section. Defaults to the `output_dose` value in the input file. (`geant4_scoring_output` is accepted as a back-compat alias.) |
-| `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section. Defaults to the `output_edep` value in the input file. |
+| `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename. The executable derives the event count from the particle file. |
+| `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, in addition to the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
+| `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read for the `dose` output section (default: the input file's `output_dose` value). `geant4_scoring_output` is a back-compat alias. |
+| `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section (default: the input file's `output_edep` value). |
 
-To supply a prebuilt Geant4 source file directly (instead of generating one with
-a `particles` module), use a `particle_source` module with a `file:` key. The
-old `geant4_particle_file` / `particle_input` / `particle_output` keys no longer
-exist.
+To supply a prebuilt Geant4 source file directly instead of generating one with a
+`particles` module, use a `particle_source` module with a `file:` key. The old
+`geant4_particle_file` / `particle_input` / `particle_output` keys are not read.
 
 (input_parameters)=
 ## `input_parameters`
 
 `input_parameters` declares the input variable space, grouped into per-code
-sub-blocks so every variable's home is explicit:
+sub-blocks:
 
 ```yaml
 input_parameters :
   cubit :                       # Cubit journal knobs (-> cubit bucket)
     cornercut : {min: 12.0, max: 16.0, num: 5}
   ace3p :                       # values inside the ACE3P input file
-    FrequencyScan : {Start: 9.424e9}
+    FrequencyScan : {Start: 9.5e9}
   geant4 :                      # Geant4 input-file overrides
     nthreads : 8
   particles :                   # particles-module knobs (e.g. field-enhancement β)
     beta : {min: 40.0, max: 60.0, num: 5}
 ```
 
-Each leaf value is a single scalar, a `list`, or a `dict` with `min`, `max`,
-and `num` defined. If any leaf is vector-like (a list, or a `min/max/num`
-range), the workflow can only be run as a parameter sweep — not a single
-evaluation. The four sub-blocks map to the four
-[`WorkflowInputs`](workflow_inputs.md) buckets (`geant4:` → the *macro*
-bucket); their per-block conventions are detailed in
-[](#ace3p_input_parameters) (duplicate-key aware) and
-[](#geant4_input_parameters). The `particles:` bucket holds the
-field-enhancement variables the `particles` module's `beta_input` / `beta_inputs`
-read (the post-Track3P Fowler-Nordheim weighting step) — see
-[](#particle_parameters).
+Each leaf value is a scalar, a `list`, or a `dict` with `min`, `max`, and `num`.
+If any leaf is vector-like, the workflow can only be run as a parameter sweep. The
+four sub-blocks map to the four [`WorkflowInputs`](workflow_inputs.md) buckets
+(`geant4:` is the *macro* bucket); see [](#ace3p_input_parameters) (duplicate-key
+aware) and [](#geant4_input_parameters). The `particles:` bucket holds the
+field-enhancement variables read by the `particles` module's `beta_input` /
+`beta_inputs`; see [](#particle_parameters).
 
 :::{important}
-`cubit:` keys must **exactly** match the variable names in the Cubit journal
-file.
+`cubit:` keys must exactly match the variable names in the Cubit journal file.
 :::
 
-During parameter sweeping, all combinations of the array-valued leaves across
-**all** sub-blocks are evaluated (the full tensor product). For example, three
-swept leaves — whether in one sub-block or spread across `cubit:`, `ace3p:`,
-and `geant4:` — with lists of lengths 10, 12, and 15 run the workflow
-10 × 12 × 15 = 1800 times.
+A parameter sweep evaluates the full tensor product of the array-valued leaves
+across all sub-blocks. Three swept leaves with lists of lengths 10, 12, and 15,
+in any sub-blocks, run the workflow 10 × 12 × 15 = 1800 times.
 
 :::{note}
-**Deprecated flat aliases.** The pre-standardization keys
-`cubit_input_parameters`, `ace3p_input_parameters`, `geant4_input_parameters`,
-`particles_input_parameters`, and a bare `input_parameters` (treated as the
-cubit block) are still accepted so existing configs keep running, but the nested
-notation above is the standard. A cubit knob literally named `cubit`, `ace3p`,
-`geant4`, or `particles` (which would collide with the reserved sub-block names)
-must be declared with the flat `cubit_input_parameters` key.
+**Deprecated flat aliases.** The flat keys `cubit_input_parameters`,
+`ace3p_input_parameters`, `geant4_input_parameters`,
+`particles_input_parameters`, and a bare `input_parameters` (treated as the cubit
+block) are still accepted, but the nested notation above is the standard. A cubit
+knob literally named `cubit`, `ace3p`, `geant4`, or `particles` collides with the
+reserved sub-block names and must be declared with the flat
+`cubit_input_parameters` key.
 :::
 
 ## `output_parameters`
 
-Each `output_parameters` entry maps a user-chosen name (used as a result-table
-column header or a VOCS objective name) to an extraction spec. The workflow
-routes each spec to the module that can satisfy it and calls that module's
-`extract`.
+Each entry maps a user-chosen name (a result-table column header or a VOCS
+objective name) to an extraction spec, which the workflow routes to the module
+that can satisfy it.
 
 (two-spec-syntaxes)=
 ### Two spec syntaxes
 
-- **Mapping form** (preferred) — `{module: <type>, quantity: <name>, at: {...}}`,
+- **Mapping form** (preferred): `{module: <type>, quantity: <name>, at: {...}}`,
   with `section:` and `component:` where the module needs them. The `module` key
-  is stripped and the rest of the mapping is handed to that module's `extract`.
-  It is **required** for S3P/T3P scalar objectives, which need a keyed lookup
-  (`quantity` + `at: {frequency}` / `at: {s}`) that no positional list can
-  express, and it is the form every acdtool quantity should now use — see
-  [](#output-specs-for-postprocess-rf).
-- **Bare form** — a positional list `['section', string1, string2, ...]` or a
-  bare quantity string, with no `module` key: the *shape* of the spec identifies
-  the module. `dose`/`edep`/`scoring` → `geant4` (see
-  [](#geant4-output-specs)), `count`/`total_weight` →
-  `particles`, a `monitor:` key or a T3P wakefield quantity
-  (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`, a `.rfpost` block name
-  (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool` **(deprecated —
-  use the mapping form)**, and a bare S-parameter string or any other mapping →
-  `s3p`.
+  is stripped and the rest is handed to that module's `extract`. It is required
+  for S3P/T3P scalar objectives, which need a keyed lookup (`quantity` +
+  `at: {frequency}` / `at: {s}`), and is the form every acdtool quantity should
+  use; see [](#output-specs-for-postprocess-rf).
+- **Bare form**: a positional list `['section', string1, string2, ...]` or a bare
+  quantity string, with no `module` key. The shape of the spec identifies the
+  module. `dose`/`edep`/`scoring` → `geant4` (see [](#geant4-output-specs));
+  `count`/`total_weight` → `particles`; a `monitor:` key or a T3P wakefield
+  quantity (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`; a `.rfpost`
+  block name (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool`
+  (deprecated; use the mapping form); a bare S-parameter string or any other
+  mapping → `s3p`.
 
-  Note acdtool's `kickFactor` section and T3P's `kick_factor` quantity are
-  distinct spellings on purpose, so the two never collide. T3P's *monitor*
-  quantities (`P`, `V`, `t`, `Ez`, …) are deliberately **not** routable bare —
-  they are too short and generic to claim — so name `module: t3p` or a `monitor:`
+  acdtool's `kickFactor` section and T3P's `kick_factor` quantity are distinct
+  spellings, so the two never collide. T3P's monitor quantities (`P`, `V`, `t`,
+  `Ez`, …) are too generic to route bare, so name `module: t3p` or a `monitor:`
   for those; see [](#t3p-module).
 
-The `module:` key is optional whenever the spec's shape already identifies its
-module, which for `acdtool` and `geant4` means naming a `section:` and for T3P's
-non-wake monitors a `monitor:`. Spelling it out is never wrong and is clearer in a
-mixed workflow.
+The `module:` key is optional whenever the spec's shape identifies its module: a
+`section:` for `acdtool` and `geant4`, a `monitor:` for T3P's non-wake monitors.
+Spelling it out is never wrong and is clearer in a mixed workflow.
 
-**Every shipped example uses the mapping form.** The bare forms stay supported so
-existing configs keep running, but only acdtool's is *deprecated* (it cannot
-express the whole-axis case); the rest are simply superseded.
+Every shipped example uses the mapping form. The bare forms stay supported; only
+acdtool's is deprecated (it cannot express the whole-axis case).
 
 :::{note}
-**Why you may still see the list form in older configs.** It models the acdtool
-result as a *positional index path* (`['RoverQ', '0', 'RoQ']` — block, mode,
-column), which is how the postprocess result dict is nested, while S3P objectives
-have always used the keyed mapping. That difference has now been removed from every
-shipped example: the middle element of the list was really an **index axis**, not
-a selector, so the mapping form both expresses the same scalar and can ask for the
-whole axis (every mode) by dropping the `at:`. `particles` specs are a single bare
-quantity name and have no positional form to retire.
+**Older configs may use the list form.** `['RoverQ', '0', 'RoQ']` is block, mode,
+column, the nesting of the postprocess result dict. The middle element is an
+index axis, so the mapping form expresses the same scalar and can also ask for
+the whole axis by dropping `at:`. `particles` specs are a single bare quantity
+name and have no positional form.
 :::
 
 (geant4-output-specs)=
 ### Geant4 output specs
 
-When the workflow includes a `geant4` module, `section:` names a **scoring-mesh
-output file** and `quantity:` the reduction over its bins. Naming a section is what
-routes the spec to the `geant4` module, so `module: geant4` is optional:
+For a `geant4` module, `section:` names a scoring-mesh output file and
+`quantity:` the reduction over its bins. Naming a section routes the spec to
+`geant4`, so `module: geant4` is optional:
 
 ```yaml
 output_parameters :
@@ -1006,19 +902,19 @@ output_parameters :
   'total_edep' : {module: geant4, section: edep, quantity: total}
 ```
 
-- `section: dose` — reads the `output_dose` file (the dose-deposit grid).
-- `section: edep` — reads the `output_edep` file (the energy-deposit grid).
-- `section: scoring` — back-compat alias for `dose`.
+- `section: dose` reads the `output_dose` file (the dose-deposit grid).
+- `section: edep` reads the `output_edep` file (the energy-deposit grid).
+- `section: scoring` is a back-compat alias for `dose`.
 - `quantity:` is one of `total` (sum over all mesh bins), `peak` (maximum bin
   value), or `peak_index` (the `(ix, iy, iz)` index of the peak bin).
 
-The positional form `['dose', 'total']` returns exactly the same value and is
-**not** deprecated: a Geant4 spec is a `(grid, reduction)` pair with no index axis,
-so the list expresses everything the mapping does. The shipped examples use the
-mapping for consistency with the rest of `output_parameters`.
+The positional form `['dose', 'total']` returns the same value and is not
+deprecated: a Geant4 spec is a `(grid, reduction)` pair with no index axis, so the
+list expresses everything the mapping does. The shipped examples use the mapping
+for consistency.
 
-Both output files use the Geant4 box-mesh scorer format: three `#`-comment
-header lines followed by comma-separated rows
+Both output files use the Geant4 box-mesh scorer format: three `#`-comment header
+lines followed by comma-separated rows
 `iX, iY, iZ, total(value), total(val^2), entry`. The fourth column
 (`total(value)`) is read as the per-bin scored quantity.
 
@@ -1028,18 +924,16 @@ More sections and entries will be added in future updates.
 ## `input_parameters.ace3p`
 
 The `ace3p:` sub-block of [`input_parameters`](#input_parameters) is a nested
-mapping organized by ACE3P input-file hierarchy, used to override or sweep over
-values inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p` input files (or to
-supply them inline when no separate ACE3P input file is provided). The same
-`min`/`max`/`num` and list conventions as the other sub-blocks apply to leaf
-values; non-list scalars are written through unchanged. (The deprecated
-top-level `ace3p_input_parameters:` key is equivalent.)
+mapping following the ACE3P input-file hierarchy. It overrides or sweeps values
+inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p` input files, or supplies them
+inline when no separate ACE3P input file is provided. Leaf values take the same
+`min`/`max`/`num` and list conventions as the other sub-blocks; scalars are
+written through unchanged. The deprecated top-level `ace3p_input_parameters:` key
+is equivalent.
 
-Internally, this block is parsed as an *ordered list of key/value pairs*
-rather than a Python dict, which means **same-named sibling sections are
-preserved**. For example, two `Port:` blocks at the same level are kept
-as two distinct entries and merged positionally into the matching pair of
-`Port` sections in the ACE3P input file:
+This block is parsed as an ordered list of key/value pairs, so same-named
+sibling sections are preserved. Two `Port:` blocks at the same level are merged
+positionally into the matching pair of `Port` sections in the ACE3P input file:
 
 ```yaml
 input_parameters :
@@ -1052,46 +946,41 @@ input_parameters :
       'NumberOfModes' : 1
 ```
 
-The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`,
-etc. entries; each block lines up positionally with its counterpart in
-the ACE3P input. Use a `ReferenceNumber:` (or other discriminating leaf)
-inside each block to keep the mapping unambiguous when reading the YAML.
+The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`, etc.
+entries. Use a `ReferenceNumber:` (or other discriminating leaf) inside each block
+to keep the YAML readable.
 
-Fast path: when a separate ACE3P input file is provided via the solver
-module's `input:` key and the `ace3p:` block does not override (or sweep) any
-values inside it, the file is copied to each working directory unchanged — no
-parse/rewrite round-trip occurs.
+Fast path: when the solver module's `input:` names a separate ACE3P input file and
+the `ace3p:` block does not override or sweep any values inside it, the file is
+copied to each working directory unchanged.
 
-See the S3P-without-separate-file example in [](parameter_sweep.md) for a
-complete usage pattern.
+See the S3P-without-separate-file example in [](parameter_sweep.md).
 
 (sweep_parameters)=
 ## `sweep_parameters`
 
-Used only with `mode: {type: gp_parameter_sweep}`. Defines the
-tensor-product grid on which the trained Gaussian Process is sampled after
-the Xopt exploration phase. Each key is a variable name (matching a name
-declared in `input_parameters`), each value is a `min`/`max`/`num` mapping
-(linearly spaced).
+Used only with `mode: {type: gp_parameter_sweep}`. Defines the tensor-product
+grid on which the trained Gaussian Process is sampled after the Xopt exploration
+phase. Each key is a variable name matching one declared in `input_parameters`;
+each value is a `min`/`max`/`num` mapping (linearly spaced).
 
 (geant4_input_parameters)=
 ## `input_parameters.geant4`
 
-The `geant4:` sub-block of [`input_parameters`](#input_parameters) is used when
-the workflow includes a `geant4` module. It supplies overrides for settings in
-the Geant4 input file. Each key is an input-file key (e.g. `nthreads`,
-`world_z`, `scale_factor`); each value is either a scalar to write through
-unchanged or a `min`/`max`/`num` mapping (or list) for a parameter sweep. A
-swept key becomes an additional sweep axis alongside any `cubit:`/`ace3p:`
-axes. Keys not present in the input file are appended. (The deprecated
-top-level `geant4_input_parameters:` key is equivalent.)
+The `geant4:` sub-block of [`input_parameters`](#input_parameters) overrides
+settings in the Geant4 input file. Each key is an input-file key (e.g.
+`nthreads`, `world_z`, `scale_factor`); each value is a scalar written through
+unchanged or a `min`/`max`/`num` mapping (or list) for a parameter sweep. A swept
+key becomes a sweep axis alongside any `cubit:`/`ace3p:` axes. Keys not present in
+the input file are appended. The deprecated top-level `geant4_input_parameters:`
+key is equivalent.
 
 (particle_parameters)=
 ## `particle_parameters`
 
-These are the keys accepted by a `particles` module entry (they configure the
-field-emission weighting; see [](#particles-module-keys)). They are set directly
-on the module's `workflow:` entry, not in a separate top-level block.
+The keys accepted by a `particles` module entry (see [](#particles-module-keys)).
+They are set directly on the module's `workflow:` entry, not in a separate
+top-level block.
 
 | Keyword          | Type               | Default               | Description |
 |------------------|--------------------|-----------------------|-------------|
@@ -1099,20 +988,16 @@ on the module's `workflow:` entry, not in a separate top-level block.
 | `impact_face_id` | `int` or `list`    | *(required)*          | Track3P `ImpactFaceID` value(s) to retain. |
 | `work_function`  | `float`            | *(required)*          | Surface work function (eV) used in the Fowler-Nordheim weighting. |
 | `dt`             | `float`            | *(required)*          | Time step (s) used to convert current density to particles per emission event. |
-| `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values from the input space. |
+| `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values. |
 | `num_bins`       | `int`              | `len(beta)`           | Number of axial (`Initial_z`) bins applied to the filtered particles. |
 | `bin_edges`      | `list[float]`      | `None` (auto-spaced)  | Explicit bin edges. If supplied, must have length `num_bins + 1`; otherwise edges are linearly spaced between the min and max `Initial_z` of the filtered particles. |
-| `beta_input`     | `str`              | `None`                | Name of a single input-space variable (declared under `input_parameters.particles`; a legacy `cubit:` declaration is still honored) whose scalar value is broadcast to all `num_bins` bins. Lets a `parameter_sweep` (or Xopt) drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
-| `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables (declared under `input_parameters.particles`), one per bin — enables independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
-| `output_format`  | `str`              | `'geant4'` (module default) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight` (commented header). `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). The `particles` module defaults this to `'geant4'`; set `'track3p'` explicitly for the weighted-Track3P dump. |
-| `output`         | `str`              | `<input>_modified.txt` | Output filename for the generated particle file (written into the workdir). |
-
-With `output_format: 'track3p'` the file contains the filtered Track3P
-columns plus a `Bin` column and a `ParticleWeight` column, with a
-`#`-commented header.
+| `beta_input`     | `str`              | `None`                | Name of one input-space variable (declared under `input_parameters.particles`; a `cubit:` declaration is also honored) whose scalar value is broadcast to all `num_bins` bins, so a `parameter_sweep` or Xopt can drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
+| `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables (declared under `input_parameters.particles`), one per bin, for independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
+| `output_format`  | `str`              | `'geant4'` (module default) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight`, with a `#`-commented header. `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). |
+| `output`         | `str`              | `<input>_modified.txt` | Output filename for the generated particle file, written into the workdir. |
 
 With `output_format: 'geant4'` (the module default) the file contains 10
-whitespace-separated columns and no header — one primary per row:
+whitespace-separated columns and no header, one primary per row:
 
 | Col | Field         | Unit  | Source Track3P column   |
 |-----|---------------|-------|-------------------------|
@@ -1130,60 +1015,56 @@ whitespace-separated columns and no header — one primary per row:
 (vocs_parameters)=
 ## `vocs_parameters`
 
-Declares the Xopt VOCS for the `scalar_optimize` and `gp_parameter_sweep`
-modes: a `variables` mapping of name → `[low, high]` bounds, plus `objectives`
-(name → `MINIMIZE`/`MAXIMIZE`/`explore`) and optional `constraints`. Objective
-names are `output_parameters` names, so no solver-specific parsing lives in the
-driver.
+Declares the Xopt VOCS for the `scalar_optimize` and `gp_parameter_sweep` modes:
+a `variables` mapping of name → `[low, high]` bounds, plus `objectives` (name →
+`MINIMIZE`/`MAXIMIZE`/`explore`) and optional `constraints`. Objective names are
+`output_parameters` names.
 
-**Variable routing.** Each Xopt variable is written into the input bucket where
-it is declared in [`input_parameters`](#input_parameters) (cubit / ace3p /
-geant4 / particles), so a single optimization can drive parameters across
-multiple codes at once. Resolution rule:
+**Variable routing.** Each Xopt variable is written into the
+[`input_parameters`](#input_parameters) bucket where it is declared (cubit /
+ace3p / geant4 / particles), so one optimization can drive several codes.
 
-- A **bare** variable name (`cornercut`) routes to its declaring bucket when
-  that name is unique across all buckets.
-- If the same bare name is declared in more than one bucket (e.g. a `cubit:`
-  knob and an `ace3p:` leaf both named `start`), a bare reference is a hard
-  error; **qualify** it with its bucket label — `cubit:start`,
-  `ace3p:FrequencyScan.Start`, `geant4:nthreads`, or `particles:beta0` (the
-  ACE3P label is the dotted section path, matching the sweep-table column label).
+- A bare variable name (`cornercut`) routes to its declaring bucket when that
+  name is unique across all buckets.
+- If the same bare name is declared in more than one bucket (a `cubit:` knob and
+  an `ace3p:` leaf both named `start`), a bare reference is a hard error. Qualify
+  it with its bucket label: `cubit:start`, `ace3p:FrequencyScan.Start`,
+  `geant4:nthreads`, or `particles:beta0`. The ACE3P label is the dotted section
+  path, matching the sweep-table column label.
 - A variable not declared in any `input_parameters` bucket falls back to the
-  cubit bucket (so a config that only lists `vocs_parameters.variables` keeps
-  working).
+  cubit bucket, so a config that only lists `vocs_parameters.variables` works.
 
 ## `xopt_parameters`
 
-Controls the Xopt driver used by the `scalar_optimize` and
-`gp_parameter_sweep` modes. Most keys are optional; the required key is
-`generator`. For `scalar_optimize`, at least one termination criterion
-(`num_step`, `cost_budget`, or `alotted_time`) must also be supplied; the
-`gp_parameter_sweep` mode uses `max_steps` plus the early-stopping keys.
+Controls the Xopt driver used by the `scalar_optimize` and `gp_parameter_sweep`
+modes. The only required key is `generator`. For `scalar_optimize`, at least one
+termination criterion (`num_step`, `cost_budget`, or `alotted_time`) must also be
+supplied; `gp_parameter_sweep` uses `max_steps` plus the early-stopping keys.
 
 | Keyword                 | Type    | Default         | Description |
 |-------------------------|---------|-----------------|-------------|
-| `generator`             | `str`   | *(required)*    | Xopt generator name. Supported: `'NelderMeadGenerator'`, `'ExpectedImprovementGenerator'`, `'UpperConfidenceBoundGenerator'`, `'MultiFidelityGenerator'`, `'ExpectedHypervolumeImprovementGenerator'`. (`gp_parameter_sweep` uses `BayesianExplorationGenerator` internally.) |
-| `generator_options`     | `dict`  | `{}`            | Keyword arguments forwarded verbatim to the chosen generator's constructor. Required for `ExpectedHypervolumeImprovementGenerator` (must include `reference_point`); also used for UCB tuning. |
+| `generator`             | `str`   | *(required)*    | Xopt generator name: `'NelderMeadGenerator'`, `'ExpectedImprovementGenerator'`, `'UpperConfidenceBoundGenerator'`, `'MultiFidelityGenerator'`, or `'ExpectedHypervolumeImprovementGenerator'`. `gp_parameter_sweep` uses `BayesianExplorationGenerator` internally. |
+| `generator_options`     | `dict`  | `{}`            | Keyword arguments forwarded verbatim to the generator's constructor. Required for `ExpectedHypervolumeImprovementGenerator` (must include `reference_point`); also used for UCB tuning. |
 | `num_random`            | `int`   | `0` (or `2` for multi-fidelity, `5` for `gp_parameter_sweep`) | Number of initial random evaluations used to seed the model. |
 | `num_step`              | `int`   | `None`          | Number of optimization steps after the random-seeding phase. |
-| `max_iterations`        | `int`   | `None`          | Total iteration cap (random + step). When set together with `tolerance`, optimization stops as soon as all objectives meet the tolerance or the cap is hit. |
-| `tolerance`             | `float` / `dict` | `None`     | Per-objective stopping threshold. A scalar applies to every objective; a mapping is keyed by objective name. Optimization terminates when all objectives are at or below their tolerance. |
-| `max_steps`             | `int`   | `None`          | Used by `gp_parameter_sweep` only; caps the number of GP-guided exploration steps. |
-| `improvement_threshold` | `float` | `0.01`          | Used by `gp_parameter_sweep`. Relative-improvement threshold for the early-stopping check. |
-| `patience`              | `int`   | `5`             | Used by `gp_parameter_sweep`. Number of consecutive iterations without improvement before stopping. |
+| `max_iterations`        | `int`   | `None`          | Total iteration cap (random + step). With `tolerance`, optimization stops when all objectives meet the tolerance or the cap is hit. |
+| `tolerance`             | `float` / `dict` | `None`     | Per-objective stopping threshold. A scalar applies to every objective; a mapping is keyed by objective name. Optimization stops when all objectives are at or below their tolerance. |
+| `max_steps`             | `int`   | `None`          | `gp_parameter_sweep` only; caps the number of GP-guided exploration steps. |
+| `improvement_threshold` | `float` | `0.01`          | `gp_parameter_sweep` only. Relative-improvement threshold for the early-stopping check. |
+| `patience`              | `int`   | `5`             | `gp_parameter_sweep` only. Number of consecutive iterations without improvement before stopping. |
 | `cost_budget`           | `float` | `None`          | Multi-fidelity termination criterion; total cost (in `xopt_runtime` units) at which optimization stops. |
 | `alotted_time`          | `str`   | `None`          | Alternative multi-fidelity criterion in `'HH:MM:SS'` format; converted to a cost budget in seconds. |
 | `cost_function`         | `str`   | `'exponential'` | Multi-fidelity cost-function model. One of `'exponential'` or `'gaussian_process'`. |
-| `fidelity_variable`     | `str`   | `'s'`           | Multi-fidelity only. Name of the input variable interpreted as the fidelity coordinate; the column is renamed from `'s'` in the input dict. |
-| `mc_noisy_objective`    | `bool`  | `False`         | Declare the objective Monte-Carlo-noisy (e.g. a Geant4 dose). Suppresses the low-noise GP prior on the MultiFidelity path and requires an explicit `bin_edges` to be set. |
-| `save_model`            | `bool`  | `False`         | If `True`, save the trained generator's GP model state to `Binary_gp_model.pt` and a human-readable summary to `gp_parameters.txt`. |
+| `fidelity_variable`     | `str`   | `'s'`           | Multi-fidelity only. Input variable interpreted as the fidelity coordinate; the column is renamed from `'s'` in the input dict. |
+| `mc_noisy_objective`    | `bool`  | `False`         | Declare the objective Monte-Carlo-noisy (e.g. a Geant4 dose). Suppresses the low-noise GP prior on the MultiFidelity path and requires an explicit `bin_edges`. |
+| `save_model`            | `bool`  | `False`         | Save the trained generator's GP model state to `Binary_gp_model.pt` and a readable summary to `gp_parameters.txt`. |
 
 (surrogate-modes)=
 ## Surrogate modes
 
-Three modes build and use a cheap reduced-basis surrogate of a Geant4 dose
-profile as a function of the per-bin field-enhancement vector
-`beta = (beta0 … betaN)`. All keys below live in the `mode:` block.
+Three modes build and use a reduced-basis surrogate of a Geant4 dose profile as
+a function of the per-bin field-enhancement vector `beta = (beta0 … betaN)`. All
+keys below live in the `mode:` block.
 
 ### `collect_training_data`
 
@@ -1195,25 +1076,23 @@ Requires a `workflow:` list.
 |---------------|--------|---------|-------------|
 | `store`       | `str`  | `'training_store'` | Store directory (result table + per-sample field artifacts + `manifest.json`). |
 | `num_samples` | `int`  | `8`     | DOE size. A power of two is ideal for Sobol. |
-| `sampler`     | `str`  | `'sobol'` | `'sobol'` or `'lhs'`. Not a tensor grid — a full 8-D grid is infeasible. |
-| `seed`        | `int`  | `0`     | Reproducible design; also what makes a resumed run reproduce the same points. |
+| `sampler`     | `str`  | `'sobol'` | `'sobol'` or `'lhs'`. Not a tensor grid; a full 8-D grid is infeasible. |
+| `seed`        | `int`  | `0`     | Reproducible design; a resumed run reproduces the same points. |
 | `fidelity`    | `float`| `None`  | Recorded Geant4 primary count per sample, for later multi-fidelity work. |
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
-| `resume`      | `bool` | `False` | Let a sample that stopped *midway through the chain* restart at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless — see [](#resume). |
+| `resume`      | `bool` | `False` | Restart a sample that stopped midway through the chain at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless; see [](#resume). |
 
-The mode enforces two correctness constraints and hard-fails otherwise: the
-`particles` module must fix `bin_edges` explicitly (length `num_bins + 1`) and
-declare per-bin `beta_inputs`, and the `geant4` input file's scoring mesh must be
-readable and unchanged for the whole campaign (it is fingerprinted into the
-manifest and re-checked per sample). It is **resumable** — a sample whose dose
-grid is already stored is skipped.
+Two constraints are enforced and hard-fail otherwise: the `particles` module
+must fix `bin_edges` explicitly (length `num_bins + 1`) and declare per-bin
+`beta_inputs`, and the `geant4` input file's scoring mesh must be readable and
+unchanged for the whole campaign (it is fingerprinted into the manifest and
+re-checked per sample).
 
 ### `train_surrogate`
 
 Fits the PCA-GP forward model from a store: stack the dose grids, subtract the
 mean, SVD to the leading POD modes, then fit one Gaussian Process per retained
-coefficient (each with a genuine fitted noise term, since MC dose is noisy).
-Store-consuming — **no `workflow:` needed**.
+coefficient, each with a fitted noise term. No `workflow:` needed.
 
 | Keyword          | Type    | Default | Description |
 |------------------|---------|---------|-------------|
@@ -1223,51 +1102,48 @@ Store-consuming — **no `workflow:` needed**.
 | `seed`           | `int`   | `0`     | Reproducible GP restart search. |
 | `model_dir`      | `str`   | `<store>/surrogate` | Where the model is saved (`basis.npz`, `gps.joblib`, `surrogate.json`). |
 | `holdout`        | `float` / `int` | `None` | Hold out a fraction (0<f<1) or count of samples for an accuracy report written to `train_report.txt`. |
-| `dose_transform` | `str`   | `'linear'` | `'linear'` or `'log10'`. Dose is exponential in beta and spans ~9 orders of magnitude, so a linear fit is dominated by the peak voxels; `'log10'` fits the *shape* far better. Accuracy is then reported in log space. |
+| `dose_transform` | `str`   | `'linear'` | `'linear'` or `'log10'`. Dose spans ~9 orders of magnitude, so a linear fit is dominated by the peak voxels; `'log10'` fits the shape far better, and accuracy is then reported in log space. |
 | `floor`          | `float` | smallest positive training dose | Positive offset for `'log10'`, keeping zero voxels finite. |
 | `n_jobs`         | `int`   | `1`     | Parallelize the per-coefficient GP fits over cores (`-1` = all). Result-invariant. |
 
 ### `invert_optimize`
 
-Given a target dose profile, estimates the beta that produced it — by projecting
-the target into the surrogate's coefficient space and minimizing
+Estimates the beta that produced a target dose profile by projecting the target
+into the surrogate's coefficient space and minimizing
 `‖project(target) − c_GP(beta)‖²` over beta with bounded multi-start L-BFGS-B.
-Runs against the cheap surrogate, not Geant4. Store-consuming — **no `workflow:`
-needed**.
+Runs against the surrogate, not Geant4. No `workflow:` needed.
 
 | Keyword                | Type    | Default | Description |
 |------------------------|---------|---------|-------------|
-| `target`               | `str`   | *required* | The dose profile to invert: a stored field `.npz` (e.g. a held-out sample's `field.npz`) or a raw Geant4 dose file. Row order does not matter — the target is reordered onto the training voxel order before projection. |
+| `target`               | `str`   | *required* | The dose profile to invert: a stored field `.npz` (e.g. a held-out sample's `field.npz`) or a raw Geant4 dose file. Rows are reordered onto the training voxel order before projection. |
 | `model_dir`            | `str`   | `<store>/surrogate` | The saved surrogate to invert. |
 | `store`                | `str`   | `None`  | The store the model was fit from. Supplies the voxel order for models saved before it was recorded, and the default output location. |
-| `num_starts`           | `int`   | `32`    | Multi-start count. Each start costs microseconds, so more starts simply give a more thorough non-uniqueness report. |
-| `seed`                 | `int`   | `0`     | Reproducible start scatter → identical `beta*`. |
-| `bounds`               | `dict`  | model's training range | Optional per-beta `[lo, hi]` search box. Outside the training range the GP extrapolates, so only *narrow* it. |
-| `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains and write `identifiability.txt`. Costs `2·D` GP evaluations. |
+| `num_starts`           | `int`   | `32`    | Multi-start count. Each start costs microseconds; more starts give a more thorough non-uniqueness report. |
+| `seed`                 | `int`   | `0`     | Reproducible start scatter and `beta*`. |
+| `bounds`               | `dict`  | model's training range | Optional per-beta `[lo, hi]` search box. Outside the training range the GP extrapolates, so only narrow it. |
+| `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains; writes `identifiability.txt`. Costs `2·D` GP evaluations. |
 | `identifiability_file` | `str`   | `identifiability.txt` beside the result table | Override that path. |
 | `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2`, then the betas. |
 
 **On non-uniqueness.** The surrogate reaches beta only through its `k` retained
-POD coefficients, so the dose can constrain **at most `k` combinations of beta**.
-When `k < D` the inverse problem is rank-deficient *by construction*: some beta
-directions are invisible to the dose, and many different beta reproduce it exactly
-as well. The multi-start search reports every distinct minimum, but when their
-misfits are all numerically zero that list is **not a ranking by evidence** — the
-minima are samples from one continuous degenerate surface, and the `rank` column
-reflects solver convergence, not preference. `identifiability.txt` reports how
-many directions are actually pinned down and which combinations are flat. To get a
-unique answer you must add information: narrow `bounds` on physical grounds,
-regularize, or use `invert_bayesian` below.
+POD coefficients, so the dose can constrain at most `k` combinations of beta. When
+`k < D` the inverse problem is rank-deficient: some beta directions are invisible
+to the dose, and many different beta reproduce it equally well. The multi-start
+search reports every distinct minimum, but when their misfits are all numerically
+zero the minima are samples from one degenerate surface and the `rank` column
+reflects solver convergence, not evidence. `identifiability.txt` reports how many
+directions are pinned down and which combinations are flat. To get a unique
+answer, add information: narrow `bounds` on physical grounds, regularize, or use
+`invert_bayesian` below.
 
 ### `invert_bayesian`
 
-The same inversion, returning a **posterior over beta** rather than a point
-estimate — the mode that *answers* the non-uniqueness above instead of reporting
-it. NUTS (gradient-based MCMC via numpyro) samples a Gaussian likelihood in the
-surrogate's coefficient space (the GP's own predictive variance plus an assumed
+The same inversion, returning a posterior over beta rather than a point estimate.
+NUTS (gradient-based MCMC via numpyro) samples a Gaussian likelihood in the
+surrogate's coefficient space (the GP's predictive variance plus an assumed
 `dose_sigma`) under a uniform prior on the training box. Gradients come from a JAX
-re-expression of the fitted GP's *prediction* (fitting stays scikit-learn).
-Store-consuming — **no `workflow:` needed**.
+re-expression of the fitted GP's prediction; fitting stays scikit-learn. No
+`workflow:` needed.
 
 | Keyword           | Type    | Default | Description |
 |-------------------|---------|---------|-------------|
@@ -1275,97 +1151,99 @@ Store-consuming — **no `workflow:` needed**.
 | `model_dir` / `store` | `str` | — | As for `invert_optimize`. |
 | `num_warmup`      | `int`   | `1000`  | Warmup draws per chain. |
 | `num_samples`     | `int`   | `2000`  | Kept draws per chain (total = `num_samples × num_chains`). |
-| `num_chains`      | `int`   | `4`     | **Do not lower casually** — see the warning below. Chains run in parallel across CPU devices. |
+| `num_chains`      | `int`   | `4`     | Do not lower casually; see the warning below. Chains run in parallel across CPU devices. |
 | `seed`            | `int`   | `0`     | Reproducible draws. |
-| `dose_sigma`      | `float` | model's predictive std at the box center | Assumed target-noise scale in coefficient space. Raise to loosen the likelihood, lower to pull harder toward exact agreement. |
-| `bounds`          | `dict`  | model's training range | The uniform **prior**. Along the flat directions the posterior equals it, so this is part of the answer. |
-| `identifiability` | `bool`  | `True`  | Compute the constrained/flat split so the summary reports posterior width per direction. |
+| `dose_sigma`      | `float` | model's predictive std at the box center | Assumed target-noise scale in coefficient space. Raise to loosen the likelihood, lower to demand closer agreement. |
+| `bounds`          | `dict`  | model's training range | The uniform prior. Along the flat directions the posterior equals it. |
+| `identifiability` | `bool`  | `True`  | Compute the constrained/flat split; the summary then reports posterior width per direction. |
 | `output_file`     | `str`   | `<store>/posterior_samples.txt` | Raw draws, one row per sample. |
 | `summary_file`    | `str`   | `posterior_summary.txt` beside it | Per-beta mean/median/credible interval + `r_hat`/`n_eff`, plus the per-direction width table. |
 
-**How to read the result.** The posterior comes out tight along the beta
-combinations the dose constrains and **as wide as the prior along the flat ones**
-(measured ~0.01–0.08× vs ~1.1–1.25× prior width on the synthetic fixture). A
-prior-wide flat direction is the **correct** result, not a sampling failure — it
-means the data says nothing about that combination, so its value comes from
-`bounds`. The summary reports the ratio per direction.
+**How to read the result.** The posterior is tight along the beta combinations
+the dose constrains and as wide as the prior along the flat ones (measured
+~0.01–0.08× vs ~1.1–1.25× prior width on the synthetic fixture). A prior-wide
+flat direction is the correct result, not a sampling failure: the data says
+nothing about that combination, so its value comes from `bounds`. The summary
+reports the ratio per direction.
 
 ```{warning}
 **Always check `r_hat`** in `posterior_summary.txt`; values above ~1.05 mean the
-chains did not mix and the credible intervals are not trustworthy. This matters
-more than usual here: a stuck chain explores only a slice of the degenerate
-manifold and so reports the flat directions as *narrow*, which reads as "the dose
-constrains beta" when it does not. Measured with one chain: `r_hat = 1.61` and flat
-widths ~0.04–0.10× prior (wrong); with four: `r_hat ≈ 1.01` and ~1.1× (right).
+chains did not mix and the credible intervals are not trustworthy. A stuck chain
+explores only a slice of the degenerate manifold and reports the flat directions
+as narrow, as if the dose constrained beta. Measured with one chain:
+`r_hat = 1.61` and flat widths ~0.04–0.10× prior (wrong); with four:
+`r_hat ≈ 1.01` and ~1.1× (right).
 ```
 
 ## The Workflow object
 
-The declarative `workflow:` list is built into a
-{py:class}`~lume_ace3p.workflow_graph.Workflow` — a validated, topologically
-ordered chain of modules with a single black-box `evaluate` seam. The
-`run_lume_ace3p` entry point calls `Workflow.from_config(yaml_data)` and hands
-the result to the mode layer; you rarely construct one directly.
+The `workflow:` list is built into a
+{py:class}`~lume_ace3p.workflow_graph.Workflow`: a validated, topologically
+ordered chain of modules with a single `evaluate` seam. The `run_lume_ace3p`
+entry point calls `Workflow.from_config(yaml_data)` and hands the result to the
+mode layer; you rarely construct one directly.
 
-Its public seams (all called by the workflow-agnostic modes, never by
-solver-specific code) are:
+Its public seams are:
 
-- `Workflow.evaluate(input_scalars=None, workdir=None, resume=False)` — run the
-  ordered module chain once for one input point and return
-  `({output_name: value}, ctx)`: the extracted values for the `output_parameters`
-  spec, plus the `RunContext` that produced them. `input_scalars` may be `None`
-  (use the base inputs as-is), a list aligned with `sweep_axes()` (materialize that
-  grid point), or a `{var: scalar}` mapping (variable overrides routed to their
-  declaring bucket — the shape Xopt passes; see [](#vocs_parameters)). An explicit
-  `workdir` overrides `workdir_mode` naming for that one call. Each call also
-  writes the run manifest described in [](#run-manifest); `resume=True` reads the
-  one already there first and skips the external tool of every module it records as
-  complete (see [](#resume)).
-- `Workflow.sweep_axes()` — the array-valued input leaves a sweep iterates over.
-- `Workflow.point_workdir(point_index)` — the `'indexed'` name for one sweep
-  point. `evaluate` deliberately takes no point index: the mode layer owns sweep
-  ordering, resolves the name here, and passes the result as `workdir=`.
+- `Workflow.evaluate(input_scalars=None, workdir=None, resume=False)` runs the
+  module chain once for one input point and returns `({output_name: value}, ctx)`:
+  the extracted `output_parameters` values plus the `RunContext` that produced
+  them. `input_scalars` may be `None` (use the base inputs), a list aligned with
+  `sweep_axes()` (that grid point), or a `{var: scalar}` mapping (variable
+  overrides routed to their declaring bucket, the shape Xopt passes; see
+  [](#vocs_parameters)). An explicit `workdir` overrides `workdir_mode` naming for
+  that call. Each call writes the run manifest ([](#run-manifest)); `resume=True`
+  reads the existing one first and skips the external tool of every module it
+  records as complete (see [](#resume)).
+- `Workflow.sweep_axes()` returns the array-valued input leaves a sweep iterates
+  over.
+- `Workflow.point_workdir(point_index)` returns the `'indexed'` name for one
+  sweep point. `evaluate` takes no point index: the mode layer owns sweep
+  ordering, resolves the name here, and passes it as `workdir=`.
 - `Workflow.resolved_workdir(input_scalars=None, point_index=None)` and
-  `Workflow.point_config_hash(input_scalars=None)` — where a point *would* run and
-  the hash its manifest must carry to be resumable, both answered without running
-  anything. This is how `--status` finds and judges each point's manifest.
-- `Workflow.field_index(ctx)` / `Workflow.field(ctx)` — the shared field index
-  (e.g. S3P's `('Frequency', array)`) and the structured per-run field output
-  (S3P spectra, Geant4 voxel grids) that the hybrid result model keeps out of the
-  flat table. Both read the evaluation the given `ctx` describes, defaulting to
-  the most recent one (`Workflow.last_context`) when it is omitted.
+  `Workflow.point_config_hash(input_scalars=None)` answer where a point would run
+  and the hash its manifest must carry to be resumable, without running anything.
+  `--status` uses these to find and judge each point's manifest.
+- `Workflow.field_index(ctx)` / `Workflow.field(ctx)` return the shared field
+  index (e.g. S3P's `('Frequency', array)`) and the structured per-run field
+  output (S3P spectra, Geant4 voxel grids) kept out of the flat table. Both read
+  the evaluation `ctx` describes, defaulting to the most recent
+  (`Workflow.last_context`) when omitted.
 
-The `ctx` is the per-evaluation carrier: it holds that run's workdir, artifacts,
-outputs and the live module instances. `Workflow.modules` is a separate list of
-never-run prototypes, useful only for inspecting configuration.
+The `ctx` is the per-evaluation carrier: that run's workdir, artifacts, outputs
+and live module instances. `Workflow.modules` is a separate list of never-run
+prototypes, useful only for inspecting configuration.
 
 ### Input data model
 
 `WorkflowInputs(cubit, ace3p, macro, particles)` is the structured
-representation the workflow consumes internally, built by `inputs.build_inputs`
-from the YAML. The four buckets correspond to the four `input_parameters`
-sub-blocks:
+representation the workflow consumes, built by `inputs.build_inputs` from the
+YAML. The four buckets correspond to the four `input_parameters` sub-blocks:
 
 | Bucket  | YAML source (nested)          | Deprecated flat alias      | Type                |
 |---------|-------------------------------|----------------------------|---------------------|
 | `cubit` | `input_parameters.cubit`      | `cubit_input_parameters` / bare `input_parameters` | `dict[str, scalar \| ndarray]` |
-| `ace3p` | `input_parameters.ace3p`      | `ace3p_input_parameters`   | ordered tree of `(name, child)` pairs (`Section`) — duplicates preserved |
+| `ace3p` | `input_parameters.ace3p`      | `ace3p_input_parameters`   | ordered tree of `(name, child)` pairs (`Section`); duplicates preserved |
 | `macro` | `input_parameters.geant4`     | `geant4_input_parameters`  | `dict[str, scalar \| ndarray]` |
 | `particles` | `input_parameters.particles` | `particles_input_parameters` | `dict[str, scalar \| ndarray]` |
 
-Array-valued leaves in any bucket become sweep axes; scalar leaves are
-written through to the matching input file unchanged. During optimization,
-each VOCS variable is routed to the bucket where it is declared (see
-[](#vocs_parameters)).
+Array-valued leaves in any bucket become sweep axes; scalar leaves are written
+through to the matching input file unchanged. During optimization, each VOCS
+variable is routed to the bucket where it is declared (see [](#vocs_parameters)).
 
+(results)=
 ### Results
 
-The table modes (`single`, `parameter_sweep`) return a pandas `DataFrame` — one
-row per evaluation (or one row per `(grid-point, frequency)` for a field-indexed
-solver like S3P) — routed through the single shared writer
-{py:func}`~lume_ace3p.results.write_table` (a tab-delimited `to_csv`) when
-`mode.output_file` is set. Structured field outputs are persisted separately as
-`.npz` and referenced by a field-artifact column. The Xopt modes return the
+The table modes (`single`, `parameter_sweep`) return a pandas `DataFrame` with
+one row per evaluation, or one row per `(grid-point, index)` when a field-indexed
+solver's axis (S3P's `Frequency`, Omega3P's `ModeID`, T3P's `s`/`t`) is spanned
+by at least one declared output or no outputs are declared at all. When
+`mode.output_file` is set it is written by
+{py:func}`~lume_ace3p.results.write_table` (a tab-delimited `to_csv`).
+Structured field outputs of a wide row (an Omega3P run with all outputs narrowed
+to one mode, a Geant4 dose grid) are persisted separately as `.npz` and
+referenced by a `field_artifact` column; load one with
+{py:func}`~lume_ace3p.results.load_field`. The Xopt modes return the
 {py:class}`xopt.Xopt` object and log its `X.data` table through the same writer.
 
 For full class- and method-level documentation, see the

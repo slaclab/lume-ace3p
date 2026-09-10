@@ -9,8 +9,8 @@ mode:      scalar_optimize
 ```
 
 Like [`../s3p_optimization`](../s3p_optimization), an Xopt loop drives the
-`cubit -> s3p` chain to minimize reflection — here the objective `reflection` is
-S3P quantity `S(1,1)` evaluated `at` frequency `12.0e+09`. The difference is the
+`cubit -> s3p` chain to minimize reflection; the objective `reflection` is S3P
+quantity `S(1,1)` evaluated `at` frequency `12.0e+09`. The difference is the
 generator: `MultiFidelityGenerator` trades solver cost against fidelity.
 `mesh_fidelity` is the Cubit knob that sets mesh resolution (the journal sizes
 elements as `4.0/(mesh_fidelity + 1.0)`), exposed to Xopt as the fidelity axis
@@ -47,6 +47,5 @@ On a cluster, submit the batch script:
 
 ```bash
 sbatch run_lume-ace3p_s3p_mf_optimization_perlmutter.batch   # NERSC Perlmutter
+sbatch run_lume-ace3p_s3p_mf_optimization_s3df.batch         # SLAC S3DF
 ```
-
-Only a Perlmutter script ships with this example; adapt it for other clusters.

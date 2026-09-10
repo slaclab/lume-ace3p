@@ -35,7 +35,9 @@ variable names + the extracted scalar outputs. Two shapes:
 * **long / tidy** (S3P) — a module that exposes a shared field index
   (:meth:`Module.field_index`, e.g. ``('Frequency', array)``) emits one row per
   ``(grid-point, frequency)``; each S-parameter output becomes a column aligned
-  to that index.
+  to that index. The axis is used only when an output rides on it (or none is
+  declared); a run whose every output is narrowed to a scalar stays wide — see
+  :func:`_table_index`.
 
 Per-run *field* outputs (S-parameter vectors, dose/edep voxel grids) are NOT
 exploded into the scalar table — they stay structured. For the wide/scalar
@@ -249,8 +251,9 @@ def single(workflow, resume=False):
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
     outputs, ctx = _evaluate_point(workflow, None, 0, resume=resume)
-    point = _PointResult(0, scalars, outputs, workflow.field_index(ctx),
-                         _persist_field(workflow, ctx, 0))
+    index = _table_index(workflow, ctx, outputs)
+    point = _PointResult(0, scalars, outputs, index,
+                         _persist_field(workflow, ctx, 0, index))
     return _assemble(workflow, input_names, [point])
 
 
@@ -294,9 +297,9 @@ def parameter_sweep(workflow, resume=False):
         # Everything the rows need is read out here, so the per-point ``ctx`` —
         # and the whole parsed solver output hanging off it — is not held for the
         # length of the sweep.
-        points.append(_PointResult(i, scalars, outputs,
-                                   workflow.field_index(ctx),
-                                   _persist_field(workflow, ctx, i)))
+        index = _table_index(workflow, ctx, outputs)
+        points.append(_PointResult(i, scalars, outputs, index,
+                                   _persist_field(workflow, ctx, i, index)))
     return _assemble(workflow, input_names, points)
 
 
@@ -405,16 +408,49 @@ def _evaluate(workflow, input_scalars, workdir=None, resume=False):
     return workflow.evaluate(input_scalars, **kwargs)
 
 
-def _persist_field(workflow, ctx, point_index):
+def _table_index(workflow, ctx, outputs):
+    """The field index this point's rows are exploded over, or ``None`` for a
+    single wide row.
+
+    A module's field index is a property of its parsed output — Omega3P's mode
+    list, S3P's frequency scan — not of what ``output_parameters`` asked for. It
+    becomes the table's axis only when something rides on it: when at least one
+    extracted output is an array (aligned to the axis, the long-format case), or
+    when no outputs were declared at all (an S3P sweep with none still tabulates
+    its frequency scan). When every declared output was narrowed to a scalar
+    (``at: {mode: 0}`` on each of an Omega3P run's outputs), exploding the point
+    into one row per index value would only repeat the scalars and label the
+    copies with an index they were not sampled at — a ``ModeID = 1`` row
+    carrying mode 0's frequency — so the point stays one wide row and the
+    structured field is persisted beside it instead (:func:`_persist_field`).
+
+    Under dry-run the S3P/T3P sentinel axis has one value and their ``extract``
+    returns a one-element array, so dry-run tables keep their index column."""
+    index = workflow.field_index(ctx)
+    if index is None or not outputs:
+        return index
+    if any(_is_array(value) for value in outputs.values()):
+        return index
+    return None
+
+
+def _is_array(value):
+    """True for an index-aligned array output (as opposed to a scalar)."""
+    if isinstance(value, np.ndarray):
+        return value.ndim > 0
+    return isinstance(value, (list, tuple))
+
+
+def _persist_field(workflow, ctx, point_index, index):
     """Persist the structured field (if any) of the evaluation ``ctx`` describes
     to a ``.npz`` under its workdir, and return the stored handle.
 
+    ``index`` is the point's resolved table index (:func:`_table_index`).
     Returns ``None`` when there is no field (dry-run, or a solver that produces
     none) or in the long-format case — where the field values are exploded into
-    the rows via :meth:`Workflow.field_index`, so storing a redundant artifact
-    would be wrong. The per-point filename keeps rows distinct even in a shared
-    (manual) workdir."""
-    if workflow.field_index(ctx) is not None:
+    the rows, so storing a redundant artifact would be wrong. The per-point
+    filename keeps rows distinct even in a shared (manual) workdir."""
+    if index is not None:
         return None
     field = workflow.field(ctx)
     if field is None:
@@ -2065,16 +2101,23 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
 
     improvement = xopt_dict.get('improvement_threshold', 0.01)
     patience = xopt_dict.get('patience', 5)
+    if 'num_step' in xopt_dict and 'max_steps' not in xopt_dict:
+        # 'num_step' is a scalar_optimize key; the key check accepts it in any
+        # xopt_parameters block, so a GP sweep that declares it ran until the
+        # patience test stopped it (examples/s3p_bayesian_sweep did, on S3DF).
+        print("Warning: gp_parameter_sweep does not read 'num_step' (that is a "
+              "scalar_optimize key); use 'max_steps' to cap the exploration "
+              "steps. Running until the improvement/patience test stops it.",
+              file=sys.stderr)
     prev_bests = []
     # A campaign total, so 'max_steps' means the same thing to a resumed run.
     steps = max(0, _evaluated(X) - num_random)
-    hit_max_steps = False
-    while not hit_max_steps:
+    while True:
+        if 'max_steps' in xopt_dict and steps >= xopt_dict['max_steps']:
+            break
         X.step()
         _log_xopt(log_file, X, state_file, campaign_hash)
         steps += 1
-        if 'max_steps' in xopt_dict and steps > xopt_dict['max_steps']:
-            hit_max_steps = True
         current_best = sum(X.data[o].min() for o in targets) / len(targets)
         prev_bests.append(current_best)
         if len(prev_bests) > patience:
@@ -2093,6 +2136,12 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
     # land in the same order as the Phase-0.5 baseline sweep_output.txt.
     input_tensor = np.stack(_legacy_meshorder(grids), axis=1)
 
+    # The generator fits its model inside step(); a campaign that took no
+    # GP-guided step (max_steps: 0, or a resume that had already reached its
+    # cap) still has the seeded data, so fit the model on that before sampling.
+    if X.generator.model is None:
+        X.generator.train_model()
+
     # Build the GP posterior-mean sweep as a DataFrame (columns = swept inputs +
     # explored targets) and write it through the shared result writer — the same
     # code path the scalar sweep modes and the Xopt log use.
@@ -2104,7 +2153,9 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
                                    dtype=torch.double)
         posterior = X.generator.model.posterior(test_points).mean
         # One point in -> posterior mean shape (1, n_targets); pull each target.
-        means = posterior[0]
+        # detach(): the mean still tracks gradients, and float() on such a
+        # tensor warns on every grid point.
+        means = posterior.detach()[0]
         for k, obj in enumerate(targets):
             row[obj] = float(means[k])
         sweep_rows.append(row)

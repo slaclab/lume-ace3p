@@ -7,6 +7,131 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
+## [Unreleased]
+
+Nothing yet.
+
+## [0.5.1] — 2026-09-10
+
+**Every example run for real on SLAC S3DF.** Until now most examples had only
+ever run in dry-run mode or on NERSC Perlmutter; several had never met a real
+solver at all. Running each one through `sbatch` on S3DF milano nodes found
+six defects that dry runs cannot see: a parser written against an assumed
+output layout, an eigenmode silently dropped when Omega3P wrote its sections in
+an unusual order, a table that repeated its scalars once per eigenmode, an
+optimization objective declared at a frequency its own scan never visits, a
+Cubit journal whose sidesets pointed at the wrong surfaces, and a solver that
+cannot split a 2.6k-element mesh over 16 ranks. It also found the sizing
+mismatch between Perlmutter and milano nodes and Geant4 batch scripts that set
+no Geant4 environment. Every example under `examples/` (17, excluding
+`incomplete/`) now has a recorded real run with plausible, NaN-free output, and
+the four S3P bend examples were run again after their scan and outputs changed.
+The checklist and job records are in
+[`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
+
+**The two S3P sweep demos tabulate their S-parameters again**, so the bundled
+sweep plotter has columns to draw, and `gp_parameter_sweep` honours `max_steps`
+exactly. **The documentation was tightened throughout**: every `docs/` page and
+example README was rewritten for concision without moving sections or dropping
+facts, refactor history was removed from user-facing pages, and about fifteen
+statements that no longer matched the code were corrected.
+
+⚠️ **Behaviour change:** a `parameter_sweep` / `single` table is emitted
+long-format over a solver's field index (`Frequency`, `ModeID`, `s`) **only when
+a declared output spans that index** — or when no outputs are declared. A run
+whose every output is narrowed with `at:` now yields one row per grid point (the
+solver's arrays are persisted in that row's `field_artifact` `.npz`) instead of
+one row per index value with the scalars duplicated. Every shipped example that
+requests an array output (`s3p_window_rfpost`, `omega3p_dispersion_sweep`,
+`t3p_sweep`, `t3p_transwake`, `t3p_power_balance`) and every frozen dry-run
+baseline is unaffected; `omega3p_sweep` and `omega3p_ace3p_param_sweep` now
+produce the 16- and 32-row tables their READMEs always described.
+
+⚠️ **Behaviour change:** an S3P `at: {frequency: <f>}` whose `<f>` is not a
+point of the run's frequency scan now **raises** (naming the scan range and the
+nearest points) instead of printing a line and returning `NaN`. Xopt is strict
+by default, so a misdeclared objective stops an optimization at its first
+evaluation rather than after its whole budget.
+
+### Changed
+
+- **The S3P bend examples scan 9.5–12.5 GHz** (13 points in 0.25 GHz steps,
+  was 9.424–12.424 GHz) so that 12.0 GHz is a scan point.
+  `examples/s3p_optimization` asked for `S(0,0)` at 12.0 GHz of the old scan,
+  and on S3DF spent 25 real S3P runs optimizing `NaN` while exiting 0; it keeps
+  the 12.0 GHz objective on the new grid.
+- **`examples/s3p_sweep` and `examples/s3p_sweep_no_s3p_file` declare outputs.**
+  Both tabulate the four `S(m,n)` spectra (the long-format table
+  `plotting/s3p_sweep_plot.py` reads; with no outputs declared the table held
+  only the inputs and `Frequency`) plus a scalar `reflection_12GHz`. Their
+  dry-run baselines were re-frozen for the five new `NaN` columns.
+- **`examples/s3p_mf_optimization` and `examples/s3p_bayesian_sweep` run S3P
+  on 8 ranks instead of 16.** Their coarsest fidelity meshes the bend at 4 mm
+  (~2.6k elements), and S3P dies with a floating-point exception when that is
+  split over 16 ranks; 8 and 4 ranks complete the scan. The multi-fidelity
+  optimization reached fidelity 0 in its first random batch on S3DF and the
+  campaign failed there.
+- **The S3DF Geant4 batch scripts source the group's Geant4 environment.**
+  The Geant4 application reads its data-directory variables (`G4LEDATA`, …)
+  from the environment and the three scripts set none, so a job submitted
+  from a shell that had not sourced `geant4.sh` could not run it. They now
+  source it inside the job while keeping the submitting shell's `PATH` and
+  `PYTHONPATH`, which that script would otherwise reset away from conda.
+- **The nonzero-exit note no longer claims the solver "probably never ran".**
+  It was written for a refused `srun` step; a solver that ran and crashed
+  exits nonzero too. The note now names both and points at the log.
+- **Solver steps in the examples fit an S3DF milano node.** The T3P and
+  optimization examples asked for `16 × 16` or `16 × 8` tasks × cores, sized for
+  Perlmutter's 256 logical CPUs; a milano node exposes 120 usable cores and the
+  S3DF batch headers allocate exactly that, so `srun` refused the step and the
+  sweep died on its first point. All now use `16 × 4`. The installation guide's
+  S3DF section states the `tasks × cores ≤ 120` rule, the actual path of the
+  ACE3P setup script, and that conda must be activated *after* sourcing it.
+- **A nonzero solver exit is now named.** The ACE3P wrapper records the
+  solver's exit status, prints `<solver> exited with status N (command: …)` to
+  stderr, and the T3P/Omega3P "no results" errors append it, instead of
+  blaming the input file for a launch that never happened.
+
+### Fixed
+
+- **`gp_parameter_sweep` honours `max_steps` exactly and warns about
+  `num_step`.** The loop tested the cap after stepping, so every campaign ran
+  one GP-guided step past `max_steps`. `num_step` is a `scalar_optimize` key
+  that the per-block key check accepts anywhere, so a GP sweep declaring it
+  (as `examples/s3p_bayesian_sweep` did) silently ran until the
+  improvement/patience test stopped it; the mode now prints a warning naming
+  `max_steps`. A campaign that takes no GP-guided step (`max_steps: 0`) still
+  emits the posterior sweep, fitting the model on its seeds. The example
+  declares `num_random: 5` and `max_steps: 3`.
+- **`acdtool`'s `maxFieldsOnSurface` block is now read.** The reader assumed
+  `Emax = value at (x, y, z)`; acdtool writes `Emax :  3.94e+07 (V.m)  at (…)`
+  — colon-separated, with a unit, preceded by a `ModeID :` line — so
+  `examples/omega3p_sweep` failed with "surface 6 reported no 'Emax'" on its
+  first real run. The surface and point readers accept both separators and drop
+  the unit; the run's `rfpost.out` is the block's first real fixture, closing
+  the gap `tests/fixtures/acdtool/COVERAGE.md` had recorded since Phase 3
+  (`kickFactor` remains the one block without real output).
+- **An Omega3P run whose `omega3p.out` lists its `Mode` sections first no
+  longer loses the first mode.** The ACE3P-format tokenizer stripped `//`
+  comments but not the file's opening `/* … */` header, which was glued onto
+  the first key's name — harmless while that key was `Version` or `AMRLevel`,
+  but Omega3P writes its sections in no fixed order. In 3 of 32 points of
+  `omega3p_ace3p_param_sweep` the modes came first, one vanished, and
+  `Mode_freq` (`at: {mode: 0}`) silently reported the *second* mode. Block
+  comments are now stripped; the affected output is a fixture.
+- **`examples/s3p_window_rfpost/window.jou` selects its ports and symmetry
+  planes by position.** The journal joined the ACE3P tutorial's two window
+  journals but kept the meshing half's hard-coded surface IDs; one of them
+  resolved to a merged ceramic/vacuum interface, which landed in a symmetry
+  sideset. `acdtool meshconvert` reported a surface Euler characteristic of 3
+  and S3P aborted inside ParMETIS. Coordinate selectors (`with z_coord < …`,
+  `not is_merged`) fix it; the 3-point sweep now completes with
+  `|S11|² + |S21|² = 1` and its best match at the 3 mm design thickness.
+- **`gp_parameter_sweep` no longer warns on every grid point** about
+  converting a gradient-tracking tensor; the posterior mean is detached first.
+- **Two `test_modules.py` stubs** returned `None` from a fake `subprocess.run`
+  and broke when the wrapper started reading the exit status.
+
 ## [0.5.0] — 2026-09-01
 
 **Resume.** A campaign cut off by a batch wall clock used to be lost

@@ -186,17 +186,20 @@ def test_fixture_inventory():
         'rfpost_inputs/pillbox-rtop+coax.rfpost',
         'rfpost_inputs/window.rfpost',
         'rfpost_inputs/coaxport-multiline.rfpost',
+        'rfpost_inputs/pillbox-rtop-maxfields.rfpost',
         'rfpost_outputs/pillbox+recWG.rfpost.out',
         'rfpost_outputs/pillbox+recWG+load.rfpost.out',
         'rfpost_outputs/pillbox-rtop.rfpost.out',
         'rfpost_outputs/pillbox-rtop+coax.rfpost.out',
         'rfpost_outputs/dlwg-pbc.rfpost.out',
         'rfpost_outputs/window.rfpost.out',
+        'rfpost_outputs/pillbox-rtop-maxfields.rfpost.out',
         'curves/field1_0', 'curves/field1_0.ec', 'curves/field1_0.bc',
         'curves/field1_1', 'curves/field1_1.ec', 'curves/field1_1.bc',
         'acdtool_inputs/Pillbox.acdtool',
         'solver_outputs/omega3p/pillbox.omega3p.out',
         'solver_outputs/omega3p/pillbox-rtop+coax.omega3p.out',
+        'solver_outputs/omega3p/pillbox-rtop-mode-first.omega3p.out',
         'solver_outputs/s3p_90DegreeBend/Reflection.out',
         'solver_outputs/s3p_90DegreeBend/SParameter.out',
         'solver_outputs/s3p_90DegreeBend/PortRef7_0.out',
@@ -581,6 +584,35 @@ def test_vfft_printgroup_nterm_is_rejected_by_name(tmp_path):
     assert 'VFFT' not in acd.output_data
 
 
+def test_maxfields_values_from_real_output(tmp_path):
+    """``[maxFieldsOnSurface]`` as acdtool really writes it -- the fixture is
+    the ``rfpost.out`` of ``examples/omega3p_sweep`` at (cav_radius 90,
+    ellipticity 0.5) run on S3DF, 2026-09-09. It closed the COVERAGE.md gap:
+    the block is colon-separated (``Emax :  3.94377e+07 (V.m)   at (...)``),
+    carries a unit after the value and a ``ModeID`` line for the single mode
+    ``RFField`` names. The reader written against the assumed ``Emax = ...``
+    layout found nothing here, and the example's ``E_max`` output failed with
+    "surface 6 reported no 'Emax'"."""
+    acd = _acdtool(tmp_path,
+                   os.path.join(RFPOST_IN, 'pillbox-rtop-maxfields.rfpost'),
+                   os.path.join(RFPOST_OUT,
+                                'pillbox-rtop-maxfields.rfpost.out'))
+    assert set(acd.output_data) == {'RoverQ', 'maxFieldsOnSurface', 'scaling'}
+    surface = acd.output_data['maxFieldsOnSurface']
+    assert surface['SurfaceIDs'] == ['6']
+    assert surface['6'] == {
+        'ModeID': 0.0,
+        'Emax': 3.94377e7,
+        'Emax_location': {'x': 4.2896e-2, 'y': 0.0, 'z': -4.5724e-2},
+        'Hmax': 6.10809e4,
+        'Hmax_location': {'x': 3.5190e-2, 'y': 5.5237e-2, 'z': 4.5000e-2}}
+    # The unit is dropped, not mistaken for the imaginary part of a complex.
+    assert 'Emax_imag' not in surface['6']
+    # The same run's [RoverQ] still reads as before.
+    assert acd.output_data['RoverQ']['ModeIDs'] == ['0', '1']
+    assert acd.output_data['RoverQ']['0']['RoQ'] == 109.912
+
+
 def test_surface_scalars_split_a_complex_power(tmp_path):
     """``powerThroughSurface``'s power is complex [W], the real part being the
     average flow from the complex Poynting vector -- so it gets the same
@@ -664,9 +696,9 @@ def test_section_table_covers_the_documented_block_surface():
         'dFSlater', 'VFFT', 'ALLFieldAtPoint', 'coaxPort'}
     assert {n for n, s in SECTIONS.items() if s.shape == SURFACE} == {
         'maxFieldsOnSurface', 'powerThroughSurface'}
-    # Only three shapes have a real acdtool output behind them -- COVERAGE.md.
+    # Only four blocks have a real acdtool output behind them -- COVERAGE.md.
     assert {n for n, s in SECTIONS.items() if s.validated} == {
-        'RoverQ', 'ALLFieldOnLine', 'scaling'}
+        'RoverQ', 'ALLFieldOnLine', 'scaling', 'maxFieldsOnSurface'}
     # Every curve/grid block names the files it writes, and the schemes differ.
     for name, section in SECTIONS.items():
         if section.shape in (CURVE, GRID):
@@ -1070,23 +1102,34 @@ def test_omega3p_complex_eigenvalues_parse_today():
     assert modes[0].get_leaf('ExternalQ') == '1024235.9659009'
 
 
-def test_omega3p_banner_does_not_break_parsing():
-    """The license banner inside ``Version`` gets absorbed into the first
-    top-level key name -- garbage, but harmless: the Mode sections are still
-    found. Phase 1 must keep ignoring it rather than trying to clean it up."""
-    for name in ['pillbox', 'pillbox-rtop+coax']:
+def test_omega3p_header_comment_is_stripped():
+    """``omega3p.out`` opens with a ``/* input parameters, KVC syntax */``
+    header. Phase 1 let it be absorbed into the first top-level key's name as
+    "harmless garbage" -- which held only while the first section was
+    ``Version`` or ``AMRLevel``. Omega3P writes its sections in no fixed order,
+    and an S3DF run put ``Mode`` first: that mode's key became
+    ``'/*...*/ Mode'`` and the eigenmode vanished from the parse (3 of 32 sweep
+    points reported one mode instead of two). The tokenizer now strips block
+    comments, so the first key is clean in every fixture and both modes of the
+    mode-first file are found."""
+    for name, first in [('pillbox', 'Version'),
+                        ('pillbox-rtop+coax', 'AMRLevel'),
+                        ('pillbox-rtop-mode-first', 'Mode')]:
         tree = _omega3p_tree(name)
-        first_key = tree.entries[0][0]
-        assert 'KVC syntax' in first_key      # banner swallowed into the key
-        assert tree.children('Mode')          # ...and Mode is still reachable
+        assert tree.entries[0][0] == first
+        assert 'KVC syntax' not in tree.entries[0][0]
+        assert tree.children('Mode')
+    assert len(_omega3p_tree('pillbox-rtop-mode-first').children('Mode')) == 2
 
 
 def test_omega3p_top_level_order_differs_between_runs():
     """Why Phase 1 must search sections by name, never by position."""
     order = {n: [k for k, _ in _omega3p_tree(n).entries]
-             for n in ['pillbox', 'pillbox-rtop+coax']}
+             for n in ['pillbox', 'pillbox-rtop+coax',
+                       'pillbox-rtop-mode-first']}
     assert order['pillbox'].index('Mode') == 5
     assert order['pillbox-rtop+coax'].index('Mode') == 1
+    assert order['pillbox-rtop-mode-first'].index('Mode') == 0
     assert order['pillbox'] != order['pillbox-rtop+coax']
 
 

@@ -1,5 +1,5 @@
 import glob
-import os, re, shutil
+import os, re, shutil, sys
 import warnings
 
 import numpy as np
@@ -56,7 +56,8 @@ def parse_ace3p(text):
 
     The format is a sequence of `key : value` entries. A value is either a
     free-form string up to end-of-line (commas inside are kept verbatim) or
-    a `{ ... }` block containing more entries. `//` starts a line comment.
+    a `{ ... }` block containing more entries. `//` starts a line comment and
+    `/* ... */` is a block comment (Omega3P's `omega3p.out` opens with one).
     """
     tokens = _tokenize(text)
     tree, _ = _parse_section(tokens, 0, top_level=True)
@@ -77,11 +78,21 @@ def write_ace3p(section, indent=0):
     return ''.join(out)
 
 
+_BLOCK_COMMENT = re.compile(r'/\*.*?\*/', re.S)
+
+
 def _tokenize(text):
     """Strip comments and emit a flat list of tokens: ('key', str),
     ('value', str), ('lbrace',), ('rbrace',). Whitespace and newlines
     are not significant beyond terminating values and comments."""
-    # Strip // line comments first
+    # Strip /* ... */ block comments, then // line comments. The block form
+    # matters for solver OUTPUT: omega3p.out opens with a '/* input parameters,
+    # KVC syntax */' header, and without this it was glued onto the first key's
+    # name -- harmless when that key was 'Version', but Omega3P writes its
+    # top-level sections in no fixed order, and when a 'Mode' block came first
+    # that mode vanished from the parse (seen on S3DF, 2026-09-09: 3 of 32
+    # sweep points reported one eigenmode instead of two).
+    text = _BLOCK_COMMENT.sub('', text)
     cleaned = []
     for line in text.split('\n'):
         i = line.find('//')
@@ -287,6 +298,7 @@ class ACE3P(CommandWrapper):
         self._results_dir = results_dir
         self.output_file = None
         self.output_data = {}
+        self.returncode = 0
         if self.workdir is None:
             self.workdir = os.getcwd()
         if self.ace3p_opts is None:
@@ -330,9 +342,35 @@ class ACE3P(CommandWrapper):
 
     def run(self):
         self.write_input()
-        run_logged(self.solver_command(), cwd=self.workdir,
-                   log_file=self.log_file)
+        completed = run_logged(self.solver_command(), cwd=self.workdir,
+                               log_file=self.log_file)
+        self.returncode = completed.returncode
+        if self.returncode:
+            # Not raised, matching the wrappers' long-standing behavior (see
+            # :func:`lume_ace3p.logs.run_logged`), but said out loud: when the
+            # launcher itself refuses the step (e.g. srun's "More processors
+            # requested than permitted"), the solver never ran and the "no
+            # results" error that follows would otherwise blame the input file.
+            print(self.exit_status_note(), file=sys.stderr)
         self.output_parser()
+
+    def exit_status_note(self):
+        """One line describing a nonzero solver exit status, or ``''`` when
+        the last :meth:`run` exited cleanly (or has not run). Appended to the
+        "no results" errors so a launch failure is named as the cause."""
+        code = getattr(self, 'returncode', 0)
+        if not code:
+            return ''
+        # Two very different causes share this line: the launcher refused the
+        # step (srun's "More processors requested than permitted" -- nothing
+        # ran) or the solver itself died (S3P's SIGFPE on a 2.6k-element mesh
+        # over 16 ranks, seen on S3DF). The log tells them apart; say so
+        # rather than guessing.
+        return (f"{self.module_name} exited with status {code} (command: "
+                f"{self.solver_command().strip()}); either the launcher "
+                f"refused the step or the solver crashed — check "
+                f"{self.log_file or 'its output above'} (a solver that ran "
+                f"leaves its own messages there; a refused step only srun's).")
 
     def load_input_file(self, *args):
         if args:
@@ -515,8 +553,10 @@ def parse_omega3p_output(path):
 
     ``Mode`` sections are found by name: top-level section order differs between
     runs (the tutorial's ``pillbox`` has ``Mode`` sixth, ``pillbox-rtop+coax``
-    second), and the license banner inside ``Version`` is absorbed into the
-    first key's name — garbage that is ignored rather than cleaned up.
+    second, and an S3DF ``pillbox-rtop`` run put ``Mode`` *first*). The file's
+    ``/* ... */`` header is stripped by the tokenizer; the license banner inside
+    ``Version`` still parses into garbage leaves of that section, which is
+    ignored.
     """
     with open(path) as file:
         tree = parse_ace3p(file.read())
