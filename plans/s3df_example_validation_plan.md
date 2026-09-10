@@ -141,14 +141,7 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ## Other open items
 
-- [~] Full `pytest` on iana: run started 2026-09-09 15:59 (source state = after
-  9698d62, before 888f558): **661 passed, 2 skipped in 52m41s**. It is slow
-  because `tests/test_bayesian.py` (6 tests, ~20 min total, up to 353 s each)
-  and `tests/test_inversion.py` (~10 min) fit GPs / run MCMC; it also uses ~9
-  cores on iana while doing so. Two stale stubs in `test_modules.py` broke on
-  66c8e2a's exit-status recording and were fixed in 9a73b48. **Re-run once more
-  after the last code change** (`python -m pytest -q tests/ -p no:cacheprovider`,
-  ~55 min; `--deselect tests/test_bayesian.py` for a 30-min version).
+- [x] Full `pytest` on iana — final run 2026-09-10 (after the last `src/` change, c653d52 tree): **662 passed, 1 failed, 2 skipped in 40m56s**; the failure was `test_t3p_out_banner_does_not_break_the_echo`, which pinned the old header-swallowing behaviour that b855423 removed — test updated in 865c2fd (file now 24/24). Earlier run (2026-09-09 15:59, pre-888f558 source): 661 passed, 2 skipped, 52m41s. Slow files: `test_bayesian.py` (~20 min), `test_inversion.py` (~10 min); ~9 cores busy on iana while they run.
 - [ ] Decide whether `s3p_sweep` / `s3p_sweep_no_s3p_file` should declare
   `output_parameters` (S(0,0), S(0,1), …). With none declared the table is only
   `inputs + Frequency`; the docs used to promise S-parameter columns (corrected
