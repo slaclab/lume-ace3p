@@ -44,10 +44,27 @@ docs gain the `tasks × cores ≤ 120` rule, setup-script ordering and the real
 2. **After the user merges — ask first:** in `/sdf/group/rfar/lume-ace3p` run
    `git pull` on `main`, then `conda activate lume-ace3p && pip install
    /sdf/group/rfar/lume-ace3p --no-deps` (the users' env; non-editable).
-3. **Open question for the user:** `s3p_sweep` and `s3p_sweep_no_s3p_file`
-   declare no `output_parameters`, so their tables are `inputs + Frequency`
-   only. Adding S-parameter outputs would move their dry-run baselines
-   (re-freeze). See "Other open items".
+3. ~~Open question~~ **Resolved 2026-09-10 (6faaf98):** `s3p_sweep` and
+   `s3p_sweep_no_s3p_file` now declare the four `S(m,n)` spectra plus
+   `reflection_12GHz`; baselines re-frozen; all three S3P bend examples scan
+   9.5–12.5 GHz and were re-validated on milano.
+
+### Follow-ups the user has deferred (2026-09-10)
+
+- **Optimization bounds.** `omega3p_optimization` and `s3p_optimization` both
+  converge to a corner of their VOCS box. Move the box so the optimum is
+  interior; each change needs a real milano run (~6–8 min) to confirm.
+- **Geant4 surrogate sampling.** `geant4_beta_surrogate` trains on 16 samples
+  in 8-D and the surrogate is poor (held-out rel-L2 ~2.1, `r_hat` 5.5). Not a
+  priority; raise `num_samples` if the example is meant to show a good fit.
+- **Docs reorganization.** The 2026-09-10 pass (2a6afce) tightened prose
+  in place without moving sections. A later pass should reorganize files and
+  layout; agents noted `docs/testing.md` lists 10 of 21 test files,
+  `docs/plotting.md` omits three shipped scripts, and the
+  `geant4_beta_surrogate_*.yaml` header comments still narrate refactor phases.
+- **ACE3P-internal sweeps.** The user wants to discuss how ACE3P sweeps
+  internally (e.g. `FrequencyScan`) and whether lume-ace3p should coordinate
+  with that rather than re-running the solver per point.
 
 ### Operational notes learned
 
@@ -200,11 +217,9 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 ## Other open items
 
 - [x] Full `pytest` on iana — final run 2026-09-10 (after the last `src/` change, c653d52 tree): **662 passed, 1 failed, 2 skipped in 40m56s**; the failure was `test_t3p_out_banner_does_not_break_the_echo`, which pinned the old header-swallowing behaviour that b855423 removed — test updated in 865c2fd (file now 24/24). Earlier run (2026-09-09 15:59, pre-888f558 source): 661 passed, 2 skipped, 52m41s. Slow files: `test_bayesian.py` (~20 min), `test_inversion.py` (~10 min); ~9 cores busy on iana while they run.
-- [ ] Decide whether `s3p_sweep` / `s3p_sweep_no_s3p_file` should declare
-  `output_parameters` (S(0,0), S(0,1), …). With none declared the table is only
-  `inputs + Frequency`; the docs used to promise S-parameter columns (corrected
-  in 888f558 to describe actual behavior). Adding outputs to the YAMLs would
-  move the dry-run baselines (new NaN columns) → re-freeze. User's call.
+- [x] `s3p_sweep` / `s3p_sweep_no_s3p_file` declare `output_parameters`
+  (6faaf98, 2026-09-10): four `S(m,n)` spectra + `reflection_12GHz`; dry-run
+  baselines re-frozen; re-validated on milano (jobs 37747638, 37748242).
 - [x] Note added to `docs/installation.md` (S3DF section) about
   `tasks × cores ≤ 120` and the `source ace3p.sh` → `conda activate` order.
 
