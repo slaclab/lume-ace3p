@@ -19,7 +19,7 @@ optimization objective declared at a frequency its own scan never visits, and a
 Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
 mismatch between Perlmutter and milano nodes, a solver that cannot split a
 2.6k-element mesh over 16 ranks, and Geant4 batch scripts that set no Geant4
-environment. Every example under `examples/` (18, excluding `incomplete/`) now
+environment. Every example under `examples/` (17, excluding `incomplete/`) now
 has a recorded real run with plausible, NaN-free output. The checklist and job
 records are in
 [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
