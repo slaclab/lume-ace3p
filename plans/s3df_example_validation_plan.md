@@ -152,10 +152,13 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 ## Finish
 
-1. All boxes checked (or `[~]` with notes). `pytest` green.
-2. Update `CHANGELOG.md` (unreleased section) summarizing the fixes.
-3. `git push origin dev`.
-4. Open a PR `dev → main` on GitHub (`gh pr create`), summarizing validation.
+1. [x] All boxes checked (or `[~]` with notes). `pytest` green (2026-09-10).
+2. [x] `CHANGELOG.md` Unreleased section written.
+3. [x] `git push origin dev` (2026-09-10, 80e135f..e514e34 + the commits after).
+4. [ ] Open a PR `dev → main`: `gh` was not installed on iana; it is now in
+   `~/.local/bin/gh` (2.100.0) but needs a one-time `gh auth login` by the user.
+   PR title/body are ready in `plans/s3df_validation_pr.md` with the exact
+   `gh pr create` command; or use the compare URL in that file.
 5. **Only after the user merges:** in `/sdf/group/rfar/lume-ace3p` run
    `git pull` on `main`, then in the **users'** env
    `conda activate lume-ace3p && pip install /sdf/group/rfar/lume-ace3p --no-deps`
