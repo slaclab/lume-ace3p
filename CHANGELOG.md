@@ -17,8 +17,12 @@ output layout, an eigenmode silently dropped when Omega3P wrote its sections in
 an unusual order, a table that repeated its scalars once per eigenmode, an
 optimization objective declared at a frequency its own scan never visits, and a
 Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
-mismatch between Perlmutter and milano nodes. The checklist and job records are
-in [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
+mismatch between Perlmutter and milano nodes, a solver that cannot split a
+2.6k-element mesh over 16 ranks, and Geant4 batch scripts that set no Geant4
+environment. Every example under `examples/` (18, excluding `incomplete/`) now
+has a recorded real run with plausible, NaN-free output. The checklist and job
+records are in
+[`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
 
 ⚠️ **Behaviour change:** a `parameter_sweep` / `single` table is emitted
 long-format over a solver's field index (`Frequency`, `ModeID`, `s`) **only when
@@ -48,6 +52,12 @@ evaluation rather than after its whole budget.
   split over 16 ranks; 8 and 4 ranks complete the scan. The multi-fidelity
   optimization reached fidelity 0 in its first random batch on S3DF and the
   campaign failed there.
+- **The S3DF Geant4 batch scripts source the group's Geant4 environment.**
+  The Geant4 application reads its data-directory variables (`G4LEDATA`, …)
+  from the environment and the three scripts set none, so a job submitted
+  from a shell that had not sourced `geant4.sh` could not run it. They now
+  source it inside the job while keeping the submitting shell's `PATH` and
+  `PYTHONPATH`, which that script would otherwise reset away from conda.
 - **The nonzero-exit note no longer claims the solver "probably never ran".**
   It was written for a refused `srun` step; a solver that ran and crashed
   exits nonzero too. The note now names both and points at the log.
@@ -89,6 +99,8 @@ evaluation rather than after its whole budget.
   and S3P aborted inside ParMETIS. Coordinate selectors (`with z_coord < …`,
   `not is_merged`) fix it; the 3-point sweep now completes with
   `|S11|² + |S21|² = 1` and its best match at the 3 mm design thickness.
+- **`gp_parameter_sweep` no longer warns on every grid point** about
+  converting a gradient-tracking tensor; the posterior mean is detached first.
 - **Two `test_modules.py` stubs** returned `None` from a fake `subprocess.run`
   and broke when the wrapper started reading the exit status.
 
