@@ -12,9 +12,10 @@ coarser grain than the entries above them.
 **Every example run for real on SLAC S3DF.** Until now most examples had only
 ever run in dry-run mode or on NERSC Perlmutter; several had never met a real
 solver at all. Running each one through `sbatch` on S3DF milano nodes found
-four defects that dry runs cannot see — a parser written against an assumed
+five defects that dry runs cannot see — a parser written against an assumed
 output layout, an eigenmode silently dropped when Omega3P wrote its sections in
-an unusual order, a table that repeated its scalars once per eigenmode, and a
+an unusual order, a table that repeated its scalars once per eigenmode, an
+optimization objective declared at a frequency its own scan never visits, and a
 Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
 mismatch between Perlmutter and milano nodes. The checklist and job records are
 in [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
@@ -30,8 +31,17 @@ requests an array output (`s3p_window_rfpost`, `omega3p_dispersion_sweep`,
 baseline is unaffected; `omega3p_sweep` and `omega3p_ace3p_param_sweep` now
 produce the 16- and 32-row tables their READMEs always described.
 
+⚠️ **Behaviour change:** an S3P `at: {frequency: <f>}` whose `<f>` is not a
+point of the run's frequency scan now **raises** (naming the scan range and the
+nearest points) instead of printing a line and returning `NaN`. Xopt is strict
+by default, so a misdeclared objective stops an optimization at its first
+evaluation rather than after its whole budget.
+
 ### Changed
 
+- **`examples/s3p_optimization` minimizes reflection at 11.924 GHz**, a point
+  of its 9.424–12.424 GHz / 0.25 GHz scan. It asked for 12.0 GHz, which is not,
+  and on S3DF spent 25 real S3P runs optimizing `NaN` while exiting 0.
 - **Solver steps in the examples fit an S3DF milano node.** The T3P and
   optimization examples asked for `16 × 16` or `16 × 8` tasks × cores, sized for
   Perlmutter's 256 logical CPUs; a milano node exposes 120 usable cores and the
