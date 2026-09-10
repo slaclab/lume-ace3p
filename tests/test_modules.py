@@ -357,6 +357,13 @@ def test_s3p_extract(tmp_path):
     # Scalar at a frequency (the Xopt objective form): S(1,1) @ 12.5e9 = 0.80.
     assert module.extract(ctx, {'quantity': 'S(1,1)',
                                 'at': {'frequency': 12.5e9}}) == pytest.approx(0.80)
+    # A frequency off the scan grid raises naming the grid, rather than
+    # returning NaN: examples/s3p_optimization asked for 12.0 GHz of a
+    # 9.424 + k*0.25 GHz scan and spent 25 real S3P runs optimizing NaN.
+    with pytest.raises(ValueError, match='not a point of this S3P run'):
+        module.extract(ctx, {'quantity': 'S(1,1)', 'at': {'frequency': 12.4e9}})
+    with pytest.raises(ValueError, match='12500000000.0'):
+        module.extract(ctx, {'quantity': 'S(1,1)', 'at': {'frequency': 12.4e9}})
 
 
 def test_s3p_extract_dry_run_is_nan(tmp_path):

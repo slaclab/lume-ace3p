@@ -18,7 +18,9 @@ file must include:
 - `mode:` with `type: scalar_optimize`.
 - `output_parameters` — declares the scalar the objective pulls out of the
   workflow. For an S3P reflection objective this is the explicit form
-  `{module: s3p, quantity: 'S(0,0)', at: {frequency: 12.0e+09}}`.
+  `{module: s3p, quantity: 'S(0,0)', at: {frequency: 11.924e+09}}`. The `at:`
+  frequency must be a point of the `.s3p` file's `FrequencyScan`; an off-grid
+  value raises at the first evaluation, naming the nearest scan points.
 - `vocs_parameters` — variables (required), objectives (required), constants
   (optional), and constraints (optional) for the optimization problem.
   - `objectives` is the plain Xopt shape: it maps an **`output_parameters`
@@ -168,7 +170,7 @@ VOCS:
 
 ```yaml
 output_parameters :
-    'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
+    'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 11.924e+09 } }
 
 vocs_parameters :
     'variables' :
@@ -186,7 +188,7 @@ add more `output_parameters` entries and list each in `objectives`:
 
 ```yaml
 output_parameters :
-    'reflection'    : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
+    'reflection'    : { module: s3p, quantity: 'S(0,0)', at: { frequency: 11.924e+09 } }
     'transmission'  : { module: s3p, quantity: 'S(0,1)', at: { frequency: 10.424e+09 } }
 
 vocs_parameters :

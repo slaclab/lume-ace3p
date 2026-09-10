@@ -530,8 +530,10 @@ mode.
 alongside it under the three suffixes rather than redefining it, so every
 existing spec and every frozen baseline is unaffected. Adding
 `at: {frequency: <f>}` to a mapping spec reduces any of these arrays to the scalar
-at that frequency (an exact match against the scan; an unmatched frequency reports
-and yields `NaN`). `Frequency` is S3P's **field index**, so a `parameter_sweep`
+at that frequency. `<f>` must be a point of the scan (matched to 1e-9 relative);
+an off-grid frequency **raises**, naming the scan's range and the nearest points,
+so an optimization stops at its first evaluation instead of spending its budget on
+`NaN`. `Frequency` is S3P's **field index**, so a `parameter_sweep`
 emits a long-format table with one row per `(grid point, frequency)` whenever an
 output spans the scan — or when no outputs are declared at all, in which case the
 table carries the swept inputs and `Frequency` only. If every declared output is
