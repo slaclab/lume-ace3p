@@ -9,17 +9,18 @@ mode:      gp_parameter_sweep
 ```
 
 This mode couples an Xopt `BayesianExploration` loop with a GP posterior-mean
-sweep. The driver actively explores the input space by running the
-`cubit -> s3p` chain, fits a GP to the results, then evaluates the GP's
-posterior mean over the dense `sweep_parameters` grid — here a 10x10 grid over
-`cornercut` (12.5-13.5) and `wgwidth` (21-22). The explored objective
-`S(1,1)_12.0e+09` is an `output_parameters` name (S3P quantity `S(1,1)` `at`
-frequency `12.0e+09`) with goal `explore`, so the mode pulls it from the
-workflow generically without any S-parameter parsing of its own.
+sweep. The driver explores the input space by running the `cubit -> s3p` chain,
+fits a GP to the results, then evaluates the GP's posterior mean over the dense
+`sweep_parameters` grid, here 10x10 over `cornercut` (12.5-13.5) and `wgwidth`
+(21-22). The explored objective `S(1,1)_12.0e+09` is an `output_parameters` name
+(S3P quantity `S(1,1)` `at` frequency `12.0e+09`) with goal `explore`, so the
+mode pulls it from the workflow without any S-parameter parsing of its own.
 
 Two output tables are written: `sim_output.txt` (the sampled trajectory, via
 `output_file`) and `sweep_output.txt` (the GP posterior-mean sweep, via
-`sweep_output_file`). The exploration itself runs `num_step: 3`.
+`sweep_output_file`). The exploration seeds `num_random: 5` random points and
+then takes at most `max_steps: 3` GP-guided steps, so `sim_output.txt` holds up
+to 8 evaluations.
 
 Unlike the deterministic grid of [`../s3p_sweep`](../s3p_sweep) or the
 optimizers in [`../s3p_optimization`](../s3p_optimization) and

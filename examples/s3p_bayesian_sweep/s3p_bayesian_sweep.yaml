@@ -61,4 +61,5 @@ vocs_parameters :
         'S(1,1)_12.0e+09' : 'explore'
 
 xopt_parameters :
-    num_step : 3
+    num_random : 5      # random seeds before the GP-guided steps (default 5)
+    max_steps : 3       # GP-guided exploration steps; the improvement/patience test may stop it sooner

@@ -82,6 +82,15 @@ evaluation rather than after its whole budget.
 
 ### Fixed
 
+- **`gp_parameter_sweep` honours `max_steps` exactly and warns about
+  `num_step`.** The loop tested the cap after stepping, so every campaign ran
+  one GP-guided step past `max_steps`. `num_step` is a `scalar_optimize` key
+  that the per-block key check accepts anywhere, so a GP sweep declaring it
+  (as `examples/s3p_bayesian_sweep` did) silently ran until the
+  improvement/patience test stopped it; the mode now prints a warning naming
+  `max_steps`. A campaign that takes no GP-guided step (`max_steps: 0`) still
+  emits the posterior sweep, fitting the model on its seeds. The example
+  declares `num_random: 5` and `max_steps: 3`.
 - **`acdtool`'s `maxFieldsOnSurface` block is now read.** The reader assumed
   `Emax = value at (x, y, z)`; acdtool writes `Emax :  3.94e+07 (V.m)  at (…)`
   — colon-separated, with a unit, preceded by a `ModeID :` line — so

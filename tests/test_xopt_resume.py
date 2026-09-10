@@ -245,6 +245,39 @@ def test_a_resumed_gp_parameter_sweep_continues(campaign):
     assert os.path.isfile('sweep_output.txt'), 'the GP posterior sweep was not emitted'
 
 
+def test_gp_parameter_sweep_max_steps_is_an_exact_cap(campaign, capsys):
+    """``max_steps`` caps the GP-guided steps exactly: ``num_random`` seeds plus
+    ``max_steps`` steps, no more. The loop used to test the cap after stepping,
+    so every campaign ran one step past it. And a ``max_steps: 0`` run still
+    emits the posterior sweep, fitting the model on the seeds alone."""
+    sweep = {'x': {'min': 0.0, 'max': 1.0, 'num': 4}}
+    vocs = {'variables': VOCS['variables'], 'objectives': {'y': 'explore'}}
+
+    counter = Counter()
+    modes.gp_parameter_sweep(counter, sweep, vocs,
+                             {'num_random': 3, 'max_steps': 2})
+    assert len(counter.calls) == 5
+
+    os.remove(STATE_FILE)
+    counter = Counter()
+    modes.gp_parameter_sweep(counter, sweep, vocs,
+                             {'num_random': 3, 'max_steps': 0})
+    assert len(counter.calls) == 3
+    assert os.path.isfile('sweep_output.txt')
+
+    # 'num_step' belongs to scalar_optimize; the GP sweep says so rather than
+    # silently running until the patience test stops it.
+    os.remove(STATE_FILE)
+    modes.gp_parameter_sweep(Counter(), sweep, vocs,
+                             {'num_random': 3, 'num_step': 1, 'max_steps': 1})
+    assert "does not read 'num_step'" not in capsys.readouterr().err
+    os.remove(STATE_FILE)
+    modes.gp_parameter_sweep(Counter(), sweep, vocs,
+                             {'num_random': 3, 'num_step': 1, 'patience': 1,
+                              'improvement_threshold': 1.0})
+    assert "does not read 'num_step'" in capsys.readouterr().err
+
+
 def test_the_seeding_loop_persists_state_as_it_goes(campaign, monkeypatch):
     """State is written after each seeding evaluation, not only after the first
     *step*. Without that, an exploration killed during seeding had nothing to come

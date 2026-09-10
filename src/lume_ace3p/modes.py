@@ -2101,16 +2101,23 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
 
     improvement = xopt_dict.get('improvement_threshold', 0.01)
     patience = xopt_dict.get('patience', 5)
+    if 'num_step' in xopt_dict and 'max_steps' not in xopt_dict:
+        # 'num_step' is a scalar_optimize key; the key check accepts it in any
+        # xopt_parameters block, so a GP sweep that declares it ran until the
+        # patience test stopped it (examples/s3p_bayesian_sweep did, on S3DF).
+        print("Warning: gp_parameter_sweep does not read 'num_step' (that is a "
+              "scalar_optimize key); use 'max_steps' to cap the exploration "
+              "steps. Running until the improvement/patience test stops it.",
+              file=sys.stderr)
     prev_bests = []
     # A campaign total, so 'max_steps' means the same thing to a resumed run.
     steps = max(0, _evaluated(X) - num_random)
-    hit_max_steps = False
-    while not hit_max_steps:
+    while True:
+        if 'max_steps' in xopt_dict and steps >= xopt_dict['max_steps']:
+            break
         X.step()
         _log_xopt(log_file, X, state_file, campaign_hash)
         steps += 1
-        if 'max_steps' in xopt_dict and steps > xopt_dict['max_steps']:
-            hit_max_steps = True
         current_best = sum(X.data[o].min() for o in targets) / len(targets)
         prev_bests.append(current_best)
         if len(prev_bests) > patience:
@@ -2128,6 +2135,12 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
     # Preserve the legacy tile/repeat ordering (first axis fastest) so the rows
     # land in the same order as the Phase-0.5 baseline sweep_output.txt.
     input_tensor = np.stack(_legacy_meshorder(grids), axis=1)
+
+    # The generator fits its model inside step(); a campaign that took no
+    # GP-guided step (max_steps: 0, or a resume that had already reached its
+    # cap) still has the seeded data, so fit the model on that before sampling.
+    if X.generator.model is None:
+        X.generator.train_model()
 
     # Build the GP posterior-mean sweep as a DataFrame (columns = swept inputs +
     # explored targets) and write it through the shared result writer — the same
