@@ -129,8 +129,7 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 
 - [x] `geant4_dose_single` — job 37732311, 1m54s: Geant4 ran with 120 threads on 144640 macro-particles; total_dose 60.85, peak_dose 0.505, total_edep 1.54e16, no NaNs; `field_0.npz` holds dose/edep grids (2641 non-zero dose voxels). Needed a fix first: the S3DF Geant4 batch scripts set no Geant4 environment (G4*DATA), so all three now source `/sdf/group/rfar/cho/geant4/geant4.sh` while preserving the conda PATH/PYTHONPATH.
 - [x] `geant4_track3p_beta` — job 37732611, 7m52s, 5 beta points (40–60), 5 workdirs, table `geant4_beta_sweep_output` = `beta` + `field_artifact` (no `output_parameters` declared — design). Artifacts hold real dose grids: total dose 0.0 / 0.002 / 0.088 / 1.64 / 19.9 for beta 40…60, macro-particles loaded 16k → 145k. No NaNs.
-- [ ] `geant4_beta_surrogate` (mode `invert_bayesian`; reads a store — check its
-  README for what must exist first; may depend on `geant4_track3p_beta` output)
+- [x] `geant4_beta_surrogate` — collection: job 37733843, 26m14s, 16 Sobol samples, `training_table.txt` 16 rows, no NaNs, manifest OK. Then on iana (CPU-only): `train` 12 s → 9-mode PCA-GP (0.9913 energy; held-out rel-L2 mean 2.10 — poor, as expected for 16 samples in 8-D with linear dose; sklearn kernel-bound ConvergenceWarnings); `invert_optimize` 30 s → recovers sample_00000's beta to ~0.5 (e.g. 56.55 vs 57.01, 58.56 vs 58.63), 8/8 directions identifiable; `invert_bayesian` 20 s → 8000 draws, but r_hat 5.5 and the mode itself warns the chains did not mix (16-sample store; data, not code). All four stages exit 0.
 
 ### Python-only (run directly on iana, no sbatch)
 
