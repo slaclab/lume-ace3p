@@ -12,8 +12,9 @@ coarser grain than the entries above them.
 **Every example run for real on SLAC S3DF.** Until now most examples had only
 ever run in dry-run mode or on NERSC Perlmutter; several had never met a real
 solver at all. Running each one through `sbatch` on S3DF milano nodes found
-three defects that dry runs cannot see — a parser written against an assumed
-output layout, a table that repeated its scalars once per eigenmode, and a
+four defects that dry runs cannot see — a parser written against an assumed
+output layout, an eigenmode silently dropped when Omega3P wrote its sections in
+an unusual order, a table that repeated its scalars once per eigenmode, and a
 Cubit journal whose sidesets pointed at the wrong surfaces — plus the sizing
 mismatch between Perlmutter and milano nodes. The checklist and job records are
 in [`plans/s3df_example_validation_plan.md`](plans/s3df_example_validation_plan.md).
@@ -53,6 +54,14 @@ produce the 16- and 32-row tables their READMEs always described.
   the unit; the run's `rfpost.out` is the block's first real fixture, closing
   the gap `tests/fixtures/acdtool/COVERAGE.md` had recorded since Phase 3
   (`kickFactor` remains the one block without real output).
+- **An Omega3P run whose `omega3p.out` lists its `Mode` sections first no
+  longer loses the first mode.** The ACE3P-format tokenizer stripped `//`
+  comments but not the file's opening `/* … */` header, which was glued onto
+  the first key's name — harmless while that key was `Version` or `AMRLevel`,
+  but Omega3P writes its sections in no fixed order. In 3 of 32 points of
+  `omega3p_ace3p_param_sweep` the modes came first, one vanished, and
+  `Mode_freq` (`at: {mode: 0}`) silently reported the *second* mode. Block
+  comments are now stripped; the affected output is a fixture.
 - **`examples/s3p_window_rfpost/window.jou` selects its ports and symmetry
   planes by position.** The journal joined the ACE3P tutorial's two window
   journals but kept the meshing half's hard-coded surface IDs; one of them
