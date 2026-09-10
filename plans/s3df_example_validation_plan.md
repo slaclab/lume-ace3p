@@ -6,6 +6,64 @@ whatever breaks, commit on `dev`, then push and release. This plan is written so
 a fresh Claude Code CLI session (or a person) can execute it without any other
 context. Status is tracked in the checklist below; **update it as you go**.
 
+## Status and handoff (2026-09-10)
+
+**Validation is complete.** All 17 examples (everything under `examples/` except
+`incomplete/` and `assets/`) ran for real on milano via the shipped
+`*_s3df.batch` scripts and met the acceptance criteria below; per-example job
+IDs, timings and notes are in the checklist. The full `pytest tests/` is green
+(662 passed, 2 skipped, plus one test-only fix rerun 24/24). `dev` is pushed to
+`origin/dev` (commit `4ca9298`, 30 commits ahead of `main`) and `CHANGELOG.md`
+has an Unreleased section describing everything below.
+
+### What real runs found (six repo defects, all fixed with tests)
+
+| # | Defect | Symptom on S3DF | Fix |
+|---|---|---|---|
+| 1 | acdtool `maxFieldsOnSurface` reader assumed `Emax = value at (…)`; acdtool writes `Emax :  3.94e+07 (V.m)  at (…)` plus a `ModeID :` line | `omega3p_sweep` failed: "surface 6 reported no 'Emax'" | 9698d62 — reader accepts `:`/`=` and drops the unit; real fixture added; COVERAGE.md gap closed |
+| 2 | ACE3P tokenizer never stripped the `/* … */` header, gluing it onto the first key | 3 of 32 `omega3p_ace3p_param_sweep` points reported one mode (the 2nd) because `Mode` came first in `omega3p.out` | b855423 — block comments stripped; Mode-first fixture added |
+| 3 | Mode layer exploded a point over a solver's field index even when every output was narrowed with `at:` | `omega3p_sweep` gave 32 rows, the `ModeID = 1` rows carrying mode-0 values | 888f558 — axis used only when an output spans it or none is declared; wide rows persist a `field_artifact`. ⚠️ behaviour change; no frozen baseline moves |
+| 4 | `s3p_optimization` objective at 12.0 GHz, not on its 9.424 + k·0.25 GHz scan; extractor printed a line and returned NaN | 25 real S3P runs optimizing NaN, job exit 0 | 64c45b3 — off-grid frequency raises naming the scan; example uses 11.924 GHz. ⚠️ behaviour change |
+| 5 | `s3p_window_rfpost/window.jou` kept the tutorial's hard-coded surface IDs after joining two journals | interior ceramic face in a symmetry sideset → bad Euler characteristic, S3P aborted in ParMETIS | cedee39 — surfaces selected by coordinate, merged faces excluded |
+| 6 | S3P dies with SIGFPE when the multi-fidelity examples' coarsest mesh (~2.6k elements) is split over 16 ranks | `s3p_mf_optimization` failed in its first random batch | 1e51dfc — `s3p_mf_optimization` and `s3p_bayesian_sweep` use 8×4 (diag job 37729506: 16 ranks fail deterministically, 8/4 pass) |
+
+Also fixed: the S3DF Geant4 batch scripts set no Geant4 environment (594edbb —
+they source the group's `geant4.sh`, keeping conda `PATH`/`PYTHONPATH`); two
+stale test stubs broken by exit-status recording (9a73b48); the nonzero-exit
+note no longer claims the solver "never ran"; a torch warning in
+`gp_parameter_sweep` (a6282ff); T3P/Omega3P banner tests updated; installation
+docs gain the `tasks × cores ≤ 120` rule, setup-script ordering and the real
+`ace3p.sh` path; README/doc statements about table shapes corrected.
+
+### What is left (for the next session / the user)
+
+1. **Open the PR `dev → main`.** `gh` is installed at `~/.local/bin/gh`
+   (2.100.0) but needs a one-time `gh auth login`. Title, body and the exact
+   command are in `plans/s3df_validation_pr.md`; alternatively use
+   https://github.com/slaclab/lume-ace3p/compare/main...dev.
+2. **After the user merges — ask first:** in `/sdf/group/rfar/lume-ace3p` run
+   `git pull` on `main`, then `conda activate lume-ace3p && pip install
+   /sdf/group/rfar/lume-ace3p --no-deps` (the users' env; non-editable).
+3. **Open question for the user:** `s3p_sweep` and `s3p_sweep_no_s3p_file`
+   declare no `output_parameters`, so their tables are `inputs + Frequency`
+   only. Adding S-parameter outputs would move their dry-run baselines
+   (re-freeze). See "Other open items".
+
+### Operational notes learned
+
+- Another rfar user can hold the whole group allocation (15 × 60-CPU jobs,
+  4 h limits); a 120-CPU job then sits `PENDING (AssocGrpCpuLimit /
+  AssocGrpNodeLimit)` for 1–2 h. Nothing to fix; poll with long sleeps.
+  `squeue -A rfar:regular` does not match jobs — use `squeue -u dbizzoze`.
+- Cubit/meshconvert sideset checks fit in a tiny sbatch (`--ntasks=1
+  --cpus-per-task=4 --mem=16gb --time=10:00`, ~7 s of node time);
+  `acdtool meshconvert` prints an Euler characteristic that must be `2`.
+- Full `pytest` takes ~41–53 min on iana (`test_bayesian.py` ~20 min,
+  `test_inversion.py` ~10 min, ~9 cores). A background run imports the source
+  at collection, so it does not see edits made after it starts.
+- Test artifacts for every example are in
+  `/sdf/scratch/users/d/dbizzoze/lume-ace3p-tests/<example>/`.
+
 ## How to run this plan from a terminal (NoMachine / ssh to sdfiana)
 
 ```bash
