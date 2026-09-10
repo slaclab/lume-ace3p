@@ -2140,7 +2140,9 @@ def gp_parameter_sweep(workflow, sweep_dict, vocs_dict, xopt_dict,
                                    dtype=torch.double)
         posterior = X.generator.model.posterior(test_points).mean
         # One point in -> posterior mean shape (1, n_targets); pull each target.
-        means = posterior[0]
+        # detach(): the mean still tracks gradients, and float() on such a
+        # tensor warns on every grid point.
+        means = posterior.detach()[0]
         for k, obj in enumerate(targets):
             row[obj] = float(means[k])
         sweep_rows.append(row)

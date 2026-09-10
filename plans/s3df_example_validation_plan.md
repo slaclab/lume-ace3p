@@ -123,7 +123,7 @@ Status legend: `[x]` validated on milano, `[~]` ran but with notes, `[ ]` todo.
 - [x] `omega3p_optimization` — job 37725620, 5m45s, 25 Nelder-Mead evaluations (25 workdirs), `sim_output.txt` 25 rows, no NaNs, no `xopt_error`; converges to the bound corner (cav_radius 105, ellipticity 0.5) with R/Q 135.96 Ω — consistent with the sweep's trend (R/Q ↑ with radius, ↓ with ellipticity). Converging to a bound is the example's design, not a bug.
 - [x] `s3p_optimization` — run 2 (job 37727718, 7m04s): 25 NM evaluations, no NaNs/errors, |S11| 0.117 → 0.020, converging to the bound corner (cornercut 14, rcorner1 2.5). Run 1 (37726476, 8m04s) completed with exit 0 but **every objective was NaN**: the YAML asked for `at: {frequency: 12.0e9}` and the .s3p scan is 9.424 + k·0.25 GHz (no 12.0). Example moved to 11.924 GHz and an off-grid frequency now raises (64c45b3).
 - [x] `s3p_mf_optimization` — run 2 (job 37730046, 7m27s): 14 evaluations over fidelities 0–1 (fidelity 0 now fine on 8 ranks), no NaNs/errors, terminated by `tolerance` (reflection 0.0000 at s=0.70; runtimes 10 s at s=0 to 36 s at s=1). Run 1 (37728605) FAILED: S3P SIGFPE at mesh_fidelity 0 (2634 elements) over 16 ranks; diag job 37729506 showed 16 ranks fail deterministically, 8/4 succeed → both MF examples moved to 8×4 (1e51dfc).
-- [ ] `s3p_bayesian_sweep` (new S3DF batch script; GP sweep)
+- [x] `s3p_bayesian_sweep` — job 37731398, 3m01s (8 ranks): 13 real S3P evaluations in `sim_output.txt` (|S11| 0.004–0.095), 100-point GP grid in `sweep_output.txt` (means 0.00–0.095), no NaNs/errors. A torch `requires_grad` → `float()` warning per grid point silenced with `.detach()`.
 
 ### Geant4 (needs `/sdf/group/rfar/geant4/example/dose-npass/sim` — exists)
 
