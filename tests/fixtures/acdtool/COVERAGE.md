@@ -77,7 +77,7 @@ Phase 3 defers binary/mesh parsing for these regardless of coverage.
 
 ---
 
-## The two gaps after Phase 3 — one closed
+## The two gaps after Phase 3, one closed
 
 **`maxFieldsOnSurface` — closed 2026-09-09.** Running `examples/omega3p_sweep`
 on S3DF produced the first real `[maxFieldsOnSurface]` output
@@ -97,21 +97,17 @@ and `[RoverQ]`. Its parser was written against an assumed format and is tested
 only with the hand-written rows in `tests/test_modules.py::RFPOST_OUTPUT`.
 
 **`examples/omega3p_sweep` depends on `maxFieldsOnSurface`** for its `E_max`
-output parameter (`['maxFieldsOnSurface', '6', 'Emax']`), and
-`tests/baseline/omega3p_sweep/` freezes that path. So a shipped example and a
-frozen baseline both rest on an unverified format.
+output parameter, and `tests/baseline/omega3p_sweep/` freezes that path. Since
+2026-09-09 that block is backed by real output, so the example and its baseline
+no longer rest on an unverified format.
 
-**How Phase 3 handled this, and what is still owed.** No cluster run was
-available, so neither parser was "cleaned up" against its assumed layout. Both
-were instead made *less* dependent on one: `kickFactor` takes its column names
-from the file's own `ModeID` header row rather than from a fixed order, and
-`maxFieldsOnSurface` reads `name = value [at (x,y,z)]` lines wherever they appear
-rather than at a fixed offset below the `surfaceID`. Both produce **byte-identical
-values** on the synthetic fixture (pinned by `test_modules.py::test_acdtool_extract`
-and `test_acdtool_field_returns_curves_not_table_columns`). That widens the range
-of real formats they would read correctly but does not verify either one — a real
-run with those two blocks at `ionoff = 1` is still the only thing that closes this,
-and remains a prerequisite for treating their column names as documented.
+**What is still owed.** `kickFactor` was made less dependent on an assumed
+layout (its column names come from the file's own `ModeID` header row rather
+than a fixed order) and produces byte-identical values on the synthetic fixture
+(pinned by `test_modules.py::test_acdtool_extract` and
+`test_acdtool_field_returns_curves_not_table_columns`). That widens the range of
+real formats it would read but does not verify one. A real run with
+`kickFactor` enabled is the only thing that closes this gap.
 
 ## Blocks with no fixture at all
 

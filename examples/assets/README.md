@@ -4,8 +4,7 @@ This folder holds large input files that are **shared across multiple examples**
 They are referenced by relative path (`../assets/...`) from each example's YAML so
 the repository carries no multi-megabyte duplicates.
 
-This folder is **not a runnable example** — it has no YAML and nothing to run. It
-exists only to store inputs consumed elsewhere.
+This folder is **not a runnable example**: it has no YAML and nothing to run.
 
 ## Contents
 

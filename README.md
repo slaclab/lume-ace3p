@@ -6,71 +6,72 @@
 
 `lume-ace3p` is a set of Python interfaces, written by David Bizzozero and
 Lila Fowler, for running [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)
-electromagnetic simulation workflows — including [Cubit](https://cubit.sandia.gov/)
-mesh generation and acdtool postprocessing — for parameter sweeps and
-optimization problems. It is built on top of [lume](https://github.com/slaclab/lume)
-by Christopher Mayes and uses [Xopt](https://github.com/xopt-org/Xopt)
-by Ryan Roussel for optimization.
+electromagnetic simulation workflows for parameter sweeps and optimization
+problems. The workflows include [Cubit](https://cubit.sandia.gov/) mesh
+generation and acdtool postprocessing. It is built on
+[lume](https://github.com/slaclab/lume) by Christopher Mayes and uses
+[Xopt](https://github.com/xopt-org/Xopt) by Ryan Roussel for optimization.
 
 The user submits a batch script to HPC nodes which calls `run_lume_ace3p.py`
-with a user-defined YAML configuration. The YAML declares a **`workflow:`** — an
-ordered list of pipeline **modules** (`cubit`, `omega3p`/`s3p`/`t3p`, `acdtool`,
-`track3p_source`, `particles`, `geant4`, and mesh/particle source modules) — plus
+with a YAML configuration. The YAML declares a **`workflow:`**, an ordered list
+of pipeline **modules** (`cubit`, `omega3p`/`s3p`/`t3p`, `acdtool`,
+`track3p_source`, `particles`, `geant4`, and mesh/particle source modules), and
 a **`mode:`** that says how to drive it (`single`, `parameter_sweep`,
-`scalar_optimize`, `gp_parameter_sweep`). The modules are validated into a
-runnable DAG by their artifact dependencies, run in order, and the scalars named
-in `output_parameters` are pulled out into a tab-delimited results table or
-handed to Xopt for optimization. Because the modes are workflow-agnostic, any
-chain — an S3P sweep, a Geant4 dose optimization, or a full
-`track3p_source → particles → geant4` pipeline — is driven by the same code.
+`scalar_optimize`, `gp_parameter_sweep`, plus the Geant4 surrogate modes
+`collect_training_data`, `train_surrogate`, `invert_optimize` and
+`invert_bayesian`). The modules are validated into a
+runnable DAG by their artifact dependencies and run in order. The scalars named
+in `output_parameters` are written to a tab-delimited results table or handed
+to Xopt for optimization. The modes are workflow-agnostic: an S3P sweep, a
+Geant4 dose optimization, or a full `track3p_source → particles → geant4`
+pipeline is driven by the same code.
 
 ### Architecture
 
-Three cleanly separated layers (see
-[`plans/workflow_module_refactor_plan.md`](plans/workflow_module_refactor_plan.md)):
+Three separate layers:
 
-1. **Modules** (`src/lume_ace3p/modules.py`) — one adapter per pipeline step,
+1. **Modules** (`src/lume_ace3p/modules.py`): one adapter per pipeline step,
    each declaring the artifact kinds it `requires` and `provides`.
-2. **Workflow** (`src/lume_ace3p/workflow_graph.py`) — a declarative,
-   YAML-defined list of modules validated into an ordered DAG, exposing a single
-   black-box `evaluate(input_dict) -> output_dict`.
-3. **Modes** (`src/lume_ace3p/modes.py`) — how the workflow is driven; they call
+2. **Workflow** (`src/lume_ace3p/workflow_graph.py`): a YAML-defined list of
+   modules validated into an ordered DAG, exposing a single black-box
+   `evaluate(input_dict) -> output_dict`.
+3. **Modes** (`src/lume_ace3p/modes.py`): how the workflow is driven. They call
    only `evaluate`/`sweep_axes` and own the outer loop (tensor product, Xopt
    generators, termination). Results flow through one shared writer
    (`src/lume_ace3p/results.py`).
 
-See the [`examples/`](examples/) directory for a YAML per mode and solver family,
-and [`docs/testing.md`](docs/testing.md) for how to run the test suite.
+See [`examples/`](examples/) for a YAML per mode and solver family, and
+[`docs/testing.md`](docs/testing.md) for how to run the test suite.
 
 ## Documentation
 
 Full documentation is hosted on Read the Docs:
 **<https://lume-ace3p.readthedocs.io>**
 
-The documentation covers:
+It covers:
 
-- [Installation and setup](https://lume-ace3p.readthedocs.io/en/latest/installation.html) — Perlmutter and S3DF.
-- [Workflow input files](https://lume-ace3p.readthedocs.io/en/latest/workflow_inputs.html) — Cubit, ACE3P, and acdtool conventions.
-- [Parameter sweeping](https://lume-ace3p.readthedocs.io/en/latest/parameter_sweep.html) — Omega3P and S3P examples.
-- [Optimization](https://lume-ace3p.readthedocs.io/en/latest/optimization.html) — Xopt scalar, multifidelity, and Omega3P-via-script.
-- [YAML configuration reference](https://lume-ace3p.readthedocs.io/en/latest/yaml_reference.html) — every `*_parameters` block.
-- [acdtool reference](https://lume-ace3p.readthedocs.io/en/latest/acdtool_reference.html) — its 19 commands and 24 `.rfpost` blocks, with what is implemented here.
+- [Installation and setup](https://lume-ace3p.readthedocs.io/en/latest/installation.html): Perlmutter and S3DF.
+- [Workflow input files](https://lume-ace3p.readthedocs.io/en/latest/workflow_inputs.html): Cubit, ACE3P, and acdtool conventions.
+- [Parameter sweeping](https://lume-ace3p.readthedocs.io/en/latest/parameter_sweep.html): Omega3P and S3P examples.
+- [Optimization](https://lume-ace3p.readthedocs.io/en/latest/optimization.html): Xopt scalar, multifidelity, and Omega3P-via-script.
+- [YAML configuration reference](https://lume-ace3p.readthedocs.io/en/latest/yaml_reference.html): every `*_parameters` block.
+- [acdtool reference](https://lume-ace3p.readthedocs.io/en/latest/acdtool_reference.html): its 19 commands and 24 `.rfpost` blocks, and what is implemented here.
 - [Plotting tools](https://lume-ace3p.readthedocs.io/en/latest/plotting.html).
 - [Troubleshooting / FAQs](https://lume-ace3p.readthedocs.io/en/latest/troubleshooting.html).
-- [API reference](https://lume-ace3p.readthedocs.io/en/latest/api/index.html) — auto-generated from source on every build.
+- [API reference](https://lume-ace3p.readthedocs.io/en/latest/api/index.html): auto-generated from source on every build.
 
 ## Repository layout
 
-- `src/lume_ace3p/` — the Python package (entry point: `run_lume_ace3p.py`).
-- `examples/` — runnable Cubit / ACE3P / YAML / batch-script examples.
-- `plotting/` — interactive plotting scripts for sweep and optimization output.
-- `CHANGELOG.md` — what changed in each release.
-- `docs/` — Sphinx documentation source.
-- `plans/` — implementation plans for the larger pieces of work, each recording
-  what was built, how it deviated from the design, and what it left owed. Kept
-  out of `docs/` because they are development history rather than user
-  documentation.
-- `references/` — external reference material, including the SLAC ACE3P
+- `src/lume_ace3p/`: the Python package (entry point: `run_lume_ace3p.py`).
+- `examples/`: runnable Cubit / ACE3P / YAML / batch-script examples.
+- `plotting/`: interactive plotting scripts for sweep and optimization output.
+- `CHANGELOG.md`: what changed in each release.
+- `docs/`: Sphinx documentation source.
+- `plans/`: implementation plans for the larger pieces of work, each recording
+  what was built, how it deviated from the design, and what it left owed. They
+  are development history rather than user documentation, so they stay out of
+  `docs/`.
+- `references/`: external reference material, including the SLAC ACE3P
   command-syntax references for every module and `acdtool`.
 
 ## Building the docs locally
@@ -84,10 +85,9 @@ Then open `docs/_build/html/index.html`.
 
 ## License
 
-Distributed under the BSD-2-Clause License. See [LICENSE](./LICENSE) for
-details. The licensing model is an open discussion between the code authors,
-SLAC management, and DOE program managers along the funding line for the
-project.
+Distributed under the BSD-2-Clause License. See [LICENSE](./LICENSE). The
+licensing model is an open discussion between the code authors, SLAC
+management, and DOE program managers along the project's funding line.
 
 ## SLAC National Accelerator Laboratory
 

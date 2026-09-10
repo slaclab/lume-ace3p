@@ -15,15 +15,13 @@ loop (`NelderMeadGenerator`, `num_random: 0`, `num_step: 25`) that **maximizes
 `R/Q`** over two Cubit journal variables, `cav_radius` (bounds `[95, 105]`) and
 `ellipticity` (bounds `[0.5, 1.2]`). The VOCS objective name `R/Q` is an
 `output_parameters` name (`{module: acdtool, section: RoverQ, quantity: RoQ,
-at: {mode: 0}}`), so the Xopt driver never parses acdtool output itself —
-extraction stays a workflow concern. `mode_freq` is declared as a tracked
-observable, not optimized, and comes from Omega3P's own eigenmode output rather
-than from acdtool.
+at: {mode: 0}}`), so the Xopt driver never parses acdtool output itself.
+`mode_freq` is a tracked observable, not optimized, and comes from Omega3P's own
+eigenmode output rather than from acdtool.
 
 Declaring `input_parameters` gives each VOCS variable an explicit home: a
 variable routes to the module bucket where it is declared (both live under
-`cubit:` here), which checks the routing and makes typos fail loudly rather than
-silently becoming junk Cubit variables.
+`cubit:` here). A name declared in no bucket falls back to `cubit:`.
 
 This is the optimization counterpart of the sweep siblings:
 [`../omega3p_sweep`](../omega3p_sweep) walks a 16-point Cubit grid and

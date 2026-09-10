@@ -10,12 +10,11 @@ mode:      parameter_sweep
 
 Cubit meshes a pillbox cavity from the `pillbox-rtop.jou` journal, Omega3P
 solves for its eigenmodes, and acdtool postprocesses the fields via
-`pillbox-rtop.rfpost`. The sweep walks two Cubit journal variables —
-`cav_radius` (90–120 mm, 4 points) and `ellipticity` (0.5–1.25, 4 points) — and
-adds a third axis from the ACE3P config: the surface-material `Sigma` list
-`[5.8e7, 1.04e7]` (2 values). That makes **4 x 4 x 2 = 32 runs**. The mode
-iterates every swept axis generically, so the ACE3P axis rides alongside the
-Cubit ones with no special-casing and appears as its own column in
+`pillbox-rtop.rfpost`. The sweep walks two Cubit journal variables, `cav_radius`
+(90–120 mm, 4 points) and `ellipticity` (0.5–1.25, 4 points), plus a third axis
+from the ACE3P config: the surface-material `Sigma` list `[5.8e7, 1.04e7]`
+(2 values). That makes **4 x 4 x 2 = 32 runs**. The mode iterates every swept
+axis generically, so the ACE3P axis appears as its own column in
 `omega3p_sweep_output.txt`. The `output_parameters` are the same set
 [`../omega3p_sweep`](../omega3p_sweep) declares: `R/Q` from the acdtool `RoverQ`
 block, `E_max` and its `loc_x/loc_y/loc_z` from `maxFieldsOnSurface` on surface 6,

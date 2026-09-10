@@ -1,10 +1,9 @@
 # Configuration by mode
 
-Every LUME-ACE3P run needs the same two things: a **`workflow:`** list of
-modules and a **`mode:`** block that selects how the workflow is driven.
-*Which additional blocks are required* depends entirely on the mode. This page
-is a checklist — for each mode, what you **must** supply, what is **optional**,
-and a minimal skeleton to copy from.
+Every LUME-ACE3P run needs a **`workflow:`** list of modules and a **`mode:`**
+block that selects how the workflow is driven. Which other blocks are required
+depends on the mode. This page is a checklist: for each mode, what you must
+supply, what is optional, and a minimal skeleton to copy from.
 
 For the full meaning of each block, see the [](yaml_reference.md); for a
 walkthrough of a sweep or an optimization, see [](parameter_sweep.md) and
@@ -14,12 +13,12 @@ walkthrough of a sweep or an optimization, see [](parameter_sweep.md) and
 
 Regardless of mode, two top-level blocks are mandatory:
 
-- **`workflow:`** — an ordered list of module entries (`cubit`, `omega3p`,
+- **`workflow:`**: an ordered list of module entries (`cubit`, `omega3p`,
   `s3p`, `acdtool`, `particles`, `geant4`, …). The run order is resolved from
   artifact dependencies, not list order.
-- **`mode:`** — a block with a `type:` key naming one of the modes below.
+- **`mode:`**: a block with a `type:` key naming one of the modes below.
 
-`workflow_parameters:` (workdir and executable paths) is always *optional* — it
+`workflow_parameters:` (workdir and executable paths) is always optional. It
 defaults to running in the current directory with auto-resolved tool paths.
 
 ## Requirements matrix
@@ -37,15 +36,15 @@ A ✓ means required for that mode; **○** means optional; a blank means ignore
 | `sweep_parameters`   |          |                   |                   |          ✓           |
 | `workflow_parameters`|    ○     |         ○         |        ○          |         ○            |
 
-¹ Optional, and if present **every leaf must be scalar** — a vector-valued leaf
+¹ Optional, and if present **every leaf must be scalar**. A vector-valued leaf
   (a list or a `min/max/num` range) makes the config a sweep, not a single run.
-² Required in the sense that a *real* sweep needs at least one **array-valued**
-  leaf (a list or `min/max/num`) to iterate over. With no array leaf the run
-  degenerates to a single evaluation.
+² A real sweep needs at least one **array-valued** leaf (a list or
+  `min/max/num`) to iterate over. With no array leaf the run degenerates to a
+  single evaluation.
 ³ Optional for routing, but **strongly recommended**: it declares each VOCS
   variable's home bucket (cubit / ace3p / geant4 / particles). Omit it and every
-  variable silently falls back to the cubit bucket — fine for a pure-Cubit
-  problem, but it masks typos and mis-routes any non-Cubit knob. See
+  variable silently falls back to the cubit bucket, which is fine for a
+  pure-Cubit problem but masks typos and mis-routes any non-Cubit knob. See
   [](yaml_reference.md#vocs_parameters).
 ⁴ Required *indirectly*: the VOCS `objectives` (and `constraints` /
   `observables`) reference `output_parameters` **by name**, so every name used
@@ -58,7 +57,7 @@ Run the workflow once and write a one-row result table (or one row per
 field-index for a field-indexed solver such as S3P).
 
 **Required:** `workflow:`, `mode:` only.
-**Optional:** `input_parameters` (scalar leaves only — nominal overrides),
+**Optional:** `input_parameters` (scalar leaves only, as nominal overrides),
 `output_parameters` (the scalars to extract into the table), `mode.output_file`.
 
 ```yaml
@@ -90,7 +89,7 @@ across different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all
 multiply into the same tensor grid.
 
 `mode.resume: True` (with `workflow_parameters: {workdir_mode: indexed}`) re-runs
-only the points and steps a previous run did not finish — see
+only the points and steps a previous run did not finish; see
 [](#resuming-a-sweep).
 
 ```yaml
@@ -122,19 +121,20 @@ Drive an Xopt optimization loop over the workflow.
 
 **Required:** `workflow:`, `mode:`, `vocs_parameters`, `xopt_parameters`, and the
 `output_parameters` entries named by the VOCS objectives/constraints/observables.
-Within `xopt_parameters`, `generator` is required and — for `scalar_optimize` —
-at least one termination criterion (`num_step`, `cost_budget`, or `alotted_time`).
+Within `xopt_parameters`, `generator` is required, as is one termination
+criterion (`num_step`, `cost_budget`, or `alotted_time`).
 **Optional but recommended:** `input_parameters` (declares variable routing; see
 note ³ above).
 **Optional:** `mode.output_file` (the Xopt run log, default `sim_output.txt`),
-`mode.resume`, and `workflow_parameters.workdir_mode` — set it to `'auto'` so each
-evaluation gets its own directory rather than overwriting the previous one's files.
+`mode.resume`, and `workflow_parameters.workdir_mode`. Set the latter to `'auto'`
+so each evaluation gets its own directory rather than overwriting the previous
+one's files.
 
-`mode.resume: True` continues an interrupted optimization from the `xopt_state.yml`
-written beside the run log, instead of starting over. Unlike a resumed sweep it does
-**not** reproduce the trajectory an uninterrupted run would have taken — it promises
-only that no evaluation is repeated and the search continues from the same data. See
-[](#xopt-resume).
+`mode.resume: True` continues an interrupted optimization from the
+`xopt_state.yml` written beside the run log, instead of starting over. Unlike a
+resumed sweep it does **not** reproduce the trajectory an uninterrupted run
+would have taken; it promises only that no evaluation is repeated and the
+search continues from the same data. See [](#xopt-resume).
 
 ```yaml
 workflow :
@@ -173,10 +173,10 @@ xopt_parameters :
 ```
 
 :::{note}
-`NelderMeadGenerator` works with `num_random: 0`. When no random seeding is
-requested, LUME-ACE3P seeds the optimizer's initial point at the **midpoint of
-each variable's bounds** (xopt requires a starting point), so the nominal values
-in `input_parameters` are not themselves the starting simplex origin.
+`NelderMeadGenerator` works with `num_random: 0`. Xopt requires a starting
+point, so when no random seeding is requested LUME-ACE3P seeds the optimizer's
+initial point at the **midpoint of each variable's bounds**. The nominal values
+in `input_parameters` are not the starting simplex origin.
 :::
 
 ## `gp_parameter_sweep`
@@ -206,14 +206,13 @@ sweep_parameters :
 
 ## Surrogate-pipeline modes
 
-Two additional modes support the offline surrogate workflow; they are configured
-differently from the modes above (their keys live directly on the `mode:` block
-rather than in separate top-level sections):
+Two further modes support the offline surrogate workflow. Their keys live
+directly on the `mode:` block rather than in separate top-level sections:
 
-- **`collect_training_data`** — samples the input space (Sobol/random) and writes
+- **`collect_training_data`** samples the input space (Sobol/random) and writes
   a training store. Key `mode:` fields: `variables` (per-variable bounds),
   `store`/`output_dir`, `num_samples`, `sampler`, `seed`, optional `fidelity`.
-- **`train_surrogate`** — fits a PCA-GP surrogate from a training store. Key
+- **`train_surrogate`** fits a PCA-GP surrogate from a training store. Key
   `mode:` fields: `store` (required), `variance`, `num_components`, `seed`.
 
 See [](optimization.md) and the surrogate examples under `examples/` for full
