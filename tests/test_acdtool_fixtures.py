@@ -199,6 +199,7 @@ def test_fixture_inventory():
         'acdtool_inputs/Pillbox.acdtool',
         'solver_outputs/omega3p/pillbox.omega3p.out',
         'solver_outputs/omega3p/pillbox-rtop+coax.omega3p.out',
+        'solver_outputs/omega3p/pillbox-rtop-mode-first.omega3p.out',
         'solver_outputs/s3p_90DegreeBend/Reflection.out',
         'solver_outputs/s3p_90DegreeBend/SParameter.out',
         'solver_outputs/s3p_90DegreeBend/PortRef7_0.out',
@@ -1101,23 +1102,34 @@ def test_omega3p_complex_eigenvalues_parse_today():
     assert modes[0].get_leaf('ExternalQ') == '1024235.9659009'
 
 
-def test_omega3p_banner_does_not_break_parsing():
-    """The license banner inside ``Version`` gets absorbed into the first
-    top-level key name -- garbage, but harmless: the Mode sections are still
-    found. Phase 1 must keep ignoring it rather than trying to clean it up."""
-    for name in ['pillbox', 'pillbox-rtop+coax']:
+def test_omega3p_header_comment_is_stripped():
+    """``omega3p.out`` opens with a ``/* input parameters, KVC syntax */``
+    header. Phase 1 let it be absorbed into the first top-level key's name as
+    "harmless garbage" -- which held only while the first section was
+    ``Version`` or ``AMRLevel``. Omega3P writes its sections in no fixed order,
+    and an S3DF run put ``Mode`` first: that mode's key became
+    ``'/*...*/ Mode'`` and the eigenmode vanished from the parse (3 of 32 sweep
+    points reported one mode instead of two). The tokenizer now strips block
+    comments, so the first key is clean in every fixture and both modes of the
+    mode-first file are found."""
+    for name, first in [('pillbox', 'Version'),
+                        ('pillbox-rtop+coax', 'AMRLevel'),
+                        ('pillbox-rtop-mode-first', 'Mode')]:
         tree = _omega3p_tree(name)
-        first_key = tree.entries[0][0]
-        assert 'KVC syntax' in first_key      # banner swallowed into the key
-        assert tree.children('Mode')          # ...and Mode is still reachable
+        assert tree.entries[0][0] == first
+        assert 'KVC syntax' not in tree.entries[0][0]
+        assert tree.children('Mode')
+    assert len(_omega3p_tree('pillbox-rtop-mode-first').children('Mode')) == 2
 
 
 def test_omega3p_top_level_order_differs_between_runs():
     """Why Phase 1 must search sections by name, never by position."""
     order = {n: [k for k, _ in _omega3p_tree(n).entries]
-             for n in ['pillbox', 'pillbox-rtop+coax']}
+             for n in ['pillbox', 'pillbox-rtop+coax',
+                       'pillbox-rtop-mode-first']}
     assert order['pillbox'].index('Mode') == 5
     assert order['pillbox-rtop+coax'].index('Mode') == 1
+    assert order['pillbox-rtop-mode-first'].index('Mode') == 0
     assert order['pillbox'] != order['pillbox-rtop+coax']
 
 
