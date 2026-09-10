@@ -912,7 +912,7 @@ input_parameters :
   cubit :                       # Cubit journal knobs (-> cubit bucket)
     cornercut : {min: 12.0, max: 16.0, num: 5}
   ace3p :                       # values inside the ACE3P input file
-    FrequencyScan : {Start: 9.424e9}
+    FrequencyScan : {Start: 9.5e9}
   geant4 :                      # Geant4 input-file overrides
     nthreads : 8
   particles :                   # particles-module knobs (e.g. field-enhancement β)

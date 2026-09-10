@@ -1,9 +1,10 @@
 # S3P parameter sweep on the declarative module/mode schema:
 #   workflow:  cubit -> s3p
 #   mode:      parameter_sweep  (tensor product over the swept input axes)
-# S3P exposes a Frequency field index, so the result table is emitted long-format
-# (one row per (cornercut, rcorner2, Frequency)). 'output_file' names the result
-# table written via the shared DataFrame.to_csv writer.
+# The four S-parameter outputs span S3P's Frequency scan, so the table is
+# long-format: one row per (cornercut, rcorner2, Frequency), the shape
+# plotting/s3p_sweep_plot.py reads. The last output is a scalar picked at one
+# scan frequency; it repeats down each point's rows.
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_s3p_workdir'
@@ -32,3 +33,14 @@ input_parameters :
       'min' : 4.0
       'max' : 16.0
       'num' : 3
+
+# S-matrix indices, not port numbers: index 0 is port 7 mode 0 and index 1 is
+# port 8 mode 0 (the run's IndexMap records the mapping). A bare quantity keeps
+# the whole spectrum; 'at:' picks one scan point and must name a point of the
+# FrequencyScan (9.5 to 12.5 GHz in 0.25 GHz steps), or the run raises.
+output_parameters :
+  'S(0,0)' : { module: s3p, quantity: 'S(0,0)' }
+  'S(0,1)' : { module: s3p, quantity: 'S(0,1)' }
+  'S(1,0)' : { module: s3p, quantity: 'S(1,0)' }
+  'S(1,1)' : { module: s3p, quantity: 'S(1,1)' }
+  'reflection_12GHz' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }

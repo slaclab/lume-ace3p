@@ -13,8 +13,8 @@ FiniteElement: {
 }
 
 FrequencyScan: { 
-  Start: 9.424e+9
-  End:   12.424e+9
+  Start: 9.5e+9
+  End:   12.5e+9
   Interval: 0.25e+9
 }
 

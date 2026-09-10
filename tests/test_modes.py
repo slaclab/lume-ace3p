@@ -59,22 +59,27 @@ def _build(entries, inputs, workdir, output_spec=None):
 
 
 def test_s3p_sweep_matches_baseline(tmp_path):
-    """cubit -> s3p, dry-run. S3P exposes a Frequency field index, so the sweep
-    is emitted long-format: one row per (cornercut, rcorner2, Frequency). The
-    example declares no output_parameters, so the columns are exactly the
-    swept inputs + Frequency — matching the legacy WriteS3PDataTable baseline."""
+    """cubit -> s3p, dry-run. S3P exposes a Frequency field index and the
+    example's four S(m,n) outputs span it, so the sweep is emitted long-format:
+    one row per (cornercut, rcorner2, Frequency). The columns are the swept
+    inputs, Frequency, the four spectra and the scalar reflection_12GHz, in the
+    order declared; under dry-run the five outputs are NaN."""
     cwd = os.getcwd()
     try:
-        _data, inputs = _staged('s3p_sweep', 's3p_sweep.yaml')
+        data, inputs = _staged('s3p_sweep', 's3p_sweep.yaml')
         entries = [
             {'module': 'cubit', 'journal': 'bend-90degree.jou'},
             {'module': 's3p', 'input': 'bend-90degree.s3p', 'tasks': 16,
              'cores': 4, 'opts': '--cpu-bind=cores'},
         ]
-        wf = _build(entries, inputs, 'lume-ace3p_s3p_workdir')
+        wf = _build(entries, inputs, 'lume-ace3p_s3p_workdir',
+                    output_spec=data.get('output_parameters'))
         df = parameter_sweep(wf)
 
-        assert list(df.columns) == ['cornercut', 'rcorner2', 'Frequency']
+        assert list(df.columns) == ['cornercut', 'rcorner2', 'Frequency',
+                                    'S(0,0)', 'S(0,1)', 'S(1,0)', 'S(1,1)',
+                                    'reflection_12GHz']
+        assert df[['S(0,0)', 'reflection_12GHz']].isna().all().all()
         out = os.path.join(str(tmp_path), 's3p_sweep_output.txt')
         write_table(df, out)
         baseline = os.path.join(bu.BASELINE_DIR, 's3p_sweep',

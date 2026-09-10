@@ -34,11 +34,11 @@ input_parameters :
         'cornercut' : 15.0
         'rcorner1' : 1.0
 
-# The 'at:' frequency must be a point of the .s3p FrequencyScan (here
-# 9.424 GHz to 12.424 GHz in 0.25 GHz steps); an off-grid value raises, naming
-# the nearest scan points, rather than optimizing NaN.
+# The 'at:' frequency must be a point of the .s3p FrequencyScan (here 9.5 GHz
+# to 12.5 GHz in 0.25 GHz steps); an off-grid value raises, naming the scan's
+# range and nearest points, rather than optimizing NaN.
 output_parameters :
-    'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 11.924e+09 } }
+    'reflection' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }
 
 vocs_parameters :
     'variables' :          # bounds only; names route via input_parameters above

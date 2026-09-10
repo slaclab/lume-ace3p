@@ -252,15 +252,17 @@ In this example `cornercut` and `rcorner2` are length 5 and 3, giving 5 × 3 =
 
 S3P exposes a frequency field index, so its sweep table is emitted in
 **long format**: one row per `(grid-point, frequency)` rather than one row per
-grid point. `output_parameters` are optional here — with none declared the
-frequency index alone drives the rows, and the table carries the swept inputs
-and `Frequency` only; the S-parameters stay in each workdir's
-`s3p_results/SParameter.out`. Declare an output such as
-`{module: s3p, quantity: 'S(0,0)'}` per S-parameter you want as a column.
+grid point. Each declared output such as `{module: s3p, quantity: 'S(0,0)'}`
+becomes a column sampled at that row's frequency. `output_parameters` are
+optional: with none declared the frequency index alone drives the rows and the
+table carries the swept inputs and `Frequency` only, with the S-parameters left
+in each workdir's `s3p_results/`.
 
-In the example, S3P scans 13 frequencies for each of the 15 workflow
-evaluations, giving 195 rows in `output_file`, each with `cornercut`,
-`rcorner2` and `Frequency`.
+The example declares the four `S(m,n)` spectra and one scalar,
+`reflection_12GHz`, which is `S(0,0)` picked `at: {frequency: 12.0e+09}`. S3P
+scans 13 frequencies (9.5 to 12.5 GHz) for each of the 15 workflow evaluations,
+giving 195 rows in `output_file`. A scalar output repeats down its point's
+rows, and an `at:` frequency that is not a scan point raises.
 
 The long format is used only while an output rides on the index (or none is
 declared). If every declared output is narrowed to a scalar — `at: {frequency:
@@ -288,8 +290,8 @@ input_parameters :
       'CurvedSurfaces' : 'on'
 
     'FrequencyScan':
-      'Start' : 9.424e+9
-      'End' : 12.424e+9
+      'Start' : 9.5e+9
+      'End' : 12.5e+9
       'Interval' : 0.25e+9
 
     'Port':

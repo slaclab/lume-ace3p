@@ -2,9 +2,10 @@
 # .s3p file) on the declarative module/mode schema:
 #   workflow:  cubit -> s3p
 #   mode:      parameter_sweep
-# The s3p module lists no 'input:' file — its ACE3P settings come entirely from
+# The s3p module lists no 'input:' file: its ACE3P settings come entirely from
 # the input_parameters.ace3p block below (duplicate-key aware, e.g. two Port
-# blocks). input_parameters.cubit feeds the Cubit knobs.
+# blocks). input_parameters.cubit feeds the Cubit knobs. Outputs are the same as
+# ../s3p_sweep: four spectra (long-format over Frequency) plus one scalar.
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_s3p_workdir'
@@ -45,8 +46,8 @@ input_parameters :
       'CurvedSurfaces' : 'on'
 
     'FrequencyScan':
-      'Start' : 9.424e+9
-      'End' : 12.424e+9
+      'Start' : 9.5e+9
+      'End' : 12.5e+9
       'Interval' : 0.25e+9
 
     'Port':
@@ -56,3 +57,14 @@ input_parameters :
     'Port' :
       'ReferenceNumber': 8
       'NumberOfModes' : 1
+
+# S-matrix indices, not port numbers: index 0 is port 7 mode 0 and index 1 is
+# port 8 mode 0 (the run's IndexMap records the mapping). A bare quantity keeps
+# the whole spectrum; 'at:' picks one scan point and must name a point of the
+# FrequencyScan (9.5 to 12.5 GHz in 0.25 GHz steps), or the run raises.
+output_parameters :
+  'S(0,0)' : { module: s3p, quantity: 'S(0,0)' }
+  'S(0,1)' : { module: s3p, quantity: 'S(0,1)' }
+  'S(1,0)' : { module: s3p, quantity: 'S(1,0)' }
+  'S(1,1)' : { module: s3p, quantity: 'S(1,1)' }
+  'reflection_12GHz' : { module: s3p, quantity: 'S(0,0)', at: { frequency: 12.0e+09 } }

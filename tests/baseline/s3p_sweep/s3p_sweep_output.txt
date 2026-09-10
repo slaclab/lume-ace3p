@@ -1,16 +1,16 @@
-cornercut	rcorner2	Frequency
-12.0	4.0	0.0
-12.0	10.0	0.0
-12.0	16.0	0.0
-13.0	4.0	0.0
-13.0	10.0	0.0
-13.0	16.0	0.0
-14.0	4.0	0.0
-14.0	10.0	0.0
-14.0	16.0	0.0
-15.0	4.0	0.0
-15.0	10.0	0.0
-15.0	16.0	0.0
-16.0	4.0	0.0
-16.0	10.0	0.0
-16.0	16.0	0.0
+cornercut	rcorner2	Frequency	S(0,0)	S(0,1)	S(1,0)	S(1,1)	reflection_12GHz
+12.0	4.0	0.0	nan	nan	nan	nan	nan
+12.0	10.0	0.0	nan	nan	nan	nan	nan
+12.0	16.0	0.0	nan	nan	nan	nan	nan
+13.0	4.0	0.0	nan	nan	nan	nan	nan
+13.0	10.0	0.0	nan	nan	nan	nan	nan
+13.0	16.0	0.0	nan	nan	nan	nan	nan
+14.0	4.0	0.0	nan	nan	nan	nan	nan
+14.0	10.0	0.0	nan	nan	nan	nan	nan
+14.0	16.0	0.0	nan	nan	nan	nan	nan
+15.0	4.0	0.0	nan	nan	nan	nan	nan
+15.0	10.0	0.0	nan	nan	nan	nan	nan
+15.0	16.0	0.0	nan	nan	nan	nan	nan
+16.0	4.0	0.0	nan	nan	nan	nan	nan
+16.0	10.0	0.0	nan	nan	nan	nan	nan
+16.0	16.0	0.0	nan	nan	nan	nan	nan

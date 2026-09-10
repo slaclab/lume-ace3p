@@ -43,9 +43,16 @@ evaluation rather than after its whole budget.
 
 ### Changed
 
-- **`examples/s3p_optimization` minimizes reflection at 11.924 GHz**, a point
-  of its 9.424–12.424 GHz / 0.25 GHz scan. It asked for 12.0 GHz, which is not,
-  and on S3DF spent 25 real S3P runs optimizing `NaN` while exiting 0.
+- **The S3P bend examples scan 9.5–12.5 GHz** (13 points in 0.25 GHz steps,
+  was 9.424–12.424 GHz) so that 12.0 GHz is a scan point.
+  `examples/s3p_optimization` asked for `S(0,0)` at 12.0 GHz of the old scan,
+  and on S3DF spent 25 real S3P runs optimizing `NaN` while exiting 0; it keeps
+  the 12.0 GHz objective on the new grid.
+- **`examples/s3p_sweep` and `examples/s3p_sweep_no_s3p_file` declare outputs.**
+  Both tabulate the four `S(m,n)` spectra (the long-format table
+  `plotting/s3p_sweep_plot.py` reads; with no outputs declared the table held
+  only the inputs and `Frequency`) plus a scalar `reflection_12GHz`. Their
+  dry-run baselines were re-frozen for the five new `NaN` columns.
 - **`examples/s3p_mf_optimization` and `examples/s3p_bayesian_sweep` run S3P
   on 8 ranks instead of 16.** Their coarsest fidelity meshes the bend at 4 mm
   (~2.6k elements), and S3P dies with a floating-point exception when that is
