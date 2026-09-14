@@ -1,0 +1,22 @@
+ModelInfo : {
+  File: ./Pillbox.ncdf
+
+  BoundaryCondition : {
+    Exterior: 1, 2, 6
+  }
+
+  SurfaceMaterial : {
+    ReferenceNumber: 6
+    Sigma: 5.8e7
+  }
+}
+
+FiniteElement: {
+  Order:           2
+  CurvedSurfaces: on
+}
+
+EigenSolver : {
+  NumEigenvalues: 2
+  FrequencyShift:  1.0e9
+}

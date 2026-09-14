@@ -27,11 +27,11 @@ Three Phase-0 claims are load-bearing for the plan and are asserted here:
    ``Survived particles`` before it. Phase 1's ``verify`` must look for the
    terminator anywhere, not on the final line.
 
-One defect is recorded as an ``xfail`` for Phase 1 to clear:
-:func:`parse_ace3p` cannot round-trip the one-line block style Lixin's generated
-inputs use (``FieldScales: { Type: FieldGradient  ScanToken: 1 ... }``), because
-the tokenizer reads a value to end of line and so swallows the sibling keys and
-the closing brace.
+Phase 0 found and Phase 1 fixed one parser defect: :func:`parse_ace3p` could
+not round-trip the one-line block style Lixin's generated inputs use
+(``FieldScales: { Type: FieldGradient  ScanToken: 1 ... }``), because the
+tokenizer read a value to end of line and so swallowed the sibling keys and the
+closing brace. The round-trip tests below were strict xfails in Phase 0.
 """
 
 import os
@@ -267,20 +267,26 @@ def test_resonant_particles_is_read_by_the_existing_reader():
     assert table['Energy'].min() >= 10.0          # EnergyRange default
 
 
-def test_header_only_tables_lose_their_header_in_the_reader():
-    """Recorded, not endorsed: `parse_column_file` picks the header line whose
-    width matches the data rows, so with **no** rows it has no width to match
-    and returns an empty dict — the 16 Faraday-cup column names are lost. Phase
-    1 needs named empty columns from these files (a run that captured nothing
-    still has a `captured_electrons` of 0) and changes this."""
+def test_header_only_tables_keep_their_header_in_the_reader():
+    """`parse_column_file` picks the header line whose width matches the data
+    rows; with **no** rows there is no width to match, and in Phase 0 it
+    returned an empty dict, losing the 16 Faraday-cup column names. Phase 1
+    needs named empty columns from these files (a run that captured nothing
+    still has a `captured_electrons` of 0), so the reader now falls back to
+    the last header line."""
     header = _lines(os.path.join(FIELDEM, 'OUTPUT', 'faradaycup_1'))
     assert len(header) == 1
     columns = header[0].split()
     assert len(columns) == 16
     assert tuple(columns) == DEFAULT_COLUMNS[:16]   # 2023 layout minus volID
-    for name in ('faradaycup_1', 'faradaycup_2', 'faradaycup_6',
-                 'enhancementCounter', 'resonantparticles'):
-        assert parse_column_file(os.path.join(FIELDEM, 'OUTPUT', name)) == {}
+    for name in ('faradaycup_1', 'faradaycup_2', 'faradaycup_6'):
+        table = parse_column_file(os.path.join(FIELDEM, 'OUTPUT', name))
+        assert tuple(table) == DEFAULT_COLUMNS[:16]
+        assert all(len(values) == 0 for values in table.values())
+    assert tuple(parse_column_file(os.path.join(
+        FIELDEM, 'OUTPUT', 'enhancementCounter'))) == ENHANCEMENT_COLUMNS
+    assert tuple(parse_column_file(os.path.join(
+        FIELDEM, 'OUTPUT', 'resonantparticles'))) == RESONANT_COLUMNS
 
 
 # --------------------------------------------------------------------------- #
@@ -406,21 +412,15 @@ def test_pillbox_single_level_input():
     assert scales.get_leaf('Minimum') is None
 
 
-ONE_LINE_BLOCK_DEFECT = (
-    'defect for Phase 1: the tokenizer reads a value to end of line, so a '
-    "one-line block 'Key: { A: x  B: y }' swallows the sibling keys and the "
-    'closing brace')
-
-
-@pytest.mark.xfail(strict=True, reason=ONE_LINE_BLOCK_DEFECT)
 def test_initials_impacts_selector_is_a_container():
     """The selector is `OutputImpactsInfo: { Type: Initials-Impacts }` — a
     block — which `parse_ace3p` reads as a Section. The scalar spelling
     `OutputImpactsInfo: Initials-Impacts` is what a user would guess; Track3P
     ignores it silently (verified on the binary, see the plan §2.3).
 
-    Written on one line, as the probe input and Lixin's generator both do, so
-    it trips the same tokenizer defect as the LCLS input below."""
+    Written on one line, as the probe input and Lixin's generator both do —
+    the shape the Phase-0 tokenizer misread (value to end of line, brace
+    swallowed) and Phase 1 fixed."""
     tree = parse_ace3p(_read(os.path.join(INPUTS,
                                           'Pillbox-b1_initials_impacts.track3p')))
     info = tree.find('OutputImpactsInfo')
@@ -429,12 +429,14 @@ def test_initials_impacts_selector_is_a_container():
     assert tree.get_leaf('OutputImpacts') == 'on'
 
 
-def test_initials_impacts_selector_is_currently_misparsed():
-    tree = parse_ace3p(_read(os.path.join(INPUTS,
-                                          'Pillbox-b1_initials_impacts.track3p')))
-    info = tree.find('OutputImpactsInfo')
-    assert isinstance(info, Section)
-    assert info.get_leaf('Type') == 'Initials-Impacts }'     # brace swallowed
+def test_one_line_blocks_serialize_and_reparse():
+    """The one-line style round-trips through write_ace3p (which writes one
+    entry per line) and the multi-line result parses to the same tree."""
+    text = _read(os.path.join(INPUTS, 'Pillbox-b1_initials_impacts.track3p'))
+    tree = parse_ace3p(text)
+    again = parse_ace3p(write_ace3p(tree))
+    assert write_ace3p(again) == write_ace3p(tree)
+    assert '}' not in write_ace3p(tree.find('OutputImpactsInfo'))
 
 
 def test_field_emission_input_keys():
@@ -449,7 +451,6 @@ def test_field_emission_input_keys():
     assert cup.get_leaf('BoundaryID') == '1 2 6'
 
 
-@pytest.mark.xfail(strict=True, reason=ONE_LINE_BLOCK_DEFECT)
 def test_lixin_input_round_trips_through_parse_ace3p():
     text = _read(os.path.join(INPUTS, 'lcls_c3_16MV.track3p'))
     tree = parse_ace3p(text)
@@ -474,16 +475,21 @@ def test_lixin_input_round_trips_through_parse_ace3p():
     assert again.find('Domain').find('Mode').get_leaf('Rz') == '2.6692'
 
 
-def test_lixin_input_one_line_blocks_are_currently_misparsed():
-    """The shape of the defect above, pinned so Phase 1 can show the fix:
-    today the whole `FieldScales` block collapses into one `Type` leaf that
-    carries the rest of the line, brace included, and every later block nests
-    inside it."""
+def test_lixin_input_top_level_is_flat():
+    """The shape of the Phase-0 defect, inverted: before the fix the whole
+    `FieldScales` block collapsed into one `Type` leaf carrying the rest of the
+    line, brace included, and every later block nested inside it. Now the ten
+    top-level entries are siblings, in file order."""
     tree = parse_ace3p(_read(os.path.join(INPUTS, 'lcls_c3_16MV.track3p')))
-    scales = tree.find('FieldScales')
-    assert scales.get_leaf('ScanToken') is None
-    assert scales.get_leaf('Type').endswith('}')
-    assert tree.find('Domain') is None              # nested inside FieldScales
+    assert [name for name, _ in tree.entries] == [
+        'TotalTime', 'ParticlesTrajectories', 'FieldScales', 'NormalizedField',
+        'Domain', 'Emitter', 'Material', 'Material', 'Material',
+        'OutputImpacts', 'OutputImpactsInfo', 'Postprocess']
+    assert '}' not in tree.find('FieldScales').get_leaf('Type')
+    # A value with internal spaces survives when a key follows it on the line.
+    assert tree.find('NormalizedField').get_leaf('StartPoint') == '0.0 0.0 2.78596'
+    assert tree.find('Material', Type='Absorber').get_leaf(
+        'BoundarySurfaceID') == '1 2'
 
 
 # --------------------------------------------------------------------------- #

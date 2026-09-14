@@ -1228,3 +1228,273 @@ def test_solver_command_keeps_mpi_prefix_and_opts(tmp_path):
     assert solver.solver_command() == (
         'srun -n 16 -c 8 --cpu-bind=cores /ace3p/omega3p '
         + solver.input_file + ' run17')
+
+
+# --------------------------------------------------------------------------- #
+# One-line KVC blocks (Track3P Phase 1: the tokenizer defect Phase 0 found)
+# --------------------------------------------------------------------------- #
+
+# The same content as NEXT_LINE_BRACE, in the one-line style Track3P's tutorial
+# inputs and Lixin Ge's LCLS-II generator write: several entries per line, a
+# block closed on the line of its last entry.
+ONE_LINE_BLOCKS = """\
+ModelInfo: { File: ./pillboxwg.ncdf
+  BoundaryCondition: { Exterior: 6 5  Absorbing: 3 4 } }
+LoadingInfo: { Bunch: { Type: Gaussian  Sigma: 0.01
+    Number of sigmas: 5 }
+  SymmetryFactor: 4 //matches bc
+  StartPoint: 0.0, 0.0, -0.075 }
+Monitor: { Type: Volume  Name: mymon }
+Monitor: { Type: WakeField  Name: wakefield  Smax: 1.4 }
+"""
+
+
+def test_one_line_blocks_parse_like_the_multi_line_form():
+    """A value stops at a closing brace or at the next 'Key:' on its line, so
+    the one-line style yields the same tree as the brace-per-line style.
+
+    The one thing the split cannot do is recognise a key *with spaces* in the
+    middle of a line ('Sigma: 0.01  Number of sigmas: 5' would read 'Number of'
+    into Sigma's value): a key is one token there. Such keys still parse at the
+    start of a line, which is where T3P's 'Start contour:' appears."""
+    one = parse_ace3p(ONE_LINE_BLOCKS)
+    multi = parse_ace3p(NEXT_LINE_BRACE)
+    assert write_ace3p(one) == write_ace3p(multi)
+    bunch = one.find('LoadingInfo').find('Bunch')
+    assert bunch.get_leaf('Number of sigmas') == '5'
+    assert one.find('ModelInfo').find('BoundaryCondition').get_leaf(
+        'Exterior') == '6 5'
+    assert one.find('LoadingInfo').get_leaf('StartPoint') == '0.0, 0.0, -0.075'
+
+
+def test_value_with_a_clock_time_is_not_split():
+    """The split looks for an identifier-like key, so the colons inside a
+    timestamp -- the one multi-colon value every solver log carries -- stay in
+    the value."""
+    tree = parse_ace3p('Timestamp : {\n  begin : Wed Sep  9 17:57:36 2026 \n}\n'
+                       'Compilation Date:          Fri Aug 28 13:07:29 PDT 2026\n')
+    assert tree.find('Timestamp').get_leaf('begin') == 'Wed Sep  9 17:57:36 2026'
+    assert tree.get_leaf('Compilation Date') == 'Fri Aug 28 13:07:29 PDT 2026'
+
+
+def test_omega3p_fixtures_parse_the_same_as_before_the_split():
+    """The three real omega3p.out files carry timestamps and a license banner;
+    their Mode sections must read exactly as they did."""
+    for name in ('pillbox', 'pillbox-rtop+coax', 'pillbox-rtop-mode-first'):
+        data = parse_omega3p_output(
+            os.path.join(OMEGA3P_FIXTURES, name + '.omega3p.out'))
+        assert len(data['Modes']) in (1, 2)
+        assert np.all(np.isfinite(data['Frequency']))
+
+
+# --------------------------------------------------------------------------- #
+# Track3P wrapper (Track3P Phase 1)
+# --------------------------------------------------------------------------- #
+
+from lume_ace3p.ace3p import (            # noqa: E402  (grouped with its tests)
+    declared_field_levels, field_levels_from_tree, impacts_summary,
+    level_from_filename, merge_levels, parse_track3p_log, read_track3p_results,
+)
+
+TRACK3P_FIXTURES = os.path.join(HERE, 'fixtures', 'track3p')
+TRACK3P_INPUTS = os.path.join(TRACK3P_FIXTURES, 'inputs')
+
+
+def _fixture_text(*parts):
+    with open(os.path.join(TRACK3P_FIXTURES, *parts)) as file:
+        return file.read()
+
+
+def test_track3p_class_facts():
+    """There is no track3p.out; the run log is track3p.log in the results
+    directory, and it is what verify() and the parser look for."""
+    assert Track3P.default_job_name == 'track3p_results'
+    assert Track3P.accepts_results_dir_arg is True
+
+
+def test_track3p_wrapper_reads_the_scan_fixture(tmp_path):
+    workdir = tmp_path / 'wd'
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan'),
+                    workdir / 'track3p_results')
+    source = tmp_path / 'Pillbox.track3p'
+    _write(source, _fixture_text('inputs', 'Pillbox.track3p'))
+    solver = Track3P(str(source), workdir=str(workdir))
+    assert solver.output_file == 'track3p.log'
+    assert solver.field_levels() == [2.3e7, 2.4e7, 2.5e7]
+    assert solver.field_dir() == './omega3p_results'
+    solver.output_parser()
+    data = solver.output_data
+    assert np.allclose(data['FieldLevel'], [2.3e7, 2.4e7, 2.5e7])
+    assert data['EmittingFaces'] == 14
+    assert data['TotalEmitted'] is None and data['Survived'] is None
+    assert data['Log']['Done'] is True
+    assert data['Log']['SourceTag'].startswith('b7f4a98f')
+    assert set(data['Log']['Scales']) == {2.3e7, 2.4e7, 2.5e7}
+    assert len(data['EnhancementCounter']['fieldlevel']) == 7
+    assert len(data['ResonantParticles']['Field_Level']) == 120
+    assert data['FaradayCups'] == {}
+    # Only the 2.3e7 dump was copied; the axis still has three levels because
+    # the input declares them and the log and tables report them.
+    assert list(data['ImpactsFiles']) == [2.3e7]
+    assert list(data['LostParticlesFiles']) == [2.3e7]
+
+
+def test_track3p_wrapper_honors_results_dir(tmp_path):
+    workdir = tmp_path / 'wd'
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, 'pillbox_initials_impacts'),
+                    workdir / 'b1_initials_impacts')
+    source = tmp_path / 'b1.track3p'
+    _write(source, _fixture_text('inputs', 'Pillbox-b1_initials_impacts.track3p'))
+    solver = Track3P(str(source), workdir=str(workdir),
+                     results_dir='b1_initials_impacts')
+    assert solver.solver_command().endswith(' b1_initials_impacts')
+    solver.output_parser()
+    assert np.allclose(solver.output_data['FieldLevel'], [2.3e7])
+    assert solver.output_data['EnhancementCounter'] is None
+
+
+def test_track3p_wrapper_raises_without_a_log(tmp_path):
+    workdir = tmp_path / 'wd'
+    os.makedirs(workdir / 'track3p_results')
+    source = tmp_path / 'Pillbox.track3p'
+    _write(source, _fixture_text('inputs', 'Pillbox.track3p'))
+    solver = Track3P(str(source), workdir=str(workdir))
+    with pytest.raises(FileNotFoundError, match='no track3p.log'):
+        solver.output_parser()
+
+
+def test_track3p_wrapper_raises_on_an_unfinished_log(tmp_path):
+    """A killed run leaves a log without 'Done!'; its tables may be partial."""
+    workdir = tmp_path / 'wd'
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan'),
+                    workdir / 'track3p_results')
+    log = workdir / 'track3p_results' / 'track3p.log'
+    text = log.read_text().replace('Done!\n', '')
+    log.write_text(text)
+    source = tmp_path / 'Pillbox.track3p'
+    _write(source, _fixture_text('inputs', 'Pillbox.track3p'))
+    with pytest.raises(ValueError, match="no 'Done!'"):
+        Track3P(str(source), workdir=str(workdir)).output_parser()
+
+
+def test_parse_track3p_log_on_every_fixture_log():
+    scan = parse_track3p_log(_fixture_text('pillbox_scan', 'track3p.log'))
+    assert scan['Done'] and scan['EmittingFaces'] == 14
+    assert scan['MPIProcesses'] == 16
+    assert scan['TotalEmitted'] is None and scan['Survived'] is None
+    assert scan['SourceDate'].startswith('Fri Aug 21')
+    assert scan['CompilationDate'].startswith('Fri Aug 28')
+    assert np.isclose(scan['Scales'][2.3e7], 1.144609569160e+06)
+
+    fieldem = parse_track3p_log(_fixture_text('pillbox_fieldemission',
+                                              'track3p.log'))
+    assert fieldem['Done'] and fieldem['TotalEmitted'] == 0
+
+    lcls = parse_track3p_log(_fixture_text('lcls_c3_16MV', 'track3p.log'))
+    assert lcls['Done'] and lcls['TotalEmitted'] == 350990
+    assert lcls['Survived'] == 11 and lcls['MPIProcesses'] == 2
+    assert list(lcls['Scales']) == [1.6e7]
+
+    assert parse_track3p_log('scale 1.0 Field 2.0e7\n')['Done'] is False
+
+
+@pytest.mark.parametrize('name, levels', [
+    ('Pillbox.track3p', [2.3e7, 2.4e7, 2.5e7]),
+    ('Pillbox2.3MV.track3p', [2.3e7]),
+    ('Pillbox-w4_type7_model2_fcup.track3p', [2.3e7]),
+    ('Pillbox-b1_initials_impacts.track3p', [2.3e7]),
+    # ScanToken 1 with Minimum == Maximum (and a redundant Scale): one level.
+    ('lcls_c3_16MV.track3p', [1.6e7]),
+])
+def test_declared_field_levels(name, levels):
+    assert declared_field_levels(_fixture_text('inputs', name)) == levels
+
+
+def test_field_levels_from_an_incomplete_block():
+    assert field_levels_from_tree(parse_ace3p('Domain: { FieldDir: ./x }\n')) == []
+    assert field_levels_from_tree(parse_ace3p(
+        'FieldScales: { ScanToken: 1  Minimum: 1.0e6 }\n')) == []
+    assert field_levels_from_tree(parse_ace3p(
+        'FieldScales: { ScanToken: 0 }\n')) == []
+    # A scan whose range is not a whole number of intervals stops short.
+    assert field_levels_from_tree(parse_ace3p(
+        'FieldScales: { ScanToken: 1  Minimum: 1.0  Maximum: 2.5  Interval: 1.0 }\n'
+    )) == [1.0, 2.0]
+
+
+def test_level_helpers():
+    assert level_from_filename('/x/ImpactsInfo_2.3e+07', 'ImpactsInfo_') == 2.3e7
+    assert level_from_filename('ImpactsInfo_abc', 'ImpactsInfo_') is None
+    assert level_from_filename('LostParticles_2.3e+07', 'ImpactsInfo_') is None
+    merged = merge_levels([2.3e7, 2.4e7 + 1e-3], [2.3e7], [], [2.5e7, None])
+    assert np.allclose(merged, [2.3e7, 2.4e7, 2.5e7])
+
+
+def test_impacts_summary_reads_both_layouts():
+    default = impacts_summary(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan',
+                                           'ImpactsInfo_2.3e+07'))
+    # 92 first impacts + 8 second impacts in the 200-row prefix; the 100
+    # ImpactNum-0 emission points do not count.
+    assert default == {'impact_count': 100, 'max_impact_energy': 631818.0}
+    initials = impacts_summary(os.path.join(
+        TRACK3P_FIXTURES, 'pillbox_initials_impacts', 'ImpactsInfo_2.3e+07'))
+    assert initials['impact_count'] == 136
+    assert initials['max_impact_energy'] == pytest.approx(155738.6)
+    empty = impacts_summary(os.path.join(TRACK3P_FIXTURES,
+                                         'pillbox_fieldemission',
+                                         'ImpactsInfo_2.3e+07'))
+    assert empty['impact_count'] == 0 and np.isnan(empty['max_impact_energy'])
+
+
+def test_impacts_summary_rejects_an_unknown_layout(tmp_path):
+    path = tmp_path / 'ImpactsInfo_1'
+    _write(path, 'a b c\n1 2 3\n')
+    with pytest.raises(ValueError, match='impact-ordinal'):
+        impacts_summary(str(path))
+
+
+def test_read_track3p_results_field_emission_run():
+    data = read_track3p_results(os.path.join(TRACK3P_FIXTURES,
+                                             'pillbox_fieldemission'))
+    assert data['TotalEmitted'] == 0
+    assert sorted(data['FaradayCups']) == [1, 2, 6]
+    cup = data['FaradayCups'][1]
+    # A header-only cup keeps its 16 column names, each an empty array.
+    assert len(cup) == 16 and len(cup['NumElectrons']) == 0
+    assert list(cup)[:2] == ['InitialID', 'ImpactNum']
+    # Header-only postprocess tables likewise.
+    assert len(data['EnhancementCounter']['fieldlevel']) == 0
+    assert np.allclose(data['FieldLevel'], [2.3e7])
+
+
+def test_read_track3p_results_merges_declared_levels():
+    """A declared level that produced no file is still on the axis."""
+    data = read_track3p_results(os.path.join(TRACK3P_FIXTURES, 'lcls_c3_16MV'),
+                                declared_levels=[1.6e7, 1.7e7])
+    assert np.allclose(data['FieldLevel'], [1.6e7, 1.7e7])
+    assert data['Survived'] == 11
+    assert data['EnhancementCounter'] is None       # Postprocess Toggle: off
+
+
+def test_parse_column_file_keeps_a_header_with_no_rows(tmp_path):
+    path = tmp_path / 'faradaycup_3'
+    _write(path, 'InitialID  ImpactNum  NumElectrons\n')
+    table = parse_column_file(str(path))
+    assert list(table) == ['InitialID', 'ImpactNum', 'NumElectrons']
+    assert all(len(values) == 0 for values in table.values())
+    # An empty file still yields an empty dict.
+    _write(tmp_path / 'empty', '')
+    assert parse_column_file(str(tmp_path / 'empty')) == {}
+
+
+def test_set_input_leaf_creates_and_updates(tmp_path):
+    solver = _solver(Track3P, tmp_path, '.track3p',
+                     _fixture_text('inputs', 'Pillbox.track3p'))
+    solver.set_input_leaf(('Domain', 'FieldDir'), './fields')
+    solver.set_input_leaf(('OutputImpactsInfo', 'Type'), 'Initials-Impacts')
+    tree = parse_ace3p(solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './fields'
+    assert tree.find('OutputImpactsInfo').get_leaf('Type') == 'Initials-Impacts'
+    # The rest of the input is intact.
+    assert len(tree.children('Material')) == 3
+    assert tree.get_leaf('OutputImpacts') == 'on'

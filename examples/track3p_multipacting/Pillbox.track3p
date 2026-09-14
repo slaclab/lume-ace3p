@@ -1,0 +1,75 @@
+//Field scan parameters
+FieldScales:{
+  Type: FieldGradient    // Three types: 
+                         // FieldGradient: average field gradient as field scale parameter, unit: v/m
+                         // InputPortPower: input port power as field scale parameter, unit: W.
+                         // StorEnergy: store energy as field scale parameter, unit: Joul.
+                         
+  ScanToken: 1           // 1: scan, 0: no scan, must provided 
+  //Minimum <= field <= Maximum,  all following three paramerters must provided, otherwise warning in track3p.warn
+  Minimum: 23.0e+6       // Minimum Field level 
+  Maximum: 25.0e+6       // Maximum Field level
+  Interval : 1.0e+6      // Field scan interval
+}
+
+// When average field gradient as field scale parameter, this block is used to normalize average field gradient between StartPoint and EndPoint
+
+NormalizedField:{
+  StartPoint: 0.0 0.0 -0.057
+  EndPoint: 0.0 0.0 0.057
+}
+
+// specify the location of EM field
+
+Domain:{
+  FieldDir: ./omega3p_results
+}
+
+// Particles emitter
+Emitter:{
+  BoundaryID: 6      // particles emit from BoundaryID exterior surface 
+// particles emit from x0 <= x <= x1; y0 <= y <=y1; z0 <= z <= z0 bounding box
+  x0: 0.03
+  x1: 0.035
+  y0: 0.04
+  y1: 0.1
+  z0: -0.045
+  z1: 0.0
+}
+
+// Test material for energy watching:
+// Four types of Material
+// 
+// 2(Absorber): when particle hit on this surface, it will be dead
+// 3(Secondary):when particle hit on this surface, seondary particles will be emitted.
+// 4(Primary): Primary particles can be emitted from this surface
+Material:{
+  Type: Primary
+  BoundarySurfaceID: 6 
+}
+
+OutputImpacts: on
+
+Material: {
+  Type: Secondary 
+  BoundarySurfaceID: 6
+}
+
+Material: {
+  Type: Absorber 
+  BoundarySurfaceID: 1 2 
+}
+
+Postprocess:{
+  Toggle: on
+  ResonantParticles:{
+    Token: on
+  }
+  EnhancementCounter:{
+    Token: on
+    MinimumEC: 0.01
+    SEYFileName1: copper.dat
+    BoundarySurfaceID1: 6
+  }
+  
+}

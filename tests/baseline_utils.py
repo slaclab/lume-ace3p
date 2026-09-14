@@ -570,6 +570,28 @@ EXAMPLES = {
                       "S3P's favour. S-parameters and m_factor are NaN without a "
                       'solver -> reachability-only.'),
     },
+    'track3p_multipacting': {
+        'kind': 'single',
+        'yaml': 'track3p_multipacting.yaml',
+        'files': {
+            'track3p_multipacting_output.txt':
+                ('track3p_multipacting_output.txt', 'table'),
+        },
+        'digests': {},
+        'frozen': ('Phase 1 of plans/track3p_module_plan.md (2026-09-14). First '
+                   'freeze -- a new example, so nothing was regenerated. The '
+                   'real run on S3DF milano (job 38240889, 28 s) gave EC_max '
+                   '0.552538 / 0.686169 / 0.700063 and impacts 2 / 11 / 10 at '
+                   '23 / 24 / 25 MV/m; the dry-run fixture holds the same three '
+                   'FieldLevel rows with NaN outputs.'),
+        'checkable': ('NUMERIC: the FieldLevel index column -- three rows, '
+                      '2.3e7 / 2.4e7 / 2.5e7, read from the input file\'s '
+                      'FieldScales block under dry run, which pins that a '
+                      'track3p table is long-format over field level before any '
+                      'solver has run. The five outputs are NaN without a solver '
+                      '-> reachability-only. Structurally this pins that '
+                      '[mesh, omega3p, track3p] validates and orders.'),
+    },
     't3p_transwake': {
         'kind': 'single',
         'yaml': 't3p_transwake.yaml',

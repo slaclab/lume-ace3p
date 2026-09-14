@@ -1,6 +1,6 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0 done 2026-09-14** (see the status notes at the
+**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14** (see the status notes at the
 end of each phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
@@ -405,6 +405,38 @@ S3DF rules in memory; never on iana).
    (`ace3p:Emitter.z1` or `ace3p:Domain.InitialEnergy`) is a cheap second
    example if time allows; a Cubit-driven geometry sweep needs a journal whose
    boundary IDs match a Track3P input and is deferred.
+
+**Phase 1 status (2026-09-14): DONE.** `Track3P` wrapper + readers in
+`ace3p.py`, `Track3PModule` in `modules.py`, routing and `_ACE3P_TYPES` in
+`workflow_graph.py`, `examples/track3p_multipacting` validated on milano (job
+38240889, 28 s; recorded in `plans/s3df_example_validation_plan.md`) and frozen
+as a dry-run baseline. Deviations from the text above:
+
+- **Tokenizer fixed first** (the Phase-0 defect): a value now stops at `}` or at
+  the next identifier-like `Key:` on its line. A key *with spaces* is still only
+  recognised at the start of a line.
+- **No `FrequencyScanID` check.** No CW23 input carries such a key and the
+  build's `InputParameters` echo lists none; both CW23 S3P-driven cases run S3P
+  at a single frequency. The module *warns* when the S3P producer's
+  `FrequencyScan` has more than one point instead of demanding an undocumented
+  key.
+- **`walltime_s` dropped** (no log has it); `survived` kept (LCLS log only).
+- **`[…, track3p, acdtool]` is not asserted**: `postprocess track3p` is
+  `wired=False` in `acdtool.COMMANDS` (KVC-dialect input), so that chain fails
+  validation today regardless of this module. Wiring it is a separate change.
+- **Index precedence.** `Workflow.field_index` took the first module in DAG order,
+  which after a real Omega3P run is `ModeID`, not `FieldLevel`. Modules may now
+  set `index_precedence`; Track3P sets 1. The s3p→acdtool rule is unchanged.
+- **`files:` on every solver module** — the Pillbox input names `copper.dat`
+  (SEY table), which Track3P reads from its cwd and no artifact supplies.
+- **Artifact = results directory** (the §3.4 single-file rule is Phase 3).
+  `impacts_format:` / `field_level:` keys are not read yet.
+- Extra per-level quantity `lost_count`; `resonant_count` is rows of the
+  enhancement counter and `resonant_particles` distinct IDs of
+  `resonantparticles` (each resonant particle is listed at two positions).
+- `docs/yaml_reference.md` got the module row and a short `track3p` section now
+  rather than in Phase 5, since the old row said no in-pipeline tracker exists.
+- The `parameter_sweep` variant over an ACE3P leaf was not added.
 
 ### Phase 2 — Fowler–Nordheim reconciliation (`particles.py`)
 

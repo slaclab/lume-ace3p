@@ -21,9 +21,10 @@ Design notes
   ``geant4`` needs ``particle_source``). ``t3p`` was added this way — it provides
   ``td_solution``, distinct from ``em_solution``, so listing ``acdtool`` after a
   T3P solver is a validation error rather than RF postprocessing pointed at
-  time-domain output. A future runnable Track3P solver that ``provides
-  {track3p_particles}`` slots in the same way, with no rule change: it simply
-  becomes the producer that satisfies ``particles``.
+  time-domain output. The runnable ``track3p`` solver slotted in the same way,
+  with no rule change: it ``provides {track3p_particles}`` and so is simply an
+  alternative producer for ``particles`` (a workflow lists it *or*
+  ``track3p_source``, never both).
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
   input point and returns ``(outputs, ctx)`` — the structured output dict plus the
   :class:`~lume_ace3p.modules.RunContext` that produced it. Sweep / Xopt loops
@@ -52,6 +53,7 @@ import numpy as np
 
 from lume_ace3p.modules import (
     Geant4Module, RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
+    Track3PModule,
 )
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
@@ -71,7 +73,7 @@ class WorkflowValidationError(ValueError):
 # Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/t3p/
 # acdtool) vs. the Geant4 binary — used only to auto-enable dry-run when the
 # matching environment is absent, mirroring the legacy per-workflow behavior.
-_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'acdtool'})
+_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'track3p', 'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
 
 # How an evaluation's working directory is named. ``manual`` shares one directory
@@ -120,6 +122,8 @@ def _infer_output_module(spec):
         total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
         ``geant4``,
       * ``'count'``/``'total_weight'`` -> ``particles``,
+      * a Track3P quantity (``'max_enhancement'``, ``'mp_onset_level'``, ...) or
+        a mapping keyed ``at: {field_level: ...}`` -> ``track3p``,
       * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
         key — -> ``t3p``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
@@ -155,10 +159,14 @@ def _infer_output_module(spec):
         at = spec.get('at') or {}
         if quantity in T3PModule.QUANTITIES or 's' in at:
             return 't3p'
+        if quantity in Track3PModule.QUANTITIES or 'field_level' in at:
+            return 'track3p'
         return 's3p'
     if isinstance(spec, str):
         if spec in ('count', 'total_weight'):
             return 'particles'
+        if spec in Track3PModule.QUANTITIES:
+            return 'track3p'
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
@@ -166,6 +174,8 @@ def _infer_output_module(spec):
             return 'geant4'
         if head in ('count', 'total_weight'):
             return 'particles'
+        if head in Track3PModule.QUANTITIES:
+            return 'track3p'
         return 't3p' if head in T3PModule.QUANTITIES else 's3p'
     raise WorkflowValidationError(f"cannot route output spec {spec!r}.")
 
@@ -725,7 +735,14 @@ class Workflow:
         ctx = self.last_context if ctx is None else ctx
         if ctx is None:
             return None
-        for module in ctx.modules:
+        # DAG order, except that a module may declare its axis takes precedence
+        # over an upstream one (``index_precedence``): a Track3P run is tabulated
+        # over its field levels, not over the Omega3P modes it read its fields
+        # from. Everything else keeps the first-producer rule that pins the
+        # s3p -> acdtool table to S3P's frequency scan.
+        ranked = sorted(ctx.modules,
+                        key=lambda m: -getattr(m, 'index_precedence', 0))
+        for module in ranked:
             idx = module.field_index(ctx)
             if idx is not None:
                 return idx

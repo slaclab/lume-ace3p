@@ -23,7 +23,8 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
 | `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
-| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. There is no in-pipeline Track3P solver. |
+| `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
+| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
 | `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys; see [](#particles-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `particles` weighting step. |
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys; see [](#geant4-module-keys). |
@@ -595,6 +596,52 @@ write `t3p_results/CHECKPOINT`, but LUME-ACE3P will not detect an existing
 checkpoint or set `Action: restart`. A sweep point that exceeds its wall time
 restarts from scratch on re-run.
 :::
+
+(track3p-module)=
+### `track3p` module
+
+Track3P is the ACE3P particle tracker. It requires an `em_solution` (not a
+mesh: it reads the mesh out of the upstream solver's results directory), so the
+minimal workflow is `mesh → omega3p → track3p` or `mesh → s3p → track3p`. It
+takes the same MPI keys as the other solvers (`input:`, `tasks:`, `cores:`,
+`opts:`, `results_dir:`) plus `files:`, a list of auxiliary files the input
+names by bare filename and Track3P reads from its working directory, such as
+the secondary-emission-yield table `SEYFileName1: copper.dat`. See
+`examples/track3p_multipacting`.
+
+The module sets the input's `Domain.FieldDir` to `./<upstream results dir>`
+unless the input already names a `FieldDir` that exists in the workdir. When the
+upstream solver is `s3p` and its `FrequencyScan` has more than one point, the run
+warns: Track3P documents no way to choose a scan frequency, and every CW23
+S3P-driven Track3P case runs S3P at a single frequency.
+
+**Field level is the index axis** (`FieldLevel`), declared by the input's
+`FieldScales` block and known before the run. Per-level quantities are arrays
+aligned to it, so the table is long-format (one row per level); `at:
+{field_level: x}` narrows one to a scalar and must name a declared level. A
+Track3P table keeps this axis even though the `omega3p` step upstream exposes a
+`ModeID` axis; an Omega3P quantity in the same table must be narrowed with `at:
+{mode: n}`.
+
+| Quantity | From | Per | Meaning |
+|---|---|---|---|
+| `max_enhancement`, `mean_enhancement`, `total_impacts`, `resonant_count` | `OUTPUT/enhancementCounter` | level | largest `maxEnhancement`, mean `averageEnhancement`, sum of `totalImpactNum`, and row count (particles above `MinimumEC`) among the level's rows |
+| `resonant_particles`, `max_resonant_energy` | `OUTPUT/resonantparticles` | level | distinct particle IDs; largest `Energy` |
+| `impact_count`, `max_impact_energy` | `ImpactsInfo_<level>` (read on demand) | level | rows with impact ordinal ≥ 1; largest `ImpactEnergy` among them |
+| `lost_count` | `LostParticles_<level>` | level | particles that left the domain |
+| `mp_onset_level` | derived | run | lowest level whose `max_enhancement` reaches `at: {threshold: t}` (default 1.0); NaN when none does |
+| `captured_electrons` | `OUTPUT/faradaycup_<id>` | cup | `sum(NumElectrons)`; `at: {boundary: id}` is required |
+| `total_emitted`, `emitting_faces`, `survived` | `track3p.log` | run | NaN when the build did not write the line (a secondary-emission run reports no `Total Emitted Particles`) |
+
+A table the run did not write raises naming the `Postprocess` token that
+enables it; a level with no rows in a table is NaN. The run log is
+`<results_dir>/track3p.log`, and a resume trusts a finished run only when that
+log ends with `Done!`.
+
+The `track3p_particles` artifact this module records is its results directory.
+Feeding it to a `particles` module (the Track3P → Geant4 chain, with the
+`Initials-Impacts` dump layout that step needs) is not yet wired; use
+`track3p_source` over a pre-run dump for that chain.
 
 (acdtool-module)=
 ### `acdtool` module

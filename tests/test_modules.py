@@ -28,14 +28,14 @@ from lume_ace3p.results import load_field, save_field
 from lume_ace3p.modules import (
     RunContext, build_module, MODULE_REGISTRY,
     CubitModule, MeshSourceModule, Omega3PModule, S3PModule, T3PModule,
-    AcdtoolModule,
+    Track3PModule, AcdtoolModule,
     Track3PSourceModule, ParticlesModule, ParticleSourceModule, Geant4Module,
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
 from lume_ace3p.ace3p import (
-    Omega3P, S3P, S3POutputWarning, T3P, T3POutputWarning, Section,
+    Omega3P, S3P, S3POutputWarning, T3P, T3POutputWarning, Section, parse_ace3p,
 )
 from lume_ace3p.workflow_graph import _infer_output_module
 from lume_ace3p.acdtool import (
@@ -235,6 +235,9 @@ def test_registry_edges_match_plan():
         # than RF postprocessing pointed at time-domain output.
         't3p': ({MESH}, {TD_SOLUTION}),
         'acdtool': ({EM_SOLUTION}, {RF_POST}),
+        # The runnable tracker is an alternative producer of the same artifact
+        # the source module supplies, so a workflow lists one or the other.
+        'track3p': ({EM_SOLUTION}, {TRACK3P_PARTICLES}),
         'track3p_source': (set(), {TRACK3P_PARTICLES}),
         'particles': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
         'particle_source': (set(), {PARTICLE_SOURCE}),
@@ -1129,6 +1132,256 @@ def test_t3p_monitor_key_routes_without_naming_the_module():
     assert 'P' not in T3PModule.QUANTITIES
     assert 't' not in T3PModule.QUANTITIES
     assert _infer_output_module({'quantity': 'P'}) == 's3p'
+
+
+# --------------------------------------------------------------------------- #
+# Track3P (Track3P Phase 1) -- fake-solver runs off the Phase-0 fixtures
+# --------------------------------------------------------------------------- #
+
+TRACK3P_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'fixtures', 'track3p')
+
+
+def _track3p_module(tmp_path, fixture_dir='pillbox_scan', input_name='Pillbox.track3p',
+                    results_dir=None, job_name='omega3p_results',
+                    producer_type='omega3p', config=None):
+    """A Track3PModule whose solver has already 'run': the fixture results are
+    copied into the workdir under the results-directory name, the upstream
+    solver's job name is recorded, and run(skip_execution=True) re-parses --
+    exactly the resume path. Returns (module, ctx)."""
+    wd = str(tmp_path / 'wd')
+    results = results_dir or 'track3p_results'
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, fixture_dir),
+                    os.path.join(wd, results))
+    input_path = str(tmp_path / input_name)
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'inputs', input_name), input_path)
+    producer = build_module(producer_type, {'input': 'unused.' + producer_type})
+    cfg = {'input': input_path}
+    if results_dir:
+        cfg['results_dir'] = results_dir
+    cfg.update(config or {})
+    module = Track3PModule(cfg)
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, paths=_paths(),
+                     modules=[producer, module])
+    ctx.job_names[EM_SOLUTION] = job_name
+    return module, ctx
+
+
+def test_track3p_module_requires_em_solution(tmp_path):
+    ctx = RunContext(str(tmp_path / 'wd'), dry_run=True)
+    with pytest.raises(ValueError, match='em_solution'):
+        Track3PModule({'input': 'in.track3p'}).run(ctx)
+
+
+def test_track3p_module_does_not_require_a_mesh(tmp_path):
+    """Track3P reads its mesh out of the upstream results directory."""
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    Track3PModule({'input': 'in.track3p'}).run(ctx)
+    assert TRACK3P_PARTICLES in ctx.artifacts
+
+
+def test_track3p_resume_reparses_the_scan(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    module.run(ctx, skip_execution=True)
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'track3p_results'
+    assert TRACK3P_PARTICLES in ctx.reparse
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel'
+    assert np.allclose(levels, [2.3e7, 2.4e7, 2.5e7])
+    assert module.verify(ctx) is True
+
+    ec = module.extract(ctx, 'max_enhancement')
+    assert np.allclose(ec, [0.552538, 0.686169, 0.700063], atol=1e-6)
+    assert np.allclose(module.extract(ctx, {'quantity': 'total_impacts'}),
+                       [2, 11, 10])
+    assert np.allclose(module.extract(ctx, ['resonant_count']), [1, 3, 3])
+    # 40 rows per level in the fixture, two per particle ID (each resonant
+    # particle is listed at two positions), so 20 distinct particles per level.
+    assert module.extract(ctx, 'resonant_particles').tolist() == [20, 20, 20]
+    assert module.extract(ctx, 'max_resonant_energy')[0] == pytest.approx(
+        np.max(module.field(ctx)['ResonantParticles']['Energy'][:40]))
+    # Only the 2.3e7 dump exists: the other two levels are NaN, not an error.
+    count = module.extract(ctx, 'impact_count')
+    assert count[0] == 100 and np.isnan(count[1:]).all()
+    lost = module.extract(ctx, 'lost_count')
+    assert lost[0] == 50 and np.isnan(lost[1:]).all()
+    energy = module.extract(ctx, {'quantity': 'max_impact_energy',
+                                  'at': {'field_level': 2.3e7}})
+    assert energy == 631818.0
+    # Scalars.
+    assert module.extract(ctx, 'emitting_faces') == 14
+    assert np.isnan(module.extract(ctx, 'total_emitted'))     # secondary run
+    assert np.isnan(module.extract(ctx, 'survived'))
+    # No level reaches enhancement 1 -> no onset; a lower threshold finds one.
+    assert np.isnan(module.extract(ctx, 'mp_onset_level'))
+    assert module.extract(ctx, {'quantity': 'mp_onset_level',
+                                'at': {'threshold': 0.6}}) == 2.4e7
+    assert module.extract(ctx, {'quantity': 'mp_onset_level',
+                                'at': {'threshold': 0.5}}) == 2.3e7
+
+
+def test_track3p_at_field_level_off_grid_names_the_grid(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    module.run(ctx, skip_execution=True)
+    with pytest.raises(ValueError, match='23000000.0, 24000000.0, 25000000.0'):
+        module.extract(ctx, {'quantity': 'max_enhancement',
+                             'at': {'field_level': 2.35e7}})
+    with pytest.raises(ValueError, match="narrows on"):
+        module.extract(ctx, {'quantity': 'max_enhancement', 'at': {'mode': 0}})
+    with pytest.raises(ValueError, match='Unknown track3p quantity'):
+        module.extract(ctx, 'loss_factor')
+
+
+def test_track3p_field_emission_run(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='pillbox_fieldemission',
+        input_name='Pillbox-w4_type7_model2_fcup.track3p')
+    module.run(ctx, skip_execution=True)
+    assert module.extract(ctx, 'total_emitted') == 0
+    for boundary in (1, 2, 6):
+        assert module.extract(ctx, {'quantity': 'captured_electrons',
+                                    'at': {'boundary': boundary}}) == 0.0
+    with pytest.raises(ValueError, match=r'at: \{boundary'):
+        module.extract(ctx, 'captured_electrons')
+    with pytest.raises(ValueError, match=r'faradaycup_3; it wrote \[1, 2, 6\]'):
+        module.extract(ctx, {'quantity': 'captured_electrons',
+                             'at': {'boundary': 3}})
+    # Header-only tables: every per-level quantity is NaN, nothing raises.
+    assert np.isnan(module.extract(ctx, 'max_enhancement')).all()
+    assert module.extract(ctx, 'impact_count').tolist() == [0]
+
+
+def test_track3p_missing_table_names_the_token(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='lcls_c3_16MV',
+        input_name='lcls_c3_16MV.track3p')
+    module.run(ctx, skip_execution=True)
+    assert module.extract(ctx, 'survived') == 11
+    assert module.extract(ctx, 'total_emitted') == 350990
+    with pytest.raises(ValueError, match='Postprocess.EnhancementCounter.Token'):
+        module.extract(ctx, 'max_enhancement')
+    with pytest.raises(ValueError, match='Postprocess.ResonantParticles.Token'):
+        module.extract(ctx, 'resonant_particles')
+    # The 1 020-row excerpt: 1 000 impacts.
+    assert module.extract(ctx, 'impact_count').tolist() == [1000]
+
+
+def test_track3p_results_dir_config(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='pillbox_initials_impacts',
+        input_name='Pillbox-b1_initials_impacts.track3p',
+        results_dir='b1_initials_impacts')
+    assert module.verify(ctx) is True
+    module.run(ctx, skip_execution=True)
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'b1_initials_impacts'
+    assert module.extract(ctx, 'impact_count').tolist() == [136]
+
+
+def test_track3p_verify_wants_done(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    log = os.path.join(ctx.workdir, 'track3p_results', 'track3p.log')
+    with open(log) as f:
+        text = f.read()
+    _write(log, text.replace('Done!\n', ''))
+    assert module.verify(ctx) is False
+    os.remove(log)
+    assert module.verify(ctx) is False
+    assert Track3PModule({'input': 'x'}).verify(
+        RunContext(ctx.workdir, dry_run=True)) is None
+
+
+def test_track3p_injects_field_dir_from_the_producer(tmp_path):
+    """The input's './omega3p_results' does not exist in the workdir, so
+    FieldDir is pointed at the job name the upstream solver recorded."""
+    module, ctx = _track3p_module(tmp_path, job_name='omega3p_run7')
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './omega3p_run7'
+    # The rest of the input is untouched by the injection.
+    assert len(tree.children('Material')) == 3
+    assert tree.find('FieldScales').get_leaf('Interval') == '1.0e+6'
+
+
+def test_track3p_respects_an_existing_field_dir(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='omega3p_run7')
+    os.makedirs(os.path.join(ctx.workdir, 'omega3p_results'))
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './omega3p_results'
+
+
+def test_track3p_adds_field_dir_when_the_input_has_none(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='s3p_results',
+                                  producer_type='s3p')
+    with open(module.input_file) as f:
+        text = f.read()
+    _write(module.input_file, text.replace('  FieldDir: ./omega3p_results\n', ''))
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './s3p_results'
+
+
+def test_track3p_warns_on_a_multi_point_s3p_scan(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='s3p_results',
+                                  producer_type='s3p')
+    s3p_input = os.path.join(str(tmp_path), 'unused.s3p')
+    _write(s3p_input, 'FrequencyScan: { Start: 9.5e9  End: 12.5e9  Interval: 0.25e9 }\n')
+    ctx.modules[0].input_file = s3p_input
+    with pytest.warns(UserWarning, match='13 frequencies'):
+        module.run(ctx, skip_execution=True)
+    # A single-frequency scan (the CW23 shape) is silent.
+    _write(s3p_input, 'FrequencyScan: { Start: 2.856e9  End: 2.856e9  Interval: 0.1e9 }\n')
+    module2, ctx2 = _track3p_module(tmp_path / 'b', job_name='s3p_results',
+                                    producer_type='s3p')
+    ctx2.modules[0].input_file = s3p_input
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        module2.run(ctx2, skip_execution=True)
+
+
+def test_track3p_dry_run_axis_comes_from_the_input(tmp_path):
+    wd = str(tmp_path / 'wd')
+    input_path = str(tmp_path / 'Pillbox.track3p')
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'inputs', 'Pillbox.track3p'),
+                input_path)
+    module = Track3PModule({'input': input_path})
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True,
+                     modules=[build_module('omega3p', {'input': 'x'}), module])
+    ctx.job_names[EM_SOLUTION] = 'omega3p_results'
+    module.run(ctx)
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel' and np.allclose(levels, [2.3e7, 2.4e7, 2.5e7])
+    value = module.extract(ctx, 'max_enhancement')
+    assert value.shape == (3,) and np.isnan(value).all()
+    assert np.isnan(module.extract(ctx, 'total_emitted')).all()
+    assert module.field(ctx) is None
+    assert module.verify(ctx) is None
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'track3p_results'
+    marker = open(os.path.join(wd, 'DRY_RUN.txt')).read()
+    assert 'Track3P step skipped' in marker
+    assert 'Track3P FieldDir: ./omega3p_results' in marker
+
+
+def test_track3p_dry_run_axis_falls_back_to_a_sentinel(tmp_path):
+    wd = str(tmp_path / 'wd')
+    module = Track3PModule({'input': 'does_not_exist.track3p'})
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    module.run(ctx)
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel' and levels.tolist() == [0.0]
+
+
+def test_track3p_specs_route_without_naming_the_module():
+    assert _infer_output_module('max_enhancement') == 'track3p'
+    assert _infer_output_module(['mp_onset_level']) == 'track3p'
+    assert _infer_output_module({'quantity': 'total_impacts'}) == 'track3p'
+    assert _infer_output_module({'quantity': 'impact_count',
+                                 'at': {'field_level': 2.3e7}}) == 'track3p'
+    # Unchanged neighbours.
+    assert _infer_output_module('loss_factor') == 't3p'
+    assert _infer_output_module({'quantity': 'S(0,0)'}) == 's3p'
+    assert _infer_output_module('count') == 'particles'
 
 
 # --------------------------------------------------------------------------- #

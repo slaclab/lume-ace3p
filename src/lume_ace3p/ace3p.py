@@ -140,14 +140,38 @@ def _tokenize(text):
             tokens.append(('lbrace',))
             i = k + 1
             continue
-        # Otherwise read value to end of line
+        # Otherwise read the value: to end of line, but no further than a
+        # closing brace or the next 'Key:' on the same line. KVC allows several
+        # entries per line and a block closed on the line of its last entry --
+        # 'FieldScales: { Type: FieldGradient  ScanToken: 1  Scale: 1.6e+7 }'
+        # is how Track3P's tutorial inputs and Lixin Ge's LCLS-II generator
+        # write them -- and reading to end of line swallowed the sibling keys
+        # and the brace, nesting every later block inside this one.
         j = i
         while j < n and text[j] != '\n':
             j += 1
-        value = text[i:j].strip()
-        tokens.append(('value', value))
+        value = text[i:j]
+        cut = _next_entry_on_line(value)
+        if cut is not None:
+            value, j = value[:cut], i + cut
+        tokens.append(('value', value.strip()))
         i = j
     return tokens
+
+
+# The start of a further entry after a value on the same line: a '}' or, after
+# whitespace, an identifier-like key and its colon. The key must start with a
+# letter so a time such as 'Wed Sep 9 17:57:36 2026' (a value in every solver's
+# Timestamp block) is not split at '17:', and the colon must be followed by
+# whitespace, a brace or the end of the line.
+_NEXT_ENTRY = re.compile(r'\}|\s+[A-Za-z_][^\s:{}]*\s*:(?=\s|\{|$)')
+
+
+def _next_entry_on_line(value):
+    """Index in `value` (one line's remainder) where the next entry starts,
+    or ``None`` when the value runs to the end of the line."""
+    match = _NEXT_ENTRY.search(value)
+    return None if match is None else match.start()
 
 
 def _parse_section(tokens, idx, top_level=False):
@@ -394,6 +418,25 @@ class ACE3P(CommandWrapper):
         if self._tree is None:
             self._tree = parse_ace3p(self.input_data)
         merge_overrides(self._tree, overrides)
+        self.input_data = write_ace3p(self._tree)
+
+    def set_input_leaf(self, path, value):
+        """Set one leaf of the input tree and re-serialize ``input_data``.
+
+        `path` is a tuple of section names ending in the leaf name, e.g.
+        ``('Domain', 'FieldDir')``; a one-element path names a top-level leaf.
+        Sections along the way are created when absent, so this can add a
+        container the input never had (``('OutputImpactsInfo', 'Type')``). The
+        module layer uses it to inject what the workflow knows and the input file
+        cannot — where the upstream solver wrote its fields."""
+        section = self._input_tree()
+        for name in path[:-1]:
+            child = section.find(name)
+            if child is None:
+                child = Section()
+                section.append(name, child)
+            section = child
+        section.set_leaf(path[-1], value)
         self.input_data = write_ace3p(self._tree)
 
     def write_input(self, *args):
@@ -1317,6 +1360,15 @@ def parse_column_file(path, columns=None):
     if columns is None:
         columns = next((tokens for tokens in reversed(comments)
                         if len(tokens) == width), None)
+    if columns is None and not rows and comments:
+        # A header with no rows under it -- Track3P writes 'faradaycup_<id>' and
+        # 'ImpactsInfo_<level>' as header-only files when nothing was captured or
+        # emitted. There is no width to match the header against, so take the
+        # last header line: the names are the result ("0 electrons captured"),
+        # and dropping them would make an empty table indistinguishable from a
+        # missing one.
+        columns = comments[-1]
+        width = len(columns)
     if columns is None:
         columns = ['column' + str(i + 1) for i in range(width)]
     table = np.array(rows).transpose() if rows else np.zeros((width, 0))
@@ -1324,7 +1376,269 @@ def parse_column_file(path, columns=None):
             for i, name in enumerate(columns)}
 
 
+# --------------------------------------------------------------------------- #
+# Track3P
+# --------------------------------------------------------------------------- #
+
+# The two 17-column ``ImpactsInfo_<level>`` layouts, by the name of the column
+# that tells them apart. Both are real (tests/fixtures/track3p/); the file's own
+# header says which one a run wrote, so readers never assume.
+#
+# * default ("general"): ``OutputImpacts: on`` alone. Bare header. The impact
+#   ordinal is ``ImpactNum`` and the file carries ``NumElectrons``/``FaceID``/
+#   ``volID``. The 2023 layout; also what ``LostParticles_*`` and (minus
+#   ``volID``) ``faradaycup_*`` use.
+# * ``OutputImpactsInfo: { Type: Initials-Impacts }``: ``#``-commented header,
+#   ordinal ``ImpactOrder``, and ``InitialNormalField``/``InitialFaceArea`` in
+#   place of ``NumElectrons``/``volID`` -- the field-emission columns
+#   :mod:`lume_ace3p.particles` reweights. That selector is a *container*: the
+#   scalar spelling ``OutputImpactsInfo: Initials-Impacts`` is silently ignored.
+IMPACT_ORDER_COLUMNS = ('ImpactNum', 'ImpactOrder')
+
+# What the log reports, by the text that introduces it. Every run writes the
+# banner and the emitting-face count; ``Total Emitted Particles`` is written by
+# a field-emission (``Emitter Type: 7``) run *after* ``Done!``, and ``Survived
+# particles`` was seen only on the LCLS-II cryomodule run. No log carries a
+# wall-time line. Verified against tests/fixtures/track3p/*/track3p.log.
+_LOG_SCALARS = {
+    'number of all emitting faces =': 'EmittingFaces',
+    'Total Emitted Particles =': 'TotalEmitted',
+    'Survived particles (still flying at end):': 'Survived',
+    'Number of MPI processes:': 'MPIProcesses',
+}
+_LOG_BANNER = {
+    'ACE3P Codes Source Date:': 'SourceDate',
+    'ACE3P Codes Source Tag:': 'SourceTag',
+    'Compilation Date:': 'CompilationDate',
+}
+TRACK3P_DONE = 'Done!'
+
+
+def parse_track3p_log(text):
+    """Parse ``track3p.log`` into a dict of run facts.
+
+    Keys: ``Done`` (the terminator was written -- a killed run leaves a log
+    without it), ``EmittingFaces``, ``TotalEmitted``, ``Survived`` and
+    ``MPIProcesses`` (ints, or ``None`` when the line is absent), ``SourceDate`` /
+    ``SourceTag`` / ``CompilationDate`` from the banner, and ``Scales``, a
+    ``{field level: scale factor}`` dict from the one ``scale <s> Field <f>`` line
+    the solver writes per level it actually tracked.
+
+    ``Done!`` is looked for anywhere, not on the last line: a field-emission run
+    prints ``Total Emitted Particles = N`` after it.
+    """
+    data = {'Done': False, 'Scales': {}}
+    for key in list(_LOG_SCALARS.values()) + list(_LOG_BANNER.values()):
+        data[key] = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == TRACK3P_DONE:
+            data['Done'] = True
+            continue
+        if line.startswith('scale '):
+            parts = line.split()
+            if len(parts) >= 4 and parts[2] == 'Field':
+                try:
+                    data['Scales'][float(parts[3])] = float(parts[1])
+                except ValueError:
+                    pass
+            continue
+        for prefix, key in _LOG_SCALARS.items():
+            if line.startswith(prefix):
+                try:
+                    data[key] = int(line[len(prefix):].split()[0])
+                except (ValueError, IndexError):
+                    pass
+        for prefix, key in _LOG_BANNER.items():
+            if line.startswith(prefix):
+                data[key] = line[len(prefix):].strip()
+    return data
+
+
+def field_levels_from_tree(tree):
+    """The field levels a Track3P input declares, sorted, from its
+    ``FieldScales`` block: ``Minimum``..``Maximum`` in steps of ``Interval`` when
+    ``ScanToken`` is 1, the single ``Scale`` when it is 0. ``[]`` when the block
+    is missing or incomplete.
+
+    This is the module's index axis, and -- unlike Omega3P's mode count -- it is
+    known before the run, which is what lets a dry run report the right rows.
+    Every output file name (``ImpactsInfo_2.3e+07``) and the ``fieldlevel`` /
+    ``Field_Level`` columns repeat the same numbers."""
+    scales = tree.find('FieldScales')
+    if scales is None:
+        return []
+
+    def number(name):
+        value = scales.get_leaf(name)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    if scales.get_leaf('ScanToken') not in ('0', '0.0'):
+        lo, hi, step = number('Minimum'), number('Maximum'), number('Interval')
+        if lo is not None and hi is not None and step:
+            count = int(np.floor((hi - lo) / step + 1e-9)) + 1
+            return [float(lo + i * step) for i in range(max(count, 1))]
+    scale = number('Scale')
+    return [scale] if scale is not None else []
+
+
+def declared_field_levels(text):
+    """:func:`field_levels_from_tree` over ``.track3p`` input `text` -- the
+    stateless form, for the module layer's dry run."""
+    return field_levels_from_tree(parse_ace3p(text))
+
+
+def level_from_filename(name, prefix):
+    """``2.3e7`` from ``ImpactsInfo_2.3e+07`` (prefix ``'ImpactsInfo_'``), or
+    ``None`` when the name does not carry a parsable level."""
+    base = os.path.basename(name)
+    if not base.startswith(prefix):
+        return None
+    try:
+        return float(base[len(prefix):])
+    except ValueError:
+        return None
+
+
+def merge_levels(*groups, rtol=1e-9):
+    """One sorted array of distinct field levels from several sources -- file
+    names, table columns, the log, the input -- which spell the same level with
+    different rounding (``2.3e+07`` in a name, ``2.30000e+07`` in a column, and a
+    ``Minimum + k * Interval`` sum in the input)."""
+    levels = []
+    for group in groups:
+        for value in group:
+            if value is None or not np.isfinite(value):
+                continue
+            if not any(np.isclose(value, seen, rtol=rtol, atol=0.0)
+                       for seen in levels):
+                levels.append(float(value))
+    return np.array(sorted(levels))
+
+
+def _level_files(results, prefix):
+    """``{level: path}`` for every ``<prefix><level>`` file in `results`."""
+    found = {}
+    for path in sorted(glob.glob(os.path.join(results, prefix + '*'))):
+        level = level_from_filename(path, prefix)
+        if level is not None:
+            found[level] = path
+    return found
+
+
+def impacts_summary(path):
+    """``{'impact_count', 'max_impact_energy'}`` for one ``ImpactsInfo_<level>``
+    file, in either layout: rows whose impact ordinal is at least 1 (ordinal 0 is
+    the emission point, written once per macroparticle) and the largest
+    ``ImpactEnergy`` among them (NaN when there is none).
+
+    Read lazily by the module, never by the parser: Lixin Ge's cryomodule dumps
+    are 137 MB each. Only the two columns needed are loaded."""
+    with open(path) as file:
+        header = file.readline().lstrip('#').split()
+    ordinal = next((name for name in IMPACT_ORDER_COLUMNS if name in header), None)
+    if ordinal is None or 'ImpactEnergy' not in header:
+        raise ValueError(
+            path + ' has no impact-ordinal column (' + ' or '.join(
+                IMPACT_ORDER_COLUMNS) + ') or no ImpactEnergy; its header is '
+            + str(header) + '.')
+    import pandas as pd
+    table = pd.read_csv(path, sep=r'\s+', skiprows=1, header=None,
+                        names=header, usecols=[ordinal, 'ImpactEnergy'])
+    impacts = table[table[ordinal] >= 1]
+    return {'impact_count': int(len(impacts)),
+            'max_impact_energy': (float(impacts['ImpactEnergy'].max())
+                                  if len(impacts) else float('nan'))}
+
+
+def read_track3p_results(results, declared_levels=()):
+    """Read a Track3P results directory into the ``output_data`` dict.
+
+    * ``Log`` -- :func:`parse_track3p_log` of ``track3p.log``; its scalars are
+      also lifted to the top level (``EmittingFaces``, ``TotalEmitted``,
+      ``Survived``);
+    * ``EnhancementCounter`` / ``ResonantParticles`` -- the two
+      ``OUTPUT/`` postprocess tables through :func:`parse_column_file` (their
+      bare headers name the columns), or ``None`` when the run did not write one;
+    * ``FaradayCups`` -- ``{boundary id: table}`` from ``OUTPUT/faradaycup_<id>``;
+    * ``ImpactsFiles`` / ``LostParticlesFiles`` -- ``{level: path}`` for the
+      per-level dumps. Paths only: their contents are read on demand by
+      :func:`impacts_summary`;
+    * ``FieldLevel`` -- every level any of the above names, merged with the
+      levels the input declared (`declared_levels`), sorted. A declared level
+      that produced no file is still a row.
+
+    Raises when there is no log (the run produced nothing) or the log has no
+    ``Done!`` (the run did not finish) -- in both cases nothing below the log can
+    be trusted, and a partially written table would otherwise read as a result.
+    """
+    log_path = os.path.join(results, 'track3p.log')
+    if not os.path.isfile(log_path):
+        raise FileNotFoundError(
+            'no track3p.log in ' + results + ': Track3P writes it on every run, '
+            'so the solver did not run or wrote to another results directory '
+            "(set 'results_dir' on the track3p module to match the job).")
+    with open(log_path) as file:
+        log = parse_track3p_log(file.read())
+    if not log['Done']:
+        raise ValueError(
+            log_path + " has no 'Done!' line, so the run did not finish; its "
+            'results directory may be partial and was not read.')
+
+    data = {'Log': log}
+    for key in ('EmittingFaces', 'TotalEmitted', 'Survived'):
+        data[key] = log[key]
+
+    output = os.path.join(results, 'OUTPUT')
+    for key, name in (('EnhancementCounter', 'enhancementCounter'),
+                      ('ResonantParticles', 'resonantparticles')):
+        path = os.path.join(output, name)
+        data[key] = parse_column_file(path) if os.path.isfile(path) else None
+    cups = {}
+    for path in sorted(glob.glob(os.path.join(output, 'faradaycup_*'))):
+        try:
+            boundary = int(os.path.basename(path)[len('faradaycup_'):])
+        except ValueError:
+            continue
+        cups[boundary] = parse_column_file(path)
+    data['FaradayCups'] = cups
+
+    data['ImpactsFiles'] = _level_files(results, 'ImpactsInfo_')
+    data['LostParticlesFiles'] = _level_files(results, 'LostParticles_')
+
+    columns = []
+    if data['EnhancementCounter']:
+        columns.append(data['EnhancementCounter'].get('fieldlevel', ()))
+    if data['ResonantParticles']:
+        columns.append(data['ResonantParticles'].get('Field_Level', ()))
+    data['FieldLevel'] = merge_levels(
+        declared_levels, log['Scales'], data['ImpactsFiles'],
+        data['LostParticlesFiles'], *columns)
+    return data
+
+
 class Track3P(ACE3P):
+    """The ACE3P particle tracker (multipacting, dark current).
+
+    Reads the EM fields an Omega3P or S3P run wrote (``Domain.FieldDir``) and
+    tracks emitted particles at each field level ``FieldScales`` declares. That
+    level is the index axis of everything it writes: one ``ImpactsInfo_<level>``
+    (and ``LostParticles_<level>``) per level, and a ``fieldlevel`` /
+    ``Field_Level`` column in the two postprocess tables. The levels are declared
+    in the *input*, so the axis is known before the run -- S3P-shaped, not
+    Omega3P-shaped.
+
+    A run writes into the second positional argument, else ``track3p_results``;
+    :meth:`output_parser` reads it through :func:`read_track3p_results`. The run
+    log is ``track3p.log`` **inside that directory** -- there is no
+    ``track3p.out`` -- and its ``Done!`` line is the only evidence a run
+    finished. The 17-column dumps are recorded by path and summarised on demand
+    (see :func:`impacts_summary`); their layout depends on the input (see
+    :data:`IMPACT_ORDER_COLUMNS`).
+    """
 
     module_name = 'track3p'
 
@@ -1337,4 +1651,28 @@ class Track3P(ACE3P):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.output_file = 'track3p.out'
+        # The run log, written into the results directory. It used to say
+        # 'track3p.out', a file no Track3P build writes.
+        self.output_file = 'track3p.log'
+
+    def make_default_input(self):
+        self.input_file = 'track3p_input_file.track3p'
+        with open(self.input_file, 'w') as f:
+            pass
+
+    def field_levels(self):
+        """The levels the input file declares (:func:`field_levels_from_tree`)."""
+        return field_levels_from_tree(self._input_tree())
+
+    def field_dir(self):
+        """``Domain.FieldDir`` of the input, or ``None``."""
+        domain = self._input_tree().find('Domain')
+        return domain.get_leaf('FieldDir') if domain is not None else None
+
+    def output_parser(self):
+        """Read the results directory (:func:`read_track3p_results`) into
+        ``output_data``, merging the input's declared levels into
+        ``FieldLevel``. Raises when the log is missing or unfinished."""
+        results = os.path.join(self.workdir, self.results_dir())
+        self.output_data = read_track3p_results(
+            results, declared_levels=self.field_levels())

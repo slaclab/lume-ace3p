@@ -10,8 +10,8 @@ Each module declares the *artifact kinds* it ``requires`` (must exist upstream)
 and ``provides`` (produces), so a future ``Workflow`` can order a declared list
 of modules into a runnable DAG purely from those edges. The requires/provides
 edges are deliberately additive — adding :class:`T3PModule` (``requires {mesh}``
-/ ``provides {td_solution}``) needed no rule change, and a runnable Track3P
-solver will likewise slot in as ``requires {em_solution}`` / ``provides
+/ ``provides {td_solution}``) needed no rule change, and :class:`Track3PModule`
+slotted in the same way as ``requires {em_solution}`` / ``provides
 {track3p_particles}``.
 
 Each module also answers two questions about a *past* run, which is what makes
@@ -41,7 +41,8 @@ from lume_ace3p.cubit import Cubit
 # deliberately NOT imported, since acdtool exports one of the same name and value
 # — T3PModule tests for a monitor's missing index axis instead.
 from lume_ace3p.ace3p import (
-    ALWAYS, MONITORS, Omega3P, S3P, T3P, declared_monitors, input_job_name,
+    ALWAYS, MONITORS, Omega3P, S3P, T3P, Track3P, declared_field_levels,
+    declared_monitors, impacts_summary, input_job_name, parse_ace3p,
     results_path,
 )
 from lume_ace3p.acdtool import (
@@ -65,7 +66,7 @@ MESH = 'mesh'                          # genesis/ncdf mesh (cubit+meshconvert, o
 EM_SOLUTION = 'em_solution'            # Omega3P/S3P frequency-domain solution
 TD_SOLUTION = 'td_solution'            # T3P time-domain solution (wakefields)
 RF_POST = 'rf_post'                    # acdtool postprocess results
-TRACK3P_PARTICLES = 'track3p_particles'  # raw Track3P dump (produced EXTERNALLY today)
+TRACK3P_PARTICLES = 'track3p_particles'  # raw Track3P dump (track3p run, or supplied)
 PARTICLE_SOURCE = 'particle_source'    # Geant4-format particle file (Particles output)
 DOSE_GRID = 'dose_grid'                # Geant4 dose scoring output
 EDEP_GRID = 'edep_grid'                # Geant4 energy-deposit scoring output
@@ -376,10 +377,12 @@ class MeshSourceModule(_SourceModule):
 class Track3PSourceModule(_SourceModule):
     """Provide ``track3p_particles`` from an externally-produced Track3P dump.
 
-    This is a *source* module — there is no in-pipeline Track3P solver in this
-    refactor. When a runnable Track3P/T3P solver is built later it will
-    ``require {em_solution}`` and ``provide {track3p_particles}``; nothing here
-    needs to change for that to slot in."""
+    The *source* counterpart of :class:`Track3PModule`, which runs Track3P in
+    the pipeline: a workflow lists one or the other, since both provide the same
+    artifact. This one is the intended head for modelling studies over pre-run
+    dumps (a cryomodule-scale Track3P run costs ~50 node-minutes per field
+    level), the runnable one for producing new dumps or for multipacting sweeps.
+    """
 
     type = 'track3p_source'
     provides = frozenset({TRACK3P_PARTICLES})
@@ -540,6 +543,10 @@ class _SolverModule(Module):
     _wrapper = None
     _label = ''
     _artifact = EM_SOLUTION
+    # The one upstream artifact :meth:`run` insists on. A mesh for the field
+    # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
+    # its mesh out of the upstream solver's results directory.
+    _input_artifact = MESH
     # The one output file whose presence means this solver's results are still on
     # disk (see :meth:`verify`) — the same file the solver's own
     # ``output_parser`` reads first, so "verify passes" and "the results are
@@ -558,11 +565,26 @@ class _SolverModule(Module):
         # solver reference documents a 'JobName' input container). Unset means
         # the per-solver default ('omega3p_results', 't3p_results', ...).
         self.results_dir = self.config.get('results_dir')
+        # Auxiliary files the solver reads from its working directory by bare
+        # name and that no artifact supplies -- a Track3P SEY table
+        # ('SEYFileName1: copper.dat'), an external field map. Staged into the
+        # workdir (see :func:`_stage_file`) before the run, the way the Geant4
+        # module stages 'geant4_geometry_files'.
+        files = self.config.get('files') or []
+        self.files = [files] if isinstance(files, str) else list(files)
         self._solver = None
 
     def run(self, ctx, skip_execution=False):
-        if MESH not in ctx.artifacts:
-            raise ValueError(f"module '{self.type}' requires a mesh artifact.")
+        if self._input_artifact not in ctx.artifacts:
+            raise ValueError(f"module '{self.type}' requires a "
+                             f"{self._input_artifact} artifact.")
+        for path in self.files:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"module '{self.type}' lists '{path}' under 'files:' but "
+                    "there is no such file (paths resolve from the directory "
+                    "run-lume-ace3p was started in).")
+            _stage_file(ctx, path)
         if ctx.dry_run:
             self._solver = None
             leaves = _ace3p_leaf_pairs(ctx.inputs.ace3p)
@@ -575,6 +597,7 @@ class _SolverModule(Module):
             # builds its command line from this.
             ctx.job_names[self._artifact] = (self.results_dir
                                              or self._wrapper.default_job_name)
+            self._prepare_dry_run(ctx)
             return
         ctx.ensure_workdir()
         solver = self._wrapper(self.input_file,
@@ -587,6 +610,7 @@ class _SolverModule(Module):
                                mpi_caller=ctx.paths.get('mpi', ''),
                                log_file=self.log_file(ctx))
         solver.set_value(ctx.inputs.ace3p)
+        self._prepare_solver(ctx, solver)
         if skip_execution:
             # Resumed: this solve already finished in this workdir, so read its
             # results instead of repeating the hours that produced them.
@@ -609,6 +633,18 @@ class _SolverModule(Module):
         # Let a consumer that rewrites this solver's output in place ask for a
         # re-read (the acdtool wake commands overwrite wakefield.out).
         ctx.reparse[self._artifact] = solver.output_parser
+
+    def _prepare_solver(self, ctx, solver):
+        """Hook: edit the solver's input tree after the ``ace3p:`` overrides
+        are merged and before it runs (or is re-read). A no-op for the field
+        solvers; :class:`Track3PModule` points ``Domain.FieldDir`` at the
+        upstream solver's results directory here."""
+
+    def _prepare_dry_run(self, ctx):
+        """Hook: the dry-run counterpart of :meth:`_prepare_solver`, called
+        after the artifact and job name are recorded. There is no solver to
+        edit, so this is where a module records what it *would* inject or
+        checks what it can without one."""
 
     def _results_dir(self, ctx):
         """This solver's results directory, relative to the workdir, resolved
@@ -1224,6 +1260,361 @@ class T3PModule(_SolverModule):
         if solver is None or not solver.output_data:
             return None
         return dict(solver.output_data)
+
+
+# --------------------------------------------------------------------------- #
+# Track3P
+# --------------------------------------------------------------------------- #
+
+
+class Track3PModule(_SolverModule):
+    """The ACE3P particle tracker: requires an ``em_solution``, provides
+    ``track3p_particles``.
+
+    The runnable counterpart of :class:`Track3PSourceModule`: a workflow has one
+    or the other as the producer of ``track3p_particles``, never both. It runs
+    ``track3p`` on the fields the upstream Omega3P or S3P step wrote, and exposes
+    the run's multipacting and dark-current results as result-table columns::
+
+        output_parameters :
+          'EC_max'   : {module: track3p, quantity: max_enhancement}
+          'impacts'  : {module: track3p, quantity: total_impacts}
+          'onset'    : {module: track3p, quantity: mp_onset_level, at: {threshold: 1.0}}
+          'captured' : {module: track3p, quantity: captured_electrons, at: {boundary: 1}}
+
+    **Field level is the index axis** (``FieldLevel``): every per-level quantity
+    is an array aligned to it, so a ``single`` or ``parameter_sweep`` table goes
+    long-format, one row per level, and ``at: {field_level: x}`` narrows one to a
+    scalar (an off-grid level raises naming the grid, as S3P's ``at:
+    {frequency}`` does). The levels are declared in the input's ``FieldScales``,
+    so a dry run reports the right rows.
+
+    **What the module injects.** Track3P finds its fields through
+    ``Domain.FieldDir``, which in a hand-run case is a relative path the user
+    typed to match a batch script. Here the upstream solver's results directory
+    is known (``ctx.job_names``), so :meth:`_prepare_solver` sets
+    ``FieldDir: ./<that directory>`` — unless the input already names a
+    ``FieldDir`` that exists in the workdir, which is respected (a pre-staged
+    ``omega3p_results`` symlink, say).
+
+    The 17-column impact dumps are *not* read into memory here: the run records
+    their paths and :meth:`extract` summarises one on demand. What the artifact
+    points at (a dump or the results directory) and the opt-in
+    ``Initials-Impacts`` layout the ``particles`` module needs are Phase 3 of
+    ``plans/track3p_module_plan.md``; this phase sets the artifact to the results
+    directory.
+    """
+
+    type = 'track3p'
+    requires = frozenset({EM_SOLUTION})
+    provides = frozenset({TRACK3P_PARTICLES})
+    _wrapper = Track3P
+    _label = 'Track3P'
+    _artifact = TRACK3P_PARTICLES
+    _input_artifact = EM_SOLUTION
+    # The run log, which every run writes and which carries the 'Done!' that
+    # says it finished. verify() checks both.
+    _results_file = 'track3p.log'
+
+    # A Track3P table is indexed by field level even though the Omega3P step
+    # upstream exposes a mode index: the modes are Track3P's *input*, and a mode
+    # frequency in this chain is one scalar per run (``at: {mode: n}``), not an
+    # axis anyone tabulates a multipacting result over. See
+    # :meth:`Workflow.field_index`.
+    index_precedence = 1
+
+    # Bare quantity names this module answers to; the output-spec router in
+    # workflow_graph sends these to 'track3p' without a 'module:' key.
+    PER_LEVEL = frozenset({
+        'max_enhancement', 'mean_enhancement', 'total_impacts', 'resonant_count',
+        'resonant_particles', 'max_resonant_energy',
+        'impact_count', 'max_impact_energy', 'lost_count',
+    })
+    SCALARS = frozenset({'total_emitted', 'emitting_faces', 'survived'})
+    QUANTITIES = PER_LEVEL | SCALARS | {'captured_electrons', 'mp_onset_level'}
+
+    # The axes an 'at:' may narrow on.
+    _AXES = ('field_level', 'boundary', 'threshold')
+
+    # Where each per-level table quantity comes from: (output_data key, level
+    # column, reduction over that level's rows).
+    _TABLE = {
+        'max_enhancement': ('EnhancementCounter', 'fieldlevel',
+                            lambda t, m: np.max(t['maxEnhancement'][m])),
+        'mean_enhancement': ('EnhancementCounter', 'fieldlevel',
+                             lambda t, m: np.mean(t['averageEnhancement'][m])),
+        'total_impacts': ('EnhancementCounter', 'fieldlevel',
+                          lambda t, m: np.sum(t['totalImpactNum'][m])),
+        'resonant_count': ('EnhancementCounter', 'fieldlevel',
+                           lambda t, m: np.count_nonzero(m)),
+        'resonant_particles': ('ResonantParticles', 'Field_Level',
+                               lambda t, m: len(np.unique(t['ID'][m]))),
+        'max_resonant_energy': ('ResonantParticles', 'Field_Level',
+                                lambda t, m: np.max(t['Energy'][m])),
+    }
+
+    def __init__(self, config=None, name=None):
+        super().__init__(config, name)
+        self._declared = None
+        self._summaries = {}
+
+    # ---- input injection ---------------------------------------------------
+
+    def _field_source(self, ctx):
+        """``(producer module or None, its results directory name)`` for the
+        ``em_solution`` this run reads."""
+        producer = next((m for m in ctx.modules if EM_SOLUTION in m.provides),
+                        None)
+        return producer, ctx.job_names.get(EM_SOLUTION)
+
+    def _prepare_solver(self, ctx, solver):
+        producer, job_name = self._field_source(ctx)
+        current = solver.field_dir()
+        if job_name and not (current and os.path.isdir(
+                os.path.join(ctx.workdir or '', current))):
+            solver.set_input_leaf(('Domain', 'FieldDir'), './' + job_name)
+        self._check_s3p_scan(producer)
+
+    def _prepare_dry_run(self, ctx):
+        producer, job_name = self._field_source(ctx)
+        _append_marker(ctx, f"Track3P FieldDir: ./{job_name}\n")
+        self._check_s3p_scan(producer)
+
+    @staticmethod
+    def _check_s3p_scan(producer):
+        """Warn when the fields come from an S3P scan with more than one
+        frequency. Both CW23 S3P-driven Track3P cases (TW7Cell, Window) run S3P
+        at a single frequency (``Start == End``); no input key selects a scan
+        point (the build's ``InputParameters`` echo lists none), so which
+        frequency a multi-point scan would track is unknown."""
+        if producer is None or producer.type != 's3p':
+            return
+        try:
+            with open(producer.input_file) as file:
+                scan = parse_ace3p(file.read()).find('FrequencyScan')
+            start, end = (float(scan.get_leaf(k)) for k in ('Start', 'End'))
+            step = float(scan.get_leaf('Interval'))
+        except (OSError, TypeError, ValueError, AttributeError):
+            return
+        points = int(np.floor((end - start) / step + 1e-9)) + 1 if step else 1
+        if points > 1:
+            warnings.warn(
+                f"track3p reads fields from an S3P scan of {points} frequencies "
+                f"({start:g} to {end:g} Hz); Track3P has no documented way to "
+                "pick one and every CW23 S3P-driven Track3P case runs S3P at a "
+                "single frequency (Start == End). Check which fields the run "
+                "used.", stacklevel=3)
+
+    # ---- the axis -----------------------------------------------------------
+
+    def _input_levels(self):
+        """Levels the input file declares, read once. ``[]`` when unreadable."""
+        if self._declared is None:
+            try:
+                with open(self.input_file) as file:
+                    self._declared = declared_field_levels(file.read())
+            except (OSError, TypeError, ValueError):
+                self._declared = []
+        return self._declared
+
+    def _levels(self):
+        solver = self._solver
+        if solver is None:
+            levels = self._input_levels()
+            return np.array(levels if levels else [0.0])
+        return np.asarray(solver.output_data['FieldLevel'], dtype=float)
+
+    def field_index(self, ctx):
+        """``('FieldLevel', levels)`` — from the run when there is one, else
+        from the input file's ``FieldScales`` (a dry run), else the ``[0.0]``
+        sentinel S3P and T3P use when the input cannot be read."""
+        return 'FieldLevel', self._levels()
+
+    def field(self, ctx):
+        """The run's tables and log scalars, or ``None`` under dry-run:
+        ``{FieldLevel, EnhancementCounter, ResonantParticles, FaradayCups,
+        EmittingFaces, TotalEmitted, Survived, Log, ImpactsFiles,
+        LostParticlesFiles}``."""
+        solver = self._solver
+        if solver is None or not solver.output_data:
+            return None
+        return dict(solver.output_data)
+
+    # ---- extraction ---------------------------------------------------------
+
+    def extract(self, ctx, spec):
+        """Return one quantity from the Track3P run.
+
+        Per level (arrays aligned to ``FieldLevel``; ``at: {field_level: x}``
+        picks one):
+
+        * from ``OUTPUT/enhancementCounter`` — ``max_enhancement`` (largest
+          ``maxEnhancement`` among the level's rows), ``mean_enhancement`` (mean
+          ``averageEnhancement``), ``total_impacts`` (sum of ``totalImpactNum``),
+          ``resonant_count`` (rows, i.e. particles above ``MinimumEC``);
+        * from ``OUTPUT/resonantparticles`` — ``resonant_particles`` (distinct
+          IDs), ``max_resonant_energy``;
+        * from ``ImpactsInfo_<level>``, read on first use — ``impact_count``
+          (rows with impact ordinal ≥ 1) and ``max_impact_energy``; and
+          ``lost_count`` from ``LostParticles_<level>``.
+
+        A level with no rows in a table is NaN, and a table the run did not
+        write raises naming the ``Postprocess`` token that enables it.
+
+        Scalars (one per run; they repeat down the level rows): ``total_emitted``,
+        ``emitting_faces``, ``survived`` from the log — NaN when the build did
+        not write the line (a secondary-emission run reports no
+        ``Total Emitted Particles``).
+
+        ``captured_electrons`` — ``sum(NumElectrons)`` of one Faraday cup;
+        ``at: {boundary: id}`` is required, naming a ``BoundaryID`` of the
+        input's ``FaradayCup`` block.
+
+        ``mp_onset_level`` — the lowest level whose ``max_enhancement`` is at
+        least ``at: {threshold: t}`` (default 1.0, i.e. growth), NaN when none
+        reaches it. The multipacting objective an optimizer minimises or
+        constrains.
+
+        Under dry-run every quantity is a NaN array aligned to the declared
+        levels, so the dry-run table has the shape the real one will.
+        """
+        quantity, at = self._parse_spec(spec)
+        stray = sorted(set(at) - set(self._AXES))
+        if stray:
+            raise ValueError(
+                "a track3p 'at:' narrows on " + str(list(self._AXES))
+                + ', not ' + str(stray) + '.')
+        if quantity not in self.QUANTITIES:
+            raise ValueError(
+                "Unknown track3p quantity '" + str(quantity) + "'. Known: "
+                + str(sorted(self.QUANTITIES)) + '.')
+        solver = self._solver
+        if solver is None:
+            return np.full(len(self._levels()), float('nan'))
+        data = solver.output_data
+
+        if quantity in self.SCALARS:
+            value = data[{'total_emitted': 'TotalEmitted',
+                          'emitting_faces': 'EmittingFaces',
+                          'survived': 'Survived'}[quantity]]
+            return float('nan') if value is None else value
+
+        if quantity == 'captured_electrons':
+            return self._captured(data, at)
+
+        if quantity == 'mp_onset_level':
+            threshold = float(at.get('threshold', 1.0))
+            peak = self._per_level(data, 'max_enhancement')
+            hits = np.flatnonzero(np.nan_to_num(peak, nan=-np.inf) >= threshold)
+            return float(self._levels()[hits[0]]) if len(hits) else float('nan')
+
+        values = self._per_level(data, quantity)
+        if 'field_level' not in at:
+            return values
+        return values[self._level_index(float(at['field_level']))]
+
+    @staticmethod
+    def _parse_spec(spec):
+        if isinstance(spec, dict):
+            return spec.get('quantity'), dict(spec.get('at') or {})
+        if isinstance(spec, (list, tuple)) and spec:
+            return spec[0], {}
+        return spec, {}
+
+    def _level_index(self, level):
+        levels = self._levels()
+        hits = np.flatnonzero(np.isclose(levels, level, rtol=1e-9, atol=0.0))
+        if not len(hits):
+            raise ValueError(
+                'at: {field_level: ' + repr(level) + '} is not a level of this '
+                "Track3P run (" + ', '.join(repr(float(v)) for v in levels)
+                + '). Pick one of those, or change the FieldScales block.')
+        return int(hits[0])
+
+    def _per_level(self, data, quantity):
+        """The per-level array for one quantity, aligned to ``FieldLevel``."""
+        levels = self._levels()
+        if quantity in self._TABLE:
+            key, column, reduce = self._TABLE[quantity]
+            table = data.get(key)
+            if not table:
+                token = ('Postprocess.EnhancementCounter.Token' if key ==
+                         'EnhancementCounter' else 'Postprocess.ResonantParticles.Token')
+                raise ValueError(
+                    f"this Track3P run wrote no OUTPUT/{key[0].lower() + key[1:]} "
+                    f"table, so '{quantity}' is unavailable. It is written when "
+                    f"the input sets {token}: on (and Postprocess.Toggle: on).")
+            column_values = np.asarray(table[column], dtype=float)
+            out = np.full(len(levels), float('nan'))
+            for i, level in enumerate(levels):
+                mask = np.isclose(column_values, level, rtol=1e-9, atol=0.0)
+                if mask.any():
+                    out[i] = float(reduce(table, mask))
+            return out
+        if quantity in ('impact_count', 'max_impact_energy'):
+            out = np.full(len(levels), float('nan'))
+            for i, level in enumerate(levels):
+                summary = self._summary(data['ImpactsFiles'], level)
+                if summary is not None:
+                    out[i] = summary[quantity]
+            return out
+        if quantity == 'lost_count':
+            out = np.full(len(levels), float('nan'))
+            for i, level in enumerate(levels):
+                summary = self._summary(data['LostParticlesFiles'], level)
+                if summary is not None:
+                    out[i] = summary['impact_count']
+            return out
+        raise ValueError(f"'{quantity}' is not a per-level track3p quantity.")
+
+    def _summary(self, files, level):
+        """:func:`impacts_summary` of the dump for `level`, cached per path;
+        ``None`` when the run wrote no file for that level."""
+        path = next((p for lv, p in files.items()
+                     if np.isclose(lv, level, rtol=1e-9, atol=0.0)), None)
+        if path is None:
+            return None
+        if path not in self._summaries:
+            self._summaries[path] = impacts_summary(path)
+        return self._summaries[path]
+
+    def _captured(self, data, at):
+        cups = data.get('FaradayCups') or {}
+        if 'boundary' not in at:
+            raise ValueError(
+                "'captured_electrons' is per Faraday cup, so it needs "
+                "'at: {boundary: <id>}'. This run wrote cups for boundaries "
+                + str(sorted(cups)) + '.')
+        boundary = int(at['boundary'])
+        if boundary not in cups:
+            raise ValueError(
+                f"this Track3P run wrote no OUTPUT/faradaycup_{boundary}; it "
+                f"wrote {sorted(cups)}. Cups follow the input's "
+                "Postprocess.FaradayCup { Token: on  BoundaryID: ... }.")
+        electrons = cups[boundary].get('NumElectrons')
+        if electrons is None:
+            raise ValueError(
+                f"OUTPUT/faradaycup_{boundary} has no NumElectrons column; its "
+                f"columns are {sorted(cups[boundary])}.")
+        return float(np.sum(electrons))
+
+    # ---- resume -------------------------------------------------------------
+
+    def verify(self, ctx):
+        """Whether the run finished: its log is in the results directory **and**
+        ends with ``Done!``. A killed run leaves a log without the terminator,
+        which the base class's presence check would mistake for a result."""
+        if ctx.dry_run:
+            return None
+        path = os.path.join(ctx.workdir or '', self._results_dir(ctx),
+                            self._results_file)
+        if not os.path.isfile(path):
+            return False
+        try:
+            with open(path) as file:
+                return any(line.strip() == 'Done!' for line in file)
+        except OSError:
+            return None
 
 
 # --------------------------------------------------------------------------- #
@@ -2144,6 +2535,7 @@ MODULE_REGISTRY = {
     Omega3PModule.type: Omega3PModule,
     S3PModule.type: S3PModule,
     T3PModule.type: T3PModule,
+    Track3PModule.type: Track3PModule,
     AcdtoolModule.type: AcdtoolModule,
     Track3PSourceModule.type: Track3PSourceModule,
     ParticlesModule.type: ParticlesModule,

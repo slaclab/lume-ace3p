@@ -9,7 +9,28 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
-Nothing yet.
+**Track3P runs in the pipeline.** A new `track3p` module (`requires
+em_solution`, `provides track3p_particles`) runs the ACE3P particle tracker
+after `omega3p` or `s3p`, points its `Domain.FieldDir` at the upstream results
+directory, and reads Track3P's own postprocess tables and run log. Field level
+is its index axis, so a `single` or `parameter_sweep` table goes one row per
+`FieldScales` level, with `max_enhancement`, `mean_enhancement`,
+`total_impacts`, `resonant_count`, `resonant_particles`, `max_resonant_energy`,
+`impact_count`, `max_impact_energy`, `lost_count`, per-cup `captured_electrons`,
+the log scalars, and a derived `mp_onset_level` objective. New example
+`examples/track3p_multipacting` (the CW23 pillbox scan, validated on S3DF).
+`track3p_source` stays the head for chains over pre-run dumps; feeding the
+runnable module's output to `particles` comes in a later phase
+(`plans/track3p_module_plan.md`).
+
+**Fixed:** the ACE3P input parser misread one-line blocks (`Key: { A: x  B: y }`),
+reading the value to end of line and swallowing the sibling keys and the closing
+brace; Track3P tutorial inputs and generated LCLS-II inputs use that style.
+The `Track3P` wrapper's output file was `track3p.out`, which no build writes; it
+is now `track3p.log` in the results directory. `parse_column_file` keeps the
+column names of a header-only table instead of returning an empty dict. Solver
+modules take a `files:` list of auxiliary inputs (an SEY table) to stage into
+the workdir.
 
 ## [0.5.1] — 2026-09-10
 

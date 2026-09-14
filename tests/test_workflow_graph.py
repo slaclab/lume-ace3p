@@ -816,3 +816,126 @@ def test_shipped_examples_raise_no_deprecation_warnings(name):
 
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
+
+
+# --------------------------------------------------------------------------- #
+# Track3P chains (Track3P Phase 1)
+# --------------------------------------------------------------------------- #
+
+TRACK3P_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'fixtures', 'track3p')
+
+
+def _pillbox_track3p(tmp_path):
+    """The CW23 Pillbox 3-level scan input, copied into tmp_path."""
+    import shutil
+    dest = tmp_path / 'Pillbox.track3p'
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'inputs', 'Pillbox.track3p'), dest)
+    return str(dest)
+
+
+def test_order_mesh_omega3p_track3p(tmp_path):
+    """The use-case-A chain validates and orders: the tracker after the
+    eigensolver, out of YAML order.
+
+    The plan also named ``[mesh, omega3p, track3p, acdtool]`` with acdtool's
+    positional ``postprocess track3p``; that command is *not* wired as a
+    workflow step (``lume_ace3p.acdtool.COMMANDS`` marks it ``wired=False``:
+    its ``.acdtool`` input is the KVC dialect, and Track3P's own
+    ``Postprocess`` container writes the same enhancement counter), so that
+    chain is not asserted here."""
+    track3p = _pillbox_track3p(tmp_path)
+    entries = [
+        {'module': 'track3p', 'input': track3p},
+        {'module': 'omega3p', 'input': 'x.omega3p'},
+        {'module': 'mesh', 'file': 'x.ncdf'},
+    ]
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['mesh', 'omega3p', 'track3p']
+
+
+def test_order_mesh_s3p_track3p(tmp_path):
+    entries = [{'module': 'mesh', 'file': 'x.ncdf'},
+               {'module': 's3p', 'input': 'x.s3p'},
+               {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)}]
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['mesh', 's3p', 'track3p']
+
+
+def test_track3p_without_a_field_solver_is_rejected(tmp_path):
+    with pytest.raises(WorkflowValidationError, match=f"'{EM_SOLUTION}'"):
+        Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
+                  {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)}],
+                 workflow_params={'dry_run': True})
+
+
+def test_track3p_and_track3p_source_together_are_rejected(tmp_path):
+    """Two producers of track3p_particles: the workflow has one or the other."""
+    with pytest.raises(WorkflowValidationError,
+                       match=f"'{TRACK3P_PARTICLES}'"):
+        Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
+                  {'module': 'omega3p', 'input': 'x.omega3p'},
+                  {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)},
+                  {'module': 'track3p_source', 'file': 'dump.txt'}],
+                 workflow_params={'dry_run': True})
+
+
+def test_track3p_chain_evaluate_dry_run_table_shape(tmp_path):
+    """mesh -> omega3p -> track3p, dry-run: the table is long-format over the
+    three levels the input declares, every output NaN, and the acdtool jobname
+    injection sees track3p's results directory."""
+    track3p = _pillbox_track3p(tmp_path)
+    mesh = tmp_path / 'Pillbox.ncdf'
+    mesh.write_bytes(b'')
+    entries = [{'module': 'mesh', 'file': str(mesh)},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'track3p', 'input': track3p, 'results_dir': 'scan'}]
+    output_spec = {
+        'EC_max': {'module': 'track3p', 'quantity': 'max_enhancement'},
+        'impacts': {'quantity': 'total_impacts'},           # routes bare
+        'onset': {'quantity': 'mp_onset_level', 'at': {'threshold': 1.0}},
+    }
+    wf = Workflow(entries,
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec=output_spec)
+    out, ctx = wf.evaluate()
+    assert _types(wf.modules) == ['mesh', 'omega3p', 'track3p']
+    assert {MESH, EM_SOLUTION, TRACK3P_PARTICLES} <= set(ctx.artifacts)
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'scan'
+    for name in output_spec:
+        assert np.isnan(out[name]).all(), name
+
+    label, levels = wf.field_index(ctx)
+    assert label == 'FieldLevel'
+    assert np.allclose(levels, [2.3e7, 2.4e7, 2.5e7])
+    rows = _rows_for_point(wf, wf.field_index(ctx), [], [], out)
+    assert len(rows) == 3
+    assert [row['FieldLevel'] for row in rows] == [2.3e7, 2.4e7, 2.5e7]
+    assert all(np.isnan(row['EC_max']) for row in rows)
+
+
+def test_track3p_axis_beats_omega3p_modes(tmp_path):
+    """After a real run Omega3P exposes a ModeID axis too; the Track3P table is
+    still indexed by field level (index_precedence), and an Omega3P quantity in
+    such a chain must be narrowed with at: {mode: n}."""
+    import shutil
+    from test_modules import _make_omega3p_solver
+    track3p = _pillbox_track3p(tmp_path)
+    entries = [{'module': 'mesh', 'file': 'x.ncdf'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'track3p', 'input': track3p}]
+    wf = Workflow(entries, workflow_params={'workdir': str(tmp_path / 'wd'),
+                                            'dry_run': True})
+    _outputs, ctx = wf.evaluate()
+    _module_of(ctx.modules, 'omega3p')._solver = _make_omega3p_solver(ctx.workdir)
+    assert _module_of(ctx.modules, 'omega3p').field_index(ctx)[0] == 'ModeID'
+    assert wf.field_index(ctx)[0] == 'FieldLevel'
+    # And with the tracker's own results parsed, the levels come from the run.
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan'),
+                    os.path.join(ctx.workdir, 'track3p_results'))
+    tracker = _module_of(ctx.modules, 'track3p')
+    ctx.dry_run = False
+    tracker.run(ctx, skip_execution=True)
+    label, levels = wf.field_index(ctx)
+    assert label == 'FieldLevel' and len(levels) == 3
