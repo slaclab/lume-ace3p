@@ -1,0 +1,3 @@
+Warning: Key '../omega3p_results/VECTOR/postprocess.in.<DEEPCOPY>.ModelInfo[0].SurfaceMaterial[0].Epsilon' undefined, using default value 1
+Warning: Key '../omega3p_results/VECTOR/postprocess.in.<DEEPCOPY>.ModelInfo[0].SurfaceMaterial[0].Mu' undefined, using default value 1
+Warning: Key '../omega3p_results/VECTOR/postprocess.in.<DEEPCOPY>.ModelInfo[0].SurfaceMaterial[0].Frequency' undefined, using default value 1e+09

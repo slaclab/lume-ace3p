@@ -1,6 +1,7 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: APPROVED, not started** — written 2026-09-14 on S3DF. Decision taken
+**Status: IN PROGRESS — Phase 0 done 2026-09-14** (see the status notes at the
+end of each phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
 `plans/t3p_monitor_plan.md` and `plans/acdtool_rework_plan.md` (both COMPLETE)
@@ -331,6 +332,37 @@ S3DF rules in memory; never on iana).
 3. Refresh `references/README.md` with the one-paragraph note that
    `track3p-commands.pdf` is inputs-only and lists none of `OutputImpactsInfo`,
    `LostParticles`, `PtrackMonitor`, `Domain.Mode`.
+
+**Phase 0 status (2026-09-14): DONE.** 27 files, 353 KB, in
+`tests/fixtures/track3p/`; 29 tests + 2 strict xfails in
+`tests/test_track3p_fixtures.py`. Deviations and findings, all recorded in
+`SOURCES.md`:
+
+- `resonantparticles` is a per-level selection (first 40 rows of each level),
+  not a prefix: the original is 204 KB.
+- The LCLS excerpt is not a contiguous 1 000-row prefix. The first 50 080 rows
+  of Lixin's dump are all `ImpactOrder 0` emission points, so the excerpt is
+  the first 20 rows plus the first 1 000 `ImpactOrder 1` rows; the matched
+  particle file is its 35 survivors, verified to 3e-7 relative.
+- Two directories the plan did not list: `pillbox_fieldemission/` (the Type-7
+  run with `Total Emitted Particles = 0` *after* `Done!`, three header-only
+  Faraday-cup files, a malformed `InputParameters` echo that nests `FaradayCup`
+  inside `EnhancementCounter`) and the LCLS `track3p.log` + `SurvivedParticles`
+  (the `Survived particles` line and a file no Pillbox run writes).
+- **Parser defect found, deferred to Phase 1:** `parse_ace3p` misreads one-line
+  blocks (`Key: { A: x  B: y }`) — the value runs to end of line, swallowing
+  sibling keys and the closing brace. Both `OutputImpactsInfo: { Type:
+  Initials-Impacts }` and Lixin's whole generated input hit it. Two strict
+  xfails pin it; Phase 1 must fix the tokenizer before `_prepare_solver` can
+  inject anything into such a file.
+- `parse_column_file` returns `{}` for a header-only table (no rows means no
+  width to match the header against); Phase 1 needs the names.
+- No Track3P log carries a wall-time line; `walltime_s` is dropped from §3.3.
+  `Survived particles` appears only in the LCLS log. Lixin's c3-solo run used
+  the same 08-28 build as the probes, not the 08-31 rebuild.
+- In the secondary-emission `Initials-Impacts` dump the two field-emission
+  columns hold uninitialized memory (denormals, negatives), not just 0 and a
+  placeholder.
 
 ### Phase 1 — wrapper + standalone module (use case A)
 
