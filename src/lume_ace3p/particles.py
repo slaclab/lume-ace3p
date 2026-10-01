@@ -35,6 +35,7 @@ filtered particles' z range or at explicit ``bin_edges``.
 """
 
 import os
+import re
 import warnings
 
 import numpy as np
@@ -83,6 +84,28 @@ def _as_list(value):
     return list(value) if isinstance(value, (list, tuple, np.ndarray)) else [value]
 
 
+# A trailing ``.something`` is only a file extension if it starts with a letter:
+# ``ImpactsInfo_2.3e+07`` ends in the decimal part of a field level, not in an
+# extension, and ``os.path.splitext`` cannot tell the difference.
+_EXTENSION_RE = re.compile(r'\.[A-Za-z][A-Za-z0-9]*\Z')
+
+
+def default_output_name(particle_file):
+    """The ``_modified`` name this module writes when no ``output:`` is given.
+
+    ``foo.txt`` -> ``foo_modified.txt``, as before. A Track3P dump name with no
+    extension -- ``ImpactsInfo_2.3e+07``, which a ``track3p`` module hands over
+    in-pipeline -- becomes ``ImpactsInfo_2.3e+07_modified`` rather than keeping
+    its own name: the old ``replace('.txt', ...)`` left such a name untouched,
+    so the output overwrote the input dump (through the symlink to the original,
+    under ``stage_mode: symlink``).
+    """
+    stem, ext = os.path.splitext(particle_file)
+    if not _EXTENSION_RE.match(ext):
+        stem, ext = particle_file, ''
+    return f'{stem}_modified{ext}'
+
+
 class Particles:
     """Reweight a Track3P ``Initials-Impacts`` dump and write a particle file.
 
@@ -100,8 +123,14 @@ class Particles:
 
     def __init__(self, particle_file, particle_params, output_file=None, workdir=None):
         self.particle_file = particle_file
-        self.output_file = output_file or particle_file.replace('.txt', '_modified.txt')
+        self.output_file = output_file or default_output_name(particle_file)
         self.workdir = workdir or os.getcwd()
+        if self._same_path(self.particle_file, self.output_file):
+            raise ValueError(
+                f"particles: the output file '{self.output_file}' is the input "
+                f"Track3P dump. Writing it would destroy the dump -- and under "
+                f"'stage_mode: symlink' the original it points at. Set the "
+                f"'output:' key to a different name.")
         self.impact_order = _as_list(particle_params.get('impact_order'))
         self.impact_face_id = _as_list(particle_params.get('impact_face_id'))
         self.work_function = particle_params.get('work_function')
@@ -128,6 +157,15 @@ class Particles:
                 f"Length of bin_edges ({len(self.bin_edges)}) must be num_bins + 1 ({self.num_bins + 1})")
         assert len(self.beta) == self.num_bins, (
             f"Length of beta ({len(self.beta)}) must match num_bins ({self.num_bins})")
+
+    def _same_path(self, a, b):
+        """Whether two names given relative to ``workdir`` are the same file.
+
+        Compared as paths, not as strings: in-pipeline the input is a subpath
+        (``track3p_results/ImpactsInfo_x``) while an ``output:`` is a bare name,
+        and ``./x`` is ``x``."""
+        return (os.path.normpath(os.path.join(self.workdir, a))
+                == os.path.normpath(os.path.join(self.workdir, b)))
 
     @staticmethod
     def _resolve_emission_time(params):

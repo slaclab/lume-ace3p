@@ -1992,6 +1992,28 @@ def test_particles_module_requires_track3p(tmp_path):
                          'frequency': 1e10}).run(ctx)
 
 
+def test_particles_module_default_output_does_not_eat_the_dump(tmp_path):
+    """A dump named ``ImpactsInfo_<level>`` has no extension, so the pre-Phase-3
+    default output name *was* the input name and ``write_output`` overwrote the
+    staged dump — through the symlink to the original. The derived name is now a
+    new file, and ``verify`` agrees on it without an ``output:`` key."""
+    dump = tmp_path / 'ImpactsInfo_2.3e+07'
+    _make_track3p_dump(str(dump), impact_order=1, impact_face_id=6)
+    original = dump.read_bytes()
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
+    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
+                              'work_function': 4.5, 'frequency': 1.0e10,
+                              'num_bins': 1, 'beta': [50.0]})
+    module.run(ctx)
+
+    assert (os.path.basename(ctx.artifacts[PARTICLE_SOURCE])
+            == 'ImpactsInfo_2.3e+07_modified')
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+    assert dump.read_bytes() == original
+    assert module.verify(ctx) is True
+
+
 # --------------------------------------------------------------------------- #
 # Geant4
 # --------------------------------------------------------------------------- #

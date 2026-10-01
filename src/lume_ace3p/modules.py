@@ -52,7 +52,7 @@ from lume_ace3p.acdtool import (
 )
 from lume_ace3p.geant4 import Geant4
 from lume_ace3p.logs import log_path
-from lume_ace3p.particles import Particles
+from lume_ace3p.particles import Particles, default_output_name
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
 
 
@@ -2226,7 +2226,7 @@ class ParticlesModule(Module):
             if not source:
                 return None
             # Mirrors Particles.__init__'s default naming.
-            name = os.path.basename(source).replace('.txt', '_modified.txt')
+            name = default_output_name(os.path.basename(source))
         return os.path.isfile(os.path.join(ctx.workdir or '', name))
 
     def extract(self, ctx, spec):

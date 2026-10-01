@@ -20,7 +20,8 @@ import numpy as np
 import pytest
 
 from lume_ace3p.particles import (
-    FN_MODELS, Particles, Q_E, TRACK3P_COLUMNS, fowler_nordheim_current_density,
+    FN_MODELS, Particles, Q_E, TRACK3P_COLUMNS, default_output_name,
+    fowler_nordheim_current_density,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -198,3 +199,52 @@ def test_empty_filter_result_writes_an_empty_file(tmp_path):
     _, filtered, output = _run(tmp_path, dict(LIXIN, impact_face_id=99))
     assert len(filtered) == 0
     assert os.path.getsize(output) == 0
+
+
+# --------------------------------------------------------------------------- #
+# The default output name (`plans/track3p_module_plan.md` Phase 3 step 1)
+# --------------------------------------------------------------------------- #
+
+
+def test_default_output_name_never_equals_the_input():
+    # The '.txt' names every shipped example uses are unchanged.
+    assert default_output_name('sample.txt') == 'sample_modified.txt'
+    assert default_output_name('a/b/sample.txt') == 'a/b/sample_modified.txt'
+    assert default_output_name('sample.data') == 'sample_modified.data'
+    # A Track3P dump's trailing '.3e+07' is a field level, not an extension:
+    # the old replace('.txt', ...) returned the input name unchanged here.
+    assert (default_output_name('ImpactsInfo_2.3e+07')
+            == 'ImpactsInfo_2.3e+07_modified')
+    assert (default_output_name('track3p_results/ImpactsInfo_1.6e+07')
+            == 'track3p_results/ImpactsInfo_1.6e+07_modified')
+    assert default_output_name('ImpactsInfo_23') == 'ImpactsInfo_23_modified'
+
+
+def test_derived_output_name_leaves_a_track3p_dump_alone(tmp_path):
+    """The default name for an extensionless dump is a new file next to it."""
+    name = _stage(tmp_path, os.path.join(LCLS, 'ImpactsInfo_1.6e+07'),
+                  name='ImpactsInfo_1.6e+07')
+    before = (tmp_path / name).read_bytes()
+    particles = Particles(name, dict(LIXIN), workdir=str(tmp_path))
+    assert particles.output_file == 'ImpactsInfo_1.6e+07_modified'
+    particles.run()
+    assert (tmp_path / 'ImpactsInfo_1.6e+07_modified').is_file()
+    assert (tmp_path / name).read_bytes() == before
+
+
+def test_output_equal_to_the_input_is_refused(tmp_path):
+    """Belt and braces: an explicit `output:` naming the dump is refused at
+    construction, before anything can overwrite the staged file."""
+    name = _stage(tmp_path, SAMPLE, name='ImpactsInfo_2.3e+07')
+    with pytest.raises(ValueError, match="'output:'"):
+        Particles(name, dict(LIXIN), output_file=name, workdir=str(tmp_path))
+    # Compared as paths, not strings.
+    with pytest.raises(ValueError, match="'output:'"):
+        Particles(name, dict(LIXIN), output_file='./' + name,
+                  workdir=str(tmp_path))
+    with pytest.raises(ValueError, match="'output:'"):
+        Particles('sub/dump.txt', dict(LIXIN), output_file='sub/../sub/dump.txt',
+                  workdir=str(tmp_path))
+    # A different name is fine.
+    assert Particles(name, dict(LIXIN), output_file='particles.data',
+                     workdir=str(tmp_path)).output_file == 'particles.data'
