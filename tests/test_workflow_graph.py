@@ -77,7 +77,7 @@ def test_order_track3p_particles_geant4():
     entries = [
         {'module': 'geant4', 'geant4_input': 'in.geant4'},
         {'module': 'particles', 'num_bins': 1, 'beta': [1.0],
-         'work_function': 4.5, 'dt': 1e-10},
+         'work_function': 4.5, 'frequency': 1e10},
         {'module': 'track3p_source', 'file': 'dump.txt'},
     ]
     wf = Workflow(entries, workflow_params={'dry_run': True})
@@ -118,7 +118,7 @@ def test_acdtool_before_solver():
 def test_particles_no_track3p_source():
     with pytest.raises(WorkflowValidationError, match=f"'{TRACK3P_PARTICLES}'"):
         Workflow([{'module': 'particles', 'num_bins': 1, 'beta': [1.0],
-                   'work_function': 4.5, 'dt': 1e-10}],
+                   'work_function': 4.5, 'frequency': 1e10}],
                  workflow_params={'dry_run': True})
 
 
@@ -613,7 +613,7 @@ def test_t3p_transwake_chain_evaluate(tmp_path):
 def test_geant4_chain_evaluate_and_baseline(tmp_path):
     """track3p_source -> particles -> geant4, dry-run geant4 with real particle
     weighting. The declared workflow produces particles.data whose numeric digest
-    matches the Phase-0.5 beta=40 baseline (the real-compute equivalence check)."""
+    matches the frozen beta=40 baseline (the real-compute equivalence check)."""
     staged = _stage('geant4_track3p_beta')
     cwd = os.getcwd()
     os.chdir(staged)
@@ -621,7 +621,8 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
         entries = [
             {'module': 'track3p_source', 'file': '../assets/sample_track3p_particles.txt'},
             {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+             'work_function': 4.2, 'frequency': 1.2999e9,
+             'min_energy_ev': 1000.0, 'fn_model': 'fn', 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',
@@ -645,11 +646,11 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
     finally:
         os.chdir(cwd)
 
-    # module path == Phase-0.5 frozen baseline (real-compute particles.data)
+    # module path == frozen baseline (real-compute particles.data)
     baseline = bu.load_json(os.path.join(
         bu.BASELINE_DIR, 'geant4_track3p_beta', 'particles_beta40.digest.json'))
     ok, msg = bu.compare_digests(baseline, module_digest)
-    assert ok, f'module vs Phase-0.5 baseline: {msg}'
+    assert ok, f'module vs frozen baseline: {msg}'
 
 
 # --------------------------------------------------------------------------- #

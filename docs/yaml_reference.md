@@ -823,7 +823,8 @@ The list cannot express the whole-axis case (no `at:`).
 
 The `particles` module (field-emission weighting) accepts the keys documented
 under [](#particle_parameters) directly on its `workflow:` entry: `impact_order`,
-`impact_face_id`, `work_function`, `dt`, `beta` / `beta_input` / `beta_inputs`,
+`impact_face_id`, `min_energy_ev`, `work_function`, `frequency`, `fn_model`,
+`beta` / `beta_input` / `beta_inputs`,
 `num_bins`, `bin_edges`, `output_format`, and `output` (default
 `<input>_modified.txt`). `output_format` defaults to `'geant4'` (the 10-column
 Geant4 source file); set `'track3p'` explicitly for the weighted-Track3P dump.
@@ -1031,10 +1032,12 @@ top-level block.
 
 | Keyword          | Type               | Default               | Description |
 |------------------|--------------------|-----------------------|-------------|
-| `impact_order`   | `int` or `list`    | *(required)*          | Track3P `ImpactOrder` value(s) to retain. Single int or list of ints. |
-| `impact_face_id` | `int` or `list`    | *(required)*          | Track3P `ImpactFaceID` value(s) to retain. |
+| `impact_order`   | `int` or `list`    | `None` (no filter)    | Track3P `ImpactOrder` value(s) to retain. Single int or list of ints. |
+| `impact_face_id` | `int` or `list`    | `None` (no filter)    | Track3P `ImpactFaceID` value(s) to retain. |
+| `min_energy_ev`  | `float`            | `0.0` (no filter)     | Drop impacts below this `ImpactEnergy` (eV). The reference converter uses 1000. |
 | `work_function`  | `float`            | *(required)*          | Surface work function (eV) used in the Fowler-Nordheim weighting. |
-| `dt`             | `float`            | *(required)*          | Time step (s) used to convert current density to particles per emission event. |
+| `frequency`      | `float`            | *(required)*          | RF frequency (Hz). The emission time one macroparticle's current flows is one RF period, `1/frequency`. The deprecated `dt` (that time in seconds, given directly) is still accepted and warns; set one or the other, not both. |
+| `fn_model`       | `str`              | `'fn'`                | Fowler-Nordheim form. `'fn'` is the plain FN form of the LCLS-II reference converter (`A = 1.541434e-6`, `B = 6.830890e9`) with real-valued weights. `'wang-loew'` is the form this module used before 2026-09-14 (prefactor `1.54e-6 · 10^(4.52/√φ)/φ`, `B = 6.53e9`) with weights rounded to whole electrons, kept so existing studies reproduce. The two differ by about two orders of magnitude in weight at `βE ≈ 2e9 V/m`, so a β fitted with one is not comparable with the other. |
 | `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values. |
 | `num_bins`       | `int`              | `len(beta)`           | Number of axial (`Initial_z`) bins applied to the filtered particles. |
 | `bin_edges`      | `list[float]`      | `None` (auto-spaced)  | Explicit bin edges. If supplied, must have length `num_bins + 1`; otherwise edges are linearly spaced between the min and max `Initial_z` of the filtered particles. |
@@ -1051,13 +1054,19 @@ whitespace-separated columns and no header, one primary per row:
 | 1   | `x`           | m     | `Impact_x`              |
 | 2   | `y`           | m     | `Impact_y`              |
 | 3   | `z`           | m     | `Impact_z`              |
-| 4   | `phase`       | rad   | `ImpactPhaseinRFcycle`  |
+| 4   | `phase`       | RF cycles | `ImpactPhaseinRFcycle`  |
 | 5   | `energy`      | eV    | `ImpactEnergy`          |
-| 6   | `n_electrons` | -     | `ParticleWeight` (event weight; written as an integer) |
-| 7   | `px`          | -     | `momentum_x`            |
-| 8   | `py`          | -     | `momentum_y`            |
-| 9   | `pz`          | -     | `momentum_z`            |
+| 6   | `n_electrons` | -     | `ParticleWeight` (event weight; real-valued for `fn_model: fn`) |
+| 7   | `dx`          | -     | `momentum_x`, normalised to a unit direction |
+| 8   | `dy`          | -     | `momentum_y`, normalised to a unit direction |
+| 9   | `dz`          | -     | `momentum_z`, normalised to a unit direction |
 | 10  | `face_id`     | -     | `ImpactFaceID`          |
+
+Rows whose weight is below one electron are dropped: they would emit no primary
+but still be counted as a row for `/run/beamOn`. The reader ignores columns 4 and
+10 (the reference converter writes 0 in both). With `output_format: 'track3p'`
+every filtered row is written, sub-electron weights included — that is the study
+file, not the Geant4 source.
 
 (vocs_parameters)=
 ## `vocs_parameters`

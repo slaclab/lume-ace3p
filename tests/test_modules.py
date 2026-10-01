@@ -1917,7 +1917,7 @@ def test_particles_module_runs_and_extracts(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
     params = {'impact_order': 1, 'impact_face_id': 6, 'work_function': 4.5,
-              'dt': 1.0e-10, 'num_bins': 8, 'beta': [50, 55, 60, 65, 65, 60, 55, 50],
+              'frequency': 1.0e10, 'num_bins': 8, 'beta': [50, 55, 60, 65, 65, 60, 55, 50],
               'output': 'particles.data'}
     module = ParticlesModule(params)
     module.run(ctx)
@@ -1935,7 +1935,7 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
     dump = tmp_path / 'dump.txt'
     _make_track3p_dump(str(dump))
     params = {'impact_order': 1, 'impact_face_id': 6, 'work_function': 4.5,
-              'dt': 1.0e-10, 'num_bins': 8,
+              'frequency': 1.0e10, 'num_bins': 8,
               'beta': [50, 55, 60, 65, 65, 60, 55, 50], 'output_format': 'geant4'}
 
     # Ground-truth: direct wrapper.
@@ -1965,7 +1965,7 @@ def test_particles_module_beta_input_broadcast(tmp_path):
     ctx = RunContext(wd, inputs=WorkflowInputs(particles={'beta': 50.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
     module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
-                              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+                              'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
     assert resolved['beta'] == [50.0] * 8
@@ -1979,7 +1979,7 @@ def test_particles_module_beta_falls_back_to_cubit(tmp_path):
     ctx = RunContext(wd, inputs=WorkflowInputs(cubit={'beta': 42.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
     module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
-                              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+                              'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
     assert resolved['beta'] == [42.0] * 8
@@ -1989,7 +1989,7 @@ def test_particles_module_requires_track3p(tmp_path):
     ctx = RunContext(str(tmp_path / 'wd'))
     with pytest.raises(ValueError):
         ParticlesModule({'num_bins': 1, 'beta': [1.0], 'work_function': 4.5,
-                         'dt': 1e-10}).run(ctx)
+                         'frequency': 1e10}).run(ctx)
 
 
 # --------------------------------------------------------------------------- #

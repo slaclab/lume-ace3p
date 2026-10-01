@@ -85,7 +85,7 @@ def _particles_workflow(root, workdir_mode, betas):
     return Workflow(
         [{'module': 'track3p_source', 'file': source},
          {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-          'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+          'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(root / 'wd'),
@@ -191,7 +191,7 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
     wf = Workflow(
         [{'module': 'track3p_source', 'file': source},
          {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-          'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+          'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(tmp_path / 'wd'),

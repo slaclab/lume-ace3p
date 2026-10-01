@@ -41,7 +41,9 @@ workflow :
     impact_order : 1
     impact_face_id : 6
     work_function : 4.5
-    dt : 1.0e-10
+    fn_model : 'wang-loew'             # the legacy FN form this campaign's beta
+    frequency : 1.0e10                 # bounds were chosen against; emission time
+                                       # 1/frequency = 1e-10 s, the former 'dt'
     num_bins : 8
     beta_inputs : ['beta0', 'beta1', 'beta2', 'beta3',
                    'beta4', 'beta5', 'beta6', 'beta7']

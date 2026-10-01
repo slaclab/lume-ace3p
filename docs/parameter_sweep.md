@@ -388,7 +388,25 @@ step that reads a Track3P particle dump, filters by impact order and face id,
 bins by axial position, and writes a weighted-particle file usable as a Geant4
 source. There is no ACE3P solver in this chain: a `track3p_source` module
 supplies the external dump, and the pure-Python weighting runs in `single`
-mode. This is
+mode.
+
+Two Fowler–Nordheim forms are available. The default `fn_model: fn` is the plain
+FN form of the LCLS-II reference converter: the emission time is one RF period
+(`frequency`, in Hz), weights are real-valued, and a macroparticle standing for
+less than one electron is left out of the Geant4 source file. `fn_model:
+wang-loew` is the form this module used before 2026-09-14, with whole-electron
+weights, kept so existing studies reproduce; the two differ by about two orders
+of magnitude in weight, so a β fitted with one is not comparable with the other.
+The deprecated `dt` key sets the emission time directly instead of through
+`frequency`.
+
+The weight depends on the *enhanced* field `β·E`, so a useful `beta` range is a
+property of the dump, not of the model: size it against that dump's own
+`InitialNormalField`. Push β high enough and every macroparticle clears the
+one-electron cut, at which point a sweep over β writes the same row count at
+every point and shows nothing.
+
+This is
 [`examples/track3p_particle_weight`](https://github.com/slaclab/lume-ace3p/blob/main/examples/track3p_particle_weight/track3p_particle_weight.yaml):
 
 ```yaml
@@ -403,7 +421,8 @@ workflow :
     impact_order : 1
     impact_face_id : 4
     work_function : 4.5
-    dt : 1.0e-10
+    fn_model : 'wang-loew'    # legacy FN form; new studies use the default 'fn'
+    frequency : 1.0e10        # emission time is one RF period, 1/frequency
     num_bins : 8
     beta : [50, 55, 60, 65, 65, 60, 55, 50]
     output_format : 'track3p'
@@ -449,10 +468,11 @@ workflow :
   - module : particles
     impact_order : 1
     impact_face_id : 6
-    work_function : 4.5
-    dt : 1.0e-10
+    work_function : 4.2
+    frequency : 1.2999e9      # emission time is one RF period, 1/frequency
+    min_energy_ev : 1000.0
     num_bins : 8
-    beta : [50, 55, 60, 65, 65, 60, 55, 50]
+    beta : [44, 46, 48, 50, 50, 48, 46, 44]
     output_format : 'geant4'
     output : 'particles.data'      # must match the 'particles = ...' line in the Geant4 input
   - module : geant4

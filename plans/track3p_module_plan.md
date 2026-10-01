@@ -1,6 +1,7 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14** (see the status notes at the
+**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done 2026-10-01**
+(see the status notes at the
 end of each phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
@@ -451,6 +452,66 @@ as a dry-run baseline. Deviations from the text above:
    (316 k rows, provenance: an early LCLS run in this format) stays or is
    replaced by the 1 000-row C3 excerpt; the example's runtime prefers small.
 
+**Phase 2 status (2026-10-01): DONE.** `fn_model`, `frequency` (+ `dt` alias),
+`min_energy_ev` and optional filters in `particles.py`; 10 tests in
+`tests/test_particles.py`; `geant4_track3p_beta` refrozen; full suite green on
+milano (job 39639568, 5m44s, 752 passed / 2 skipped). Deviations from the text
+above:
+
+- **The acceptance test is tighter than 1e-6 but on 8 of 10 columns.** Position,
+  energy, weight and unit direction agree to `rtol=1e-6`, which is the shipped
+  file's own `%.6e`. Columns 4 and 10 are excluded *by assertion*: the reference
+  converter writes 0 in both and the repo writes the impact phase and the face
+  ID, which the Geant4 reader ignores. The test pins that difference rather than
+  papering over it.
+- **`wang-loew` is bit-exact legacy, not just the old constants.** Reproducing
+  the frozen `track3p_particle_weight` digest needed the old *arithmetic* too:
+  direct (not log-space) evaluation, the old `Q_E = 1.60217663e-19` (kept as
+  `_LEGACY_Q_E`; the 2.5e-9 relative difference from the exact charge flips a
+  rounding), and `np.round` to whole electrons. `fn` keeps real weights.
+- **Zero field gives `exp(-500)`, not 0.** The log-space clip the reference
+  converter uses floors at ≈7e-218 rather than returning 0. Faithful to the
+  reference and far below the one-electron cut either way; the docstring and
+  test say so instead of claiming 0.
+- **A β range is a property of the dump, not of the model — and §3.6's "β range
+  100–150" does not transfer to the shipped asset.** `sample_track3p_particles.txt`
+  has `InitialNormalField` averaging 3.7e7 V/m, about 4× Lixin's cryomodule, so
+  the `β·E` the LCLS-II study reaches at β = 120 is reached here near β = 30. The
+  first cut of this phase did move `geant4_track3p_beta` to the study's 100–150
+  and that **silently broke the example**: above β ≈ 55 every macroparticle clears
+  the one-electron cut, so all five sweep points wrote an identical 144 732 rows
+  and the sweep demonstrated nothing (the digests were briefly frozen that way).
+  The swept range is therefore **kept at 40–60**, where the surviving count climbs
+  2055 → 60 736 → 124 428 → 144 732 → 144 732 and the weight spans six decades.
+  Only the FN *settings* moved. Both example READMEs, the
+  `docs/parameter_sweep.md` section and the baseline provenance say why.
+- **`geant4_dose_single` and the `geant4_beta_surrogate` DOE also moved.**
+  `dose_single` took the same `fn` settings with a per-bin β vector
+  `[44,46,48,50,50,48,46,44]`, sized the same way — above ~55 the per-bin
+  structure washes out, so 44–50 is where the bins still differ (98 380 primaries
+  of 144 732). It is in `not_frozen.json`, so no baseline moved.
+  `beta_surrogate` pins `fn_model: 'wang-loew'` instead: its 8-D β bounds
+  (40–60) were chosen against the legacy weighting, and re-deriving them is the
+  shelved surrogate project's business, not this phase's.
+- **Both Geant4 examples need one real S3DF run** before their dose numbers are
+  trustworthy again; logged as an open item in
+  `plans/s3df_example_validation_plan.md`. The weighting itself is verified
+  against the reference converter, so this is a sizing check, not a correctness
+  one.
+- **Docs updated now, not in Phase 5:** `docs/yaml_reference.md`
+  `particle_parameters` (the `dt` row replaced by `frequency`/`fn_model`/
+  `min_energy_ev`, filters no longer "required", the Geant4 column table's unit
+  direction / real weight / sub-electron drop) and the `docs/parameter_sweep.md`
+  Track3P-weighting section, whose two YAML blocks had gone stale against their
+  examples.
+- **Asset decision: keep** `sample_track3p_particles.txt` (David, 2026-10-01).
+  Its field-emission columns are real on the 144 732 rows the examples retain
+  (`InitialNormalField` 3.2e7–4.4e7 V/m, areas 9e-8–1.3e-6 m²), so the chain
+  still demonstrates a realistic particle count; the 1 000-row excerpt would
+  leave ~35 primaries and meaningless dose. Noted for a future cleanup: the file
+  has one `-nan` row and two rows with absurd magnitudes, all outside every
+  example's filter.
+
 ### Phase 3 — `track3p -> particles` chain (use case B, in-pipeline)
 
 1. `impacts_format: initials-impacts` injection (§3.2) and the build-time
@@ -519,7 +580,7 @@ Lixin's.
 | Phase | Decision | Recommendation |
 |---|---|---|
 | 2 | FN model default: plain FN (Lixin) or Wang–Loew (repo today) | **DECIDED 2026-09-14: plain FN**, so the 22 shipped files are reproducible |
-| 2 | Keep `sample_track3p_particles.txt` or swap for the 1 000-row C3 excerpt | swap; note provenance (overnight session: keep unless told otherwise) |
+| 2 | Keep `sample_track3p_particles.txt` or swap for the 1 000-row C3 excerpt | **DECIDED 2026-10-01: keep** — the excerpt leaves ~35 primaries and meaningless dose |
 | 1 | `mp_onset_level` default threshold | 1.0 (enhancement ≥ 1 = growth) |
 | 4 | Which Geant4 app path the examples name | Lixin's polycone package, via `geant4_app_path` in YAML |
 

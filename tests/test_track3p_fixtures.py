@@ -193,7 +193,7 @@ def test_particles_load_misreads_the_default_layout(tmp_path):
     module injects that selector — so it stays pinned."""
     shutil.copy(os.path.join(SCAN, 'ImpactsInfo_2.3e+07'), tmp_path / 'dump.txt')
     particles = Particles('dump.txt', {'impact_order': 1, 'impact_face_id': 6,
-                                       'work_function': 4.5, 'dt': 1e-10,
+                                       'work_function': 4.5, 'frequency': 1e10,
                                        'beta': [50.0]}, workdir=str(tmp_path))
     particles.load()
     assert len(particles.data) == 201            # the header became a row
@@ -210,7 +210,7 @@ def test_particles_load_reads_the_initials_impacts_layout(tmp_path):
     shutil.copy(os.path.join(INITIALS, 'ImpactsInfo_2.3e+07'),
                 tmp_path / 'dump.txt')
     particles = Particles('dump.txt', {'impact_order': 1, 'impact_face_id': 6,
-                                       'work_function': 4.5, 'dt': 1e-10,
+                                       'work_function': 4.5, 'frequency': 1e10,
                                        'beta': [50.0]}, workdir=str(tmp_path))
     particles.load()
     assert len(particles.data) == 200

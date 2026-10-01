@@ -147,7 +147,7 @@ def test_generic_geant4_objective_dry_run(tmp_path):
         entries = [
             {'module': 'track3p_source', 'file': '../assets/sample_track3p_particles.txt'},
             {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+             'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',

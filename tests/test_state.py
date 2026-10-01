@@ -63,7 +63,7 @@ def _particles_workflow(root, betas, **params):
     numbers with no ACE3P binary — which is what makes the recorded ``outputs``
     worth comparing."""
     particles = {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-                 'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+                 'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                  'beta_input': 'beta', 'output_format': 'geant4',
                  'output': 'particles.data'}
     particles.update(params.pop('particles', {}))

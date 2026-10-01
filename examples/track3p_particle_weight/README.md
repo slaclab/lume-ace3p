@@ -21,6 +21,13 @@ than the 10-column `geant4` source file that
 explicit per-bin vector (length `num_bins`), not a broadcast input variable that
 a mode sweeps.
 
+This example pins the **legacy Wang–Loew Fowler–Nordheim form**
+(`fn_model: wang-loew`, weights rounded to whole electrons; emission time
+`1/frequency` = 1e-10 s) so its frozen baseline stands. New studies should use
+the default `fn` model, which reproduces the LCLS-II reference converter; the two
+forms differ by about two orders of magnitude in weight and a β fitted with one
+is not comparable with the other.
+
 ## Assets
 
 The external Track3P dump lives in the shared [`../assets/`](../assets) folder and

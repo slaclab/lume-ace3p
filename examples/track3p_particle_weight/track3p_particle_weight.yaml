@@ -6,6 +6,10 @@
 # 'output_format: track3p' writes the 19-column weighted Track3P dump (vs the
 # 10-column 'geant4' source file the Geant4 chain uses). 'beta' is an explicit
 # per-bin vector of length num_bins here (not a broadcast input variable).
+# This example pins the legacy Wang-Loew Fowler-Nordheim form ('fn_model:
+# wang-loew', whole-electron weights) so its frozen baseline stands; new studies
+# should use the default 'fn' model, which reproduces the LCLS-II reference
+# converter (see geant4_track3p_beta).
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_track3p_workdir'
@@ -18,7 +22,9 @@ workflow :
     impact_order : 1
     impact_face_id : 4
     work_function : 4.5
-    dt : 1.0e-10
+    fn_model : 'wang-loew'
+    frequency : 1.0e10                 # emission time 1/frequency = 1e-10 s, the
+                                       # value this example's 'dt' used to set
     num_bins : 8
     beta : [50, 55, 60, 65, 65, 60, 55, 50]
     output_format : 'track3p'
