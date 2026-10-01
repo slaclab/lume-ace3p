@@ -1,8 +1,8 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done 2026-10-01**
-(see the status notes at the
-end of each phase). Written 2026-09-14 on S3DF. Decision taken
+**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done 2026-10-01;
+Phase 3 is next** (reviewed and re-ordered 2026-10-01 — see the note at the top
+of Phase 3; see the status notes at the end of each finished phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
 `plans/t3p_monitor_plan.md` and `plans/acdtool_rework_plan.md` (both COMPLETE)
@@ -230,13 +230,18 @@ Two consumers exist today and they want different things:
 - `acdtool postprocess track3p` (`acdtool.py:252`) wants
   `ctx.job_names[TRACK3P_PARTICLES]` = the results directory name.
 
-Contract: the module always sets `ctx.job_names[TRACK3P_PARTICLES] = solver.job_name()`.
-For the artifact it sets **the path of one `ImpactsInfo_<level>` file** when the
-run produced exactly one, or when `field_level:` names one; otherwise it sets
-the results directory. `ParticlesModule` learns to handle a directory: exactly
-one `ImpactsInfo_*` inside → use it; several → raise listing the levels and the
-two ways to choose (`field_level:` on `track3p`, or a single-level
-`FieldScales`). `Track3PSourceModule` is unchanged.
+Contract (**revised 2026-10-01**): the module always sets
+`ctx.job_names[TRACK3P_PARTICLES] = solver.job_name()` and always sets the
+artifact to the **results directory** — the Phase 1 behaviour, under run and
+dry-run alike. The earlier single-file rule is dropped: `track3p_source` always
+provides a file, so the consumer must handle both shapes regardless, and a value
+whose *type* depends on how many levels a run produced is a second code path for
+nothing. All resolution lives in `ParticlesModule` (Phase 3 step 3): a file is
+used as today; a directory holds exactly one `ImpactsInfo_*` → use it; several →
+raise listing the levels and the two ways to choose (`field_level:` on
+`track3p`, or a single-level `FieldScales`); none → raise. A `field_level:` whose
+dump is missing raises naming the levels that do have dumps — it never falls
+through to another level. `Track3PSourceModule` is unchanged.
 
 ### 3.5 Build-time validation
 
@@ -247,6 +252,14 @@ injection, has no `OutputImpactsInfo` container with `Type: Initials-Impacts`,
 raise naming the exact two lines to add or the `impacts_format:
 initials-impacts` key. This is the "fail at build, not after a 45-minute
 solve" rule the plan inherits from `xopt_config_validation_plan.md`.
+
+**Widened 2026-10-01** to the `track3p_source` head as well: read the first line
+of the supplied dump and reject the default layout (`InitialID ImpactNum …
+NumElectrons volID`), which `Particles.load` turns into silent garbage (Phase 0
+pinned this). One `readline()`, and the higher-value check of the two — every
+shipped Geant4 example enters through `track3p_source`. Since the chain example
+cannot be frozen (Phase 3 step 5), this validator is the chain's only CI
+coverage and should be thorough.
 
 ### 3.6 Fowler–Nordheim reconciliation (`particles.py` vs `convert_track3p.py`)
 
@@ -430,7 +443,7 @@ as a dry-run baseline. Deviations from the text above:
   set `index_precedence`; Track3P sets 1. The s3p→acdtool rule is unchanged.
 - **`files:` on every solver module** — the Pillbox input names `copper.dat`
   (SEY table), which Track3P reads from its cwd and no artifact supplies.
-- **Artifact = results directory** (the §3.4 single-file rule is Phase 3).
+- **Artifact = results directory** (§3.4 originally deferred a single-file rule to Phase 3; dropped 2026-10-01 — the directory is the contract).
   `impacts_format:` / `field_level:` keys are not read yet.
 - Extra per-level quantity `lost_count`; `resonant_count` is rows of the
   enhancement counter and `resonant_particles` distinct IDs of
@@ -514,21 +527,148 @@ above:
 
 ### Phase 3 — `track3p -> particles` chain (use case B, in-pipeline)
 
-1. `impacts_format: initials-impacts` injection (§3.2) and the build-time
-   validator (§3.5).
-2. Artifact contract (§3.4): single-file vs directory, `field_level:`,
-   `ParticlesModule` directory handling with the enumerating error.
-3. Example `examples/track3p_geant4_chain/` (or extend
-   `geant4_track3p_beta` with a commented alternative head): `mesh_source ->
-   omega3p -> track3p -> particles -> geant4` on the Pillbox with `Emitter
-   Type: 7, N: 1` so `InitialNormalField` is populated. Dry-run only in CI;
-   one S3DF validation run. Note in the README that for cryomodule-scale
-   meshes this head costs ~50 node-minutes per evaluation and the intended
-   pattern is `track3p_source` over pre-run dumps.
-4. Hybrid launch: check whether `tasks: 2, cores: 60` plus `opts:` can
-   reproduce Lixin's `srun -n 2 -c 60` with `OMP_NUM_THREADS=60`, or whether
-   the module needs an `env:` mapping. Document the working recipe in the
-   example batch script.
+**Reviewed 2026-10-01** (Opus draft of the open questions, second opinion,
+David's decisions). The order below is deliberate: steps 1 and 2 need none of
+the module work and de-risk everything after them; step 7 is mechanical and
+goes last so it is one commit on top of a working chain. Run the full suite on
+milano after each landable step, as every phase does.
+
+1. **Output-name collision fix in `particles.py` — land first, alone.**
+   `Particles.output_file` defaults to `particle_file.replace('.txt',
+   '_modified.txt')` (`particles.py:103`). A Track3P dump named
+   `ImpactsInfo_2.3e+07` contains no `.txt`, so the default output name
+   **equals the input name** and `write_output` overwrites the staged dump —
+   straight through the symlink to the original under `stage_mode: symlink`,
+   which is exactly the read-only invariant `_stage_file` documents. It has
+   never fired only because every shipped example sets `output:`; Phase 3 is the
+   first time a dump named `ImpactsInfo_*` reaches this code. Fix both ways:
+   derive the default with `os.path.splitext` (`ImpactsInfo_2.3e+07` →
+   `ImpactsInfo_2.3e+07_modified`; `.txt` names unchanged, so no baseline
+   moves) **and** refuse at construction when the resolved output path equals
+   the input path, naming the `output:` key. `ParticlesModule.verify` mirrors
+   the same default. Tests for both. Independent of everything else in the
+   phase.
+
+2. **One probe job before any example (milano, < 2 min).** The plan's chain
+   example assumes `Emitter Type: 7, N: 1` on the Pillbox populates
+   `InitialNormalField`/`InitialFaceArea`; nothing has ever shown that. All
+   three Type-7 probes used `N: 100` and emitted 0 particles, and the only
+   `Initials-Impacts` fixture is a secondary-emission run whose two
+   field-emission columns hold uninitialized memory. Run the Pillbox with
+   `Emitter Type: 7  N: 1  WorkFunction: 4.2  Beta: 50`, `OutputImpacts: on`,
+   `OutputImpactsInfo: { Type: Initials-Impacts }`, one level (`ScanToken: 0
+   Scale: 23e6`), under the §2.4 probe conventions. **In the same job**, the
+   hybrid-launch check for step 6: `tasks: 2, cores: 8, opts: '--overlap
+   --cpu-bind=none'` with `OMP_NUM_THREADS=8` exported in the batch script, and
+   confirm from `track3p.log`'s MPI/OpenMP banner that both ranks saw 8
+   threads. Outcomes:
+   - FE columns populated and sane (normal field ~1e7 V/m, areas ~1e-7–1e-6
+     m²): copy the first 200 rows, `track3p.log` and `InputParameters` to
+     `tests/fixtures/track3p/pillbox_fieldemission_n1/`, record in
+     `SOURCES.md`, and size the example's β **from this dump's own
+     `InitialNormalField`** — the Phase 2 lesson (a β range belongs to its
+     dump), not the LCLS study's 100–150. Note the row count: Lixin's 7852
+     emitting faces at `N: 1` gave 351 k macroparticles; the Pillbox emitter
+     box has far fewer faces, but check before truncating.
+   - Zero particles or garbage columns: the example's emitter (bounding box,
+     `BoundaryID`, `Material Type: Primary`) needs rethinking, and the phase
+     stops here until it is — no example is written against an unknown dump.
+
+3. **Artifact contract (§3.4 as revised).** `Track3PModule` keeps the results
+   directory as the artifact; the single-file rule is gone. In
+   `ParticlesModule.run`:
+   - artifact is a file (`track3p_source`) → as today;
+   - artifact is a directory → `ImpactsInfo_*` under
+     `ctx.job_names[TRACK3P_PARTICLES]` inside it; exactly one → use it;
+     several → raise listing the levels and the two ways to choose; none →
+     raise (no dump: `OutputImpacts` off, or nothing emitted — quote the log's
+     `TotalEmitted` when the run wrote one);
+   - `field_level:` on `track3p` (new key) names the level. How it reaches the
+     consumer is the implementer's call — recording it next to the job name in
+     `ctx` is the least invasive; say which in the status note. A named level
+     whose dump is missing **raises** naming the levels that have one.
+   - Hand `Particles` the **relative subpath** (`track3p_results/ImpactsInfo_x`,
+     it joins onto `workdir`) instead of `_stage_file`: the paths differ, so
+     staging would copy the dump to `workdir/ImpactsInfo_x` — a same-workdir
+     copy of a 137 MB file at cryomodule scale. With step 1 the derived default
+     output then lands inside the solver's results directory; the example sets
+     `output: particles.data` regardless, and `verify` follows the same rule.
+   - `impacts_format: initials-impacts` injection per §3.2 (`set_input_leaf`
+     already creates missing containers). `Track3PSourceModule` unchanged.
+
+4. **Build-time validation (§3.5 as widened).** Both heads: the `track3p`
+   input-tree check (container present after the module's injection) and the
+   `track3p_source` first-line sniff (`#InitialID ImpactOrder …
+   InitialNormalField`, else raise naming the default layout and how to
+   regenerate the dump). Skip silently when the source file does not exist yet:
+   today no module input file is opened at build time and `files:` paths are
+   checked only at run time, so a missing file is run time's error, not this
+   validator's. Test: the chain validates with the container, is rejected
+   without it, and a default-layout `track3p_source` is rejected with the
+   Phase 0 fixture `pillbox_scan/ImpactsInfo_2.3e+07`.
+
+5. **Example `examples/track3p_geant4_chain/` — new directory, not frozen.**
+   `mesh_source -> omega3p -> track3p -> particles -> geant4` on the Pillbox,
+   the step 2 emitter, `impacts_format: initials-impacts`, `mode: single`, β
+   and `impact_face_id` sized from step 2. A new directory rather than a second
+   head on `geant4_track3p_beta`: that example is the `track3p_source` pattern
+   and its README now explains a β range that belongs to its dump; grafting a
+   second head on it muddies both. **Not frozen** (`not_frozen.json`; Option B,
+   David 2026-10-01): `ParticlesModule.run` has no dry-run branch — it always
+   runs because the weighting is pure Python — and under dry-run the `track3p`
+   artifact is a workdir with no `ImpactsInfo_*`, so the particles step would
+   raise and `geant4` would have no source. A placeholder-artifact mechanism so
+   two modules with nothing to compute can pass a dry run is not worth
+   building; CI instead asserts that the chain **validates and orders**
+   (`test_workflow_graph.py`) plus the step 4 rejections. The example's value
+   is its one real S3DF run, recorded in `plans/s3df_example_validation_plan.md`.
+   README: for cryomodule meshes this head costs ~50 node-minutes per
+   evaluation and `track3p_source` over pre-run dumps is the intended pattern.
+
+6. **Hybrid launch — batch script, no `env:` key.** `solver_command` builds
+   `srun -n <tasks> -c <cores> <opts> …` and `run_logged` passes no
+   environment, so `tasks: 2, cores: 60, opts: '--overlap --cpu-bind=none'`
+   reproduces Lixin's launcher and only the OpenMP exports
+   (`OMP_NUM_THREADS=60 OMP_PROC_BIND=spread OMP_PLACES=cores`) are missing —
+   put them in the example batch script, where every solver in the job inherits
+   them. (The `ace3p_opts.startswith('--cpu-bind')` drop at `ace3p.py:330` does
+   not bite: the string starts with `--overlap`.) Document only what step 2
+   verified. An `env:` mapping waits for a workflow that needs two different
+   thread counts in one job.
+
+7. **Rename the `particles` module → `field_emission` (DECIDED, David
+   2026-10-01).** The module's job is the Fowler–Nordheim field-emission
+   weighting of a Track3P dump, plus its filters, z-binning and Geant4
+   formatting; `particles` says none of that and collides in the reader's mind
+   with `particle_source` (the Geant4-input artifact and module),
+   `particle_output`, `geant4_particle_cmd` and the `particles:` *input bucket*.
+   Underscore names are what every other type key uses (`mesh_source`,
+   `track3p_source`). **Hard rename, no alias**: David is the only user of this
+   functionality, so there are no third-party YAMLs or workdirs to keep
+   working, and a deprecation shim would be code that protects nobody. Scope —
+   **registry key and class only**:
+   - `FieldEmissionModule`, `type = 'field_emission'`; the `'particles'` registry
+     entry is removed, so an old YAML fails at build with `build_module`'s
+     existing "Unknown module type … Known types: […]" message, which lists the
+     new key. The two `_infer_output_module` branches return the new key; the
+     §3.5 validator and every error message name it. `_route_output` needs no
+     alias handling since there is nothing to alias.
+   - **Not renamed:** the `particles:` input bucket (`inputs.py`,
+     `beta_input`/`beta_inputs`, every `input_parameters:` block — a namespace
+     for β variables, not the module; David 2026-10-01); the `particle_source`
+     artifact and module; the `particles.py` file and `Particles` class (the
+     YAML surface is what the rename is for; the file can follow in a later
+     cleanup if it ever bothers anyone).
+   - The four shipped YAMLs (`geant4_dose_single`, `geant4_track3p_beta`,
+     `geant4_beta_surrogate`, `track3p_particle_weight`), the five docs pages
+     and the two baseline `manifest.json` prose fields that say `particles`
+     move to the new key. Baseline **data** does not move (same code, same
+     outputs). One test pins that `module: particles` is rejected naming
+     `field_emission`.
+   - A module's default `name` is its `type`, so the log file becomes
+     `field_emission.log` and a workdir written before the rename will not
+     resume. Acceptable (single user, no shipped baseline reads the log); one
+     line in the release notes.
 
 ### Phase 4 — Geant4 module for the polycone app
 
@@ -582,6 +722,10 @@ Lixin's.
 | 2 | FN model default: plain FN (Lixin) or Wang–Loew (repo today) | **DECIDED 2026-09-14: plain FN**, so the 22 shipped files are reproducible |
 | 2 | Keep `sample_track3p_particles.txt` or swap for the 1 000-row C3 excerpt | **DECIDED 2026-10-01: keep** — the excerpt leaves ~35 primaries and meaningless dose |
 | 1 | `mp_onset_level` default threshold | 1.0 (enhancement ≥ 1 = growth) |
+| 3 | Artifact: one `ImpactsInfo` file when unambiguous, or always the results directory | **DECIDED 2026-10-01: always the directory**; `ParticlesModule` resolves both shapes |
+| 3 | Chain example under dry-run: placeholder artifact (A) or not frozen (B) | **DECIDED 2026-10-01: B** — CI asserts validate/order plus the §3.5 rejections |
+| 3 | Probe `N: 1` Pillbox field emission before or via the example's validation run | **DECIDED 2026-10-01: before** (step 2; < 2 min, and the answer shapes the example) |
+| 3 | Rename the `particles` module | **DECIDED 2026-10-01: `field_emission` / `FieldEmissionModule`**, hard rename (no alias — single user), `particles:` input bucket untouched |
 | 4 | Which Geant4 app path the examples name | Lixin's polycone package, via `geant4_app_path` in YAML |
 
 Questions for Lixin (not blocking; the source answers most): semantics of
@@ -599,6 +743,10 @@ whether the group `/sdf/group/rfar/ace3p/bin/track3p` will be refreshed to the
   frozen; one sbatch job at a time on `milano`/`rfar:regular`, from scratch,
   `source ~/ace3p.sh` **before** `conda activate lume-ace3p-dev`.
 - Baselines that move: `geant4_track3p_beta` (Phase 2), the Geant4 examples
-  (Phase 4). New: `track3p_multipacting` (Phase 1). All others must not move.
+  (Phase 4). New: `track3p_multipacting` (Phase 1). **Phase 3 moves none** —
+  the output-name fix leaves `.txt` names alone, the rename changes the type key
+  but not the weighting, and `track3p_geant4_chain` goes into `not_frozen.json` (its
+  `particles` step cannot run on a dry-run `track3p` artifact). All others
+  must not move.
 - Nothing under `tests/fixtures/` is generated by the suite; `SOURCES.md`
   records where each byte came from and how it was truncated.
