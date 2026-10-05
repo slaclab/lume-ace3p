@@ -18,7 +18,8 @@ A parameter sweep input file needs:
   - `cubit:` names and vector values for Cubit journal (geometry) knobs.
   - `ace3p:` (optional) parameters inside the ACE3P input file.
   - `geant4:` (optional) overrides for the Geant4 input file.
-  - `particles:` (optional) knobs of the `particles` module.
+  - `particles:` (optional) knobs of the `field_emission` module. The bucket
+    keeps its name: it is a namespace for β variables, not the module.
 
   A single sweep can span all four sub-blocks; every array-valued leaf across
   them multiplies into the tensor product. The old flat keys
@@ -383,7 +384,7 @@ table.
 
 ## Track3P particle weighting
 
-Field-emission particle weighting is the `particles` module, a post-processing
+Field-emission particle weighting is the `field_emission` module, a post-processing
 step that reads a Track3P particle dump, filters by impact order and face id,
 bins by axial position, and writes a weighted-particle file usable as a Geant4
 source. There is no ACE3P solver in this chain: a `track3p_source` module
@@ -417,7 +418,7 @@ workflow_parameters :
 workflow :
   - module : track3p_source
     file : '../assets/sample_track3p_particles.txt'
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 4
     work_function : 4.5
@@ -465,7 +466,7 @@ workflow_parameters :
 workflow :
   - module : track3p_source
     file : '../assets/sample_track3p_particles.txt'
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
     work_function : 4.2
@@ -494,5 +495,5 @@ sweep axis alongside any `cubit:`/`ace3p:` axes. Geant4 paths are resolved
 through the same precedence chain as ACE3P; see
 [](installation.md#executable-paths). If `GEANT4_APP_PATH` / `GEANT4_APP_EXE`
 (or YAML / site-default equivalents) are unset, dry-run mode is auto-enabled:
-the `particles` weighting still runs for real and only the Geant4 binary is
+the `field_emission` weighting still runs for real and only the Geant4 binary is
 skipped.

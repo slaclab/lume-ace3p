@@ -19,9 +19,41 @@ is its index axis, so a `single` or `parameter_sweep` table goes one row per
 `impact_count`, `max_impact_energy`, `lost_count`, per-cup `captured_electrons`,
 the log scalars, and a derived `mp_onset_level` objective. New example
 `examples/track3p_multipacting` (the CW23 pillbox scan, validated on S3DF).
-`track3p_source` stays the head for chains over pre-run dumps; feeding the
-runnable module's output to `particles` comes in a later phase
-(`plans/track3p_module_plan.md`).
+**The Track3P → Geant4 chain runs in the pipeline too.** A `track3p` step can
+now feed the field-emission weighting directly. The `track3p_particles`
+artifact a `track3p` step provides is always its **results directory**, and the
+consumer resolves the `ImpactsInfo_<level>` dump out of it: one is used as-is,
+several need `field_level:` on the `track3p` module, none raises and quotes the
+log's emitted-particle count. The dump is read in place rather than staged (at
+cryomodule scale each is ~137 MB). New key `impacts_format:
+initials-impacts` injects `OutputImpacts: on` and the `OutputImpactsInfo`
+container that selects the 17-column layout the weighting needs; the workflow
+now **refuses to build** when a field-emission step sits downstream of a dump in
+the default layout, which the weighting used to misread silently rather than
+reject — including a `track3p_source` file, checked by sniffing its header. New
+example `examples/track3p_geant4_chain` (validated on S3DF); it stops at the
+weighting step because no Pillbox Geant4 geometry exists. `track3p_source`
+remains the intended head for β studies over pre-run dumps, since one dump
+reweights analytically for any β.
+
+**BREAKING: the `particles` module is now `field_emission`.** Its job is the
+Fowler–Nordheim field-emission weighting of a Track3P dump; `particles` said
+none of that and collided with `particle_source`, `particle_output` and the
+`particles:` input bucket. There is **no alias**: `module: particles` fails at
+build with the "Unknown module type" error, which lists the new key. Rename the
+key in any YAML that uses it. The module's default `name` is its type, so its
+log file becomes `field_emission.log` and a workdir written before this change
+will not resume. **Not** renamed: the `particles:` input bucket (a namespace for
+β variables, not the module), the `particle_source` artifact and module, the
+`geant4_particle_cmd` default, and the `particles.py` module / `Particles`
+class. Baseline data does not move — same code, same outputs.
+
+**Fixed:** the weighting step's default output filename was derived with
+`particle_file.replace('.txt', '_modified.txt')`, so a Track3P dump named
+`ImpactsInfo_<level>` (no `.txt`) got an output name *equal to its input* and
+the write destroyed the dump — through the symlink to the original under
+`stage_mode: symlink`. The default now appends `_modified` before the extension,
+and an output path that resolves to the input is refused outright.
 
 **Fixed:** the ACE3P input parser misread one-line blocks (`Key: { A: x  B: y }`),
 reading the value to end of line and swallowing the sibling keys and the closing

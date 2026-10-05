@@ -37,7 +37,7 @@ from lume_ace3p import state
 from lume_ace3p.inputs import WorkflowInputs, load_yaml
 from lume_ace3p.modules import (
     AcdtoolModule, CubitModule, Geant4Module, MeshSourceModule, Omega3PModule,
-    ParticlesModule, RunContext, S3PModule, T3PModule, TRACK3P_PARTICLES,
+    FieldEmissionModule, RunContext, S3PModule, T3PModule, TRACK3P_PARTICLES,
 )
 from lume_ace3p.workflow_graph import Workflow
 
@@ -62,14 +62,14 @@ def _particles_workflow(root, betas, **params):
     it. The field-emission weighting is pure Python, so every point produces real
     numbers with no ACE3P binary — which is what makes the recorded ``outputs``
     worth comparing."""
-    particles = {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+    particles = {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
                  'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                  'beta_input': 'beta', 'output_format': 'geant4',
                  'output': 'particles.data'}
     particles.update(params.pop('particles', {}))
     output_spec = params.pop('output_spec', None) or {
-        'weight': {'module': 'particles', 'quantity': 'total_weight'},
-        'count': {'module': 'particles', 'quantity': 'count'}}
+        'weight': {'module': 'field_emission', 'quantity': 'total_weight'},
+        'count': {'module': 'field_emission', 'quantity': 'count'}}
     return Workflow(
         [particles, {'module': 'track3p_source', 'file': TRACK3P_SAMPLE}],
         workflow_params={'workdir': str(root / 'wd'), 'workdir_mode': 'indexed',
@@ -98,8 +98,8 @@ def test_a_completed_run_records_the_dag_order_and_the_outputs(tmp_path):
     assert recorded['point'] == {'axes': {'beta': 40.0}}
     assert recorded['workdir'] == os.path.abspath(ctx.workdir)
     assert [entry['name'] for entry in recorded['modules']] == [
-        'track3p_source', 'particles']
-    assert [m.name for m in ctx.modules] == ['track3p_source', 'particles']
+        'track3p_source', 'field_emission']
+    assert [m.name for m in ctx.modules] == ['track3p_source', 'field_emission']
     assert {entry['status'] for entry in recorded['modules']} == {'complete'}
 
     assert set(recorded['outputs']) == set(outputs)
@@ -118,7 +118,7 @@ def test_a_completed_run_records_each_module_s_artifacts(tmp_path):
     entries = {entry['name']: entry for entry in recorded['modules']}
     assert entries['track3p_source']['artifacts'] == {
         'track3p_particles': 'sample_track3p_particles.txt'}
-    assert entries['particles']['artifacts'] == {
+    assert entries['field_emission']['artifacts'] == {
         'particle_source': 'particles.data'}
     assert not any(os.path.isabs(path) for entry in recorded['modules']
                    for path in entry.get('artifacts', {}).values())
@@ -200,10 +200,10 @@ def test_a_failing_middle_module_is_recorded_and_the_later_ones_are_absent(
     def boom(self, ctx):
         raise RuntimeError('the weighting fell over')
 
-    monkeypatch.setattr(ParticlesModule, 'run', boom)
+    monkeypatch.setattr(FieldEmissionModule, 'run', boom)
     wf = Workflow(
         [{'module': 'track3p_source', 'file': TRACK3P_SAMPLE},
-         {'module': 'particles', 'beta': [40.0], 'num_bins': 1},
+         {'module': 'field_emission', 'beta': [40.0], 'num_bins': 1},
          {'module': 'geant4', 'geant4_input': 'never_read.geant4'}],
         workflow_params={'workdir': str(tmp_path / 'wd'), 'dry_run': True},
         inputs=WorkflowInputs(), output_spec={})
@@ -213,7 +213,8 @@ def test_a_failing_middle_module_is_recorded_and_the_later_ones_are_absent(
 
     recorded = state.read_state(str(tmp_path / 'wd'))
     statuses = [(e['name'], e['status']) for e in recorded['modules']]
-    assert statuses == [('track3p_source', 'complete'), ('particles', 'failed')]
+    assert statuses == [('track3p_source', 'complete'),
+                        ('field_emission', 'failed')]
     assert recorded['modules'][1]['error'] == (
         'RuntimeError: the weighting fell over')
     # Nothing was extracted, so nothing is claimed.
@@ -281,7 +282,7 @@ def test_config_hash_changes_when_an_output_parameter_changes(tmp_path):
     has to be re-extracted, so the output spec is in the hash."""
     assert (_run_hash(tmp_path / 'a')
             != _run_hash(tmp_path / 'b',
-                         output_spec={'weight': {'module': 'particles',
+                         output_spec={'weight': {'module': 'field_emission',
                                                  'quantity': 'total_weight'}}))
 
 
@@ -510,7 +511,7 @@ def test_particles_verify_checks_its_output_file(tmp_path):
     """Checked under dry-run too, because this step always runs: the Geant4 binary
     is the only thing a dry run skips, so the particle source it consumes is always
     produced."""
-    module = ParticlesModule({'beta': [40.0], 'num_bins': 1,
+    module = FieldEmissionModule({'beta': [40.0], 'num_bins': 1,
                               'output': 'particles.data'})
     dry = _ctx(tmp_path, dry_run=True)
     assert module.verify(dry) is False
@@ -523,7 +524,7 @@ def test_particles_verify_derives_the_default_output_name(tmp_path):
     :class:`~lume_ace3p.particles.Particles` derives from the Track3P dump, so it
     is answerable only once the upstream source module has recorded that
     artifact."""
-    module = ParticlesModule({'beta': [40.0], 'num_bins': 1})
+    module = FieldEmissionModule({'beta': [40.0], 'num_bins': 1})
     assert module.verify(_ctx(tmp_path)) is None
 
     ctx = _ctx(tmp_path)

@@ -37,7 +37,7 @@ workflow :
   # 'beta_inputs' maps one input variable per bin (beta0->bin0, ...). The DOE
   # sampler sets all eight per sample. 'bin_edges' MUST be fixed (length
   # num_bins + 1 = 9) so the binning never drifts between samples.
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
     work_function : 4.5

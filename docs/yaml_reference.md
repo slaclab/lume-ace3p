@@ -25,8 +25,8 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
 | `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
 | `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
-| `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys; see [](#particles-module-keys). |
-| `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `particles` weighting step. |
+| `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#particles-module-keys). |
+| `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys; see [](#geant4-module-keys). |
 
 An optional `name:` labels the instance (default: the module type). It names
@@ -841,9 +841,10 @@ The list cannot express the whole-axis case (no `at:`).
 :::
 
 (particles-module-keys)=
-### `particles` module keys
+### `field_emission` module keys
 
-The `particles` module (field-emission weighting) accepts the keys documented
+The `field_emission` module (Fowler–Nordheim weighting of a Track3P dump)
+accepts the keys documented
 under [](#particle_parameters) directly on its `workflow:` entry: `impact_order`,
 `impact_face_id`, `min_energy_ev`, `work_function`, `frequency`, `fn_model`,
 `beta` / `beta_input` / `beta_inputs`,
@@ -886,7 +887,7 @@ Used on a `geant4` `workflow:` entry.
 | `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section (default: the input file's `output_edep` value). |
 
 To supply a prebuilt Geant4 source file directly instead of generating one with a
-`particles` module, use a `particle_source` module with a `file:` key. The old
+`field_emission` module, use a `particle_source` module with a `file:` key. The old
 `geant4_particle_file` / `particle_input` / `particle_output` keys are not read.
 
 (input_parameters)=
@@ -903,7 +904,7 @@ input_parameters :
     FrequencyScan : {Start: 9.5e9}
   geant4 :                      # Geant4 input-file overrides
     nthreads : 8
-  particles :                   # particles-module knobs (e.g. field-enhancement β)
+  particles :                   # field_emission knobs (e.g. field-enhancement β)
     beta : {min: 40.0, max: 60.0, num: 5}
 ```
 
@@ -912,7 +913,7 @@ If any leaf is vector-like, the workflow can only be run as a parameter sweep. T
 four sub-blocks map to the four [`WorkflowInputs`](workflow_inputs.md) buckets
 (`geant4:` is the *macro* bucket); see [](#ace3p_input_parameters) (duplicate-key
 aware) and [](#geant4_input_parameters). The `particles:` bucket holds the
-field-enhancement variables read by the `particles` module's `beta_input` /
+field-enhancement variables read by the `field_emission` module's `beta_input` /
 `beta_inputs`; see [](#particle_parameters).
 
 :::{important}
@@ -1067,7 +1068,8 @@ key is equivalent.
 (particle_parameters)=
 ## `particle_parameters`
 
-The keys accepted by a `particles` module entry (see [](#particles-module-keys)).
+The keys accepted by a `field_emission` module entry (see
+[](#particles-module-keys)).
 They are set directly on the module's `workflow:` entry, not in a separate
 top-level block.
 
@@ -1179,7 +1181,7 @@ Requires a `workflow:` list.
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
 | `resume`      | `bool` | `False` | Restart a sample that stopped midway through the chain at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless; see [](#resume). |
 
-Two constraints are enforced and hard-fail otherwise: the `particles` module
+Two constraints are enforced and hard-fail otherwise: the `field_emission` module
 must fix `bin_edges` explicitly (length `num_bins + 1`) and declare per-bin
 `beta_inputs`, and the `geant4` input file's scoring mesh must be readable and
 unchanged for the whole campaign (it is fingerprinted into the manifest and

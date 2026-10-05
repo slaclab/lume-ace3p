@@ -31,7 +31,7 @@ workflow :
   # variable to all num_bins bins (run 1 -> [40]*8, run 2 -> [45]*8, ...).
   # 'output' must match the 'particles = ...' line named in the Geant4 input
   # file below.
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
     work_function : 4.2

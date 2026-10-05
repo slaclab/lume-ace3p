@@ -84,16 +84,16 @@ def _particles_workflow(root, workdir_mode, betas):
                           'sample_track3p_particles.txt')
     return Workflow(
         [{'module': 'track3p_source', 'file': source},
-         {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+         {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
           'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(root / 'wd'),
                          'workdir_mode': workdir_mode, 'dry_run': True},
         inputs=WorkflowInputs(particles={'beta': np.array(betas)}),
-        output_spec={'weight': {'module': 'particles',
+        output_spec={'weight': {'module': 'field_emission',
                                 'quantity': 'total_weight'},
-                     'count': {'module': 'particles', 'quantity': 'count'}})
+                     'count': {'module': 'field_emission', 'quantity': 'count'}})
 
 
 # --------------------------------------------------------------------------- #
@@ -190,14 +190,14 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
                           'sample_track3p_particles.txt')
     wf = Workflow(
         [{'module': 'track3p_source', 'file': source},
-         {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+         {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
           'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(tmp_path / 'wd'),
                          'workdir_mode': 'auto', 'dry_run': True},
         inputs=WorkflowInputs(particles={'beta': np.array([40.0, 60.0])}),
-        output_spec={'weight': {'module': 'particles',
+        output_spec={'weight': {'module': 'field_emission',
                                 'quantity': 'total_weight'}})
     df = modes.parameter_sweep(wf)
     assert len(df) == 2
@@ -211,7 +211,7 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
                 f'prototype {module.name!r} carries run state in {attr}')
     # The last evaluation's own particles module does hold it — the state exists,
     # it just lives on the context.
-    assert _module_of(wf.last_context.modules, 'particles')._filtered is not None
+    assert _module_of(wf.last_context.modules, 'field_emission')._filtered is not None
 
 
 # --------------------------------------------------------------------------- #

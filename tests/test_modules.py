@@ -4,11 +4,11 @@ Two things are verified for every module:
 
 1. **Isolation dry-run** — each module runs from a hand-built ``RunContext``,
    consuming the artifact keys it ``requires`` and producing the keys it
-   ``provides``. The source modules and the pure-Python ``ParticlesModule`` run
+   ``provides``. The source modules and the pure-Python ``FieldEmissionModule`` run
    for real; the solver/geant4 modules run their dry-run path.
 2. **extract** — for the modules that expose scalars (``S3PModule``,
    ``AcdtoolModule``, ``Geant4Module``), ``extract`` is checked to pull the
-   expected values out of synthetic solver-output fixtures. ``ParticlesModule``
+   expected values out of synthetic solver-output fixtures. ``FieldEmissionModule``
    is checked against a direct ``Particles`` invocation (the wrapper it adapts).
 
 No ACE3P / Geant4 binary is needed: solver objects are constructed pointing at
@@ -29,7 +29,7 @@ from lume_ace3p.modules import (
     RunContext, build_module, MODULE_REGISTRY,
     CubitModule, MeshSourceModule, Omega3PModule, S3PModule, T3PModule,
     Track3PModule, AcdtoolModule,
-    Track3PSourceModule, ParticlesModule, ParticleSourceModule, Geant4Module,
+    Track3PSourceModule, FieldEmissionModule, ParticleSourceModule, Geant4Module,
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
@@ -239,7 +239,7 @@ def test_registry_edges_match_plan():
         # the source module supplies, so a workflow lists one or the other.
         'track3p': ({EM_SOLUTION}, {TRACK3P_PARTICLES}),
         'track3p_source': (set(), {TRACK3P_PARTICLES}),
-        'particles': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
+        'field_emission': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
         'particle_source': (set(), {PARTICLE_SOURCE}),
         'geant4': ({PARTICLE_SOURCE}, {DOSE_GRID, EDEP_GRID}),
     }
@@ -1426,7 +1426,7 @@ def test_track3p_specs_route_without_naming_the_module():
     # Unchanged neighbours.
     assert _infer_output_module('loss_factor') == 't3p'
     assert _infer_output_module({'quantity': 'S(0,0)'}) == 's3p'
-    assert _infer_output_module('count') == 'particles'
+    assert _infer_output_module('count') == 'field_emission'
 
 
 # --------------------------------------------------------------------------- #
@@ -1964,7 +1964,7 @@ def test_particles_module_runs_and_extracts(tmp_path):
     params = {'impact_order': 1, 'impact_face_id': 6, 'work_function': 4.5,
               'frequency': 1.0e10, 'num_bins': 8, 'beta': [50, 55, 60, 65, 65, 60, 55, 50],
               'output': 'particles.data'}
-    module = ParticlesModule(params)
+    module = FieldEmissionModule(params)
     module.run(ctx)
 
     assert PARTICLE_SOURCE in ctx.artifacts
@@ -1995,7 +1995,7 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
     # Module path.
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
-    ParticlesModule(dict(params, output='particles.data')).run(ctx)
+    FieldEmissionModule(dict(params, output='particles.data')).run(ctx)
     mod_arr = np.loadtxt(ctx.artifacts[PARTICLE_SOURCE])
 
     assert np.allclose(ref_arr, mod_arr)
@@ -2009,7 +2009,7 @@ def test_particles_module_beta_input_broadcast(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, inputs=WorkflowInputs(particles={'beta': 50.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
                               'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
@@ -2023,7 +2023,7 @@ def test_particles_module_beta_falls_back_to_cubit(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, inputs=WorkflowInputs(cubit={'beta': 42.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
                               'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
@@ -2033,7 +2033,7 @@ def test_particles_module_beta_falls_back_to_cubit(tmp_path):
 def test_particles_module_requires_track3p(tmp_path):
     ctx = RunContext(str(tmp_path / 'wd'))
     with pytest.raises(ValueError):
-        ParticlesModule({'num_bins': 1, 'beta': [1.0], 'work_function': 4.5,
+        FieldEmissionModule({'num_bins': 1, 'beta': [1.0], 'work_function': 4.5,
                          'frequency': 1e10}).run(ctx)
 
 
@@ -2077,7 +2077,7 @@ def test_particles_resolves_a_single_dump_in_a_results_directory(tmp_path):
     wd = str(tmp_path / 'wd')
     _track3p_results(wd)
     ctx = _chain_ctx(wd)
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     module.run(ctx)
 
     assert module.extract(ctx, 'count') == 24
@@ -2091,7 +2091,7 @@ def test_particles_does_not_copy_a_dump_that_is_already_in_the_workdir(tmp_path)
     wd = str(tmp_path / 'wd')
     _track3p_results(wd)
     ctx = _chain_ctx(wd)
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     assert (module._resolve_dump(ctx)
             == os.path.join('track3p_results', 'ImpactsInfo_2.3e+07'))
     module.run(ctx)
@@ -2102,7 +2102,7 @@ def test_particles_ambiguous_scan_raises_naming_both_ways_out(tmp_path):
     wd = str(tmp_path / 'wd')
     _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
     ctx = _chain_ctx(wd)
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     with pytest.raises(ValueError) as excinfo:
         module.run(ctx)
     message = str(excinfo.value)
@@ -2111,14 +2111,14 @@ def test_particles_ambiguous_scan_raises_naming_both_ways_out(tmp_path):
     assert 'field_level:' in message and 'FieldScales' in message
     # With no explicit `output:` there is no name to derive either, and verify
     # declines to answer rather than guessing one of the three dumps.
-    assert ParticlesModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
+    assert FieldEmissionModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
 
 
 def test_particles_uses_the_field_level_the_track3p_module_named(tmp_path):
     wd = str(tmp_path / 'wd')
     _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
     ctx = _chain_ctx(wd, field_level=2.4e7)
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     assert (module._resolve_dump(ctx)
             == os.path.join('track3p_results', 'ImpactsInfo_2.4e+07'))
     module.run(ctx)
@@ -2132,7 +2132,7 @@ def test_particles_named_level_without_a_dump_raises_rather_than_falling_through
     wd = str(tmp_path / 'wd')
     _track3p_results(wd, levels=('2.3e+07', '2.5e+07'))
     ctx = _chain_ctx(wd, field_level=2.4e7)
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     with pytest.raises(ValueError) as excinfo:
         module.run(ctx)
     message = str(excinfo.value)
@@ -2155,7 +2155,7 @@ def test_particles_no_dump_at_all_raises_and_quotes_the_emitted_count(tmp_path):
     producer.run(producer_ctx, skip_execution=True)
 
     ctx = _chain_ctx(wd, modules=[producer])
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     with pytest.raises(ValueError) as excinfo:
         module.run(ctx)
     message = str(excinfo.value)
@@ -2173,7 +2173,7 @@ def test_particles_resolves_a_dump_path_that_is_not_staged_yet(tmp_path):
     branch instead, and `verify` could no longer derive an output name."""
     ctx = RunContext(str(tmp_path / 'wd'),
                      artifacts={TRACK3P_PARTICLES: str(tmp_path / 'dump.txt')})
-    module = ParticlesModule(dict(PARTICLES_PARAMS))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS))
     assert module._resolve_dump(ctx) == 'dump.txt'
     assert module.verify(ctx) is False
     os.makedirs(ctx.workdir, exist_ok=True)
@@ -2188,7 +2188,7 @@ def test_particles_still_reads_a_plain_dump_file(tmp_path):
     _make_track3p_dump(str(dump), impact_order=1, impact_face_id=6)
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
     assert module._resolve_dump(ctx) == 'supplied.txt'
     module.run(ctx)
     assert os.path.isfile(os.path.join(wd, 'supplied.txt'))   # staged
@@ -2205,7 +2205,7 @@ def test_particles_default_output_does_not_eat_the_dump(tmp_path):
     original = dump.read_bytes()
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
                               'work_function': 4.5, 'frequency': 1.0e10,
                               'num_bins': 1, 'beta': [50.0]})
     module.run(ctx)

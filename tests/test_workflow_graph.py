@@ -76,12 +76,12 @@ def test_order_cubit_s3p_acdtool():
 def test_order_track3p_particles_geant4():
     entries = [
         {'module': 'geant4', 'geant4_input': 'in.geant4'},
-        {'module': 'particles', 'num_bins': 1, 'beta': [1.0],
+        {'module': 'field_emission', 'num_bins': 1, 'beta': [1.0],
          'work_function': 4.5, 'frequency': 1e10},
         {'module': 'track3p_source', 'file': 'dump.txt'},
     ]
     wf = Workflow(entries, workflow_params={'dry_run': True})
-    assert _types(wf.modules) == ['track3p_source', 'particles', 'geant4']
+    assert _types(wf.modules) == ['track3p_source', 'field_emission', 'geant4']
 
 
 def test_order_is_stable_tiebreak():
@@ -117,9 +117,40 @@ def test_acdtool_before_solver():
 
 def test_particles_no_track3p_source():
     with pytest.raises(WorkflowValidationError, match=f"'{TRACK3P_PARTICLES}'"):
-        Workflow([{'module': 'particles', 'num_bins': 1, 'beta': [1.0],
+        Workflow([{'module': 'field_emission', 'num_bins': 1, 'beta': [1.0],
                    'work_function': 4.5, 'frequency': 1e10}],
                  workflow_params={'dry_run': True})
+
+
+def test_the_old_particles_module_key_is_rejected():
+    """`particles` was renamed to `field_emission` with **no alias**: the job is
+    the Fowler-Nordheim field-emission weighting of a Track3P dump, and
+    `particles` collided with `particle_source`, `particle_output` and the
+    `particles:` input bucket.
+
+    An old YAML therefore fails at build through `build_module`'s existing
+    "Unknown module type" path, whose message lists the registry's keys — so it
+    names the replacement without the registry carrying a dead entry to say
+    so."""
+    with pytest.raises(ValueError, match='Unknown module type') as excinfo:
+        Workflow([{'module': 'track3p_source', 'file': 'dump.txt'},
+                  {'module': 'particles', 'num_bins': 1, 'beta': [1.0],
+                   'work_function': 4.5, 'frequency': 1e10}],
+                 workflow_params={'dry_run': True})
+    assert 'field_emission' in str(excinfo.value)
+    assert "'particles'" not in str(excinfo.value).split('Known types')[1]
+
+
+def test_the_particles_input_bucket_keeps_its_name():
+    """Deliberately *not* renamed: the bucket is a namespace for the beta
+    variables an input space declares, not a reference to the module."""
+    from lume_ace3p.inputs import _INPUT_BUCKETS
+    from lume_ace3p.modules import MODULE_REGISTRY
+    assert 'particles' in _INPUT_BUCKETS
+    assert 'field_emission' not in _INPUT_BUCKETS
+    # And the artifact/module that supplies a prebuilt Geant4 source is
+    # untouched too -- it was never the weighting step.
+    assert 'particle_source' in MODULE_REGISTRY
 
 
 def test_geant4_no_particle_source():
@@ -620,7 +651,7 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
     try:
         entries = [
             {'module': 'track3p_source', 'file': '../assets/sample_track3p_particles.txt'},
-            {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+            {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
              'work_function': 4.2, 'frequency': 1.2999e9,
              'min_energy_ev': 1000.0, 'fn_model': 'fn', 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
@@ -636,7 +667,7 @@ def test_geant4_chain_evaluate_and_baseline(tmp_path):
                       inputs=inputs)
         wf.evaluate([40.0])
 
-        assert _types(wf.modules) == ['track3p_source', 'particles', 'geant4']
+        assert _types(wf.modules) == ['track3p_source', 'field_emission', 'geant4']
         assert wf.workdir == 'lume-ace3p_geant4_workdir_40.0'
         module_particles = os.path.join(wf.workdir, 'particles.data')
         assert os.path.isfile(module_particles)
@@ -920,7 +951,7 @@ def test_track3p_chain_evaluate_dry_run_table_shape(tmp_path):
 # The field-emission chain and its build-time layout check (Phase 3 steps 4, 5)
 # --------------------------------------------------------------------------- #
 
-_CHAIN_PARTICLES = {'module': 'particles', 'work_function': 4.2,
+_CHAIN_PARTICLES = {'module': 'field_emission', 'work_function': 4.2,
                     'frequency': 1.3138172e9, 'beta': 45.0,
                     'impact_face_id': 6, 'output': 'particles.data'}
 
@@ -954,14 +985,14 @@ def test_order_track3p_particles_in_pipeline(tmp_path):
     wf = Workflow(_chain_entries(tmp_path,
                                  impacts_format='initials-impacts'),
                   workflow_params={'dry_run': True})
-    assert _types(wf.modules) == ['mesh', 'omega3p', 'track3p', 'particles']
+    assert _types(wf.modules) == ['mesh', 'omega3p', 'track3p', 'field_emission']
 
     # And with a dose step on the end, which is where this chain is headed once
     # there is geometry for it (Phase 4).
     full = Workflow(_chain_entries(tmp_path, geant4=True,
                                    impacts_format='initials-impacts'),
                     workflow_params={'dry_run': True})
-    assert _types(full.modules) == ['mesh', 'omega3p', 'track3p', 'particles',
+    assert _types(full.modules) == ['mesh', 'omega3p', 'track3p', 'field_emission',
                                     'geant4']
 
 
@@ -986,7 +1017,7 @@ def test_chain_accepts_a_selector_the_input_already_declares(tmp_path):
     entries = _chain_entries(tmp_path)
     entries[2]['input'] = str(dest)
     wf = Workflow(entries, workflow_params={'dry_run': True})
-    assert _types(wf.modules)[2:4] == ['track3p', 'particles']
+    assert _types(wf.modules)[2:4] == ['track3p', 'field_emission']
 
 
 def test_track3p_source_in_the_default_layout_is_rejected(tmp_path):

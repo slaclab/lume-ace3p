@@ -118,7 +118,7 @@ class RunContext:
         when its ``field_level:`` key names which level of a multi-level scan a
         consumer should take. The artifact itself is always the results
         directory, so this is how the choice reaches
-        :class:`ParticlesModule` without the artifact's shape depending on how
+        :class:`FieldEmissionModule` without the artifact's shape depending on how
         many levels a run produced.
 
     ``modules``
@@ -1376,7 +1376,7 @@ class Track3PModule(_SolverModule):
                 f"'default' (leave the input's own layout alone) or "
                 f"'initials-impacts' (inject OutputImpacts: on and "
                 f"OutputImpactsInfo: {{ Type: Initials-Impacts }}, the layout "
-                f"the '{ParticlesModule.type}' module reads).")
+                f"the '{FieldEmissionModule.type}' module reads).")
         self.impacts_format = fmt
         # Which level's dump is *the* track3p_particles dump when a scan
         # produced several. The artifact is always the results directory
@@ -2192,7 +2192,7 @@ def _levels_note(dumps):
     return ' (levels: ' + ', '.join(f'{level:g}' for level in sorted(dumps)) + ')'
 
 
-class ParticlesModule(Module):
+class FieldEmissionModule(Module):
     """Requires ``track3p_particles``, provides ``particle_source``.
 
     Owns the ``beta`` / ``beta_input`` / ``beta_inputs`` resolution. Always runs
@@ -2215,7 +2215,7 @@ class ParticlesModule(Module):
     :class:`~lume_ace3p.workflow_graph.Workflow` rejects a chain that is missing
     it at build time rather than after the solve."""
 
-    type = 'particles'
+    type = 'field_emission'
     requires = frozenset({TRACK3P_PARTICLES})
     provides = frozenset({PARTICLE_SOURCE})
 
@@ -2707,7 +2707,7 @@ MODULE_REGISTRY = {
     Track3PModule.type: Track3PModule,
     AcdtoolModule.type: AcdtoolModule,
     Track3PSourceModule.type: Track3PSourceModule,
-    ParticlesModule.type: ParticlesModule,
+    FieldEmissionModule.type: FieldEmissionModule,
     ParticleSourceModule.type: ParticleSourceModule,
     Geant4Module.type: Geant4Module,
 }

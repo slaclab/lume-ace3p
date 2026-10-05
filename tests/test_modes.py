@@ -165,7 +165,7 @@ def test_geant4_beta_broadcast_sweep(tmp_path):
         entries = [
             {'module': 'track3p_source',
              'file': '../assets/sample_track3p_particles.txt'},
-            {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
+            {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
              'work_function': 4.2, 'frequency': 1.2999e9,
              'min_energy_ev': 1000.0, 'fn_model': 'fn', 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',

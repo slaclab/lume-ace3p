@@ -846,7 +846,7 @@ class _RecordingWorkflow:
     cosmetic."""
 
     class _Particles:
-        type = 'particles'
+        type = 'field_emission'
         params = {'num_bins': 4, 'beta_inputs': _BETAS,
                   'bin_edges': [0.0, 1.0, 2.0, 3.0, 4.0]}
 

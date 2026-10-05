@@ -52,8 +52,8 @@ import os
 import numpy as np
 
 from lume_ace3p.modules import (
-    Geant4Module, RunContext, TRACK3P_PARTICLES, acdtool_spec, build_module,
-    STAGE_MODES, T3PModule, Track3PModule,
+    FieldEmissionModule, Geant4Module, RunContext, TRACK3P_PARTICLES,
+    acdtool_spec, build_module, STAGE_MODES, T3PModule, Track3PModule,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.inputs import WorkflowInputs
@@ -165,7 +165,7 @@ def _infer_output_module(spec):
         return 's3p'
     if isinstance(spec, str):
         if spec in ('count', 'total_weight'):
-            return 'particles'
+            return FieldEmissionModule.type
         if spec in Track3PModule.QUANTITIES:
             return 'track3p'
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
@@ -174,7 +174,7 @@ def _infer_output_module(spec):
         if head in Geant4Module.SECTIONS:
             return 'geant4'
         if head in ('count', 'total_weight'):
-            return 'particles'
+            return FieldEmissionModule.type
         if head in Track3PModule.QUANTITIES:
             return 'track3p'
         return 't3p' if head in T3PModule.QUANTITIES else 's3p'

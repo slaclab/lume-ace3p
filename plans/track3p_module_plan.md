@@ -1,8 +1,8 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done 2026-10-01;
-Phase 3 is next** (reviewed and re-ordered 2026-10-01 — see the note at the top
-of Phase 3; see the status notes at the end of each finished phase). Written 2026-09-14 on S3DF. Decision taken
+**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done
+2026-10-01, Phase 3 done 2026-10-05; Phase 4 is next** (see the status notes at
+the end of each finished phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
 `plans/t3p_monitor_plan.md` and `plans/acdtool_rework_plan.md` (both COMPLETE)
@@ -225,18 +225,18 @@ levels parsed from the input file (`FieldScales`), as `T3PModule._dry_run_axis`
 
 Two consumers exist today and they want different things:
 
-- `ParticlesModule.run` (`modules.py:1806`) treats `ctx.artifacts[TRACK3P_PARTICLES]`
+- `ParticlesModule.run` (`modules.py:1806`, now `FieldEmissionModule`) treats `ctx.artifacts[TRACK3P_PARTICLES]`
   as **a file path** and stages it.
 - `acdtool postprocess track3p` (`acdtool.py:252`) wants
   `ctx.job_names[TRACK3P_PARTICLES]` = the results directory name.
 
-Contract (**revised 2026-10-01**): the module always sets
+Contract (**revised 2026-10-01; implemented 2026-10-05**): the module always sets
 `ctx.job_names[TRACK3P_PARTICLES] = solver.job_name()` and always sets the
 artifact to the **results directory** — the Phase 1 behaviour, under run and
 dry-run alike. The earlier single-file rule is dropped: `track3p_source` always
 provides a file, so the consumer must handle both shapes regardless, and a value
 whose *type* depends on how many levels a run produced is a second code path for
-nothing. All resolution lives in `ParticlesModule` (Phase 3 step 3): a file is
+nothing. All resolution lives in `FieldEmissionModule` (Phase 3 step 3): a file is
 used as today; a directory holds exactly one `ImpactsInfo_*` → use it; several →
 raise listing the levels and the two ways to choose (`field_level:` on
 `track3p`, or a single-level `FieldScales`); none → raise. A `field_level:` whose
@@ -245,8 +245,8 @@ through to another level. `Track3PSourceModule` is unchanged.
 
 ### 3.5 Build-time validation
 
-In `Workflow.__init__` (where `WorkflowValidationError`s already fire for
-unroutable specs and missing producers), add: if a `particles` module is
+In `_resolve_order` (where `WorkflowValidationError`s already fire for
+unroutable specs and missing producers), add: if a `field_emission` module is
 downstream of `track3p` and the Track3P input file, after the module's own
 injection, has no `OutputImpactsInfo` container with `Type: Initials-Impacts`,
 raise naming the exact two lines to add or the `impacts_format:
@@ -720,6 +720,100 @@ milano after each landable step, as every phase does.
      resume. Acceptable (single user, no shipped baseline reads the log); one
      line in the release notes.
 
+**Phase 3 status (2026-10-05): DONE.** Four commits, each leaving the suite
+green, in the order the plan fixed: the step 1 fix alone (`f27abcf`), the step 2
+probe (`538aa8b`), steps 3–6 (`fc73f79`), the step 7 rename alone (this commit).
+All four closed decisions were implemented as decided; none was re-opened.
+
+Verified on milano (one job at a time, from scratch):
+
+| Job | What | Result |
+|---|---|---|
+| 39647859 | full suite, step 1 | 756 passed / 2 skipped, 25m06s |
+| 39649793 | step 2 probe + the step 6 launch check | **0 particles emitted** (the gate) — but the launch check passed |
+| 39651022 | three step 2 diagnostics | 522 / **23 984** / 242 958 particles |
+| 39926642 | full suite, step 2 | 760 passed / 2 skipped, 6m48s |
+| 39928306 | `track3p_geant4_chain` real run | COMPLETED, 16m22s — see below |
+| 39932673 | full suite, steps 3–6 | 781 passed / 2 skipped, 21m05s |
+| 39935147 | full suite, step 7 | **783 passed / 2 skipped, 5m36s** |
+
+Deviations from the text above:
+
+- **Step 2's premise was wrong, and the gate fired.** The plan assumed `N: 100`
+  was why `pillbox_fieldemission/` emitted nothing and that `N: 1` would fix
+  it. It did not — the `N: 1` probe also reported `Total Emitted Particles = 0`.
+  With `N <= 1.0` the build skips the macroparticle threshold entirely, so `N`
+  was never the blocker; the **emitter bounding box** was, selecting 14
+  low-field faces whose Fowler–Nordheim current underflows to exactly zero.
+  Rather than stop, three diagnostics in one job isolated it (the same box at
+  β = 1000 *does* emit), and the fixture is the unboxed boundary-6 emitter:
+  6 558 faces, 23 984 particles, real field-emission columns. Full detail in the
+  step 2 block above. **The example's emitter is therefore unboxed**, which is
+  the one place the example departs from §3.5's sketch.
+- **β = 45, sized from the probe dump** as decision 3 requires: the
+  one-electron cut bites between 35 and 50 here and saturates by 50, so the
+  LCLS study's 100–150 would have flatlined the example exactly as it did
+  `geant4_track3p_beta` in Phase 2.
+- **The chain example stops at `field_emission`, not `geant4`** (David,
+  2026-10-05). The dose app needs a copper body *and* a vacuum cavity as STL
+  meshes and **no Pillbox geometry exists** — only 7cell STLs ship, and they are
+  a different cavity, so the dose would be meaningless. The cavity surface is
+  extractable from `Pillbox.ncdf` exactly (6 836 closed triangles, verified);
+  the copper body is not, since the mesh is the vacuum volume and a wall
+  thickness would have to be invented. Options offered were (a) derive both with
+  a stated 3 mm wall, (b) stop at the weighting step, (c) wait for Phase 4's
+  polycone app; **(b) chosen** — invent no geometry. The YAML carries the
+  `geant4` block commented out with the two filenames it needs. Everything
+  Phase 3 built is still exercised by the real run.
+- **`field_level:` travels in `ctx.field_levels`**, a new per-artifact side
+  table beside `job_names` (the plan left the mechanism to the implementer and
+  asked which was chosen). The artifact's *type* therefore never depends on how
+  many levels a run produced, which was the point of decision 1.
+- **`_level_files` became public `level_files`** so the wrapper's reader and the
+  consumer's resolution agree by construction on what a per-level dump is
+  called, rather than by two copies of a glob.
+- **Step 6 needed no code at all**, as predicted: the existing
+  `solver_command` already produces Lixin's launcher shape, and the three
+  `OMP_*` exports sit in the example batch script. The step 2 job confirmed both
+  ranks saw `OMP_NUM_THREADS=8` and ran 8 OpenMP threads each — sampled from
+  `/proc`, since no Track3P log line reports a thread count.
+- **Two defects found and fixed in passing**, neither in the plan:
+  `.gitignore`'s blanket `*.log` had silently excluded all five
+  `tests/fixtures/track3p/*/track3p.log` fixtures since Phase 0 (the suite
+  passed only because they sat untracked in the dev checkout; a fresh clone
+  failed `test_fixture_inventory`), now fixed with a `!tests/fixtures/**`
+  negation mirroring the `!tests/baseline/**` one. And the step 3 work briefly
+  regressed `verify` by dispatching the two artifact shapes on `isfile` rather
+  than `isdir` — `verify` runs *before* staging, so a recorded path that does
+  not exist yet is still a file. The suite caught it; a test now pins it.
+- **No baseline data moved** (§7 holds): `not_frozen.json` gained the
+  `track3p_geant4_chain` entry and `geant4_track3p_beta/manifest.json` had two
+  **prose** fields re-synced for the rename. No digest, table or field changed.
+- **Docs updated now rather than in Phase 5**, continuing Phases 1–2's practice:
+  `docs/yaml_reference.md` (the `track3p` artifact contract, `impacts_format`
+  and `field_level`, the dump-resolution rules, the `output:` default) and
+  `docs/parameter_sweep.md`, plus a CHANGELOG entry carrying the breaking-rename
+  note the plan asked for.
+
+Deferred, with reasons:
+
+- **Pillbox Geant4 geometry** (above). The decision is a modelling one — what
+  wall thickness — not a packaging one. Phase 4 moves the Geant4 examples to the
+  polycone app, which takes an R(Z) profile rather than an STL, so the real fix
+  may be to write this head against that app instead of generating STLs now.
+- **`geant4_dose_single` / `geant4_track3p_beta` re-validation** after Phase 2's
+  weighting change is still open in
+  `plans/s3df_example_validation_plan.md`; untouched by this phase beyond the
+  one renamed line each.
+- **The full-suite slowdown** (5m49s → 25m06s, first seen 2026-10-01) is
+  intermittent, not monotonic: across this phase's four full runs the same tree
+  took 25m06s, 6m48s, 21m05s and 5m36s. It tracks neither the diff nor the test
+  count (the slowest run and the fastest are 27 tests apart), which rules the
+  Phase 2/3 code out as the cause and points at the node or at thread
+  oversubscription. Still deferred — a wall-clock concern, not a correctness
+  one, and all four runs were green. Investigation plan in memory
+  (`pytest-suite-slowdown-2026-10-01`), now with four data points.
+
 ### Phase 4 — Geant4 module for the polycone app
 
 1. `seed:` handling (§3.7); `extract` detector quantities; `detector` index
@@ -772,11 +866,11 @@ Lixin's.
 | 2 | FN model default: plain FN (Lixin) or Wang–Loew (repo today) | **DECIDED 2026-09-14: plain FN**, so the 22 shipped files are reproducible |
 | 2 | Keep `sample_track3p_particles.txt` or swap for the 1 000-row C3 excerpt | **DECIDED 2026-10-01: keep** — the excerpt leaves ~35 primaries and meaningless dose |
 | 1 | `mp_onset_level` default threshold | 1.0 (enhancement ≥ 1 = growth) |
-| 3 | Artifact: one `ImpactsInfo` file when unambiguous, or always the results directory | **DECIDED 2026-10-01: always the directory**; `ParticlesModule` resolves both shapes |
-| 3 | Chain example under dry-run: placeholder artifact (A) or not frozen (B) | **DECIDED 2026-10-01: B** — CI asserts validate/order plus the §3.5 rejections |
-| 3 | Probe `N: 1` Pillbox field emission before or via the example's validation run | **DECIDED 2026-10-01: before** (step 2; < 2 min, and the answer shapes the example) |
-| 3 | Rename the `particles` module | **DECIDED 2026-10-01: `field_emission` / `FieldEmissionModule`**, hard rename (no alias — single user), `particles:` input bucket untouched |
-| 4 | Which Geant4 app path the examples name | Lixin's polycone package, via `geant4_app_path` in YAML |
+| 3 | Artifact: one `ImpactsInfo` file when unambiguous, or always the results directory | **DECIDED 2026-10-01: always the directory**; `FieldEmissionModule` resolves both shapes. **Implemented 2026-10-05** |
+| 3 | Chain example under dry-run: placeholder artifact (A) or not frozen (B) | **DECIDED 2026-10-01: B** — CI asserts validate/order plus the §3.5 rejections. **Implemented 2026-10-05**; the example also stops at `field_emission`, since no Pillbox Geant4 geometry exists |
+| 3 | Probe `N: 1` Pillbox field emission before or via the example's validation run | **DECIDED 2026-10-01: before** (step 2; < 2 min, and the answer shapes the example). **Done 2026-10-05 — and it mattered**: `N: 1` emitted nothing; the bounding box was the blocker, and β came out at 45, not 100–150 |
+| 3 | Rename the `particles` module | **DECIDED 2026-10-01: `field_emission` / `FieldEmissionModule`**, hard rename (no alias — single user), `particles:` input bucket untouched. **Implemented 2026-10-05** |
+| 4 | Which Geant4 app path the examples name | Lixin's polycone package, via `geant4_app_path` in YAML. Note Phase 3 left `track3p_geant4_chain` without a Geant4 step for want of Pillbox geometry; the polycone app's R(Z) profile may be the answer |
 
 Questions for Lixin (not blocking; the source answers most): semantics of
 `Domain.Mode {Amplitude, Phase, Rz}` in solo mode and of `SuppressionFactor`;

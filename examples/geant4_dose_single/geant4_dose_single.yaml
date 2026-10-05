@@ -32,7 +32,7 @@ workflow :
   # Lixin's cryomodule, so the same beta*E is reached at about a quarter of the
   # beta. Above ~55 every macroparticle clears the one-electron cut and the
   # per-bin structure washes out; 44-50 straddles the onset, so the bins differ.
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
     work_function : 4.2

@@ -3,12 +3,12 @@
 The dark-current chain with Track3P run **in the pipeline**:
 
 ```
-workflow:  mesh -> omega3p -> track3p -> particles
+workflow:  mesh -> omega3p -> track3p -> field_emission
 mode:      single
 ```
 
 Omega3P solves the CW23 pillbox eigenmodes, Track3P tracks field-emitted
-electrons off the cavity wall at 23 MV/m, and the `particles` step reweights
+electrons off the cavity wall at 23 MV/m, and the `field_emission` step reweights
 the resulting 17-column dump into a Geant4 source file by the Fowler–Nordheim
 current at `β·E`.
 
@@ -31,7 +31,7 @@ and reach for `track3p_source` otherwise.
 ## The Geant4 step is missing, deliberately
 
 The plan for this example called for a five-module chain ending in `geant4`.
-It stops at `particles` instead: **there is no Pillbox Geant4 geometry.** The
+It stops at `field_emission` instead: **there is no Pillbox Geant4 geometry.** The
 dose app needs a copper body (`solid_stl`) and a vacuum cavity (`cavity_stl`)
 as STL meshes, and nothing in this repo or in the app's own package ships them
 for the pillbox. The 7cell STLs in `../assets/` are a different cavity — this
@@ -90,7 +90,7 @@ flattened `geant4_track3p_beta` in Phase 2.
 - `copper.dat` — the SEY table the input's `EnhancementCounter` block names.
   Track3P reads it from its working directory, so `files:` stages it there.
 
-The `Beta: 50` in the Track3P input and the `beta: 45.0` on the `particles`
+The `Beta: 50` in the Track3P input and the `beta: 45.0` on the `field_emission`
 module are different quantities that happen to share a name: Track3P's scales
 the field that decides *which* electrons are emitted and tracked, the module's
 scales the field that decides *how many real electrons* each macroparticle
@@ -100,7 +100,7 @@ not.
 ## `impacts_format`
 
 Track3P's default dump has no field-emission columns, and
-`particles` **misreads it silently** rather than rejecting it — it eats the
+`field_emission` **misreads it silently** rather than rejecting it — it eats the
 uncommented header as a data row and weights whatever the columns contain.
 `impacts_format: initials-impacts` on the `track3p` module injects the two
 lines that select the right layout:
@@ -129,8 +129,8 @@ One field level, so the table has one row, written to
 | `EC_max` | `OUTPUT/enhancementCounter` | largest `maxEnhancement` |
 | `impacts` | same | sum of `totalImpactNum` |
 | `emitted` | `track3p.log` | `Total Emitted Particles` (23 984 here) |
-| `primaries` | `particles` | macroparticles surviving the filters |
-| `electrons` | `particles` | real electrons they stand for (summed weight) |
+| `primaries` | `field_emission` | macroparticles surviving the filters |
+| `electrons` | `field_emission` | real electrons they stand for (summed weight) |
 
 ## Running
 
@@ -151,7 +151,7 @@ key to keep in sync. Keep the two in step if you change either.
 
 ## Not frozen as a baseline
 
-This example is in `tests/baseline/not_frozen.json`. The `particles` step has
+This example is in `tests/baseline/not_frozen.json`. The `field_emission` step has
 no dry-run branch — the weighting is pure Python, so it always runs — and under
 a dry run the `track3p` artifact is a workdir with no dump in it, so the step
 would raise. Building a placeholder-artifact mechanism so two steps with

@@ -1,5 +1,5 @@
 # In-pipeline dark-current chain on the declarative module/mode schema:
-#   workflow:  mesh -> omega3p -> track3p -> particles
+#   workflow:  mesh -> omega3p -> track3p -> field_emission
 #   mode:      single  (one evaluation)
 #
 # The use-case-B counterpart of examples/geant4_track3p_beta, which supplies a
@@ -71,7 +71,7 @@ workflow :
   # InitialNormalField averages 3.7e7 V/m, so the one-electron cut bites
   # between 35 and 50 and every macroparticle clears it by 50. At beta 120
   # every row survives and the weighting demonstrates nothing. See the README.
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
     work_function : 4.2
@@ -109,5 +109,5 @@ output_parameters :
   'EC_max'       : { module: track3p, quantity: max_enhancement }
   'impacts'      : { module: track3p, quantity: total_impacts }
   'emitted'      : { module: track3p, quantity: total_emitted }
-  'primaries'    : { module: particles, quantity: count }
-  'electrons'    : { module: particles, quantity: total_weight }
+  'primaries'    : { module: field_emission, quantity: count }
+  'electrons'    : { module: field_emission, quantity: total_weight }

@@ -90,7 +90,7 @@ def dose_of_beta(beta, noise=0.0, seed=None):
 
 
 class _FakeModule:
-    type = 'particles'
+    type = 'field_emission'
 
     def __init__(self):
         self.params = {'num_bins': 8, 'beta_inputs': list(BETA_NAMES),

@@ -1522,7 +1522,7 @@ def merge_levels(*groups, rtol=1e-9):
 def level_files(results, prefix):
     """``{level: path}`` for every ``<prefix><level>`` file in `results`.
 
-    Shared with the module layer: :class:`~lume_ace3p.modules.ParticlesModule`
+    Shared with the module layer: :class:`~lume_ace3p.modules.FieldEmissionModule`
     resolves which dump to reweight out of a Track3P results directory, and it
     must agree with this reader about what a per-level dump is called."""
     found = {}
