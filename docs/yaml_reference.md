@@ -638,10 +638,32 @@ enables it; a level with no rows in a table is NaN. The run log is
 `<results_dir>/track3p.log`, and a resume trusts a finished run only when that
 log ends with `Done!`.
 
-The `track3p_particles` artifact this module records is its results directory.
-Feeding it to a `particles` module (the Track3P → Geant4 chain, with the
-`Initials-Impacts` dump layout that step needs) is not yet wired; use
-`track3p_source` over a pre-run dump for that chain.
+The `track3p_particles` artifact this module records is its **results
+directory**, under run and dry run alike — never a single dump file, however
+many levels the run produced. A `particles` step downstream resolves the dump
+out of it (see [](#particles-module-keys)).
+
+Two keys serve that chain:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `impacts_format` | `default` | `initials-impacts` injects `OutputImpacts: on` and the container `OutputImpactsInfo: { Type: Initials-Impacts }`, the 17-column layout carrying `InitialNormalField` / `InitialFaceArea`. `default` leaves the input's own layout alone. |
+| `field_level` | — | Which level's `ImpactsInfo_<level>` a downstream `particles` step should reweight, when the scan produced several. |
+
+`impacts_format: initials-impacts` is not optional for a field-emission chain:
+Track3P's default dump is the same width but has no field-emission columns, and
+the weighting step **misreads it silently** rather than rejecting it (it reads
+the uncommented header as a data row). The workflow therefore refuses to build
+when a `particles` step is downstream of a `track3p` step that would write the
+default layout — naming both this key and the two input lines — and the same
+check rejects a `track3p_source` file whose first line is the default header.
+The selector is a *container*; the scalar spelling `OutputImpactsInfo:
+Initials-Impacts` is silently ignored by the build.
+
+Running Track3P in-pipeline costs a full solve per evaluation (~50 node-minutes
+per field level at cryomodule scale). Since one dump reweights analytically for
+any β, prefer `track3p_source` over a pre-run dump for β studies and use this
+head when the fields themselves change. See `examples/track3p_geant4_chain`.
 
 (acdtool-module)=
 ### `acdtool` module
@@ -826,8 +848,27 @@ under [](#particle_parameters) directly on its `workflow:` entry: `impact_order`
 `impact_face_id`, `min_energy_ev`, `work_function`, `frequency`, `fn_model`,
 `beta` / `beta_input` / `beta_inputs`,
 `num_bins`, `bin_edges`, `output_format`, and `output` (default
-`<input>_modified.txt`). `output_format` defaults to `'geant4'` (the 10-column
+`<input>_modified<ext>`). `output_format` defaults to `'geant4'` (the 10-column
 Geant4 source file); set `'track3p'` explicitly for the weighted-Track3P dump.
+
+**The dump it reads** comes from whichever module provides
+`track3p_particles`, and the two provide different shapes:
+
+- `track3p_source` provides a **dump file**, staged into the workdir.
+- `track3p` provides its **results directory**. This module then finds the
+  `ImpactsInfo_<level>` dump inside it: exactly one is used as-is; several
+  raises unless `field_level:` on the `track3p` module names one (a named level
+  with no dump raises rather than falling through to another); none raises,
+  quoting the log's `Total Emitted Particles` when the run wrote one, since an
+  emitter that produced nothing is the usual cause.
+
+A dump found inside a results directory is read **in place**, not staged — at
+cryomodule scale each is ~137 MB, and staging would copy it to a second name in
+the same workdir.
+
+Either way the dump must be in the `Initials-Impacts` layout; see
+[](#track3p-module) for the `impacts_format` key that guarantees it and the
+build-time check that enforces it.
 
 (geant4-module-keys)=
 ### `geant4` module keys
@@ -1044,7 +1085,7 @@ top-level block.
 | `beta_input`     | `str`              | `None`                | Name of one input-space variable (declared under `input_parameters.particles`; a `cubit:` declaration is also honored) whose scalar value is broadcast to all `num_bins` bins, so a `parameter_sweep` or Xopt can drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
 | `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables (declared under `input_parameters.particles`), one per bin, for independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
 | `output_format`  | `str`              | `'geant4'` (module default) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight`, with a `#`-commented header. `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). |
-| `output`         | `str`              | `<input>_modified.txt` | Output filename for the generated particle file, written into the workdir. |
+| `output`         | `str`              | `<input>_modified<ext>` | Output filename for the generated particle file, written into the workdir. The derived default appends `_modified` before the extension, so `dump.txt` gives `dump_modified.txt` and an extensionless Track3P dump `ImpactsInfo_2.3e+07` gives `ImpactsInfo_2.3e+07_modified` — never the input's own name, which would overwrite the dump. An `output:` that resolves to the input path is refused. |
 
 With `output_format: 'geant4'` (the module default) the file contains 10
 whitespace-separated columns and no header, one primary per row:

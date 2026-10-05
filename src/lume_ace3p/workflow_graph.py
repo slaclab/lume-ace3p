@@ -52,9 +52,10 @@ import os
 import numpy as np
 
 from lume_ace3p.modules import (
-    Geant4Module, RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
-    Track3PModule,
+    Geant4Module, RunContext, TRACK3P_PARTICLES, acdtool_spec, build_module,
+    STAGE_MODES, T3PModule, Track3PModule,
 )
+from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 from lume_ace3p.config import warn_unrecognized
@@ -180,6 +181,91 @@ def _infer_output_module(spec):
     raise WorkflowValidationError(f"cannot route output spec {spec!r}.")
 
 
+# The first line of a dump in the layout the field-emission weighting needs.
+# Checked by name, not by width: both layouts are 17 columns wide, and it is
+# the two trailing field-emission columns that distinguish them.
+_FE_COLUMNS = ('InitialNormalField', 'InitialFaceArea')
+
+
+def _validate_impacts_layout(modules, producer):
+    """Reject a field-emission chain whose Track3P dump is in the wrong layout,
+    at build time rather than after a 45-minute solve.
+
+    ``Particles.load`` reads the ``Initials-Impacts`` layout: 17 columns ending
+    ``InitialNormalField InitialFaceArea``. Handed the *default* layout — same
+    width, but ending ``FaceID volID`` and with no field emission in it at all —
+    it does not fail. It reads the uncommented header as a data row and weights
+    whatever the columns happen to contain, which Phase 0 pinned as silent
+    garbage. Both heads of the chain are checked:
+
+    * ``track3p`` — the input tree, after accounting for what the module itself
+      injects. ``impacts_format: initials-impacts`` is the fix, and the message
+      names it.
+    * ``track3p_source`` — one ``readline()`` of the supplied dump. The
+      higher-value check of the two: every shipped Geant4 example enters this
+      way, and the chain example cannot be frozen, so this is the chain's only
+      CI coverage.
+
+    A source file that does not exist yet is skipped silently. No module input
+    file is opened at build time and ``files:`` paths are checked only at run
+    time, so a missing file is run time's error to report, not this one's."""
+    consumer = next((m for m in modules
+                     if TRACK3P_PARTICLES in m.requires), None)
+    if consumer is None or TRACK3P_PARTICLES not in producer:
+        return
+    head = modules[producer[TRACK3P_PARTICLES]]
+
+    if head.type == 'track3p':
+        if head.impacts_format == 'initials-impacts':
+            return          # the module injects the selector itself
+        try:
+            with open(head.input_file) as file:
+                tree = parse_ace3p(file.read())
+        except (OSError, TypeError, ValueError):
+            return          # unreadable input: run time's error to report
+        container = tree.find('OutputImpactsInfo')
+        declared = container.get_leaf('Type') if container is not None else None
+        if declared and declared.strip().lower() == 'initials-impacts':
+            return
+        raise WorkflowValidationError(
+            f"module '{consumer.name}' reweights a Track3P dump, but "
+            f"'{head.name}' would write the default impact layout, which has "
+            f"no field-emission columns ({', '.join(_FE_COLUMNS)}) and which "
+            f"the weighting silently misreads rather than rejecting. Either "
+            f"set\n    impacts_format: initials-impacts\n"
+            f"on the '{head.name}' module, or add these two lines to "
+            f"{head.input_file}:\n"
+            f"    OutputImpacts: on\n"
+            f"    OutputImpactsInfo: {{ Type: Initials-Impacts }}\n"
+            f"(the selector is a container; the scalar spelling "
+            f"'OutputImpactsInfo: Initials-Impacts' is silently ignored.)")
+
+    if head.type == 'track3p_source':
+        path = head.config.get('file')
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            with open(path) as file:
+                header = file.readline()
+        except OSError:
+            return
+        columns = header.lstrip('#').split()
+        if all(name in columns for name in _FE_COLUMNS):
+            return
+        raise WorkflowValidationError(
+            f"module '{consumer.name}' reweights the Track3P dump "
+            f"'{path}', but that file's first line is not the "
+            f"'Initials-Impacts' header: it has no "
+            f"{' / '.join(_FE_COLUMNS)} column, so there is no field to weight "
+            f"by. Its header is:\n    {header.strip()}\n"
+            f"A dump in the default layout (ending 'FaceID volID') cannot be "
+            f"converted after the fact — the field-emission columns were never "
+            f"written. Re-run Track3P with\n"
+            f"    OutputImpacts: on\n"
+            f"    OutputImpactsInfo: {{ Type: Initials-Impacts }}\n"
+            f"or point 'file:' at a dump that already has them.")
+
+
 def _resolve_order(modules):
     """Validate the module list and return it topologically ordered.
 
@@ -230,6 +316,8 @@ def _resolve_order(modules):
                 "entry in the run manifest, so it must be unique within a "
                 "workflow. Give one of them a different 'name:'.")
         seen[m.name] = m.type
+
+    _validate_impacts_layout(modules, producer)
 
     deps = {i: {producer[k] for k in m.requires} for i, m in enumerate(modules)}
 

@@ -42,8 +42,8 @@ from lume_ace3p.cubit import Cubit
 # — T3PModule tests for a monitor's missing index axis instead.
 from lume_ace3p.ace3p import (
     ALWAYS, MONITORS, Omega3P, S3P, T3P, Track3P, declared_field_levels,
-    declared_monitors, impacts_summary, input_job_name, parse_ace3p,
-    results_path,
+    declared_monitors, impacts_summary, input_job_name, level_files,
+    parse_ace3p, results_path,
 )
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
@@ -113,6 +113,13 @@ class RunContext:
         consumer that **overwrites** its producer's output file in place calls the
         hook so the producer re-reads it — see :class:`AcdtoolModule` for why
         ``postprocess transwake`` needs this.
+    ``field_levels``
+        ``{artifact kind: field level}``, recorded by :class:`Track3PModule`
+        when its ``field_level:`` key names which level of a multi-level scan a
+        consumer should take. The artifact itself is always the results
+        directory, so this is how the choice reaches
+        :class:`ParticlesModule` without the artifact's shape depending on how
+        many levels a run produced.
 
     ``modules``
         the **live** module instances this evaluation runs, in resolved DAG order.
@@ -145,6 +152,7 @@ class RunContext:
         self.stage_mode = stage_mode
         self.job_names = {}
         self.reparse = {}
+        self.field_levels = {}
 
     def ensure_workdir(self):
         if self.workdir and not os.path.exists(self.workdir):
@@ -1357,6 +1365,26 @@ class Track3PModule(_SolverModule):
         super().__init__(config, name)
         self._declared = None
         self._summaries = {}
+        # Opt-in: inject the Initials-Impacts selector so the dump carries the
+        # two field-emission columns the field_emission module reweights. Left
+        # alone by default -- a multipacting user never needs it, and the
+        # default layout is what every CW23 case writes.
+        fmt = str(self.config.get('impacts_format') or 'default').lower()
+        if fmt not in ('default', 'initials-impacts'):
+            raise ValueError(
+                f"track3p: impacts_format '{fmt}' is not recognised; use "
+                f"'default' (leave the input's own layout alone) or "
+                f"'initials-impacts' (inject OutputImpacts: on and "
+                f"OutputImpactsInfo: {{ Type: Initials-Impacts }}, the layout "
+                f"the '{ParticlesModule.type}' module reads).")
+        self.impacts_format = fmt
+        # Which level's dump is *the* track3p_particles dump when a scan
+        # produced several. The artifact is always the results directory
+        # (plan 3.4); this only disambiguates for the consumer, which is why it
+        # travels in ctx.field_levels rather than changing the artifact's shape.
+        self.field_level = self.config.get('field_level')
+        if self.field_level is not None:
+            self.field_level = float(self.field_level)
 
     # ---- input injection ---------------------------------------------------
 
@@ -1373,11 +1401,34 @@ class Track3PModule(_SolverModule):
         if job_name and not (current and os.path.isdir(
                 os.path.join(ctx.workdir or '', current))):
             solver.set_input_leaf(('Domain', 'FieldDir'), './' + job_name)
+        if self.impacts_format == 'initials-impacts':
+            # Both lines: the dump is only written at all with OutputImpacts on,
+            # and the container is what selects the 17-column layout that
+            # carries InitialNormalField / InitialFaceArea. The scalar spelling
+            # 'OutputImpactsInfo: Initials-Impacts' is silently ignored by the
+            # build -- it is parsed as a container (genptab.C:543).
+            solver.set_input_leaf(('OutputImpacts',), 'on')
+            solver.set_input_leaf(('OutputImpactsInfo', 'Type'),
+                                  'Initials-Impacts')
         self._check_s3p_scan(producer)
+
+    def run(self, ctx, skip_execution=False):
+        """The base run, plus the level a downstream consumer should prefer.
+
+        The artifact stays the results directory in every case (plan §3.4), so
+        ``field_level:`` cannot be expressed by narrowing it. It travels beside
+        the job name instead, which keeps the artifact's *type* the same under
+        run and dry run and leaves all resolution in the consumer."""
+        super().run(ctx, skip_execution=skip_execution)
+        if self.field_level is not None:
+            ctx.field_levels[self._artifact] = self.field_level
 
     def _prepare_dry_run(self, ctx):
         producer, job_name = self._field_source(ctx)
         _append_marker(ctx, f"Track3P FieldDir: ./{job_name}\n")
+        if self.impacts_format == 'initials-impacts':
+            _append_marker(ctx, 'Track3P OutputImpactsInfo: '
+                                '{ Type: Initials-Impacts }\n')
         self._check_s3p_scan(producer)
 
     @staticmethod
@@ -2127,13 +2178,42 @@ class AcdtoolModule(Module):
 # --------------------------------------------------------------------------- #
 
 
+def _impacts_dumps(directory):
+    """``{field level: path}`` for the ``ImpactsInfo_<level>`` dumps in a
+    Track3P results directory. Same naming rule the wrapper's reader uses, so
+    the consumer and the producer agree on what a dump is called."""
+    return level_files(directory, 'ImpactsInfo_')
+
+
+def _levels_note(dumps):
+    """`` (levels: 2.3e+07, 2.4e+07)`` for an error message, or ``''``."""
+    if not dumps:
+        return ''
+    return ' (levels: ' + ', '.join(f'{level:g}' for level in sorted(dumps)) + ')'
+
+
 class ParticlesModule(Module):
     """Requires ``track3p_particles``, provides ``particle_source``.
 
     Owns the ``beta`` / ``beta_input`` / ``beta_inputs`` resolution. Always runs
     (the field-emission weighting is pure Python and produces real numbers), even
     under dry-run — the Geant4 binary is the only thing a dry run skips, so the
-    particle source it consumes is always produced."""
+    particle source it consumes is always produced.
+
+    Its one input artifact comes in two shapes and this module resolves both
+    (see :meth:`_resolve_dump`): a **dump file** from
+    :class:`Track3PSourceModule`, or a **results directory** from an
+    in-pipeline :class:`Track3PModule`, in which the per-level
+    ``ImpactsInfo_<level>`` dumps live. A scan that produced several dumps is
+    ambiguous and raises unless ``field_level:`` on the ``track3p`` module says
+    which one to take.
+
+    The dump must be in the ``Initials-Impacts`` layout — the default layout has
+    no ``InitialNormalField`` / ``InitialFaceArea`` to weight by and
+    :meth:`Particles.load` silently misreads it. ``impacts_format:
+    initials-impacts`` on the ``track3p`` module injects the selector, and
+    :class:`~lume_ace3p.workflow_graph.Workflow` rejects a chain that is missing
+    it at build time rather than after the solve."""
 
     type = 'particles'
     requires = frozenset({TRACK3P_PARTICLES})
@@ -2196,18 +2276,100 @@ class ParticlesModule(Module):
         milliseconds to have it rather than carrying a second, file-backed way to
         reconstruct it."""
         if TRACK3P_PARTICLES not in ctx.artifacts:
-            raise ValueError("module 'particles' requires a track3p_particles "
-                             "artifact.")
-        src = ctx.artifacts[TRACK3P_PARTICLES]
-        base = os.path.basename(src)
-        _stage_file(ctx, src)
+            raise ValueError(f"module '{self.type}' requires a "
+                             f"track3p_particles artifact.")
+        dump = self._resolve_dump(ctx, stage=True)
         params = dict(self._resolve_beta(ctx.inputs))
         params.setdefault('output_format', 'geant4')
-        particles = Particles(base, params, output_file=self.output_file,
+        particles = Particles(dump, params, output_file=self.output_file,
                               workdir=ctx.workdir)
         self._filtered = particles.run()
         ctx.artifacts[PARTICLE_SOURCE] = os.path.join(ctx.workdir,
                                                       particles.output_file)
+
+    def _resolve_dump(self, ctx, stage=False):
+        """The Track3P dump to reweight, as a path relative to the workdir.
+
+        The ``track3p_particles`` artifact has two shapes and always has had
+        (plan §3.4): :class:`Track3PSourceModule` provides a **file** — an
+        externally produced dump, staged into the workdir as today — while
+        :class:`Track3PModule` provides its **results directory**, which holds
+        one ``ImpactsInfo_<level>`` per field level. All the resolution lives
+        here so the artifact's type never depends on how many levels a run
+        produced.
+
+        A directory is *not* staged. The dump already sits inside the workdir,
+        so the relative subpath is handed to :class:`Particles` directly;
+        staging would copy a file the workdir already contains (137 MB each at
+        cryomodule scale) to a second name beside it.
+
+        ``stage`` is what separates :meth:`run` from :meth:`verify`: both need
+        the same name, only the former may create anything to get it.
+
+        The two shapes are told apart by asking whether the artifact *is a
+        directory*, not whether it is an existing file: a recorded path that
+        does not exist yet is a dump file whose staging has not happened, and
+        :meth:`verify` must still be able to derive a name from it."""
+        src = ctx.artifacts[TRACK3P_PARTICLES]
+        if not os.path.isdir(src):
+            if stage:
+                _stage_file(ctx, src)
+            return os.path.basename(src)
+
+        results = ctx.job_names.get(TRACK3P_PARTICLES)
+        directory = os.path.join(src, results) if results else src
+        if not os.path.isdir(directory):
+            raise ValueError(
+                f"module '{self.type}': {directory!r} is not a directory, so "
+                f"there is no Track3P results directory to find a dump in. The "
+                f"'track3p' module records its results directory name as the "
+                f"job name; a run that wrote somewhere else needs "
+                f"'results_dir:' set to match.")
+
+        dumps = _impacts_dumps(directory)
+        wanted = ctx.field_levels.get(TRACK3P_PARTICLES)
+        if wanted is not None:
+            match = next((path for level, path in dumps.items()
+                          if np.isclose(level, wanted, rtol=1e-9, atol=0.0)),
+                         None)
+            if match is None:
+                raise ValueError(
+                    f"module '{self.type}': the 'track3p' module asked for "
+                    f"field level {wanted:g}, but {directory} has no "
+                    f"ImpactsInfo for it{_levels_note(dumps)}.")
+            return os.path.relpath(match, ctx.workdir)
+
+        if not dumps:
+            raise ValueError(
+                f"module '{self.type}': no ImpactsInfo_<level> dump in "
+                f"{directory}. Either Track3P ran with 'OutputImpacts' off — "
+                f"set 'impacts_format: initials-impacts' on the 'track3p' "
+                f"module, which injects it together with the layout selector "
+                f"this module needs — or the run emitted nothing"
+                f"{self._emitted_note(ctx)}.")
+        if len(dumps) > 1:
+            raise ValueError(
+                f"module '{self.type}': {directory} holds "
+                f"{len(dumps)} ImpactsInfo dumps and nothing says which one to "
+                f"reweight{_levels_note(dumps)}. Name one with 'field_level:' "
+                f"on the 'track3p' module, or declare a single level in its "
+                f"input's FieldScales.")
+        return os.path.relpath(next(iter(dumps.values())), ctx.workdir)
+
+    @staticmethod
+    def _emitted_note(ctx):
+        """`` (track3p.log reports Total Emitted Particles = N)`` when the run
+        wrote a log saying so — the usual reason a field-emission dump is
+        missing is that the emitter produced nothing, and the log says it
+        outright."""
+        producer = next((m for m in ctx.modules
+                         if TRACK3P_PARTICLES in m.provides), None)
+        data = getattr(getattr(producer, '_solver', None), 'output_data', None)
+        total = (data or {}).get('TotalEmitted')
+        if total is None:
+            return ''
+        return (f" (its track3p.log reports Total Emitted Particles = "
+                f"{total:g})")
 
     def verify(self, ctx):
         """Whether the weighted particle file is still in the workdir.
@@ -2222,11 +2384,18 @@ class ParticlesModule(Module):
         has recorded that artifact. Before then, ``None``."""
         name = self.output_file
         if not name:
-            source = ctx.artifacts.get(TRACK3P_PARTICLES)
-            if not source:
+            if TRACK3P_PARTICLES not in ctx.artifacts:
                 return None
-            # Mirrors Particles.__init__'s default naming.
-            name = default_output_name(os.path.basename(source))
+            try:
+                dump = self._resolve_dump(ctx)
+            except ValueError:
+                # Nothing to resolve a name from yet (or an ambiguous scan):
+                # run() will raise and say why. Not this method's answer to give.
+                return None
+            # Mirrors Particles.__init__'s default naming. Resolved from the
+            # same subpath run() hands over, so a dump inside the solver's
+            # results directory is looked for beside it, where it was written.
+            name = default_output_name(dump)
         return os.path.isfile(os.path.join(ctx.workdir or '', name))
 
     def extract(self, ctx, spec):

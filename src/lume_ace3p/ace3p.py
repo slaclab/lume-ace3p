@@ -1519,8 +1519,12 @@ def merge_levels(*groups, rtol=1e-9):
     return np.array(sorted(levels))
 
 
-def _level_files(results, prefix):
-    """``{level: path}`` for every ``<prefix><level>`` file in `results`."""
+def level_files(results, prefix):
+    """``{level: path}`` for every ``<prefix><level>`` file in `results`.
+
+    Shared with the module layer: :class:`~lume_ace3p.modules.ParticlesModule`
+    resolves which dump to reweight out of a Track3P results directory, and it
+    must agree with this reader about what a per-level dump is called."""
     found = {}
     for path in sorted(glob.glob(os.path.join(results, prefix + '*'))):
         level = level_from_filename(path, prefix)
@@ -1606,8 +1610,8 @@ def read_track3p_results(results, declared_levels=()):
         cups[boundary] = parse_column_file(path)
     data['FaradayCups'] = cups
 
-    data['ImpactsFiles'] = _level_files(results, 'ImpactsInfo_')
-    data['LostParticlesFiles'] = _level_files(results, 'LostParticles_')
+    data['ImpactsFiles'] = level_files(results, 'ImpactsInfo_')
+    data['LostParticlesFiles'] = level_files(results, 'LostParticles_')
 
     columns = []
     if data['EnhancementCounter']:

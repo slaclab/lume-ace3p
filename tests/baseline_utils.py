@@ -660,6 +660,23 @@ NOT_FROZEN = {
         'the fast tests; what is no longer checked is that botorch\'s GP '
         'posterior-mean numerics still match the frozen fixture, which is an '
         'upstream concern, not ours.'),
+    'track3p_geant4_chain': (
+        'RECORDED 2026-10-05, Phase 3 step 5 of plans/track3p_module_plan.md '
+        '(Option B, decided before implementation). The in-pipeline chain '
+        'mesh -> omega3p -> track3p -> particles cannot be dry-run frozen: '
+        'ParticlesModule has no dry-run branch — the Fowler-Nordheim weighting '
+        'is pure Python, so it always runs — and under a dry run the track3p '
+        'artifact is a workdir containing no ImpactsInfo dump, so the particles '
+        'step raises. A placeholder-artifact mechanism so two steps with '
+        'nothing to compute can pass a dry run was judged not worth building. '
+        'CI instead asserts that the chain validates and orders '
+        '(test_workflow_graph.py::test_order_track3p_particles_geant4_in_'
+        'pipeline) plus the build-time impact-layout rejections, which are the '
+        'failure mode that actually bites. Its remaining value is one real '
+        'S3DF run, recorded in plans/s3df_example_validation_plan.md. Note the '
+        'example deliberately stops at the particles step: the Geant4 step it '
+        'was planned to end in needs Pillbox STL geometry that does not exist '
+        '(see its README).'),
     'MOBO_ExpectedHypervolume_Example': (
         'DE-REGISTERED 2026-08. Botorch MOBO/EHVI fit: slow (minutes+) AND a '
         'known nondeterministic flake, so it was both unrunnable in practice and '

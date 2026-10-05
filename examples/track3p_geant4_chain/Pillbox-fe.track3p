@@ -1,0 +1,81 @@
+// CW23 Pillbox, field emission (Emitter Type: 7) at one field level.
+//
+// Verified on milano 2026-10-01 (job 39651022): 6558 emitting faces, 23984
+// macroparticles emitted, and the two field-emission columns of the
+// Initials-Impacts dump are real (InitialNormalField 3.1e7-4.5e7 V/m,
+// InitialFaceArea 3.7e-6-1.2e-5 m^2). Fixture copy:
+// tests/fixtures/track3p/inputs/Pillbox-fieldemission-n1.track3p.
+//
+// Two things here are load-bearing and easy to break:
+//
+//  * **No emitter bounding box.** With one, only the faces inside it emit, and
+//    the obvious box over the end-wall annulus selects 14 low-field faces whose
+//    Fowler-Nordheim current underflows to exactly zero -- the run then emits
+//    nothing at all and still exits 'Done!'. Boundary 6 is the whole cavity
+//    wall, which is what gives 6558 faces.
+//  * **N: 1.** Not for the reason the key's own comment suggests: with N <= 1
+//    the build skips the macroparticle threshold entirely. Raising it suppresses
+//    emission, so leave it.
+//
+// The OutputImpacts / OutputImpactsInfo lines at the bottom are what make the
+// dump readable by the field-emission weighting. The YAML's
+// 'impacts_format: initials-impacts' injects the same two lines, so they are
+// redundant here on purpose -- this file stays runnable by hand.
+FieldScales:{
+  Type: FieldGradient
+  ScanToken: 0
+  Scale: 23.00e+6
+  EmissionOutput: 1
+}
+
+NormalizedField:{
+  StartPoint: 0.0 0.0 -0.057
+  EndPoint: 0.0 0.0 0.057
+}
+
+Domain:{
+  FieldDir: ./omega3p_results
+}
+
+// Diagnostic: no bounding box at all -- every face of boundary 6 emits.
+Emitter:{
+  Type: 7
+  BoundaryID: 6
+  t0: 0
+  t1: 1
+  N: 1
+  WorkFunction: 4.2
+  Beta: 50
+}
+
+Material:{
+  Type: Primary
+  BoundarySurfaceID: 6
+}
+
+Material:{
+  Type: Secondary
+  BoundarySurfaceID: 6
+  Model: 2
+}
+
+Material: {
+  Type: Absorber
+  BoundarySurfaceID: 1 2
+}
+
+Postprocess:{
+  Toggle: on
+  ResonantParticles:{
+    Token: on
+  }
+  EnhancementCounter:{
+    Token: on
+    MinimumEC: 0.01
+    SEYFileName1: copper.dat
+    BoundarySurfaceID1: 6
+  }
+}
+
+OutputImpacts: on
+OutputImpactsInfo: { Type: Initials-Impacts }

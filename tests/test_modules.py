@@ -1322,6 +1322,51 @@ def test_track3p_adds_field_dir_when_the_input_has_none(tmp_path):
     assert tree.find('Domain').get_leaf('FieldDir') == './s3p_results'
 
 
+def test_track3p_injects_the_initials_impacts_selector(tmp_path):
+    """`impacts_format: initials-impacts` adds both lines the 17-column
+    field-emission layout needs -- the dump is only written at all with
+    `OutputImpacts: on`, and the container is what selects the layout."""
+    module, ctx = _track3p_module(
+        tmp_path, config={'impacts_format': 'initials-impacts'})
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.get_leaf('OutputImpacts') == 'on'
+    assert tree.find('OutputImpactsInfo').get_leaf('Type') == 'Initials-Impacts'
+
+    # Default: the input's own layout is left exactly as it was.
+    plain, plain_ctx = _track3p_module(tmp_path / 'b')
+    plain.run(plain_ctx, skip_execution=True)
+    plain_tree = parse_ace3p(plain._solver.input_data)
+    assert plain_tree.find('OutputImpactsInfo') is None
+
+
+def test_track3p_rejects_an_unknown_impacts_format():
+    with pytest.raises(ValueError, match='impacts_format'):
+        Track3PModule({'input': 'x.track3p', 'impacts_format': 'geant4'})
+
+
+def test_track3p_dry_run_records_the_injection(tmp_path):
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    Track3PModule({'input': 'in.track3p',
+                   'impacts_format': 'initials-impacts'}).run(ctx)
+    marker = open(os.path.join(wd, 'DRY_RUN.txt')).read()
+    assert 'OutputImpactsInfo' in marker and 'Initials-Impacts' in marker
+
+
+def test_track3p_records_the_requested_field_level(tmp_path):
+    """`field_level:` travels beside the job name, not in the artifact: the
+    artifact is the results directory under run and dry run alike (plan 3.4)."""
+    module, ctx = _track3p_module(tmp_path, config={'field_level': 2.4e7})
+    module.run(ctx, skip_execution=True)
+    assert ctx.artifacts[TRACK3P_PARTICLES] == ctx.workdir
+    assert ctx.field_levels[TRACK3P_PARTICLES] == 2.4e7
+    # Absent by default -- nothing to disambiguate.
+    plain, plain_ctx = _track3p_module(tmp_path / 'b')
+    plain.run(plain_ctx, skip_execution=True)
+    assert TRACK3P_PARTICLES not in plain_ctx.field_levels
+
+
 def test_track3p_warns_on_a_multi_point_s3p_scan(tmp_path):
     module, ctx = _track3p_module(tmp_path, job_name='s3p_results',
                                   producer_type='s3p')
@@ -1992,7 +2037,165 @@ def test_particles_module_requires_track3p(tmp_path):
                          'frequency': 1e10}).run(ctx)
 
 
-def test_particles_module_default_output_does_not_eat_the_dump(tmp_path):
+# --------------------------------------------------------------------------- #
+# Resolving the two shapes of the track3p_particles artifact (Phase 3 step 3)
+# --------------------------------------------------------------------------- #
+
+PARTICLES_PARAMS = {'impact_order': 1, 'impact_face_id': 6,
+                    'work_function': 4.5, 'frequency': 1.0e10,
+                    'num_bins': 1, 'beta': [50.0]}
+
+
+def _track3p_results(workdir, levels=('2.3e+07',), results='track3p_results',
+                     log=True):
+    """A Track3P results directory inside `workdir`, as the solver module
+    leaves it: one Initials-Impacts dump per level."""
+    directory = os.path.join(workdir, results)
+    os.makedirs(directory, exist_ok=True)
+    for level in levels:
+        _make_track3p_dump(os.path.join(directory, 'ImpactsInfo_' + level),
+                           impact_order=1, impact_face_id=6)
+    if log:
+        shutil.copy(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan', 'track3p.log'),
+                    os.path.join(directory, 'track3p.log'))
+    return directory
+
+
+def _chain_ctx(workdir, results='track3p_results', field_level=None, **kwargs):
+    """A context shaped like the one a `track3p -> particles` chain builds:
+    the artifact is the workdir, the job name is the results directory."""
+    ctx = RunContext(workdir, artifacts={TRACK3P_PARTICLES: workdir}, **kwargs)
+    ctx.job_names[TRACK3P_PARTICLES] = results
+    if field_level is not None:
+        ctx.field_levels[TRACK3P_PARTICLES] = field_level
+    return ctx
+
+
+def test_particles_resolves_a_single_dump_in_a_results_directory(tmp_path):
+    """The in-pipeline shape: one ImpactsInfo under the solver's results
+    directory is used without anything having to name it."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd)
+    ctx = _chain_ctx(wd)
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module.run(ctx)
+
+    assert module.extract(ctx, 'count') == 24
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+    assert module.verify(ctx) is True
+
+
+def test_particles_does_not_copy_a_dump_that_is_already_in_the_workdir(tmp_path):
+    """The dump is handed over as a relative subpath, not staged: staging would
+    copy a 137 MB file to a second name in the same workdir."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd)
+    ctx = _chain_ctx(wd)
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.3e+07'))
+    module.run(ctx)
+    assert not os.path.exists(os.path.join(wd, 'ImpactsInfo_2.3e+07'))
+
+
+def test_particles_ambiguous_scan_raises_naming_both_ways_out(tmp_path):
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd)
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert '3 ImpactsInfo dumps' in message
+    assert '2.3e+07' in message and '2.5e+07' in message
+    assert 'field_level:' in message and 'FieldScales' in message
+    # With no explicit `output:` there is no name to derive either, and verify
+    # declines to answer rather than guessing one of the three dumps.
+    assert ParticlesModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
+
+
+def test_particles_uses_the_field_level_the_track3p_module_named(tmp_path):
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd, field_level=2.4e7)
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.4e+07'))
+    module.run(ctx)
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+
+
+def test_particles_named_level_without_a_dump_raises_rather_than_falling_through(
+        tmp_path):
+    """A `field_level:` whose dump is missing never silently uses another
+    level's -- a sweep would then reweight fields it did not ask for."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd, field_level=2.4e7)
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert 'field level 2.4e+07' in message
+    assert '2.3e+07' in message and '2.5e+07' in message
+
+
+def test_particles_no_dump_at_all_raises_and_quotes_the_emitted_count(tmp_path):
+    """The usual reason a field-emission results directory has no dump is that
+    the emitter produced nothing, and track3p.log says so outright. The Phase 3
+    step 2 probe hit exactly this."""
+    wd = str(tmp_path / 'wd')
+    results = _track3p_results(wd, levels=(), log=False)
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'pillbox_fieldemission',
+                             'track3p.log'),
+                os.path.join(results, 'track3p.log'))
+    producer, producer_ctx = _track3p_module(
+        tmp_path / 'producer', fixture_dir='pillbox_fieldemission',
+        input_name='Pillbox-w4_type7_model2_fcup.track3p')
+    producer.run(producer_ctx, skip_execution=True)
+
+    ctx = _chain_ctx(wd, modules=[producer])
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert 'no ImpactsInfo_<level> dump' in message
+    assert 'impacts_format: initials-impacts' in message
+    assert 'Total Emitted Particles = 0' in message
+
+
+def test_particles_resolves_a_dump_path_that_is_not_staged_yet(tmp_path):
+    """The two artifact shapes are told apart by `isdir`, not by `isfile`.
+
+    `verify` runs before the dump is staged (that is the point of a resume
+    check), so a recorded path that does not exist yet must still resolve to a
+    *file* name. Dispatching on `isfile` sent it down the results-directory
+    branch instead, and `verify` could no longer derive an output name."""
+    ctx = RunContext(str(tmp_path / 'wd'),
+                     artifacts={TRACK3P_PARTICLES: str(tmp_path / 'dump.txt')})
+    module = ParticlesModule(dict(PARTICLES_PARAMS))
+    assert module._resolve_dump(ctx) == 'dump.txt'
+    assert module.verify(ctx) is False
+    os.makedirs(ctx.workdir, exist_ok=True)
+    open(os.path.join(ctx.workdir, 'dump_modified.txt'), 'w').close()
+    assert module.verify(ctx) is True
+
+
+def test_particles_still_reads_a_plain_dump_file(tmp_path):
+    """The track3p_source shape is unchanged: a file is staged into the workdir
+    and read by basename, exactly as before Phase 3."""
+    dump = tmp_path / 'supplied.txt'
+    _make_track3p_dump(str(dump), impact_order=1, impact_face_id=6)
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
+    module = ParticlesModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert module._resolve_dump(ctx) == 'supplied.txt'
+    module.run(ctx)
+    assert os.path.isfile(os.path.join(wd, 'supplied.txt'))   # staged
+    assert module.extract(ctx, 'count') == 24
+
+
+def test_particles_default_output_does_not_eat_the_dump(tmp_path):
     """A dump named ``ImpactsInfo_<level>`` has no extension, so the pre-Phase-3
     default output name *was* the input name and ``write_output`` overwrote the
     staged dump — through the symlink to the original. The derived name is now a
