@@ -42,7 +42,9 @@ import pandas as pd
 import pytest
 
 from lume_ace3p.ace3p import parse_ace3p, parse_column_file, write_ace3p, Section
-from lume_ace3p.particles import Particles, TRACK3P_COLUMNS
+from lume_ace3p.particles import (
+    Particles, Q_E, TRACK3P_COLUMNS, fowler_nordheim_current_density,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, 'fixtures', 'track3p')
@@ -50,9 +52,10 @@ INPUTS = os.path.join(FIXTURES, 'inputs')
 SCAN = os.path.join(FIXTURES, 'pillbox_scan')
 INITIALS = os.path.join(FIXTURES, 'pillbox_initials_impacts')
 FIELDEM = os.path.join(FIXTURES, 'pillbox_fieldemission')
+FIELDEM_N1 = os.path.join(FIXTURES, 'pillbox_fieldemission_n1')
 LCLS = os.path.join(FIXTURES, 'lcls_c3_16MV')
 
-# The 27 files SOURCES.md inventories, relative to the fixture root.
+# The 30 files SOURCES.md inventories, relative to the fixture root.
 PHASE0_FIXTURES = [
     'inputs/Pillbox.track3p', 'inputs/Pillbox2.3MV.track3p',
     'inputs/Pillbox-w4_type7_model2_fcup.track3p',
@@ -72,6 +75,11 @@ PHASE0_FIXTURES = [
     'pillbox_fieldemission/OUTPUT/faradaycup_6',
     'lcls_c3_16MV/ImpactsInfo_1.6e+07', 'lcls_c3_16MV/c3_16MV_beta120.data',
     'lcls_c3_16MV/track3p.log', 'lcls_c3_16MV/SurvivedParticles_1.6e+07',
+    # Added by Phase 3 step 2 (the probe that finally emitted).
+    'inputs/Pillbox-fieldemission-n1.track3p',
+    'pillbox_fieldemission_n1/ImpactsInfo_2.3e+07',
+    'pillbox_fieldemission_n1/track3p.log',
+    'pillbox_fieldemission_n1/InputParameters',
 ]
 
 # The default ("general") layout, written by `OutputImpacts: on` alone. Spelled
@@ -298,6 +306,7 @@ def test_header_only_tables_keep_their_header_in_the_reader():
     (SCAN, 106, []),
     (INITIALS, 104, []),
     (FIELDEM, 105, ['Total Emitted Particles = 0']),
+    (FIELDEM_N1, 104, ['Total Emitted Particles = 23984']),
     (LCLS, 106, ['Total Emitted Particles = 350990']),
 ])
 def test_log_terminator_and_what_follows_it(directory, done_line, after):
@@ -384,6 +393,99 @@ def test_field_emission_echo_explains_the_zero_emission():
     cup = postprocess.find('EnhancementCounter').find('FaradayCup')
     assert cup.get_leaf('Token') == 'on'
     assert cup.get_leaf('BoundaryID') == '1'      # the echo keeps one of three
+
+
+# --------------------------------------------------------------------------- #
+# The N: 1 field-emission dump (Phase 3 step 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_n1_was_not_what_unblocked_emission():
+    """`N: 1` alone still emits nothing; dropping the emitter bounding box is
+    what emits.
+
+    The plan assumed `pillbox_fieldemission/`'s `Total Emitted Particles = 0`
+    was down to `N: 100` suppressing every macroparticle. It is not — the same
+    case at `N: 1` also emitted 0 (probe `track3p_probe5/fe_n1`, job 39649793).
+    With `N <= 1.0` the build takes `numParticles = 1` unconditionally, so the
+    `this_N < 0.5 * m_N` cut cannot be the cause; `J == 0.0` skipping the face
+    is, and at β = 50 the RF Fowler-Nordheim exponent underflows to exactly
+    zero below ≈ 1.5e6 V/m. The probe's box selected 14 low-field faces.
+
+    What this fixture's input changed is therefore the *box*, not `N`: the
+    emitter has no `x0..z1`, so all 6 558 faces of boundary 6 emit."""
+    echo = parse_ace3p(_read(os.path.join(FIELDEM_N1, 'InputParameters')))
+    emitter = echo.find('Emitter')
+    assert emitter.get_leaf('Type') == '7'
+    assert emitter.get_leaf('N') == '1'
+    # The echo prints the bounding-box defaults, which is how you can see the
+    # box was left out of the input entirely.
+    assert float(emitter.get_leaf('x0')) <= -1.0e10
+    assert float(emitter.get_leaf('x1')) >= 1.0e10
+
+    supplied = parse_ace3p(_read(os.path.join(
+        INPUTS, 'Pillbox-fieldemission-n1.track3p')))
+    box_keys = ('x0', 'x1', 'y0', 'y1', 'z0', 'z1')
+    assert all(supplied.find('Emitter').get_leaf(k) is None for k in box_keys)
+    # The suppressed-emission input it was derived from does carry the box.
+    boxed = parse_ace3p(_read(os.path.join(
+        INPUTS, 'Pillbox-w4_type7_model2_fcup.track3p')))
+    assert all(boxed.find('Emitter').get_leaf(k) is not None for k in box_keys)
+
+    log = _read(os.path.join(FIELDEM_N1, 'track3p.log'))
+    assert 'number of all emitting faces = 6558' in log
+    assert 'Total Emitted Particles = 23984' in log
+
+
+def test_n1_dump_has_real_field_emission_columns():
+    """The point of this fixture: on a true `Emitter Type: 7` run the two
+    field-emission columns carry physics, where the secondary-emission dump in
+    `pillbox_initials_impacts/` holds uninitialized memory."""
+    path = os.path.join(FIELDEM_N1, 'ImpactsInfo_2.3e+07')
+    assert _lines(path)[0].lstrip('#').split() == TRACK3P_COLUMNS
+    data = np.loadtxt(path, skiprows=1)
+    assert data.shape == (220, 17)
+    order = data[:, 1]
+    assert (order == 0).sum() == 20 and (order == 1).sum() == 200
+
+    impacts = data[order == 1]
+    field, area = impacts[:, 15], impacts[:, 16]
+    assert np.isfinite(field).all() and np.isfinite(area).all()
+    assert (field > 3.1e7).all() and (field < 4.5e7).all()
+    assert (area > 4.5e-6).all() and (area < 9.8e-6).all()
+    # One emitting boundary, and these are real dark-current energies.
+    assert set(impacts[:, 14].astype(int)) == {6}
+    assert impacts[:, 10].min() > 3.0e5
+
+    # Emission-point rows, as in Lixin's dump: impact == initial.
+    initial = data[order == 0]
+    assert np.allclose(initial[:, 2:5], initial[:, 5:8])
+
+
+def test_n1_dump_beta_sizing_is_well_below_the_lcls_study():
+    """A β range belongs to its dump (the Phase 2 lesson).
+
+    This Pillbox dump's ``InitialNormalField`` averages ≈ 3.7e7 V/m, so the
+    one-electron cut bites between β = 35 and β = 50 and every macroparticle
+    clears it by β = 50. The LCLS study's 100–150 would saturate every sweep
+    point here and demonstrate nothing, exactly as it did for
+    ``geant4_track3p_beta`` in Phase 2."""
+    data = np.loadtxt(os.path.join(FIELDEM_N1, 'ImpactsInfo_2.3e+07'),
+                      skiprows=1)
+    impacts = data[data[:, 1] == 1]
+    field, area = impacts[:, 15], impacts[:, 16]
+    frequency = 1.3138172e9      # the Pillbox Omega3P mode 0
+
+    def kept(beta):
+        current = fowler_nordheim_current_density(beta * field, 4.2, 'fn')
+        return int((current * area / frequency / Q_E >= 1.0).sum())
+
+    assert kept(30) == 0
+    assert kept(35) == 0
+    assert 0 < kept(40) < 200
+    assert 0 < kept(45) < 200
+    assert kept(50) == 200
+    assert kept(120) == 200       # the LCLS range: saturated, hence useless
 
 
 # --------------------------------------------------------------------------- #

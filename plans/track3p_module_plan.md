@@ -574,6 +574,56 @@ milano after each landable step, as every phase does.
      `BoundaryID`, `Material Type: Primary`) needs rethinking, and the phase
      stops here until it is — no example is written against an unknown dump.
 
+   **Step 2 result (2026-10-01): PASSED, but not as predicted — `N` was never
+   the blocker; the emitter bounding box was.** Two milano jobs:
+
+   - **Job 39649793** — the probe exactly as specified above (`N: 1`, the
+     probe3/w4 box, `Initials-Impacts`, one level). `number of all emitting
+     faces = 14`, `Done!`, **`Total Emitted Particles = 0`**: the gate's bad
+     outcome. The hybrid-launch check in the same job **passed** — both ranks
+     reported `OMP_NUM_THREADS=8 OMP_PROC_BIND=spread OMP_PLACES=cores` and ran
+     9 LWPs each (8 OpenMP + main) under `srun -n 2 -c 8 --overlap
+     --cpu-bind=none`, so step 6 needs only the three exports in the batch
+     script, as written. No Track3P log line reports threads, so the team size
+     was sampled from `ps -o nlwp` rather than read from the log.
+   - **Why**, from Lixin's source: with `N <= 1.0`,
+     `EMT_FieldEmission.C:200-202` sets `numParticles = 1` *unconditionally* —
+     the `this_N < 0.5 * m_N` cut that suppressed the `N: 100` run is in the
+     `else` branch, so `N: 1` cannot be what stops emission. What stops it is
+     `J == 0.0`, which `continue`s before a particle exists (line 184–186).
+     `FowlerLawRF` (line 488) is `C1·(βE)^2.5·exp(−C2/E)`, and at β = 50,
+     φ = 4.2 the exponent underflows `exp()` to *exactly* zero below
+     E ≈ 1.5e6 V/m. The probe's `x0..z1` box selects 14 of the pillbox's 9 100
+     surface faces, all on the flat end-wall annulus where the 23 MV/m mode's
+     normal field is below that floor.
+   - **Job 39651022** — three diagnostics separating the causes: same box at
+     β = 1000 emits 522 particles (so the box is legal and the mechanism is
+     field magnitude); **no box at all, β = 50, emits 23 984 particles from all
+     6 558 faces of boundary 6** (`d2_wholeb6`, the fixture); both at once emits
+     242 958 / 1.78 M rows.
+   - **The columns are real.** On the 23 984 `ImpactOrder 1` rows of
+     `d2_wholeb6`, `InitialNormalField` is 3.14e7–4.53e7 V/m and
+     `InitialFaceArea` 3.7e-6–1.2e-5 m², every value finite and positive —
+     the first Pillbox dump for which that is true. (Rows of `ImpactOrder >= 2`
+     are secondary electrons and their two FE columns are uninitialized memory,
+     as in the Phase 0 dump; the chain filters to order 1 anyway.)
+   - **Fixture:** `tests/fixtures/track3p/pillbox_fieldemission_n1/` (header +
+     first 20 order-0 rows + first 200 order-1 rows, the same selection shape
+     Phase 0 used for the LCLS excerpt and for the same reason — the first 636
+     rows of the original are all emission points), plus `track3p.log`,
+     `InputParameters` and `inputs/Pillbox-fieldemission-n1.track3p`. Recorded
+     in `SOURCES.md`, which also corrects the old claim that `N: 100` was the
+     reason `pillbox_fieldemission/` emitted nothing. Three tests pin the
+     finding, the columns and the β sizing.
+   - **β for the example, sized from this dump** (not the LCLS 100–150): at
+     f = 1.3138172 GHz the one-electron cut bites between β = 35 and β = 50 —
+     full-dump kept counts are 0 at β = 30, 51 at 35, 9 191 at 40, 23 984 (all)
+     from 50 up. **The example sweeps below 50**; β ≥ 100 would saturate every
+     point, the exact failure Phase 2 hit on `geant4_track3p_beta`.
+   - **Deviation to carry into step 5:** the example's emitter is the
+     *unboxed* boundary-6 emitter, not the plan's bounding box, and
+     `impact_face_id` is 6 (the only face ID on the order-1 rows).
+
 3. **Artifact contract (§3.4 as revised).** `Track3PModule` keeps the results
    directory as the artifact; the single-file rule is gone. In
    `ParticlesModule.run`:
