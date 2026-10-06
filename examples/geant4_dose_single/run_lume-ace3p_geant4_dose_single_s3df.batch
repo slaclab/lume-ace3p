@@ -14,6 +14,12 @@
 
 #SBATCH --partition=milano
 #SBATCH --account=rfar:regular
+# This example runs no gsl-linked ACE3P binary (the Geant4 app and
+# track3p_source do not link it), so unlike the other s3df examples it is
+# not known to *need* EL8. Pinned for consistency with them and because the
+# group's Geant4/ACE3P builds are only exercised on EL8; the whole 'sim'
+# toolchain resolves 43 libraries from the node's /lib64. Safe to relax.
+#SBATCH --constraint=OS_VER:8.10
 #SBATCH --job-name=lume-ace3p_geant4_dose_single
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt
