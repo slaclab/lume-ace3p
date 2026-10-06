@@ -27,7 +27,7 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
 | `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#particles-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
-| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys; see [](#geant4-module-keys). |
+| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:`, `geant4_seed:` and related keys. Voxel dose/edep grids, plus per-detector output when the application scores detectors; see [](#geant4-module-keys). |
 
 An optional `name:` labels the instance (default: the module type). It names
 the step's log file (`<workdir>/<name>.log`) and its run-manifest entry, which is
@@ -883,8 +883,28 @@ Used on a `geant4` `workflow:` entry.
 | `geant4_opts`             | `str`  | `''`                   | Additional `mpirun`/`srun` arguments when launching the Geant4 application. |
 | `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename. The executable derives the event count from the particle file. |
 | `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, in addition to the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
-| `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read for the `dose` output section (default: the input file's `output_dose` value). `geant4_scoring_output` is a back-compat alias. |
-| `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section (default: the input file's `output_edep` value). |
+| `geant4_dose_output`      | `str`  | `None`                 | Overrides the filename read for the `dose` output section. `geant4_scoring_output` is a back-compat alias. |
+| `geant4_edep_output`      | `str`  | `None`                 | Overrides the filename read for the `edep` output section. |
+| `geant4_detector_output`  | `str`  | `None`                 | Overrides the per-detector CSV filename. Setting it also makes the module read detector output from a run whose input file does not say `detectors = on`. |
+| `geant4_spectrum_output`  | `str`  | `None`                 | Overrides the gamma-spectrum CSV filename, same effect. |
+| `geant4_seed`             | `str` / `int` | `None`          | `'auto'` derives a distinct, reproducible random seed per evaluation; an integer is written verbatim. Unset leaves the input file's own `seed` (or its absence) untouched. |
+
+Output filenames are resolved per output as: the override above, else the input
+file's own `output_dose` / `output_edep` key, else a name derived from its
+`output_prefix` (`<prefix>_doseDeposit.txt`, `<prefix>_energyDeposit.txt`,
+`<prefix>_detector_dose.csv`, `<prefix>_detector_gamma_spectrum.csv`), else the
+application's bare defaults. The two detector files are only looked for when the
+run scores detectors, so a grid-only run is never reported incomplete for
+lacking them.
+
+**Seeds.** Every evaluation of a sweep needs its own seed, or the runs reproduce
+identical particle histories. `geant4_seed: auto` derives one from the
+evaluation's resolved configuration and input point, so it differs between sweep
+points and reproduces when the same point is re-run or resumed. Two *identical*
+points therefore share a seed, which is the correct answer for an identical
+configuration. To drive the seed as a swept variable instead, declare it under
+[`input_parameters.geant4`](#geant4_input_parameters) — an input-space value
+wins over this key.
 
 To supply a prebuilt Geant4 source file directly instead of generating one with a
 `field_emission` module, use a `particle_source` module with a `file:` key. The old
@@ -951,7 +971,8 @@ that can satisfy it.
   use; see [](#output-specs-for-postprocess-rf).
 - **Bare form**: a positional list `['section', string1, string2, ...]` or a bare
   quantity string, with no `module` key. The shape of the spec identifies the
-  module. `dose`/`edep`/`scoring` → `geant4` (see [](#geant4-output-specs));
+  module. `dose`/`edep`/`scoring`, and the `detector_*` quantities → `geant4`
+  (see [](#geant4-output-specs));
   `count`/`total_weight` → `particles`; a `monitor:` key or a T3P wakefield
   quantity (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`; a `.rfpost`
   block name (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool`
@@ -1007,6 +1028,49 @@ Both output files use the Geant4 box-mesh scorer format: three `#`-comment heade
 lines followed by comma-separated rows
 `iX, iY, iZ, total(value), total(val^2), entry`. The fourth column
 (`total(value)`) is read as the per-bin scored quantity.
+
+#### Per-detector quantities
+
+An application that scores GM-tube detectors (`detectors = on`) writes a
+per-detector CSV beside the grids. Those quantities name **no section** — there
+is one detector table, and the quantity names it:
+
+```yaml
+output_parameters :
+  'det_edep'    : {module: geant4, quantity: detector_edep_MeV}
+  'det_gammas'  : {module: geant4, quantity: detector_gammas}
+  'det5_gammas' : {module: geant4, quantity: detector_gammas, at: {detector: 5}}
+```
+
+- `detector_edep_MeV` — energy deposited in each detector volume, MeV.
+- `detector_gammas` — gamma entries counted crossing into each detector.
+
+**Detector is an index axis.** Without an `at:` the whole per-detector vector
+comes back and the result table goes long-format, one row per detector, with a
+`detector` column — the same rule as S3P's `Frequency` and Track3P's
+`FieldLevel`. With `at: {detector: n}` it is that detector's scalar; a detector
+the run did not write raises, naming those it did. The detector count and their
+Z positions are compiled into the application, not set from the input file.
+
+A quantity is `NaN` when the run scored no detectors or has not run (dry-run),
+and a zero is a real result: in a short run most detectors legitimately deposit
+no energy while still counting gammas.
+
+The gamma spectrum (`<prefix>_detector_gamma_spectrum.csv`) is **not** an
+extractable column: the application writes only each detector's non-empty energy
+bins, so its rows are ragged. It rides out with the scoring grids as part of the
+run's [field artifact](workflow_inputs.md) under the key `gamma_spectrum`, as
+`{detector_id, energy_MeV, weighted_fluence}`.
+
+:::{note}
+A field artifact is written only for a **wide** table — in the long form the
+field values are the rows, so no artifact is stored (the same rule that leaves
+an S3P long-format sweep without its `PortRef` mode profiles). A run that asks
+for a whole per-detector vector therefore goes long-format and gets the detector
+columns but no `gamma_spectrum` artifact. Narrow the detector outputs with
+`at: {detector: n}` when the spectrum is wanted as well; the CSV is in the
+working directory either way.
+:::
 
 More sections and entries will be added in future updates.
 
@@ -1064,6 +1128,10 @@ unchanged or a `min`/`max`/`num` mapping (or list) for a parameter sweep. A swep
 key becomes a sweep axis alongside any `cubit:`/`ace3p:` axes. Keys not present in
 the input file are appended. The deprecated top-level `geant4_input_parameters:`
 key is equivalent.
+
+This is also how to drive the random `seed` as an input variable rather than
+letting the module derive one; a value here wins over the module's
+[`geant4_seed`](#geant4-module-keys) key.
 
 (particle_parameters)=
 ## `particle_parameters`

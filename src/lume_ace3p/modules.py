@@ -30,6 +30,7 @@ bool.
 """
 
 import glob
+import hashlib
 import os
 import shutil
 import warnings
@@ -50,7 +51,7 @@ from lume_ace3p.acdtool import (
     field_sections, mode_table_arrays, resolve_command, table_mode_ids,
     wired_commands,
 )
-from lume_ace3p.geant4 import Geant4
+from lume_ace3p.geant4 import Geant4, read_detector_dose, read_gamma_spectrum
 from lume_ace3p.logs import log_path
 from lume_ace3p.particles import Particles, default_output_name
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
@@ -121,6 +122,15 @@ class RunContext:
         :class:`FieldEmissionModule` without the artifact's shape depending on how
         many levels a run produced.
 
+    ``config_hash``
+        the ``'sha256:...'`` identity of this evaluation's resolved
+        configuration (:func:`lume_ace3p.state.config_hash`) — the module chain
+        plus the *materialized* input point. Recorded by
+        :meth:`~lume_ace3p.workflow_graph.Workflow.evaluate`, which computes it
+        for the run manifest anyway. :class:`Geant4Module` derives
+        ``geant4_seed: auto`` from it: distinct per sweep point, reproducible
+        across re-runs of the same point. ``None`` on a hand-built context.
+
     ``modules``
         the **live** module instances this evaluation runs, in resolved DAG order.
         Module instances hold per-run state (a solver's parsed results, acdtool's
@@ -140,8 +150,9 @@ class RunContext:
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
                  dry_run=False, paths=None, stage_mode='copy', modules=None,
-                 capture_output=False):
+                 capture_output=False, config_hash=None):
         self.workdir = workdir
+        self.config_hash = config_hash
         self.modules = list(modules) if modules else []
         self.capture_output = bool(capture_output)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
@@ -2306,12 +2317,25 @@ class FieldEmissionModule(Module):
         ``stage`` is what separates :meth:`run` from :meth:`verify`: both need
         the same name, only the former may create anything to get it.
 
-        The two shapes are told apart by asking whether the artifact *is a
-        directory*, not whether it is an existing file: a recorded path that
-        does not exist yet is a dump file whose staging has not happened, and
-        :meth:`verify` must still be able to derive a name from it."""
+        **Which shape it is follows from the producer, not from the
+        filesystem.** The module in ``ctx.modules`` that provides
+        ``track3p_particles`` is asked, the way :meth:`_emitted_note` already
+        asks it: a :class:`Track3PSourceModule` means a file, a
+        :class:`Track3PModule` means a results directory. The filesystem cannot
+        answer this reliably — ``verify`` runs *before* staging, so a dump file
+        that is not there yet looks like neither — and dispatching on it is how
+        an ``isfile`` variant briefly broke ``verify`` (job 39931202) and how a
+        results directory that has since been deleted gets silently misread as an
+        unstaged file, making ``verify`` return ``False`` instead of explaining.
+
+        When no producer is in ``ctx.modules`` — a hand-built
+        :class:`RunContext` with artifacts alone, which the unit tests and a
+        direct driver both use — fall back to asking whether the artifact *is a
+        directory*. Not whether it is an existing file: a recorded path that does
+        not exist yet is a dump file whose staging has not happened, and
+        :meth:`verify` must still derive a name from it."""
         src = ctx.artifacts[TRACK3P_PARTICLES]
-        if not os.path.isdir(src):
+        if not self._producer_is_solver(ctx, src):
             if stage:
                 _stage_file(ctx, src)
             return os.path.basename(src)
@@ -2357,13 +2381,31 @@ class FieldEmissionModule(Module):
         return os.path.relpath(next(iter(dumps.values())), ctx.workdir)
 
     @staticmethod
-    def _emitted_note(ctx):
+    def _producer(ctx):
+        """The module in this evaluation that provides ``track3p_particles``, or
+        ``None`` when the context was built from artifacts alone."""
+        return next((m for m in ctx.modules
+                     if TRACK3P_PARTICLES in m.provides), None)
+
+    @classmethod
+    def _producer_is_solver(cls, ctx, src):
+        """Whether the dump artifact is an in-pipeline Track3P **results
+        directory** (as opposed to an externally supplied dump file).
+
+        The producer's class is the answer when there is one; otherwise
+        ``os.path.isdir`` — see :meth:`_resolve_dump` on why that order."""
+        producer = cls._producer(ctx)
+        if producer is None:
+            return os.path.isdir(src)
+        return isinstance(producer, Track3PModule)
+
+    @classmethod
+    def _emitted_note(cls, ctx):
         """`` (track3p.log reports Total Emitted Particles = N)`` when the run
         wrote a log saying so — the usual reason a field-emission dump is
         missing is that the emitter produced nothing, and the log says it
         outright."""
-        producer = next((m for m in ctx.modules
-                         if TRACK3P_PARTICLES in m.provides), None)
+        producer = cls._producer(ctx)
         data = getattr(getattr(producer, '_solver', None), 'output_data', None)
         total = (data or {}).get('TotalEmitted')
         if total is None:
@@ -2426,11 +2468,38 @@ class FieldEmissionModule(Module):
 class Geant4Module(Module):
     """Requires a ``particle_source``, provides ``dose_grid`` / ``edep_grid``.
 
-    Owns ``_geometry_files``, ``_output_files`` and ``_read_scoring_output``."""
+    Owns ``_geometry_files``, ``_output_files`` and ``_read_scoring_output``.
+
+    **Two generations of the dose application** are in use and this one module
+    drives both, because the difference is entirely in the input file's keys and
+    the output files that follow from them:
+
+    * ``/sdf/group/rfar/geant4/example/dose-npass`` — the original: STL
+      geometry (``solid_stl`` / ``cavity_stl``), a voxel scoring mesh, and the
+      ``dose``/``edep`` grids. Nothing below changes it.
+    * Lixin Ge's LCLS-II **polycone** application — adds a ``seed``, an
+      ``R(Z)``-profile cavity (its ``cavity_stl`` is a profile table, not an
+      STL; ``solid_stl`` is ignored), concentric cryostat layers, and
+      ``detectors = on``: 8 GM-tube detectors whose per-detector energy deposit
+      and gamma spectrum land in two CSVs beside the grids.
+
+    So beyond the two scoring grids this module exposes ``detector_edep_MeV``
+    and ``detector_gammas``, indexed by ``detector``, and carries the gamma
+    spectrum out through :meth:`field`. A run that scores no detectors (every
+    shipped example today) is unaffected: the CSVs are only looked for when the
+    input file turns detectors on, and :meth:`field_index` then reports ``None``
+    so such a table stays one wide row."""
 
     type = 'geant4'
     requires = frozenset({PARTICLE_SOURCE})
     provides = frozenset({DOSE_GRID, EDEP_GRID})
+
+    # A detector-scored Geant4 run is tabulated over its detectors, not over the
+    # Track3P field levels upstream (``Track3PModule.index_precedence`` is 1):
+    # the dose at a detector is the end product of the whole chain, while the
+    # field level that produced the dump is one scalar per run. See
+    # :meth:`Workflow.field_index`.
+    index_precedence = 2
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2440,18 +2509,76 @@ class Geant4Module(Module):
         self.geant4_particle_cmd = self.config.get('geant4_particle_cmd', 'particles')
         self.geant4_geometry_files = self.config.get('geant4_geometry_files') or []
         # Output files are normally named in the Geant4 input file
-        # (output_dose / output_edep); these allow an explicit YAML override.
-        # 'geant4_scoring_output' stays a back-compat alias for the dose file.
+        # (output_dose / output_edep, or derived from output_prefix); these allow
+        # an explicit YAML override. 'geant4_scoring_output' stays a back-compat
+        # alias for the dose file.
         self.geant4_dose_output = (self.config.get('geant4_dose_output')
                                    or self.config.get('geant4_scoring_output'))
         self.geant4_edep_output = self.config.get('geant4_edep_output')
+        self.geant4_detector_output = self.config.get('geant4_detector_output')
+        self.geant4_spectrum_output = self.config.get('geant4_spectrum_output')
+        self.geant4_seed = self._parse_seed(self.config.get('geant4_seed'))
         self.geant4_obj = None
+        # Detector CSVs are read on demand and cached per path: 'extract' is
+        # called once per declared output and 'field_index' once per row, and
+        # they would otherwise re-read the same file several times per
+        # evaluation.
+        self._detector_cache = {}
+
+    @staticmethod
+    def _parse_seed(value):
+        """Validate ``geant4_seed:``: ``None`` (leave the input alone),
+        ``'auto'``, or an integer."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip().lower() == 'auto':
+            return 'auto'
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"geant4: geant4_seed must be 'auto' (derive a distinct, "
+                f"reproducible seed per evaluation) or an integer, not "
+                f"{value!r}. To sweep the seed as an input instead, declare it "
+                f"under input_parameters: {{geant4: {{seed: ...}}}}.") from None
+
+    def _seed_value(self, ctx):
+        """The seed to write, or ``None`` to leave the input file's own alone.
+
+        ``auto`` derives it from this evaluation's **config hash**, which
+        ``Workflow.evaluate`` has already computed over the module chain and the
+        *materialized* input point — so it differs between sweep points and
+        reproduces across re-runs of the same point. Folded to a positive 31-bit
+        int, which is what ``/random/setSeeds`` takes.
+
+        Not the evaluation's position in the sweep: no point index reaches
+        ``Workflow`` by design (see :meth:`Workflow.point_workdir`) — sweep
+        ordering belongs to the mode layer — and an index is not stable across a
+        re-ordered or partially resumed sweep, while a hash of the configuration
+        is. Two *identical* points (a Nelder-Mead simplex does propose one
+        twice) therefore share a seed, which is the right answer for an
+        identical configuration.
+
+        Falls back to the module name when a hand-built context carries no hash,
+        so this is still deterministic off the ``Workflow`` path."""
+        if self.geant4_seed is None:
+            return None
+        if self.geant4_seed != 'auto':
+            return self.geant4_seed
+        material = getattr(ctx, 'config_hash', None) or self.name
+        digest = hashlib.sha256(str(material).encode()).digest()
+        # Positive and inside int32: the application reads it with std::atol and
+        # hands it to /random/setSeeds, and seed = 0 means 'use the clock'.
+        return int.from_bytes(digest[:4], 'big') % (2 ** 31 - 1) + 1
 
     def run(self, ctx, skip_execution=False):
         if PARTICLE_SOURCE not in ctx.artifacts:
             raise ValueError("module 'geant4' requires a particle_source "
                              "artifact.")
         ctx.ensure_workdir()
+        # A resume path may have read the detector CSV through verify() before
+        # the binary re-ran, so drop what was cached then.
+        self._detector_cache.clear()
         particle_file_path = ctx.artifacts[PARTICLE_SOURCE]
         macro_inputs = dict(ctx.inputs.macro) if ctx.inputs.macro else None
 
@@ -2498,6 +2625,13 @@ class Geant4Module(Module):
                     particle_file_path,
                     macro_value=os.path.basename(particle_file_path),
                     particle_cmd=self.geant4_particle_cmd)
+            seed = self._seed_value(ctx)
+            if seed is not None:
+                self.geant4_obj.set_value({'seed': seed})
+            # Last, so a swept 'geant4: {seed: ...}' input overrides the module
+            # key rather than the other way round: an input-space variable is
+            # the more specific statement of the two, and it is the per-point
+            # seed mechanism the YAML reference points at.
             if macro_inputs:
                 self.geant4_obj.set_value(macro_inputs)
 
@@ -2508,12 +2642,19 @@ class Geant4Module(Module):
             _stage_file(ctx, geom)
 
         if ctx.dry_run:
+            # The seed line is written only when a seed is set: a dry-run marker
+            # is a frozen baseline for one example, and markers are compared by
+            # the numeric tokens they contain, so an unconditional extra number
+            # would move it for nothing.
+            seed_note = ('' if self._seed_value(ctx) is None
+                         else f'Seed: {self._seed_value(ctx)}\n')
             _append_marker(ctx, 'Dry run mode: Geant4 step skipped.\n'
                                 f'Input file: {self.geant4_input}\n'
                                 f'Particle file: {particle_file_path}\n'
                                 f'Geometry files: {geom_files}\n'
                                 f'Output files: {self._output_files()}\n'
                                 f'Threads: {self.geant4_threads}\n'
+                                + seed_note +
                                 f'Particles: {ctx.inputs.particles}\n'
                                 f'Input overrides: {macro_inputs}\n')
             if self.geant4_obj is not None:
@@ -2538,11 +2679,16 @@ class Geant4Module(Module):
         """Whether the scoring files this step writes are still in the workdir.
 
         ``None`` under dry-run (the binary was skipped), and ``None`` when the
-        filenames are not known: they normally live in the Geant4 input file
-        (``output_dose`` / ``output_edep``), which is read when the module builds
-        its :class:`~lume_ace3p.geant4.Geant4` object — so before this module has
+        filenames are not known: they come from the Geant4 input file
+        (``output_dose`` / ``output_edep``, or derived from ``output_prefix``),
+        which is read when the module builds its
+        :class:`~lume_ace3p.geant4.Geant4` object — so before this module has
         run, only an explicit ``geant4_dose_output`` / ``geant4_edep_output``
-        override can name them."""
+        override can name them.
+
+        The two detector CSVs are checked **only when the run scores detectors**
+        (:meth:`_detectors_on`), which is what keeps this from reporting every
+        grid-only run incomplete."""
         if ctx.dry_run:
             return None
         files = [name for name in self._output_files().values() if name]
@@ -2586,13 +2732,77 @@ class Geant4Module(Module):
         return files
 
     def _output_files(self):
-        """Resolve the dose / edep output filenames, preferring explicit YAML
-        overrides and otherwise reading output_dose / output_edep from the
-        Geant4 input file."""
-        values = self.geant4_obj.get_values() if self.geant4_obj is not None else {}
-        dose = self.geant4_dose_output or values.get('output_dose')
-        edep = self.geant4_edep_output or values.get('output_edep')
-        return {'dose': dose, 'edep': edep}
+        """Resolve every output filename this module may read, as
+        ``{dose, edep, detector, spectrum}`` with ``None`` for one it cannot
+        name.
+
+        The precedence, per output, mirrors the application's own
+        (``sim.cc:165-177`` for the grids, ``run.cc:143-160`` for the
+        detectors):
+
+        1. the explicit YAML override (``geant4_dose_output`` &c.), then
+        2. the input file's own ``output_dose`` / ``output_edep`` key, then
+        3. a name derived from the input file's ``output_prefix``, then
+        4. the application's bare default.
+
+        Steps 3 and 4 are what the polycone application needs: it is driven by
+        ``output_prefix`` and writes no ``output_dose`` key at all, so before
+        this a prefix-only input resolved to no filenames whatsoever and both
+        ``verify`` and ``extract`` came up empty.
+
+        The two detector entries are ``None`` unless the input turns detectors
+        **on** — they are the one pair of outputs a run may legitimately not
+        write, and naming them unconditionally would make :meth:`verify` demand
+        files from every grid-only run.
+
+        Steps 3 and 4 need the input file to have been *read*, so they apply
+        only once this module has built its wrapper. Before then an explicit
+        override is still honoured and everything else stays ``None``, which is
+        the property :meth:`verify` documents: asked about a workdir it has not
+        opened an input file for, it cannot name the outputs and says so rather
+        than reporting the application's defaults missing."""
+        read_input = self.geant4_obj is not None
+        values = self.geant4_obj.get_values() if read_input else {}
+        prefix = (values.get('output_prefix') or values.get('output') or '').strip()
+
+        def named(override, key, suffix, bare):
+            if override:
+                return override
+            if not read_input:
+                return None
+            return values.get(key) or (prefix + suffix if prefix else bare)
+
+        files = {
+            'dose': named(self.geant4_dose_output, 'output_dose',
+                          '_doseDeposit.txt', 'doseDeposit.txt'),
+            'edep': named(self.geant4_edep_output, 'output_edep',
+                          '_energyDeposit.txt', 'energyDeposit.txt'),
+            'detector': None,
+            'spectrum': None,
+        }
+        if self._detectors_on(values):
+            files['detector'] = (self.geant4_detector_output
+                                 or (prefix + '_detector_dose.csv' if prefix
+                                     else 'detector_dose.csv'))
+            files['spectrum'] = (self.geant4_spectrum_output
+                                 or (prefix + '_detector_gamma_spectrum.csv'
+                                     if prefix
+                                     else 'detector_gamma_spectrum.csv'))
+        return files
+
+    def _detectors_on(self, values):
+        """Whether this run scores the GM-tube detectors.
+
+        The input file's ``detectors`` key, read with the application's own
+        truthiness (``sim.cc:128-132``) so the two cannot disagree about what
+        ``detectors = yes`` means. An explicit ``geant4_detector_output`` /
+        ``geant4_spectrum_output`` override also counts as "on": naming the file
+        is as clear a statement as setting the key, and it is the way to read a
+        detector CSV written by a run this module did not launch."""
+        if self.geant4_detector_output or self.geant4_spectrum_output:
+            return True
+        return str(values.get('detectors') or '').strip().lower() in (
+            'on', 'true', '1', 'yes')
 
     def _read_scoring_output(self, ctx, filename):
         """Parse a whitespace ix iy iz value scoring file into
@@ -2607,10 +2817,30 @@ class Geant4Module(Module):
         from lume_ace3p.surrogate_data import read_dose_file
         return read_dose_file(os.path.join(ctx.workdir, filename))
 
+    def _detector_table(self, ctx):
+        """``read_detector_dose`` of this run's detector CSV, cached per path;
+        ``None`` when the run scored no detectors or has not run."""
+        name = self._output_files()['detector']
+        if not name:
+            return None
+        path = os.path.join(ctx.workdir or '', name)
+        if path not in self._detector_cache:
+            self._detector_cache[path] = read_detector_dose(path)
+        return self._detector_cache[path]
+
     # The scoring grids this module can be asked for. ``scoring`` is a
     # back-compat alias for ``dose``; the router in workflow_graph keys on this
     # set, so a new grid needs adding in one place only.
     SECTIONS = frozenset({'dose', 'edep', 'scoring'})
+
+    # Per-detector quantities, keyed by the column of the detector CSV each one
+    # reads. Unlike the grids these take no ``section:`` — there is one detector
+    # table, and the quantity names it — so they route on the quantity alone
+    # (``workflow_graph._infer_output_module``).
+    DETECTOR_QUANTITIES = {
+        'detector_edep_MeV': 'edep_MeV',
+        'detector_gammas': 'gamma_entries',
+    }
 
     @staticmethod
     def _parse_spec(spec):
@@ -2639,12 +2869,28 @@ class Geant4Module(Module):
         return None, None
 
     def extract(self, ctx, spec):
-        """Extract a scalar from the Geant4 dose/edep scoring output.
+        """Extract a scalar from the Geant4 scoring output.
 
-        ``spec`` is ``{section: dose, quantity: total}`` or its positional alias
-        ``['dose', 'total']``, with section in {dose, edep, scoring}
-        (``scoring`` is a back-compat alias for dose) and entry in
-        {total, peak, peak_index}."""
+        **The scoring grids.** ``spec`` is ``{section: dose, quantity: total}``
+        or its positional alias ``['dose', 'total']``, with section in
+        {dose, edep, scoring} (``scoring`` is a back-compat alias for dose) and
+        entry in {total, peak, peak_index}.
+
+        **The GM-tube detectors** (polycone application, ``detectors = on``) are
+        named by quantity alone, since there is one detector table::
+
+            'det_edep'  : {module: geant4, quantity: detector_edep_MeV}
+            'det_5'     : {module: geant4, quantity: detector_gammas, at: {detector: 5}}
+
+        Without an ``at:`` the whole 8-vector comes back, aligned to
+        :meth:`field_index`, so a sweep table goes one row per detector; with
+        one it is that detector's scalar. A detector the run did not write
+        raises naming those it did. NaN when the run scored no detectors or
+        wrote no CSV (dry-run), the sentinel every module uses."""
+        quantity, at = self._parse_detector_spec(spec)
+        if quantity is not None:
+            return self._detector_value(ctx, quantity, at)
+
         files = self._output_files()
         grids = {
             'dose': self._read_scoring_output(ctx, files['dose']),
@@ -2658,7 +2904,8 @@ class Geant4Module(Module):
                     "a geant4 output spec needs a 'section' naming the scoring "
                     "grid and a 'quantity' naming the reduction, e.g. "
                     "{module: geant4, section: dose, quantity: total}. Sections: "
-                    + str(sorted(self.SECTIONS)) + '.')
+                    + str(sorted(self.SECTIONS)) + '; per-detector quantities: '
+                    + str(sorted(self.DETECTOR_QUANTITIES)) + '.')
             return float('nan')
         if section not in grids:
             raise ValueError("Unknown section name '" + str(section) + "' in output dict.")
@@ -2675,13 +2922,102 @@ class Geant4Module(Module):
         raise ValueError("Unknown entry '" + str(entry) + "' in '"
                          + str(section) + "' section.")
 
-    def field(self, ctx):
-        """Return the Geant4 voxel-grid field outputs for the just-run
-        evaluation as ``{'dose': {indices, values}, 'edep': {...}}``, or
-        ``None`` when neither scoring file is present (e.g. dry-run).
+    @classmethod
+    def _parse_detector_spec(cls, spec):
+        """``(quantity, at)`` when ``spec`` asks for a per-detector quantity,
+        else ``(None, {})`` so :meth:`extract` carries on to the grids.
 
-        These are the ragged 3-D grids the hybrid model keeps out of the flat
-        table; the mode layer persists them per row and reloads on demand."""
+        Accepts the mapping form with or without ``module:``, the bare string,
+        and the single-element list — the detector quantities name one table, so
+        unlike the grids they need no ``section:``."""
+        if isinstance(spec, dict):
+            quantity = spec.get('quantity') or spec.get('entry')
+            at = dict(spec.get('at') or {})
+        elif isinstance(spec, str):
+            quantity, at = spec, {}
+        elif isinstance(spec, (list, tuple)) and len(spec) == 1:
+            quantity, at = spec[0], {}
+        else:
+            return None, {}
+        if quantity not in cls.DETECTOR_QUANTITIES:
+            return None, {}
+        stray = sorted(set(at) - {'detector'})
+        if stray:
+            raise ValueError(
+                f"a geant4 detector 'at:' narrows on ['detector'], not "
+                f"{stray}.")
+        return quantity, at
+
+    def _detector_value(self, ctx, quantity, at):
+        """One per-detector quantity: the 8-vector, or a scalar under
+        ``at: {detector: n}``."""
+        table = self._detector_table(ctx)
+        column = self.DETECTOR_QUANTITIES[quantity]
+        if table is None:
+            # No detector CSV: dry-run, detectors off, or a run that has not
+            # happened. A declared output must still produce a cell.
+            return (float('nan') if 'detector' in at
+                    else np.array([float('nan')]))
+        values = table[column]
+        if 'detector' not in at:
+            return values
+        ids = table['detector_id']
+        wanted = float(at['detector'])
+        hits = np.flatnonzero(np.isclose(ids, wanted, rtol=0.0, atol=1e-9))
+        if not len(hits):
+            raise ValueError(
+                'at: {detector: ' + repr(at['detector']) + '} is not a detector '
+                'of this Geant4 run, which wrote '
+                + str([int(i) for i in ids]) + '. The detector count and their '
+                'Z positions are compiled into the application (8, one per '
+                'cavity of the LCLS-II cryomodule), so this is not something '
+                'the input file can change.')
+        return float(values[int(hits[0])])
+
+    def field_index(self, ctx):
+        """``('detector', ids)`` when this run scored the GM-tube detectors,
+        else ``None``.
+
+        ``None``, not the single-row sentinel S3P and T3P return, for the reason
+        :meth:`Omega3PModule.field_index` records: whether there is a detector
+        axis at all is a *result* (did the run write the CSV?), not something the
+        input declares, and emitting a sentinel axis would reshape the existing
+        wide dose tables of every grid-only example.
+
+        The mode layer drops this axis again when no declared output rides on it
+        (:func:`lume_ace3p.modes._table_index`), so asking for nothing but
+        scalars still gives one wide row."""
+        table = self._detector_table(ctx)
+        if table is None:
+            return None
+        return 'detector', table['detector_id'].astype(int)
+
+    def field(self, ctx):
+        """Return the Geant4 field outputs for the just-run evaluation —
+        ``{'dose': {indices, values}, 'edep': {...}}`` plus ``'gamma_spectrum'``
+        when the run scored detectors — or ``None`` when none is present (e.g.
+        dry-run).
+
+        The grids are the ragged 3-D arrays the hybrid model keeps out of the
+        flat table; the mode layer persists them per row and reloads on demand.
+
+        ``gamma_spectrum`` rides here rather than in :meth:`extract` because it
+        is not indexed by detector: the application writes only the non-empty
+        bins of each detector's 100, so the rows are ragged and
+        ``detector_id`` repeats down them. It is stored as a nested dict, which
+        :func:`lume_ace3p.results.save_field` serializes as JSON — the route
+        S3P's ``IndexMap`` already takes.
+
+        **Caveat, inherited rather than new:** the mode layer persists a field
+        artifact only for a *wide* table
+        (:func:`lume_ace3p.modes._persist_field` returns ``None`` once a table
+        has an index axis, since in the long form the field values are the
+        rows). So a run that asks for a whole per-detector vector — and
+        therefore goes long-format — gets the detector columns but **no**
+        ``gamma_spectrum`` artifact, exactly as an S3P long-format sweep gets no
+        ``PortRef`` mode profiles. Declare the detector outputs with
+        ``at: {detector: n}`` when the spectrum is wanted too; the CSV is in the
+        workdir either way."""
         files = self._output_files()
         grids = {}
         for section in ('dose', 'edep'):
@@ -2691,6 +3027,12 @@ class Geant4Module(Module):
                 # round-trips without pickling.
                 grids[section] = {'indices': grid['indices'],
                                   'values': grid['values']}
+        if files['spectrum']:
+            spectrum = read_gamma_spectrum(
+                os.path.join(ctx.workdir or '', files['spectrum']))
+            if spectrum is not None:
+                grids['gamma_spectrum'] = {name: values.tolist()
+                                           for name, values in spectrum.items()}
         return grids or None
 
 

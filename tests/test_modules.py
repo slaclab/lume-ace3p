@@ -2165,7 +2165,8 @@ def test_particles_no_dump_at_all_raises_and_quotes_the_emitted_count(tmp_path):
 
 
 def test_particles_resolves_a_dump_path_that_is_not_staged_yet(tmp_path):
-    """The two artifact shapes are told apart by `isdir`, not by `isfile`.
+    """With no producer in the context the two shapes fall back to `isdir`, not
+    `isfile`.
 
     `verify` runs before the dump is staged (that is the point of a resume
     check), so a recorded path that does not exist yet must still resolve to a
@@ -2179,6 +2180,52 @@ def test_particles_resolves_a_dump_path_that_is_not_staged_yet(tmp_path):
     os.makedirs(ctx.workdir, exist_ok=True)
     open(os.path.join(ctx.workdir, 'dump_modified.txt'), 'w').close()
     assert module.verify(ctx) is True
+
+
+def test_particles_shape_follows_the_producer_not_the_filesystem(tmp_path):
+    """Which shape the artifact has is the *producer's* class, not what is on
+    disk at the moment of asking.
+
+    Both halves matter. A `track3p_source` head whose dump happens to be a
+    directory is still read as a file (the user named a file; a directory there
+    is their error to see, not something to reinterpret), and an in-pipeline
+    `track3p` head is read as a results directory even when the directory is
+    gone -- which is the case that used to be silently misread as an unstaged
+    dump file."""
+    source = build_module('track3p_source', {'file': 'whatever.txt'})
+    as_dir = tmp_path / 'looks_like_results'
+    as_dir.mkdir()
+    ctx = RunContext(str(tmp_path / 'wd'),
+                    artifacts={TRACK3P_PARTICLES: str(as_dir)},
+                    modules=[source])
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS))
+    assert module._resolve_dump(ctx) == 'looks_like_results'
+
+
+def test_particles_missing_results_directory_raises_naming_the_path(tmp_path):
+    """An in-pipeline producer whose results directory has vanished gets an
+    error that names the path, rather than `verify` quietly returning False.
+
+    Before the dispatch moved to the producer, `isdir` on the missing directory
+    was False, so this fell into the *file* branch and resolved to a basename
+    that meant nothing."""
+    wd = str(tmp_path / 'wd')
+    producer, _ = _track3p_module(tmp_path / 'producer')
+    ctx = _chain_ctx(wd, modules=[producer])
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module._resolve_dump(ctx)
+    message = str(excinfo.value)
+    assert 'track3p_results' in message
+    assert 'is not a directory' in message
+    assert 'results_dir:' in message
+    # With an explicit `output:` verify never has to resolve the dump, so it
+    # answers the question it was asked: that file is not there.
+    assert module.verify(ctx) is False
+    # Without one there is no name to derive, and verify declines to answer
+    # rather than inventing a basename from the vanished directory -- run()
+    # will raise the message above and say why.
+    assert FieldEmissionModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
 
 
 def test_particles_still_reads_a_plain_dump_file(tmp_path):
@@ -2317,6 +2364,353 @@ def test_geant4_mapping_form_without_a_section_names_the_sections(tmp_path):
     with pytest.raises(ValueError, match="'dose'"):
         module.extract(ctx, {'quantity': 'total'})
     assert np.isnan(module.extract(ctx, ['dose']))     # unchanged list behavior
+
+
+# --------------------------------------------------------------------------- #
+# Geant4, polycone application: output_prefix, detectors, seed
+# (Track3P plan Phase 4 step 1)
+# --------------------------------------------------------------------------- #
+
+GEANT4_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'fixtures', 'geant4')
+
+# The polycone application is driven by output_prefix and names no output_dose
+# key at all; 'detectors = on' is what makes it write the two CSVs.
+GEANT4_POLYCONE_INPUT = """\
+# synthetic polycone-shaped geant4 input
+particles = particles.data
+cavity_stl = nb_wall_profile.dat
+nthreads = 4
+passes = 10
+output_prefix = run7
+cryostat = on
+detectors = on
+detector_r = 1000.0
+"""
+
+
+def _stage_polycone(workdir, detectors='on', prefix='run7', scoring=True):
+    """A workdir shaped like a finished polycone run: a prefix-driven input
+    file, the two prefix-named scoring grids, and the real detector CSVs copied
+    in under the names the prefix implies."""
+    os.makedirs(workdir, exist_ok=True)
+    text = GEANT4_POLYCONE_INPUT
+    if detectors is None:
+        text = text.replace('detectors = on\n', '')
+    else:
+        text = text.replace('detectors = on', 'detectors = ' + detectors)
+    if prefix is None:
+        text = text.replace('output_prefix = run7\n', '')
+    else:
+        text = text.replace('output_prefix = run7', 'output_prefix = ' + prefix)
+    input_path = os.path.join(workdir, 'input_polycone.geant4')
+    _write(input_path, text)
+    stem = (prefix + '_') if prefix else ''
+    if scoring:
+        _write(os.path.join(workdir, stem + 'doseDeposit.txt'), DOSE_OUT)
+        _write(os.path.join(workdir, stem + 'energyDeposit.txt'), EDEP_OUT)
+        for name, fixture in (('detector_dose.csv', 'detector_dose.csv'),
+                              ('detector_gamma_spectrum.csv',
+                               'detector_gamma_spectrum.csv')):
+            shutil.copy(os.path.join(GEANT4_FIXTURES, fixture),
+                        os.path.join(workdir, stem + name))
+    psrc = os.path.join(workdir, 'particles.data')
+    _write(psrc, '0.0 0.0 0.0 0.0 1.0 1 0 0 1 6\n')
+    return input_path, psrc
+
+
+def _polycone_module(workdir, config=None, **stage):
+    """A run Geant4Module over a staged polycone workdir. Dry-run, so the
+    binary is skipped and the pre-placed outputs are what get read -- the same
+    shape every other geant4 test here uses."""
+    input_path, psrc = _stage_polycone(workdir, **stage)
+    ctx = RunContext(workdir, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path, **(config or {})})
+    module.run(ctx)
+    return module, ctx
+
+
+def test_geant4_output_names_derive_from_the_prefix(tmp_path):
+    """The polycone application names every output off `output_prefix` and
+    writes no `output_dose` key, so before this a prefix-only input resolved to
+    no filenames at all and both verify and extract came up empty."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    files = module._output_files()
+    assert files['dose'] == 'run7_doseDeposit.txt'
+    assert files['edep'] == 'run7_energyDeposit.txt'
+    assert files['detector'] == 'run7_detector_dose.csv'
+    assert files['spectrum'] == 'run7_detector_gamma_spectrum.csv'
+    # And the grids really are readable under those names.
+    assert module.extract(ctx, ['dose', 'total']) == pytest.approx(8.0)
+    assert module.verify(ctx) is None             # dry run: binary was skipped
+
+
+def test_geant4_output_names_fall_back_to_the_bare_defaults(tmp_path):
+    """No prefix and no explicit keys: the application's own default names."""
+    module, _ = _polycone_module(str(tmp_path / 'wd'), prefix=None)
+    files = module._output_files()
+    assert files['dose'] == 'doseDeposit.txt'
+    assert files['edep'] == 'energyDeposit.txt'
+    assert files['detector'] == 'detector_dose.csv'
+
+
+def test_geant4_explicit_output_keys_still_win(tmp_path):
+    """Precedence is unchanged: the input file's own `output_dose` beats the
+    prefix, and a YAML override beats both."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    with open(input_path, 'a') as file:
+        file.write('output_dose = named_in_the_input.txt\n')
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path,
+                           'geant4_edep_output': 'named_in_the_yaml.txt',
+                           'geant4_detector_output': 'dets.csv'})
+    module.run(ctx)
+    files = module._output_files()
+    assert files['dose'] == 'named_in_the_input.txt'      # input file beats prefix
+    assert files['edep'] == 'named_in_the_yaml.txt'       # YAML beats input file
+    assert files['detector'] == 'dets.csv'
+
+
+@pytest.mark.parametrize('detectors', ['on', 'ON', 'true', '1', 'yes'])
+def test_geant4_detector_files_named_when_detectors_are_on(tmp_path, detectors):
+    """Every spelling the application accepts (sim.cc:128-132), so the two
+    cannot disagree about what `detectors = yes` means."""
+    module, _ = _polycone_module(str(tmp_path / 'wd' / detectors),
+                                 detectors=detectors)
+    assert module._output_files()['detector'] == 'run7_detector_dose.csv'
+
+
+@pytest.mark.parametrize('detectors', [None, 'off', 'false', '0'])
+def test_geant4_detector_files_unnamed_when_detectors_are_off(tmp_path,
+                                                              detectors):
+    """A grid-only run must not have `verify` start demanding detector CSVs it
+    was never going to write -- which is every shipped example today."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd' / str(detectors)),
+                                   detectors=detectors)
+    files = module._output_files()
+    assert files['detector'] is None and files['spectrum'] is None
+    assert files['dose'] == 'run7_doseDeposit.txt'
+    # No detector axis, so such a table stays one wide row.
+    assert module.field_index(ctx) is None
+    assert 'gamma_spectrum' not in (module.field(ctx) or {})
+
+
+def test_geant4_extract_detector_quantities(tmp_path):
+    """The 8-vector and the narrowed scalar, against the real CSV."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+
+    edep = module.extract(ctx, {'quantity': 'detector_edep_MeV'})
+    assert len(edep) == 8
+    # Detector 5 is the only one that deposited energy in this run; the other
+    # seven zeros are results, not gaps.
+    assert edep[4] == pytest.approx(20107900.0)
+    assert np.count_nonzero(edep) == 1
+
+    gammas = module.extract(ctx, {'quantity': 'detector_gammas'})
+    assert gammas.tolist() == [5., 18., 10., 11., 9., 4., 1., 4.]
+
+    # Narrowed to one detector -> a scalar.
+    assert module.extract(
+        ctx, {'quantity': 'detector_edep_MeV', 'at': {'detector': 5}}
+    ) == pytest.approx(20107900.0)
+    assert module.extract(
+        ctx, {'quantity': 'detector_gammas', 'at': {'detector': 2}}
+    ) == pytest.approx(18.0)
+    # A real zero comes back as a zero, not as NaN.
+    assert module.extract(
+        ctx, {'quantity': 'detector_edep_MeV', 'at': {'detector': 1}}) == 0.0
+
+
+def test_geant4_detector_at_off_grid_raises_naming_the_detectors(tmp_path):
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'quantity': 'detector_gammas',
+                             'at': {'detector': 9}})
+    message = str(excinfo.value)
+    assert 'at: {detector: 9}' in message
+    assert '[1, 2, 3, 4, 5, 6, 7, 8]' in message
+    # And an 'at:' on an axis this module does not have says so.
+    with pytest.raises(ValueError, match="narrows on \\['detector'\\]"):
+        module.extract(ctx, {'quantity': 'detector_gammas',
+                             'at': {'field_level': 2.3e7}})
+
+
+def test_geant4_detector_quantities_are_nan_without_a_csv(tmp_path):
+    """Detectors off, or a run that has not happened: a declared output still
+    produces a cell, as the NaN sentinel every other module uses."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'), detectors='off')
+    whole = module.extract(ctx, {'quantity': 'detector_edep_MeV'})
+    assert np.isnan(whole).all() and len(whole) == 1
+    assert np.isnan(module.extract(
+        ctx, {'quantity': 'detector_gammas', 'at': {'detector': 3}}))
+
+
+def test_geant4_detector_spec_forms_agree(tmp_path):
+    """Mapping, bare string and single-element list all name the same
+    quantity -- the detector quantities carry no 'section:', so there is only
+    one thing a bare name can mean."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    mapped = module.extract(ctx, {'module': 'geant4',
+                                  'quantity': 'detector_gammas'})
+    assert mapped.tolist() == module.extract(ctx, 'detector_gammas').tolist()
+    assert mapped.tolist() == module.extract(ctx, ['detector_gammas']).tolist()
+
+
+def test_geant4_detector_index_axis(tmp_path):
+    """A detector-scored run is tabulated over its detectors."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    label, values = module.field_index(ctx)
+    assert label == 'detector'
+    assert values.tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    # It outranks an upstream Track3P field-level axis: the dose at a detector
+    # is the end product of the chain, the field level one scalar per run.
+    assert module.index_precedence > Track3PModule.index_precedence
+
+
+def test_geant4_dose_only_run_keeps_its_wide_table(tmp_path):
+    """The three shipped examples run the older application, which writes no
+    detector CSV -- so nothing about their tables moves."""
+    wd = str(tmp_path / 'mod')
+    m_input, m_psrc = _stage_geant4(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: m_psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': m_input})
+    module.run(ctx)
+    assert module.field_index(ctx) is None
+    assert sorted(module.field(ctx)) == ['dose', 'edep']
+
+
+def test_geant4_field_carries_the_gamma_spectrum(tmp_path):
+    """The spectrum is ragged per detector, so it rides out through field()
+    rather than becoming a detector-indexed column -- and round-trips through
+    the field artifact the mode layer persists."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    field = module.field(ctx)
+    assert sorted(field) == ['dose', 'edep', 'gamma_spectrum']
+    spectrum = field['gamma_spectrum']
+    assert sorted(spectrum) == ['detector_id', 'energy_MeV', 'weighted_fluence']
+    assert len(spectrum['detector_id']) == 52
+
+    handle = save_field(field, os.path.join(str(tmp_path), 'field_0.npz'))
+    loaded = load_field(handle)
+    # The nested dict goes out as JSON and comes back rehydrated to arrays,
+    # the same route S3P's IndexMap takes.
+    assert np.allclose(loaded['gamma_spectrum']['weighted_fluence'],
+                       spectrum['weighted_fluence'])
+    assert np.allclose(loaded['gamma_spectrum']['detector_id'],
+                       spectrum['detector_id'])
+    assert np.allclose(loaded['dose']['values'], field['dose']['values'])
+
+
+# ---- seeds ---------------------------------------------------------------- #
+
+
+def test_geant4_seed_auto_is_written_and_follows_the_config_hash(tmp_path):
+    """'auto' derives the seed from the evaluation's config hash: distinct
+    between sweep points, reproducible across re-runs of the same point.
+
+    Not the point's position in the sweep -- no point index reaches Workflow by
+    design, and an index is not stable across a re-ordered or partially resumed
+    sweep."""
+    def seed_for(name, config_hash):
+        wd = str(tmp_path / name)
+        input_path, psrc = _stage_polycone(wd)
+        ctx = RunContext(wd, inputs=WorkflowInputs(),
+                         artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                         paths=_paths(), config_hash=config_hash)
+        module = Geant4Module({'geant4_input': input_path,
+                               'geant4_seed': 'auto'})
+        module.run(ctx)
+        return int(module.geant4_obj.get_value('seed'))
+
+    first = seed_for('a', 'sha256:aaaa')
+    again = seed_for('b', 'sha256:aaaa')
+    other = seed_for('c', 'sha256:bbbb')
+
+    assert first == again                  # same configuration -> same seed
+    assert first != other                  # different point    -> different seed
+    # seed = 0 means 'use the wall clock' to the application, so auto never
+    # produces it, and it must fit the int32 the macro takes.
+    for seed in (first, other):
+        assert 0 < seed < 2 ** 31
+
+
+def test_geant4_seed_explicit_integer_is_passed_through(tmp_path):
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path, 'geant4_seed': 20260926})
+    module.run(ctx)
+    assert module.geant4_obj.get_value('seed') == '20260926'
+
+
+def test_geant4_no_seed_key_leaves_the_input_alone(tmp_path):
+    """Default: the input file's own seed (or its absence) is untouched, so
+    nothing about the three shipped examples moves."""
+    module, _ = _polycone_module(str(tmp_path / 'wd'))
+    assert 'seed' not in module.geant4_obj.get_values()
+
+
+def test_geant4_swept_seed_input_overrides_the_module_key(tmp_path):
+    """A swept 'geant4: {seed: ...}' input is the per-point seed mechanism, and
+    it is the more specific statement of the two, so it wins."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(macro={'seed': 4242}),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths(), config_hash='sha256:aaaa')
+    module = Geant4Module({'geant4_input': input_path, 'geant4_seed': 'auto'})
+    module.run(ctx)
+    assert module.geant4_obj.get_value('seed') == '4242'
+
+
+def test_geant4_seed_rejects_a_value_that_is_neither(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        Geant4Module({'geant4_input': 'x.geant4', 'geant4_seed': 'random'})
+    message = str(excinfo.value)
+    assert "'auto'" in message and 'input_parameters' in message
+
+
+def test_geant4_detector_specs_route_without_naming_the_module():
+    """The detector quantities name one table rather than a scoring grid, so
+    they carry no 'section:' and must route on the quantity (or on the
+    'detector' axis their 'at:' narrows)."""
+    for quantity in ('detector_edep_MeV', 'detector_gammas'):
+        assert _infer_output_module(quantity) == 'geant4'
+        assert _infer_output_module([quantity]) == 'geant4'
+        assert _infer_output_module({'quantity': quantity}) == 'geant4'
+        assert _infer_output_module(
+            {'quantity': quantity, 'at': {'detector': 5}}) == 'geant4'
+    # Unchanged neighbours: the grid sections still route by 'section:', and
+    # nothing else claims these shapes.
+    assert _infer_output_module({'section': 'dose', 'quantity': 'total'}) == 'geant4'
+    assert _infer_output_module(['dose', 'total']) == 'geant4'
+    assert _infer_output_module('max_enhancement') == 'track3p'
+    assert _infer_output_module({'quantity': 'S(0,0)'}) == 's3p'
+
+
+def test_geant4_verify_checks_the_detector_csvs(tmp_path):
+    """A detector-scored run whose CSV is gone is not complete -- and the same
+    run with detectors off is, since it was never going to write one."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, paths=_paths())
+    module = Geant4Module({'geant4_input': input_path})
+    module.run(ctx, skip_execution=True)
+    assert module.verify(ctx) is True
+
+    os.remove(os.path.join(wd, 'run7_detector_dose.csv'))
+    module._detector_cache.clear()
+    assert module.verify(ctx) is False
 
 
 # --------------------------------------------------------------------------- #

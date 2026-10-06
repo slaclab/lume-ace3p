@@ -158,6 +158,11 @@ def _infer_output_module(spec):
             return 't3p'
         quantity = spec.get('quantity')
         at = spec.get('at') or {}
+        # The per-detector quantities name one table rather than a scoring grid,
+        # so they carry no 'section:' and route on the quantity (or on the
+        # 'detector' axis their 'at:' narrows).
+        if quantity in Geant4Module.DETECTOR_QUANTITIES or 'detector' in at:
+            return 'geant4'
         if quantity in T3PModule.QUANTITIES or 's' in at:
             return 't3p'
         if quantity in Track3PModule.QUANTITIES or 'field_level' in at:
@@ -166,12 +171,14 @@ def _infer_output_module(spec):
     if isinstance(spec, str):
         if spec in ('count', 'total_weight'):
             return FieldEmissionModule.type
+        if spec in Geant4Module.DETECTOR_QUANTITIES:
+            return 'geant4'
         if spec in Track3PModule.QUANTITIES:
             return 'track3p'
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
-        if head in Geant4Module.SECTIONS:
+        if head in Geant4Module.SECTIONS or head in Geant4Module.DETECTOR_QUANTITIES:
             return 'geant4'
         if head in ('count', 'total_weight'):
             return FieldEmissionModule.type
@@ -570,16 +577,22 @@ class Workflow:
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = (workdir if workdir is not None
                         else self._getworkdir(inputs, sweep_scalars))
+        current_hash = config_hash(self.entries, inputs, self.output_spec)
         # A fresh module list per evaluation: module instances hold run state, so
         # sharing them across points is what would let row i report row j's
         # results once two evaluations overlap.
+        #
+        # The hash is computed before the context rather than after because the
+        # context carries it: it identifies this evaluation's configuration and
+        # input point, which is what 'geant4_seed: auto' needs to derive a seed
+        # that differs between sweep points and reproduces across re-runs.
         ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
                          paths=self.paths, stage_mode=self.stage_mode,
                          modules=self._build_modules(),
-                         capture_output=self.capture_output)
+                         capture_output=self.capture_output,
+                         config_hash=current_hash)
         ctx.ensure_workdir()
 
-        current_hash = config_hash(self.entries, inputs, self.output_spec)
         # Read before the new manifest overwrites it.
         previous = self._resume_state(current_hash) if resume else None
 

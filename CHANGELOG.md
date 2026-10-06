@@ -48,6 +48,24 @@ will not resume. **Not** renamed: the `particles:` input bucket (a namespace for
 `geant4_particle_cmd` default, and the `particles.py` module / `Particles`
 class. Baseline data does not move — same code, same outputs.
 
+**The `geant4` module reads GM-tube detector output and can seed its own runs.**
+Lixin Ge's LCLS-II polycone dose application adds a random `seed`, concentric
+cryostat layers and `detectors = on`: 8 detector volumes whose per-detector
+energy deposit and gamma spectrum land in two CSVs beside the voxel grids. The
+module now exposes `detector_edep_MeV` and `detector_gammas` as outputs, with
+`detector` as an index axis (no `at:` gives the whole vector and a long-format
+table, one row per detector; `at: {detector: n}` narrows to a scalar), and
+carries the ragged gamma spectrum out in the run's field artifact under
+`gamma_spectrum`. New keys `geant4_seed` (`'auto'` derives a distinct,
+reproducible seed per evaluation — a sweep whose points share a seed reproduces
+identical particle histories — or an integer), `geant4_detector_output` and
+`geant4_spectrum_output`. Output filenames are now also derived from the input
+file's `output_prefix` when it names no `output_dose` / `output_edep`, which is
+how that application is driven; before this a prefix-only input resolved to no
+filenames at all and both `extract` and `verify` came up empty. Runs that score
+no detectors — every shipped example — are unaffected: the CSVs are only looked
+for when the input turns detectors on, and such a table stays one wide row.
+
 **Fixed:** the weighting step's default output filename was derived with
 `particle_file.replace('.txt', '_modified.txt')`, so a Track3P dump named
 `ImpactsInfo_<level>` (no `.txt`) got an output name *equal to its input* and

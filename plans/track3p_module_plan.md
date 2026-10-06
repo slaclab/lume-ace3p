@@ -1,7 +1,9 @@
 # Track3P as a Workflow Module — Implementation Plan
 
 **Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done
-2026-10-01, Phase 3 done 2026-10-05; Phase 4 is next** (see the status notes at
+2026-10-01, Phase 3 done 2026-10-05, Phase 4 steps 0–1 done 2026-10-06 (its
+steps 2–3, the example migration, deferred pending an LCLS dump asset — see the
+Phase 4 status note and §6); Phase 5 is next** (see the status notes at
 the end of each finished phase). Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
@@ -243,6 +245,16 @@ raise listing the levels and the two ways to choose (`field_level:` on
 dump is missing raises naming the levels that do have dumps — it never falls
 through to another level. `Track3PSourceModule` is unchanged.
 
+**Which of the two shapes it is follows from the producer** (Phase 4 step 0b):
+the module in `ctx.modules` providing `TRACK3P_PARTICLES` is asked, the way
+`_emitted_note` already asks it. The filesystem cannot answer reliably — `verify`
+runs *before* staging, so a dump file that is not there yet looks like neither —
+and dispatching on it is how an `isfile` variant briefly broke `verify` (job
+39931202) and how a deleted results directory was silently misread as an
+unstaged file. `os.path.isdir` remains the documented fallback for a context
+built from artifacts alone (unit tests, a direct driver), which is what the
+original regression pin asserts.
+
 ### 3.5 Build-time validation
 
 In `_resolve_order` (where `WorkflowValidationError`s already fire for
@@ -300,14 +312,29 @@ new code with β = 120, φ = 4.2 equals the same rows of
 - **Seeds.** Every evaluation in a sweep must get a distinct `seed` or split
   parts reproduce identical histories (Lixin's bug #2). `Geant4Module` gains
   `seed: auto` (evaluation index + base) | integer | input-variable name.
+  **Implemented 2026-10-06 as `geant4_seed`, and `auto` is the *config hash*,
+  not an evaluation index** — no point index reaches `Workflow` by design and an
+  index is not stable across a re-ordered or resumed sweep, while the hash is
+  both distinct and reproducible per point. The third form needed no code: a
+  swept `input_parameters: {geant4: {seed: ...}}` already reaches `set_value`,
+  and wins over the module key.
 - **Detector outputs.** `extract` quantities `detector_edep_MeV` and
   `detector_gammas` from `<prefix>_detector_dose.csv`, `at: {detector: n}`
   narrowing, or the 8-vector without `at:`; `detector` becomes the module's
   index axis when a detector quantity is declared (the `ModeID`/`Frequency`
   rule). `<prefix>_detector_gamma_spectrum.csv` rides on `field()`.
+  **Implemented 2026-10-06.** Two corrections: the axis is reported whenever the
+  run *wrote* a detector CSV, not when a detector quantity was declared — a
+  module's index is a property of its output, and `modes._table_index` already
+  drops an axis no output rides on — and the output filenames had to learn the
+  `output_prefix` derivation first, since the polycone app names no
+  `output_dose` and so resolved to nothing at all.
 - Examples `geant4_dose_single`, `geant4_track3p_beta`, `geant4_beta_surrogate`
   move to the polycone app path and the `nb_wall_profile.dat` geometry key.
   `geant4_app_path` stays a YAML override, so nothing hardcodes Lixin's path in `src/`.
+  **Deferred 2026-10-06** — the app ignores `solid_stl` and its geometry is the
+  cryomodule, so neither the 7cell STLs nor the shared dump transfer; see the
+  Phase 4 status note and §6.
 
 ---
 
@@ -860,6 +887,142 @@ tested, and the step 2 premise (the box, not `N`) is recorded in the plan,
    new `input_lcls.geant4` with `nb_wall_profile.dat` copied to assets.
 3. One S3DF validation per example (`passes` small), baselines refrozen.
 
+**Phase 4 status (2026-10-06): steps 0 and 1 DONE; steps 2 and 3 DEFERRED**
+(David, 2026-10-06, before implementation). One commit. **No baseline moved and
+none was added** — `test_baseline_selfcheck.py` passes unchanged, which is the
+check that says so.
+
+**Why steps 2–3 were deferred, and what has to be decided first.** Reading the
+polycone application's own source against the repo found two facts that make the
+planned migration produce meaningless physics rather than a working example:
+
+- **The app ignores `solid_stl` entirely.** `construction.cc:18` assigns
+  `fSolidSTLs` in the constructor and `Construct()` **never reads it** — the
+  only geometry built is `cavity_stl`, parsed as an R(Z) table into a
+  `G4Polycone`, plus the cryostat cylinders. `CADMesh.hh` is still `#include`d
+  but unused, which is what makes the gap easy to miss. So
+  `7cell_solid_whole.stl` / `7cell_cavity_whole.stl` cannot carry over at all,
+  and the app's geometry *is* the LCLS-II cryomodule: profile Z = −111…10856 mm,
+  8 detectors compiled in at z = 414…10126 mm (`construction.hh:42`).
+- **The shared dump is in the wrong place for that geometry.**
+  `examples/assets/sample_track3p_particles.txt` has primaries at
+  r = 0.010–0.017 m, |z| ≤ 0.125 m, while the profile's `r_inner` is ≥ 0.039 m
+  everywhere — so **100 %** of its primaries would start in vacuum far from the
+  Nb wall, with every detector ≥ 0.4 m away in z. The same
+  "geometry that does not match the dump" objection that stopped Phase 3's
+  `geant4` step, arriving from the other direction.
+
+A real polycone example therefore needs an **LCLS dump asset**. Measured this
+session: a 20 000-row `ImpactOrder 1` excerpt of `data/track3p/c3_16MV` is
+3.9 MB and gives 1 192 / 1 691 / 2 329 primaries at β = 100 / 120 / 140 through
+the repo's own weighting, so the study's own 100–150 range *is* meaningful on
+that dump (unlike on the shared one — the Phase 2 lesson, from the other side).
+Whether to ship such an asset, and at what size, is the decision steps 2–3 are
+waiting on; §6's "which Geant4 app path the examples name" row is updated
+accordingly. The three examples stay on `dose-npass`, where their dump and their
+STLs match, and nothing about them moves.
+
+The module work needed none of it: the detector quantities are driven off **real
+detector CSVs** copied in as fixtures, plus one real run.
+
+Verified on milano (one job at a time):
+
+| Job | What | Result |
+|---|---|---|
+| 40050673 | full suite, steps 0 + 1 | **820 passed / 2 skipped, 6m01s** (was 783 + 2) |
+| 40050948 | polycone run, 20 k-row excerpt, `passes: 10`, whole-vector detector outputs | COMPLETED 12 s — plumbing confirmed, but **every detector value legitimately 0** and no field artifact; see below |
+| 40051263 | polycone run, full `c3_16MV` dump, `passes: 30`, `at:`-narrowed outputs | COMPLETED 7m46s — **every mechanism confirmed on real output** |
+
+The validation ran from a throwaway config in
+`/sdf/scratch/users/d/dbizzoze/ph4_polycone/`, not a committed example, since
+the example migration is deferred. Job 40051263 confirmed, against the real
+binary: all four output filenames resolved off `output_prefix` (the input names
+no `output_dose`); `det1_gammas = 2` and `det3_gammas = 4` matching rows 1 and 3
+of the CSV; `det3_edep = 0.0` as a **real** zero while detectors 1, 5 and 6
+deposited energy; `seed = 1808052552` written by `auto`, and a different value
+(`1426628193`) for the differently-configured job 40050948; and
+`gamma_spectrum` inside `field_0.npz` with 19 ragged rows
+(`[2,3,3,3,3,2,3,0]` per detector) round-tripping through
+`save_field`/`load_field`.
+
+**Job 40050948 was the useful failure.** Sized at 16 910 events it produced a
+header-only spectrum and eight zero detectors — ~1000× too few, since Lixin's
+own 18 M-event run counts only 5–18 gammas per detector — and, because its
+detector outputs were declared without an `at:`, the table went long-format and
+**no field artifact was written at all**. That is pre-existing, documented mode
+behaviour (`modes._persist_field` returns `None` once a table has an index axis;
+an S3P long sweep loses its `PortRef` profiles the same way), not something this
+phase introduced, and changing it would add a `field_artifact` column to every
+frozen long-format baseline. So it is documented instead — in
+`Geant4Module.field`, in `docs/yaml_reference.md`, and pinned by a new test in
+`tests/test_results.py` that asserts an un-indexed field key is dropped rather
+than kept beside the rows. The guidance: narrow the detector outputs with
+`at: {detector: n}` when the spectrum is wanted too.
+
+Deviations from the text above:
+
+- **`seed: auto` derives the seed from the evaluation's config hash, not from
+  "evaluation index + base"** as §3.7 proposed. No point index reaches
+  `Workflow` by design (`point_workdir`'s docstring: sweep ordering belongs to
+  the mode layer), and an index is not stable across a re-ordered or partially
+  resumed sweep, while `config_hash(entries, inputs, output_spec)` — which
+  `evaluate` already computes for the run manifest — is distinct per point *and*
+  reproducible per point. It now rides on `RunContext.config_hash`. Two
+  *identical* points share a seed, which is the right answer for an identical
+  configuration. §3.7's third form, "input-variable name", needed **no code**: a
+  swept `input_parameters: {geant4: {seed: ...}}` already reaches `set_value`
+  through `ctx.inputs.macro`, and an input-space value deliberately wins over
+  the module key.
+- **`_output_files` had a pre-existing gap that had to be fixed first.** It read
+  only `output_dose` / `output_edep`, and the polycone app writes neither — it
+  derives every output name from `output_prefix` (`sim.cc:165-177`,
+  `run.cc:143-160`). A prefix-only input therefore resolved to *no filenames at
+  all*, so `extract` returned NaN and `verify` returned `None`, for the grids as
+  much as for the detectors. The full four-step precedence (override → input-file
+  key → prefix-derived → bare default) is now implemented, and the
+  "before the input file has been read, name nothing" property `verify`
+  documents is preserved explicitly.
+- **The detector CSVs needed their own reader.** They are **comma**-separated
+  with a `#` header, and `parse_column_file` — the header-driven reader every
+  other table in the package goes through — splits on whitespace, so it finds no
+  numeric rows and returns a single key made of the file's last line. A test
+  pins that, so a later "just reuse the column reader" refactor fails loudly.
+  The pair lives in `geant4.py`, not `surrogate_data.py`: `read_dose_file` is the
+  canonical *voxel-grid* parser and these are not voxel grids.
+- **Detector quantities carry no `section:`.** There is one detector table and
+  the quantity names it, so `detector_edep_MeV` / `detector_gammas` route on the
+  quantity (or on the `detector` axis an `at:` narrows) rather than on a section
+  the way the grids do.
+- **`Geant4Module.index_precedence = 2`**, above Track3P's 1: in a
+  `track3p -> field_emission -> geant4` chain the dose at a detector is the end
+  product, while the field level that produced the dump is one scalar per run.
+  Nothing shipped is affected — the `dose-npass` binary supports none of
+  `seed` / `detectors` / `cryostat` (confirmed from its `strings`), so it writes
+  no detector CSV, `field_index` stays `None`, and all three examples keep their
+  wide tables.
+- **A zero detector `edep_MeV` is a result, not a gap**, and the fixture makes
+  that unavoidable: 7 of its 8 detectors deposited nothing while all 8 counted
+  gammas. Pinned, because a reader that dropped zeros or an `extract` that
+  returned NaN for one would look correct on a busier run.
+- **The gamma spectrum is not an extractable column.** The app writes only each
+  detector's non-empty bins, so the rows are ragged and `detector_id` repeats
+  down them; it rides out in `field()` as a nested dict, the route S3P's
+  `IndexMap` already takes through `save_field`.
+- **The step 0a test fired on its first real use.** The new
+  `git ls-files tests/fixtures` assertion failed on the two detector CSVs this
+  phase added, before they were `git add`ed — exactly the Phase 0-to-3 failure
+  mode it was written for, caught in the checkout that created it rather than in
+  a later fresh clone.
+- **Step 0b keeps the `isdir` check as a documented fallback.** Dispatch is on
+  the producer's class when `ctx.modules` names one, but a `RunContext` built
+  from artifacts alone (the unit tests, a direct driver) has no producer to ask,
+  and the plan's named regression pin
+  (`test_particles_resolves_a_dump_path_that_is_not_staged_yet`) is exactly that
+  shape. Both halves are now tested: a `track3p_source` artifact that happens to
+  be a directory is still read as a file, and a `track3p` results directory that
+  has vanished raises naming the path instead of being misread as an unstaged
+  dump.
+
 ### Phase 5 — docs, plans, memory
 
 1. `docs/track3p_reference.md` in the `t3p_reference.md` shape: inputs the
@@ -907,7 +1070,7 @@ Lixin's.
 | 3 | Chain example under dry-run: placeholder artifact (A) or not frozen (B) | **DECIDED 2026-10-01: B** — CI asserts validate/order plus the §3.5 rejections. **Implemented 2026-10-05**; the example also stops at `field_emission`, since no Pillbox Geant4 geometry exists |
 | 3 | Probe `N: 1` Pillbox field emission before or via the example's validation run | **DECIDED 2026-10-01: before** (step 2; < 2 min, and the answer shapes the example). **Done 2026-10-05 — and it mattered**: `N: 1` emitted nothing; the bounding box was the blocker, and β came out at 45, not 100–150 |
 | 3 | Rename the `particles` module | **DECIDED 2026-10-01: `field_emission` / `FieldEmissionModule`**, hard rename (no alias — single user), `particles:` input bucket untouched. **Implemented 2026-10-05** |
-| 4 | Which Geant4 app path the examples name | Lixin's polycone package, via `geant4_app_path` in YAML. Note Phase 3 left `track3p_geant4_chain` without a Geant4 step for want of Pillbox geometry; the polycone app's R(Z) profile may be the answer |
+| 4 | Which Geant4 app path the examples name | **DEFERRED 2026-10-06 — the migration needs an LCLS dump asset first.** The polycone app ignores `solid_stl` (`construction.cc` never reads it) and its geometry is the cryomodule, so the 7cell STLs cannot carry over *and* the shared `sample_track3p_particles.txt` has 100 % of its primaries in vacuum ≥ 0.4 m from any detector. A real example needs an excerpt of Lixin's own `c3_16MV` dump (20 k order-1 rows = 3.9 MB, 1 691 primaries at β = 120). Open question: ship such an asset, at what size? The three examples stay on `dose-npass`, which matches their dump and STLs. Phase 4's module work was validated against real detector CSVs plus one throwaway run instead |
 
 Questions for Lixin (not blocking; the source answers most): semantics of
 `Domain.Mode {Amplitude, Phase, Rz}` in solo mode and of `SuppressionFactor`;
@@ -923,11 +1086,15 @@ whether the group `/sdf/group/rfar/ace3p/bin/track3p` will be refreshed to the
 - Every new or changed example gets one real S3DF run before its baseline is
   frozen; one sbatch job at a time on `milano`/`rfar:regular`, from scratch,
   `source ~/ace3p.sh` **before** `conda activate lume-ace3p-dev`.
-- Baselines that move: `geant4_track3p_beta` (Phase 2), the Geant4 examples
-  (Phase 4). New: `track3p_multipacting` (Phase 1). **Phase 3 moves none** —
-  the output-name fix leaves `.txt` names alone, the rename changes the type key
-  but not the weighting, and `track3p_geant4_chain` goes into `not_frozen.json` (its
-  `particles` step cannot run on a dry-run `track3p` artifact). All others
-  must not move.
+- Baselines that move: `geant4_track3p_beta` (Phase 2). New:
+  `track3p_multipacting` (Phase 1). **Phase 3 moves none** — the output-name fix
+  leaves `.txt` names alone, the rename changes the type key but not the
+  weighting, and `track3p_geant4_chain` goes into `not_frozen.json` (its
+  `particles` step cannot run on a dry-run `track3p` artifact). **Phase 4 moves
+  none either**, which is a change from the line above: its steps 2–3 (the
+  example migration that would have refrozen the Geant4 baselines) are deferred,
+  and steps 0–1 touch only module internals — the detector CSVs are only read
+  when an input turns detectors on, so no shipped example's table or digest
+  changes. All others must not move.
 - Nothing under `tests/fixtures/` is generated by the suite; `SOURCES.md`
   records where each byte came from and how it was truncated.

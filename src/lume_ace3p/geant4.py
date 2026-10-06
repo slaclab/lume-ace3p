@@ -1,8 +1,78 @@
 import os, shutil
 
+import numpy as np
+
 from lume.base import CommandWrapper
 
 from lume_ace3p.logs import run_logged
+
+
+# --------------------------------------------------------------------------- #
+# Detector scoring readers (the 'detectors = on' outputs)
+# --------------------------------------------------------------------------- #
+
+# The columns each detector file declares, in order. Named here rather than read
+# from the header because the header is what they are checked against: a build
+# that renames or reorders a column must fail loudly, not silently relabel an
+# array. (Lixin Ge's app writes them at run.cc:146 and run.cc:162.)
+DETECTOR_DOSE_COLUMNS = ('detector_id', 'z_mm', 'edep_MeV', 'gamma_entries')
+GAMMA_SPECTRUM_COLUMNS = ('detector_id', 'energy_MeV', 'weighted_fluence')
+
+
+def _read_detector_csv(path, columns):
+    """Parse one of the comma-separated, ``#``-headed detector CSVs into
+    ``{column: array}``; ``None`` when the file is absent or holds no data rows.
+
+    These need their own reader rather than
+    :func:`lume_ace3p.ace3p.parse_column_file`: that one is the header-driven
+    reader for ACE3P's *whitespace* tables, and on a comma-separated file it
+    returns a single key made of the last row. The format here is fixed and
+    narrow — one header line, then ``len(columns)`` numeric fields per row — so
+    the column names are supplied by the caller and the header is only
+    validated.
+
+    Rows narrower than ``columns`` are skipped, matching
+    :func:`lume_ace3p.surrogate_data.read_dose_file`'s tolerance of the same
+    family of files."""
+    if not path or not os.path.isfile(path):
+        return None
+    rows = []
+    with open(path) as file:
+        for line in file:
+            text = line.strip()
+            if not text or text.startswith('#'):
+                continue
+            fields = text.replace(',', ' ').split()
+            if len(fields) < len(columns):
+                continue
+            try:
+                rows.append([float(value) for value in fields[:len(columns)]])
+            except ValueError:
+                continue
+    if not rows:
+        return None
+    table = np.asarray(rows, dtype=float).transpose()
+    return {name: table[i] for i, name in enumerate(columns)}
+
+
+def read_detector_dose(path):
+    """Parse ``<prefix>_detector_dose.csv`` into ``{detector_id, z_mm,
+    edep_MeV, gamma_entries}`` (one entry per GM-tube detector), or ``None``
+    when the file is absent.
+
+    A zero ``edep_MeV`` is a result, not a gap: in a short run most detectors
+    legitimately record no energy deposit while still counting gamma entries."""
+    return _read_detector_csv(path, DETECTOR_DOSE_COLUMNS)
+
+
+def read_gamma_spectrum(path):
+    """Parse ``<prefix>_detector_gamma_spectrum.csv`` into ``{detector_id,
+    energy_MeV, weighted_fluence}``, or ``None`` when the file is absent.
+
+    Long/tidy, not a matrix: the application writes only the non-empty bins of
+    its 100 log-spaced bins per detector (``run.cc:168``), so the row count per
+    detector varies and ``detector_id`` repeats down the rows."""
+    return _read_detector_csv(path, GAMMA_SPECTRUM_COLUMNS)
 
 
 class Geant4(CommandWrapper):
