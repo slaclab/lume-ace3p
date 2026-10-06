@@ -810,11 +810,48 @@ Deferred, with reasons:
   took 25m06s, 6m48s, 21m05s and 5m36s. It tracks neither the diff nor the test
   count (the slowest run and the fastest are 27 tests apart), which rules the
   Phase 2/3 code out as the cause and points at the node or at thread
-  oversubscription. Still deferred — a wall-clock concern, not a correctness
-  one, and all four runs were green. Investigation plan in memory
-  (`pytest-suite-slowdown-2026-10-01`), now with four data points.
+  oversubscription. **Resolved 2026-10-06: thread oversubscription.** Pinning
+  BLAS/OpenMP to one thread held sdfmilan265 — the 25:13 node — to 7:25 on the
+  same node, and the fixture now in `tests/conftest.py` takes the suite to
+  5:34. See `plans/pytest_slowdown_experiment_plan.md`.
 
 ### Phase 4 — Geant4 module for the polycone app
+
+**Step 0 — Phase 3 follow-ups (land first, one commit, full suite on milano).**
+Reviewed 2026-10-05 from the Phase 3 defect list. Two of the four Phase 3
+defects need no further code: the output-name collision (step 1) is fixed and
+tested, and the step 2 premise (the box, not `N`) is recorded in the plan,
+`SOURCES.md` and memory. The other two left a gap each:
+
+- **Fixture inventory must check git, not just the filesystem.**
+  `test_fixture_inventory` (`tests/test_track3p_fixtures.py:120`) compares the
+  files on disk with `SOURCES.md`, so a fixture that `.gitignore` excludes
+  passes in the dev checkout and fails only on a fresh clone — which is how the
+  five `track3p.log` fixtures went untracked from Phase 0 to Phase 3. Add one
+  assertion: every file under `tests/fixtures/` appears in `git ls-files
+  tests/fixtures` (one subprocess; `pytest.skip` when `git` is absent or the
+  tree is not a checkout, since an sdist has no index to ask). A `*.log`-style
+  rule then fails in the checkout it was written in.
+- **`_resolve_dump` should dispatch on the producer, not on the filesystem.**
+  `FieldEmissionModule._resolve_dump` (`modules.py:2290`) tells the two
+  `track3p_particles` shapes apart with `os.path.isdir`, which is why the
+  `isfile` version briefly regressed `verify` (job 39931202, 2026-10-05) and
+  why a results directory that has vanished is still misread as an unstaged
+  *file* and makes `verify` return `False` instead of explaining. Resolve the
+  producer the way `_emitted_note` already does — the module in `ctx.modules`
+  whose `provides` holds `TRACK3P_PARTICLES` — and branch on whether it is a
+  `Track3PSourceModule` (file: stage, basename) or a `Track3PModule`
+  (directory: `ImpactsInfo_*` under the job name). Keep the existing
+  "told apart by `isdir`, not `isfile`" test as the regression pin and add one
+  for the missing-directory case raising a `ValueError` that names the path.
+  Docstring and the §3.4 note above change with it.
+- ~~**Also, while in the suite:** pin BLAS/OpenMP threads for the test run
+  (`threadpoolctl.threadpool_limits(1)` in a session autouse fixture, or the
+  three `*_NUM_THREADS=1` exports in the pytest batch script).~~ **Done
+  2026-10-06** — session autouse fixture in `tests/conftest.py`; the slowdown
+  was thread oversubscription. Full suite 5:34 wall / 6:56 CPU with the fixture
+  alone, against 12:14–12:25 CPU for the previously *fast* unpinned runs and
+  1:14:59 for the worst. See `plans/pytest_slowdown_experiment_plan.md`.
 
 1. `seed:` handling (§3.7); `extract` detector quantities; `detector` index
    axis; spectrum on `field()`.

@@ -15,6 +15,9 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "numpyro",
+    # Imported directly by tests/conftest.py to pin BLAS/OpenMP threads; also a
+    # transitive scikit-learn dependency, declared here so it is not implicit.
+    "threadpoolctl>=3.2.0",
 ]
 
 [project.scripts]
