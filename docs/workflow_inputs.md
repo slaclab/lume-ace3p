@@ -1,8 +1,8 @@
 # Setting up workflow input files
 
 A `lume-ace3p` run is a user-composed **`workflow:`**, an ordered list of
-modules (`cubit`, `omega3p`/`s3p`/`t3p`, `acdtool`, `track3p_source`,
-`particles`, `geant4`, …) validated into a runnable DAG by their artifact
+modules (`cubit`, `omega3p`/`s3p`/`t3p`/`track3p`, `acdtool`, `track3p_source`,
+`field_emission`, `geant4`, …) validated into a runnable DAG by their artifact
 dependencies. The chain is *not* a fixed pipeline. You list only the modules you
 want (an Omega3P sweep is `cubit → omega3p → acdtool`; an S3P sweep is
 `cubit → s3p`), and each module carries its own input-file references. This page
@@ -126,6 +126,43 @@ When the solver module's `input:` key names an ACE3P input file and the
 copied to each working directory verbatim, with no parse / rewrite round-trip.
 Parsing happens only when overrides are present, or when no `input:` file is
 provided and the entire input is assembled from the YAML.
+
+### `ace3p:` leaves on a Track3P input
+
+A `.track3p` file takes `ace3p:` overrides like any other, and two of its blocks
+are the usual sweep targets:
+
+```yaml
+input_parameters :
+  ace3p :
+    FieldScales :                   # the index axis -- see below
+      'Maximum' : 2.5e7
+    Emitter :
+      'Beta' : {'min' : 40.0, 'max' : 60.0, 'num' : 5}
+```
+
+Three Track3P-specific cautions:
+
+- **`FieldScales` *is* the result table's index axis.** Sweeping a leaf inside it
+  changes how many rows each evaluation produces, not just their values. That is
+  legal and occasionally what you want, but a sweep over `Minimum`/`Maximum`/
+  `Interval` gives a table whose row count varies per point; narrowing outputs
+  with `at: {field_level: x}` then fails on the points that lack that level.
+- **`Emitter.Beta` is not the β a field-emission study sweeps.** It is Track3P's
+  *own* field-enhancement factor, used while tracking. The β a dark-current study
+  scans is applied afterwards, in the `field_emission` weighting, and sweeping it
+  needs no Track3P re-run at all — see
+  [](track3p_reference.md#running-it-in-pipeline-or-not).
+- **Two blocks are injected by the module, so do not also set them by hand**
+  unless you mean to override the injection: `Domain.FieldDir` (pointed at the
+  upstream solver's results directory) and, under
+  `impacts_format: initials-impacts`, `OutputImpacts` and `OutputImpactsInfo.Type`.
+  An explicit `FieldDir` that names a directory present in the working directory
+  *is* respected.
+
+Track3P inputs also need files no artifact supplies — the CW23 pillbox case reads
+a `copper.dat` secondary-emission-yield table from its working directory. List
+those under the module's `files:` key.
 
 For more on configuring ACE3P input files, see the
 [ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).

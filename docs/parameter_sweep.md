@@ -436,16 +436,16 @@ mode :
 `output_format: 'track3p'` writes the weighted Track3P dump (all filtered
 columns plus `Bin` and `ParticleWeight`); the module default `'geant4'` writes
 the 10-column Geant4 source file. See
-[](yaml_reference.md#particles-module-keys) for the full key list.
+[](yaml_reference.md#field_emission-module-keys) for the full key list.
 
 ## Geant4 dose-calculation workflow
 
 The `geant4` module drives a Geant4 application using a single plain-text input
 file (`key = value` lines, `#` comments) that names its own geometry STL files,
 scoring mesh, thread count, and output files. The particle source comes from an
-upstream module: either a `particles` weighting step (fed by a
-`track3p_source`) or a `particle_source` module naming a prebuilt Geant4-format
-file. The module writes the source filename into the input file (the executable
+upstream module: either a `field_emission` weighting step (fed by a
+`track3p_source` or an in-pipeline `track3p`) or a `particle_source` module
+naming a prebuilt Geant4-format file. The module writes the source filename into the input file (the executable
 derives the event count from the particle file), stages the STL files it names
 into each working directory, and reads the dose and energy-deposit output files
 after the run. STLs named in the input file are located next to it by default.

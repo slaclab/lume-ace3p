@@ -66,6 +66,32 @@ filenames at all and both `extract` and `verify` came up empty. Runs that score
 no detectors — every shipped example — are unaffected: the CSVs are only looked
 for when the input turns detectors on, and such a table stays one wide row.
 
+**New page: [Track3P reference](docs/track3p_reference.md).** Both of the
+solver's uses — multipacting onset and field emission into Geant4 — in one
+place: what a run writes and which of it is read, both 17-column `ImpactsInfo`
+layouts with the container-vs-scalar selector trap, the full extractable-quantity
+table, the two Fowler–Nordheim models and why the default is the plain form, and
+when to run Track3P in the pipeline rather than reweighting a dump you already
+have. It also records the two failure modes that look like bugs and are not: a
+`Type: 7` run that emits nothing is almost always its emitter *bounding box*
+selecting low-field faces (never the `N` threshold), and a β range is a property
+of the dump it was derived on — transplanting the LCLS-II study's 100–150 onto
+another dump saturates the one-electron cut and flatlines a sweep without
+failing anything.
+
+**Fixed:** a cross-document documentation link rendered as an empty link.
+`[](yaml_reference.md#particles-module-keys)` in the parameter-sweep guide
+resolved its href but produced no link text: MyST's cross-document anchor keeps
+the underscore of the heading it targets while docutils' section id hyphenates
+it. Both spellings exist in the built HTML, so the link worked while being
+invisible.
+
+**Fixed:** eight prose references to the old `particles` module name, left
+behind by the rename above in docstrings and in four documentation pages — the
+rename moved every identifier but not the sentences describing them. The
+bare-output-spec routing list also now mentions the `track3p` and per-detector
+quantities, which it never had.
+
 **Fixed:** the weighting step's default output filename was derived with
 `particle_file.replace('.txt', '_modified.txt')`, so a Track3P dump named
 `ImpactsInfo_<level>` (no `.txt`) got an output name *equal to its input* and

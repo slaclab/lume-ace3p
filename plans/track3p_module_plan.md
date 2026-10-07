@@ -1,10 +1,13 @@
 # Track3P as a Workflow Module — Implementation Plan
 
-**Status: IN PROGRESS — Phases 0 and 1 done 2026-09-14, Phase 2 done
-2026-10-01, Phase 3 done 2026-10-05, Phase 4 steps 0–1 done 2026-10-06 (its
-steps 2–3, the example migration, deferred pending an LCLS dump asset — see the
-Phase 4 status note and §6); Phase 5 is next** (see the status notes at
-the end of each finished phase). Written 2026-09-14 on S3DF. Decision taken
+**Status: COMPLETE — Phases 0 and 1 done 2026-09-14, Phase 2 done 2026-10-01,
+Phase 3 done 2026-10-05, Phase 4 done 2026-10-06, Phase 5 done 2026-10-07.**
+Phase 4's steps 2–3 (moving the shipped Geant4 examples to the polycone app)
+were **closed rather than implemented**, by decision 2026-10-07: that app's
+geometry is the LCLS-II cryomodule and fits neither the repo's 7cell STLs nor
+its shared Track3P dump, and a shipped polycone example is a possible future
+extension rather than part of this plan. The module-side capability it would
+need is in place and tested. See the status note at the end of each phase. Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
 `plans/t3p_monitor_plan.md` and `plans/acdtool_rework_plan.md` (both COMPLETE)
@@ -887,14 +890,15 @@ tested, and the step 2 premise (the box, not `N`) is recorded in the plan,
    new `input_lcls.geant4` with `nb_wall_profile.dat` copied to assets.
 3. One S3DF validation per example (`passes` small), baselines refrozen.
 
-**Phase 4 status (2026-10-06): steps 0 and 1 DONE; steps 2 and 3 DEFERRED**
-(David, 2026-10-06, before implementation). One commit. **No baseline moved and
-none was added** — `test_baseline_selfcheck.py` passes unchanged, which is the
-check that says so.
+**Phase 4 status (2026-10-06): steps 0 and 1 DONE; steps 2 and 3 CLOSED, not
+implemented** (deferred by David 2026-10-06 before implementation, then closed
+outright 2026-10-07 — see below). One commit. **No baseline moved and none was
+added** — `test_baseline_selfcheck.py` passes unchanged, which is the check that
+says so.
 
-**Why steps 2–3 were deferred, and what has to be decided first.** Reading the
-polycone application's own source against the repo found two facts that make the
-planned migration produce meaningless physics rather than a working example:
+**Why steps 2–3 are closed.** Reading the polycone application's own source
+against the repo found two facts that make the planned migration produce
+meaningless physics rather than a working example:
 
 - **The app ignores `solid_stl` entirely.** `construction.cc:18` assigns
   `fSolidSTLs` in the constructor and `Construct()` **never reads it** — the
@@ -912,15 +916,24 @@ planned migration produce meaningless physics rather than a working example:
   "geometry that does not match the dump" objection that stopped Phase 3's
   `geant4` step, arriving from the other direction.
 
-A real polycone example therefore needs an **LCLS dump asset**. Measured this
-session: a 20 000-row `ImpactOrder 1` excerpt of `data/track3p/c3_16MV` is
-3.9 MB and gives 1 192 / 1 691 / 2 329 primaries at β = 100 / 120 / 140 through
-the repo's own weighting, so the study's own 100–150 range *is* meaningful on
-that dump (unlike on the shared one — the Phase 2 lesson, from the other side).
-Whether to ship such an asset, and at what size, is the decision steps 2–3 are
-waiting on; §6's "which Geant4 app path the examples name" row is updated
-accordingly. The three examples stay on `dose-npass`, where their dump and their
-STLs match, and nothing about them moves.
+A real polycone example would therefore need an **LCLS dump asset** of its own.
+Measured this session: a 20 000-row `ImpactOrder 1` excerpt of
+`data/track3p/c3_16MV` is 3.9 MB and gives 1 192 / 1 691 / 2 329 primaries at
+β = 100 / 120 / 140 through the repo's own weighting, so the study's own 100–150
+range *is* meaningful on that dump (unlike on the shared one — the Phase 2
+lesson, from the other side).
+
+**Closed 2026-10-07 (David): not wanted, and not an open question.** The
+Track3P-side capability the plan set out to deliver is what the work was for, and
+it is delivered; a shipped polycone example is a *possible future extension*
+rather than something this plan is waiting on. A Geant4 head is worth building
+only for specific research that asks for one — and such a study would come with
+its own cavity and its own dump, which is exactly the asset the example was
+missing. So no asset is shipped, steps 2–3 are closed rather than pending, and
+the three Geant4 examples stay on `dose-npass`, where their dump and their STLs
+match. The module-side capability is in place and tested either way (step 1),
+so a future study can point `geant4_app_path` at the polycone build and declare
+detector outputs without any further work here.
 
 The module work needed none of it: the detector quantities are driven off **real
 detector CSVs** copied in as fixtures, plus one real run.
@@ -1039,6 +1052,54 @@ Deviations from the text above:
    `workflow_graph.py:20-26` design note: the predicted module now exists.
 5. Memory: mark `track3p-on-s3df` as landed; record the FN decision.
 
+**Phase 5 status (2026-10-07): DONE.** One commit. No code behaviour changed —
+every `src/` edit is a docstring or an error message — and no baseline moved.
+
+- **`docs/track3p_reference.md`** written in the `t3p_reference.md` shape, and
+  added to the `index.md` toctree and its "Where to start" list. It carries the
+  output-file table, both dump layouts with the container-vs-scalar trap, the
+  full `extract` quantity table, the two FN models and why the default moved,
+  the in-pipeline-vs-pre-run guidance, and the two traps that cost this plan the
+  most time (the emitter box, and a β range belonging to its dump).
+- **Items 2–5 as written.** `docs/workflow_inputs.md` gained an `ace3p:`
+  leaves-on-a-Track3P-input section (the `FieldScales`-is-the-axis caution, the
+  `Emitter.Beta` vs study-β distinction, and what the module injects);
+  `beta_localization_plan.md` §4 step 2 and §6 updated; the
+  `workflow_graph.py` design note and the `Track3PModule` docstring no longer
+  describe the module as future work; `track3p-on-s3df` rewritten to keep only
+  what the repo cannot record.
+
+Found and fixed along the way, none of it in the plan:
+
+- **The Phase 3 rename left eight stale `particles` references in prose** —
+  three in `workflow_graph.py` (including the artifact-vocabulary design note),
+  two in `modules.py`, and four across `docs/{configuration_by_mode,
+  workflow_inputs,parameter_sweep,yaml_reference}.md`. The rename commit moved
+  every *identifier*; these were the sentences describing them. Also added the
+  `track3p` and detector-quantity routes to the bare-spec list in
+  `yaml_reference.md`, which had never mentioned either.
+- **A broken cross-document doc link, pre-existing.**
+  `[](yaml_reference.md#particles-module-keys)` rendered as an **empty** link in
+  `parameter_sweep.md`: MyST's cross-doc anchor keeps the underscore of the
+  heading it targets (`field_emission-module-keys`) while docutils' section id
+  hyphenates it (`field-emission-module-keys`), so the href resolved but the
+  link *text* came back blank. Both references now use the MyST spelling and
+  render with text. `sphinx -b html -W` is clean apart from one pre-existing
+  autosummary warning, and a scan of the built HTML finds no dangling
+  cross-document anchor anywhere.
+- **A §10 question in `beta_localization_plan.md` answered for free.** That plan
+  flagged "does `InitialNormalField` include the `sin φ` factor?" as something
+  that *silently breaks everything if wrong*. Running its own suggested
+  diagnostic over Lixin's `c3_16MV` library settles it: grouped by emission
+  site, the column follows `E_peak · sin(2πφ + φ₀)` to **5e-7** relative across
+  37 launch phases, so the phase factor **is** already in it and must not be
+  applied again — which is what `particles.py` and the reference converter both
+  already assume. Recorded there, and in the new reference page. The same
+  measurement gave that plan's §8 a calibration point it lacked: Lixin's library
+  used 37 phases on a 0.01-cycle grid over 0.00–0.48 cycles, so the plan's
+  recommended ±75° at 2° is a refinement of a validated grid rather than a
+  guess.
+
 ---
 
 ## 5. Order and dependencies
@@ -1070,7 +1131,7 @@ Lixin's.
 | 3 | Chain example under dry-run: placeholder artifact (A) or not frozen (B) | **DECIDED 2026-10-01: B** — CI asserts validate/order plus the §3.5 rejections. **Implemented 2026-10-05**; the example also stops at `field_emission`, since no Pillbox Geant4 geometry exists |
 | 3 | Probe `N: 1` Pillbox field emission before or via the example's validation run | **DECIDED 2026-10-01: before** (step 2; < 2 min, and the answer shapes the example). **Done 2026-10-05 — and it mattered**: `N: 1` emitted nothing; the bounding box was the blocker, and β came out at 45, not 100–150 |
 | 3 | Rename the `particles` module | **DECIDED 2026-10-01: `field_emission` / `FieldEmissionModule`**, hard rename (no alias — single user), `particles:` input bucket untouched. **Implemented 2026-10-05** |
-| 4 | Which Geant4 app path the examples name | **DEFERRED 2026-10-06 — the migration needs an LCLS dump asset first.** The polycone app ignores `solid_stl` (`construction.cc` never reads it) and its geometry is the cryomodule, so the 7cell STLs cannot carry over *and* the shared `sample_track3p_particles.txt` has 100 % of its primaries in vacuum ≥ 0.4 m from any detector. A real example needs an excerpt of Lixin's own `c3_16MV` dump (20 k order-1 rows = 3.9 MB, 1 691 primaries at β = 120). Open question: ship such an asset, at what size? The three examples stay on `dose-npass`, which matches their dump and STLs. Phase 4's module work was validated against real detector CSVs plus one throwaway run instead |
+| 4 | Which Geant4 app path the examples name | **DECIDED 2026-10-07: none — the examples stay on `dose-npass`, and a polycone example is a possible future extension, not a pending decision.** The app ignores `solid_stl` (`construction.cc` never reads it) and its geometry is the cryomodule, so the 7cell STLs cannot carry over *and* the shared `sample_track3p_particles.txt` has 100 % of its primaries in vacuum ≥ 0.4 m from any detector; a shipped example would need an excerpt of Lixin's own dump as a new asset. David 2026-10-07: the Track3P capability is what this plan was for and it is delivered; a Geant4 head is worth building only for specific research, which would bring its own cavity and dump. The **module-side** capability landed and is tested (Phase 4 step 1, validated against the real polycone binary in job 40051263), so such a study needs no further work here — point `geant4_app_path` at the polycone build and declare detector outputs |
 
 Questions for Lixin (not blocking; the source answers most): semantics of
 `Domain.Mode {Amplitude, Phase, Rz}` in solo mode and of `SuppressionFactor`;
@@ -1092,9 +1153,11 @@ whether the group `/sdf/group/rfar/ace3p/bin/track3p` will be refreshed to the
   weighting, and `track3p_geant4_chain` goes into `not_frozen.json` (its
   `particles` step cannot run on a dry-run `track3p` artifact). **Phase 4 moves
   none either**, which is a change from the line above: its steps 2–3 (the
-  example migration that would have refrozen the Geant4 baselines) are deferred,
-  and steps 0–1 touch only module internals — the detector CSVs are only read
-  when an input turns detectors on, so no shipped example's table or digest
-  changes. All others must not move.
+  example migration that would have refrozen the Geant4 baselines) are closed
+  unimplemented, and steps 0–1 touch only module internals — the detector CSVs
+  are only read when an input turns detectors on, so no shipped example's table
+  or digest changes. **In the end this plan moved exactly one baseline**
+  (`geant4_track3p_beta`, Phase 2) and added one (`track3p_multipacting`,
+  Phase 1). All others did not move.
 - Nothing under `tests/fixtures/` is generated by the suite; `SOURCES.md`
   records where each byte came from and how it was truncated.

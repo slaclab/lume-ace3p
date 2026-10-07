@@ -17,14 +17,15 @@ Design notes
 * **Additive rules.** The only structural rules are "one producer per artifact"
   and "every requirement has a producer". The per-module ``requires``/``provides``
   sets in :mod:`lume_ace3p.modules` carry the rest (solver needs ``mesh``,
-  ``acdtool`` needs ``em_solution``, ``particles`` needs ``track3p_particles``,
-  ``geant4`` needs ``particle_source``). ``t3p`` was added this way — it provides
-  ``td_solution``, distinct from ``em_solution``, so listing ``acdtool`` after a
-  T3P solver is a validation error rather than RF postprocessing pointed at
-  time-domain output. The runnable ``track3p`` solver slotted in the same way,
-  with no rule change: it ``provides {track3p_particles}`` and so is simply an
-  alternative producer for ``particles`` (a workflow lists it *or*
-  ``track3p_source``, never both).
+  ``acdtool`` needs ``em_solution``, ``field_emission`` needs
+  ``track3p_particles``, ``geant4`` needs ``particle_source``). ``t3p`` was added
+  this way — it provides ``td_solution``, distinct from ``em_solution``, so
+  listing ``acdtool`` after a T3P solver is a validation error rather than RF
+  postprocessing pointed at time-domain output. The runnable ``track3p`` solver
+  slotted in the same way, with no rule change: it
+  ``provides {track3p_particles}`` and so is simply a second producer of what
+  ``field_emission`` consumes (a workflow lists it *or* ``track3p_source``,
+  never both).
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
   input point and returns ``(outputs, ctx)`` — the structured output dict plus the
   :class:`~lume_ace3p.modules.RunContext` that produced it. Sweep / Xopt loops
@@ -120,9 +121,11 @@ def _infer_output_module(spec):
       * a mapping (``{quantity: 'S(0,0)', at: {...}}``) or an S-parameter string
         -> ``s3p``,
       * anything naming a Geant4 scoring grid — ``{section: dose, quantity:
-        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
+        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` — or one of
+        its per-detector quantities (``'detector_edep_MeV'``,
+        ``'detector_gammas'``, or a mapping keyed ``at: {detector: ...}``) ->
         ``geant4``,
-      * ``'count'``/``'total_weight'`` -> ``particles``,
+      * ``'count'``/``'total_weight'`` -> ``field_emission``,
       * a Track3P quantity (``'max_enhancement'``, ``'mp_onset_level'``, ...) or
         a mapping keyed ``at: {field_level: ...}`` -> ``track3p``,
       * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
@@ -679,9 +682,9 @@ class Workflow:
         Asked lazily, one module at a time, rather than planned up front: by the
         time this is asked about module *k*, modules 0..*k*-1 have re-recorded
         their artifacts and job names on ``ctx``, which is exactly what
-        ``particles`` needs to name its output file and what an ``acdtool`` step
-        needs to name its jobname. Asked before any of them had run, both would
-        have to answer "cannot tell"."""
+        ``field_emission`` needs to name its output file and what an ``acdtool``
+        step needs to name its jobname. Asked before any of them had run, both
+        would have to answer "cannot tell"."""
         entry = module_entry(previous, module.name)
         if not is_complete(previous, module.name):
             if entry is None:

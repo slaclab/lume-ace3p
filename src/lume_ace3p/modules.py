@@ -278,9 +278,9 @@ class Module:
         a module reading ``ctx`` to decide whether to launch a subprocess is the
         kind of implicit control flow this codebase has otherwise avoided.
 
-        A module with no subprocess to skip (the source modules, ``particles``)
-        accepts the parameter and ignores it, since running again *is* the cheap
-        path and is what re-records its artifact.
+        A module with no subprocess to skip (the source modules,
+        ``field_emission``) accepts the parameter and ignores it, since running
+        again *is* the cheap path and is what re-records its artifact.
         """
         raise NotImplementedError
 
@@ -1317,11 +1317,16 @@ class Track3PModule(_SolverModule):
     ``omega3p_results`` symlink, say).
 
     The 17-column impact dumps are *not* read into memory here: the run records
-    their paths and :meth:`extract` summarises one on demand. What the artifact
-    points at (a dump or the results directory) and the opt-in
-    ``Initials-Impacts`` layout the ``particles`` module needs are Phase 3 of
-    ``plans/track3p_module_plan.md``; this phase sets the artifact to the results
-    directory.
+    their paths and :meth:`extract` summarises one on demand (Lixin Ge's
+    cryomodule dumps are ~137 MB each).
+
+    **The artifact is always the results directory**, never one dump, so its
+    shape does not depend on how many field levels a run produced;
+    :meth:`FieldEmissionModule._resolve_dump` is where a consumer resolves the
+    ``ImpactsInfo_<level>`` out of it, and ``field_level:`` says which one when a
+    scan produced several. ``impacts_format: initials-impacts`` injects the
+    opt-in layout selector that dump needs to carry the two field-emission
+    columns the weighting reads.
     """
 
     type = 'track3p'
@@ -2457,7 +2462,9 @@ class FieldEmissionModule(Module):
             return int(len(self._filtered))
         if spec == 'total_weight':
             return float(self._filtered['ParticleWeight'].sum())
-        raise ValueError("Unknown particles quantity '" + str(spec) + "'.")
+        raise ValueError(
+            f"Unknown {self.type} quantity '{spec}'. Known: 'count' (filtered "
+            "particles) and 'total_weight' (summed ParticleWeight).")
 
 
 # --------------------------------------------------------------------------- #

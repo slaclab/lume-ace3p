@@ -278,8 +278,16 @@ cross-check (§6, Phase 4), not as the primary route.
     eight cavities** — only the longitudinal placement in the Geant4 geometry
     differs. Track3P cost is therefore (number of distinct gradients), not
     (8 × that).
-  - Track3P is run externally and its dump supplied through the
-    `track3p_source` module; there is no in-pipeline tracker.
+  - **`track3p_source` is still the right head here, but no longer the only
+    one** (updated 2026-10-07; `plans/track3p_module_plan.md` is complete). A
+    runnable `track3p` module now exists and can produce the dump in-pipeline,
+    feeding `field_emission` directly. For *this* study the external route
+    remains correct: the 72-cell library is one ~50-node-minute solve per
+    gradient, reused across all eight cavities and across every β, so re-running
+    the tracker per evaluation would pay that cost for nothing. Reach for the
+    in-pipeline head only when the thing being varied changes the **fields** —
+    a geometry sweep or a new gradient — which is the one case where the dump is
+    not reusable.
 
 - **Step 3 — Fowler–Nordheim weighting.**
   - Assign each launch to an origin bin from `Initial_z` using `bin_edges`
@@ -376,8 +384,8 @@ viable; rank 1 means the dominant β and nothing else.
 
 | Need | Existing asset | Change |
 |---|---|---|
-| FN weighting | `particles.py` `Particles` | float weights; 10 (or 11) bins; pinned `bin_edges` |
-| Track3P dump ingest | `track3p_source` module | none |
+| FN weighting | `particles.py` `Particles`, via the `field_emission` module (renamed from `particles` 2026-10-05) | **float weights already landed** (`fn_model: 'fn'`, Track3P plan Phase 2) — remaining: 10 (or 11) bins, pinned `bin_edges` |
+| Track3P dump ingest | `track3p_source` module | none. A runnable `track3p` module also exists now, but the external head is the right one here — see §4 step 2 |
 | Geant4 driver | `geant4` module | **10** monitor scorers (8 per-cavity + 2 cryomodule-end); response-weighted scoring |
 | Training store | `surrogate_data`, `collect_training_data` | reusable for the κ campaign |
 | Identifiability | `DoseSurrogate.identifiability` (`surrogate.py:399`) | same construction, applied to the analytic Jacobian |
@@ -611,6 +619,17 @@ pre-collapsed** — keep every (triangle, phase) pair as its own row, which is w
 `Particles` already does. `Δt` follows from Δφ, not from the window width
 (constraint #7), so widening the span does not change it.
 
+**For calibration, what Lixin Ge's own LCLS-II library used** (measured
+2026-10-07 off `data/track3p/c3_16MV`, while answering the
+`InitialNormalField` question in §10): 37 launches per site on a uniform
+**0.01-cycle (3.6°) grid spanning 0.00–0.48 cycles**, i.e. a 173° span at 3.6°
+resolution, run at β = 120. So that library is *wider* in span than the ±75°
+recommended here and about 1.8× coarser in step. Its span is not centred on the
+crest either — it is a half-cycle sweep from zero-crossing to zero-crossing,
+which is the conservative choice when the crest phase per face is not known in
+advance. Either shape works; the point is that ±75° at 2° is a refinement of an
+existing, validated grid rather than an untested guess.
+
 ---
 
 ## 9. Error budget
@@ -710,13 +729,25 @@ promoted others.
 - **Far-monitor signal is real and transport-dominated**, not a shielding-leak
   artifact — dose appears upstream of the powered cavity (§8).
 
-### Still open, simulation-side (unchanged, resolve before Phase 2)
+### Resolved, simulation-side
 
-- Does `InitialNormalField` include the `sin φ` factor, i.e. is it the field at
-  the emission site *at the emission phase*, or the peak field at that site?
-  Diagnostic: for a fixed face, plot `InitialNormalField` against
-  `InitialPhaseinRFcycle`; flat means the phase factor must be applied manually.
-  This silently breaks everything if wrong.
+- **`InitialNormalField` is the field at the emission phase, not the peak at
+  that site — the `sin φ` factor is already in it. Do not apply it again.**
+  Answered 2026-10-07 by running this section's own diagnostic over Lixin Ge's
+  `data/track3p/c3_16MV/ImpactsInfo_1.6e+07`: group the `ImpactOrder 0` emission
+  rows by `Initial_{x,y,z}` and plot `InitialNormalField` against
+  `InitialPhaseinRFcycle`. It is **not** flat. Each site is launched at 37
+  phases on a 0.01-cycle grid spanning 0.00–0.48, and a least-squares fit of
+  `E_peak · sin(2π φ + φ₀)` reproduces the column to **5e-7** relative
+  (`E_peak` ≈ 1.6e7 V/m at 16 MV/m, `φ₀` ≈ 0.07 rad). A pure `sin(2π φ)` through
+  the origin leaves 7e-2 residual, so the small phase offset is real but the
+  sinusoid is unmistakable. The repo's weighting therefore already consumes the
+  right quantity — `particles.py` applies `J(β · InitialNormalField)` with no
+  phase factor of its own, which is also what Lixin's reference converter does
+  (Track3P plan §3.6), and the two agree to 3e-7 on the shipped particle files.
+
+### Still open, simulation-side (resolve before Phase 2)
+
 - Can Track3P carry a field defined only on the powered-cavity subdomain of a
   72-cell mesh, or must the Omega3P mode be interpolated onto the full mesh?
   Memory/storage feasibility of the latter needs checking, and the all-on

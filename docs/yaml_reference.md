@@ -640,21 +640,21 @@ log ends with `Done!`.
 
 The `track3p_particles` artifact this module records is its **results
 directory**, under run and dry run alike — never a single dump file, however
-many levels the run produced. A `particles` step downstream resolves the dump
-out of it (see [](#particles-module-keys)).
+many levels the run produced. A `field_emission` step downstream resolves the
+dump out of it (see [](#particles-module-keys)).
 
 Two keys serve that chain:
 
 | Key | Default | Meaning |
 |---|---|---|
 | `impacts_format` | `default` | `initials-impacts` injects `OutputImpacts: on` and the container `OutputImpactsInfo: { Type: Initials-Impacts }`, the 17-column layout carrying `InitialNormalField` / `InitialFaceArea`. `default` leaves the input's own layout alone. |
-| `field_level` | — | Which level's `ImpactsInfo_<level>` a downstream `particles` step should reweight, when the scan produced several. |
+| `field_level` | — | Which level's `ImpactsInfo_<level>` a downstream `field_emission` step should reweight, when the scan produced several. |
 
 `impacts_format: initials-impacts` is not optional for a field-emission chain:
 Track3P's default dump is the same width but has no field-emission columns, and
 the weighting step **misreads it silently** rather than rejecting it (it reads
 the uncommented header as a data row). The workflow therefore refuses to build
-when a `particles` step is downstream of a `track3p` step that would write the
+when a `field_emission` step is downstream of a `track3p` step that would write the
 default layout — naming both this key and the two input lines — and the same
 check rejects a `track3p_source` file whose first line is the default header.
 The selector is a *container*; the scalar spelling `OutputImpactsInfo:
@@ -973,7 +973,9 @@ that can satisfy it.
   quantity string, with no `module` key. The shape of the spec identifies the
   module. `dose`/`edep`/`scoring`, and the `detector_*` quantities → `geant4`
   (see [](#geant4-output-specs));
-  `count`/`total_weight` → `particles`; a `monitor:` key or a T3P wakefield
+  `count`/`total_weight` → `field_emission`; a Track3P quantity
+  (`max_enhancement`, `mp_onset_level`, …) or an `at: {field_level: …}` →
+  `track3p`; a `monitor:` key or a T3P wakefield
   quantity (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`; a `.rfpost`
   block name (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool`
   (deprecated; use the mapping form); a bare S-parameter string or any other
@@ -995,8 +997,8 @@ acdtool's is deprecated (it cannot express the whole-axis case).
 **Older configs may use the list form.** `['RoverQ', '0', 'RoQ']` is block, mode,
 column, the nesting of the postprocess result dict. The middle element is an
 index axis, so the mapping form expresses the same scalar and can also ask for
-the whole axis by dropping `at:`. `particles` specs are a single bare quantity
-name and have no positional form.
+the whole axis by dropping `at:`. `field_emission` specs are a single bare
+quantity name and have no positional form.
 :::
 
 (geant4-output-specs)=
