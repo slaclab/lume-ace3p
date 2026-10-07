@@ -15,7 +15,8 @@ generation and acdtool postprocessing. It is built on
 The user submits a batch script to HPC nodes which calls `run_lume_ace3p.py`
 with a YAML configuration. The YAML declares a **`workflow:`**, an ordered list
 of pipeline **modules** (`cubit`, `omega3p`/`s3p`/`t3p`, `acdtool`,
-`track3p_source`, `particles`, `geant4`, and mesh/particle source modules), and
+`track3p`/`track3p_source`, `field_emission`, `geant4`, and mesh/particle source
+modules), and
 a **`mode:`** that says how to drive it (`single`, `parameter_sweep`,
 `scalar_optimize`, `gp_parameter_sweep`, plus the Geant4 surrogate modes
 `collect_training_data`, `train_surrogate`, `invert_optimize` and
@@ -23,7 +24,7 @@ a **`mode:`** that says how to drive it (`single`, `parameter_sweep`,
 runnable DAG by their artifact dependencies and run in order. The scalars named
 in `output_parameters` are written to a tab-delimited results table or handed
 to Xopt for optimization. The modes are workflow-agnostic: an S3P sweep, a
-Geant4 dose optimization, or a full `track3p_source → particles → geant4`
+Geant4 dose optimization, or a full `track3p_source → field_emission → geant4`
 pipeline is driven by the same code.
 
 ### Architecture

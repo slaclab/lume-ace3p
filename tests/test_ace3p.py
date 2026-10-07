@@ -1294,6 +1294,7 @@ def test_omega3p_fixtures_parse_the_same_as_before_the_split():
 from lume_ace3p.ace3p import (            # noqa: E402  (grouped with its tests)
     declared_field_levels, field_levels_from_tree, impacts_summary,
     level_from_filename, merge_levels, parse_track3p_log, read_track3p_results,
+    same_level,
 )
 
 TRACK3P_FIXTURES = os.path.join(HERE, 'fixtures', 'track3p')
@@ -1428,6 +1429,22 @@ def test_level_helpers():
     assert level_from_filename('LostParticles_2.3e+07', 'ImpactsInfo_') is None
     merged = merge_levels([2.3e7, 2.4e7 + 1e-3], [2.3e7], [], [2.5e7, None])
     assert np.allclose(merged, [2.3e7, 2.4e7, 2.5e7])
+
+
+def test_a_six_figure_filename_is_the_declared_level():
+    """Track3P names its dumps with ostream's default six significant figures
+    (``ImpactsInfo_2.34568e+07`` for a declared 2.3456789e7) while the input and
+    the log carry the exact value. A tolerance tight enough to tell those apart
+    split one level into two axis rows and made ``field_level:`` miss a dump
+    that existed; the merge keeps the exact spelling, which came first."""
+    exact = 2.3456789e7
+    from_name = level_from_filename('ImpactsInfo_2.34568e+07', 'ImpactsInfo_')
+    assert from_name != exact
+    assert same_level(from_name, exact)
+    merged = merge_levels([exact], [from_name])
+    assert merged.tolist() == [exact]
+    # ...but neighbouring scan points stay distinct: intervals are percent-scale.
+    assert not same_level(2.3e7, 2.3e7 * (1 + 1e-3))
 
 
 def test_impacts_summary_reads_both_layouts():

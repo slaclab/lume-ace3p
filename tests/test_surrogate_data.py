@@ -142,7 +142,7 @@ def _particles_entry(**overrides):
 
 
 def _staged_beta_workflow(tmp_path, particles_overrides=None):
-    """A dry-run track3p_source -> particles -> geant4 Workflow staged in
+    """A dry-run track3p_source -> field_emission -> geant4 Workflow staged in
     tmp_path: the shared assets (particle dump + STL geometry) come from
     examples/assets/, while the Geant4 input file lives with its example. All
     are symlinked into tmp_path by basename so bare-name entries resolve."""
@@ -318,7 +318,7 @@ class _FakeModule:
 
 
 class _FakeWorkflow:
-    """Minimal Workflow surface the collection loop drives: a particles module
+    """Minimal Workflow surface the collection loop drives: a field_emission module
     with fixed bin_edges, and evaluate/field that emit a synthetic dose grid
     which is a deterministic function of β (so the loader's β↔dose alignment is
     checkable). Records evaluate() calls to prove resume skips re-evaluation.

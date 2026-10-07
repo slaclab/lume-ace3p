@@ -9,6 +9,10 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.6.0] — 2026-10-07
+
 **Track3P runs in the pipeline.** A new `track3p` module (`requires
 em_solution`, `provides track3p_particles`) runs the ACE3P particle tracker
 after `omega3p` or `s3p`, points its `Domain.FieldDir` at the upstream results
@@ -98,6 +102,20 @@ quantities, which it never had.
 the write destroyed the dump — through the symlink to the original under
 `stage_mode: symlink`. The default now appends `_modified` before the extension,
 and an output path that resolves to the input is refused outright.
+
+**Fixed (0.6.0 review):** matching a Track3P field level across its spellings
+used a 1e-9 relative tolerance, but the build names its dumps with ostream's
+default six significant figures (`ImpactsInfo_2.34568e+07` for a declared
+2.3456789e7) while the input and log carry the exact value. A non-round level
+therefore appeared as two `FieldLevel` rows, and `field_level:` reported "no
+ImpactsInfo for it" for a dump that existed. The tolerance is now 1e-5
+(`LEVEL_RTOL`), far below any scan interval, and the exact declared spelling is
+the one kept. Also: the two detector-reader docstrings broke the Sphinx `-W`
+build, the `track3p_geant4_chain` README's "about two minutes" was 16 (the
+2 × 8 hybrid launch; flat 16-rank MPI takes about a minute), the missing-log
+error now points at the upstream solver rather than at `results_dir`, and the
+remaining `particles → geant4` diagrams in READMEs, YAML comments and docstrings
+say `field_emission`.
 
 **Fixed:** the ACE3P input parser misread one-line blocks (`Key: { A: x  B: y }`),
 reading the value to end of line and swallowing the sibling keys and the closing

@@ -65,7 +65,7 @@ the self-check passed against the *un*-regenerated fixtures first, which is what
 establishes that no numbers moved.
 
 **One set has moved numerically, on purpose:** `geant4_track3p_beta`, re-frozen
-2026-10-01 for Phase 2 of `plans/track3p_module_plan.md`. The `particles` module
+2026-10-01 for Phase 2 of `plans/track3p_module_plan.md`. The `field_emission` module
 now defaults to the plain Fowler–Nordheim form of the LCLS-II reference
 converter (`fn_model: 'fn'`) rather than the Wang–Loew form it used before, so
 `particles.data` carries real-valued weights instead of whole electrons, unit

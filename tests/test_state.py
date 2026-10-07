@@ -55,7 +55,7 @@ def _write(path, text=''):
 
 
 def _particles_workflow(root, betas, **params):
-    """A ``track3p_source -> particles`` chain over β, rooted at ``root``.
+    """A ``track3p_source -> field_emission`` chain over β, rooted at ``root``.
 
     Declared with ``particles`` **first** so the DAG has something to reorder: the
     manifest's module order is only worth asserting if the YAML order differs from

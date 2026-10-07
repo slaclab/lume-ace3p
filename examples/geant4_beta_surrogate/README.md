@@ -7,7 +7,7 @@ posterior. The stages are separate YAMLs sharing one store:
 ```
 geant4_beta_surrogate.yaml     geant4_beta_surrogate_train.yaml  geant4_beta_surrogate_invert.yaml
   workflow: track3p_source ->    (no workflow: needed)             (no workflow: needed)
-            particles -> geant4
+            field_emission -> geant4
   mode: collect_training_data    mode: train_surrogate             mode: invert_optimize
                                                                    + geant4_beta_surrogate_invert_bayesian.yaml
                                                                      mode: invert_bayesian
@@ -20,10 +20,10 @@ model, never drive the module chain, and so carry **no `workflow:` block**, only
 scoring-mesh invariants.
 
 **`geant4_beta_surrogate.yaml` (`mode: collect_training_data`)** drives the same
-`track3p_source -> particles -> geant4` chain as
+`track3p_source -> field_emission -> geant4` chain as
 [`../geant4_track3p_beta`](../geant4_track3p_beta), but scatters a DOE (Sobol
 by default, `num_samples: 16`, `seed: 0`) over the 8-D per-bin field-enhancement
-vector `beta = (beta0 … beta7)`. The `particles` module maps one input variable
+vector `beta = (beta0 … beta7)`. The `field_emission` module maps one input variable
 per bin via `beta_inputs: [beta0 … beta7]` rather than broadcasting a scalar with
 `beta_input: beta`. `bin_edges` is **required and fixed** (length `num_bins + 1
 = 9`) so the beta→dose binning is stationary across the campaign. Each sample

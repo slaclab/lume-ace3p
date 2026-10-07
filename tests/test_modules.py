@@ -2062,7 +2062,7 @@ def _track3p_results(workdir, levels=('2.3e+07',), results='track3p_results',
 
 
 def _chain_ctx(workdir, results='track3p_results', field_level=None, **kwargs):
-    """A context shaped like the one a `track3p -> particles` chain builds:
+    """A context shaped like the one a `track3p -> field_emission` chain builds:
     the artifact is the workdir, the job name is the results directory."""
     ctx = RunContext(workdir, artifacts={TRACK3P_PARTICLES: workdir}, **kwargs)
     ctx.job_names[TRACK3P_PARTICLES] = results
@@ -2123,6 +2123,17 @@ def test_particles_uses_the_field_level_the_track3p_module_named(tmp_path):
             == os.path.join('track3p_results', 'ImpactsInfo_2.4e+07'))
     module.run(ctx)
     assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+
+
+def test_particles_field_level_matches_a_six_figure_dump_name(tmp_path):
+    """The dump is named with six significant figures (``2.34568e+07``) while
+    ``field_level:`` carries the exact declared value; the two must match."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.34568e+07',))
+    ctx = _chain_ctx(wd, field_level=2.3456789e7)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.34568e+07'))
 
 
 def test_particles_named_level_without_a_dump_raises_rather_than_falling_through(

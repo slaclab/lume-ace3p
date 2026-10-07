@@ -452,7 +452,7 @@ after the run. STLs named in the input file are located next to it by default.
 When they live elsewhere (e.g. a shared `assets/` directory), list them under
 `geant4_geometry_files` so the module can find and stage them.
 
-The full runnable chain (`track3p_source → particles → geant4`) is shipped as
+The full runnable chain (`track3p_source → field_emission → geant4`) is shipped as
 [`examples/geant4_track3p_beta`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_track3p_beta/geant4_track3p_beta.yaml)
 (a `beta` sweep) and
 [`examples/geant4_dose_single`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_dose_single/geant4_dose_single.yaml)

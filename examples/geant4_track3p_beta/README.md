@@ -4,7 +4,7 @@ A beta *sweep* of the full downstream-dose pipeline on the declarative
 module/mode schema:
 
 ```
-workflow:  track3p_source -> particles -> geant4
+workflow:  track3p_source -> field_emission -> geant4
 mode:      parameter_sweep
 ```
 
@@ -19,7 +19,7 @@ The weighting uses the plain Fowler–Nordheim form of the LCLS-II reference
 converter (`fn_model: fn`, the default): work function 4.2 eV, an emission time
 of one RF period at 1.2999 GHz, impacts below 1 keV dropped, real-valued
 weights, and macroparticles standing for less than one electron left out of
-`particles.data`. With those settings the `particles` module reproduces that
+`particles.data`. With those settings the `field_emission` module reproduces that
 study's shipped particle files.
 
 **Why 40–60 and not the study's own 100–150.** The weight depends on the
@@ -37,7 +37,7 @@ Particle tracking is done externally and the dump is supplied to the
 cryomodule-scale run costs about 50 node-minutes per field level, so studies
 over pre-run dumps start here). Unlike
 `geant4_dose_single`, which uses a fixed per-bin `beta` vector and runs once,
-here the `particles` module's `beta_input: beta` broadcasts the single swept
+here the `field_emission` module's `beta_input: beta` broadcasts the single swept
 scalar to all `num_bins` bins (run 1 → `[35]*8`, run 2 → `[41.25]*8`, …). Unlike
 [`../geant4_beta_surrogate`](../geant4_beta_surrogate), which scatters a DOE over
 an 8-D per-bin `beta` vector, this is a one-axis tensor sweep of a single knob.

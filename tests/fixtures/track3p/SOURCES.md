@@ -84,7 +84,7 @@ Source: `track3p_probe3/w4_type7_model2_fcup/` (input
 Source: `track3p_probe5/d2_wholeb6/` (input `inputs/Pillbox-fieldemission-n1.track3p`,
 results directory `d2_wholeb6`), job 39651022, 2026-10-01. The first Pillbox run
 in this fixture set with **populated** field-emission columns, which is what the
-`track3p -> particles` chain needs.
+`track3p -> field_emission` chain needs.
 
 **`N` was not the blocker; the emitter bounding box was.** The plan predicted
 that `pillbox_fieldemission/`'s zero particles were down to `N: 100` and that

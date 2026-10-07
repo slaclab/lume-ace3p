@@ -74,7 +74,7 @@ def _s3p_workflow(tmp_path, cubit_inputs, workdir_mode='auto'):
 
 
 def _particles_workflow(root, workdir_mode, betas):
-    """A ``track3p_source -> particles`` sweep over β, rooted at ``root``.
+    """A ``track3p_source -> field_emission`` sweep over β, rooted at ``root``.
 
     Chosen over a solver chain wherever a test needs the *table* to carry real
     numbers: the field-emission weighting is pure Python, so it produces genuine
@@ -180,7 +180,7 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
     ``ctx.modules`` safe: a prototype's ``extract`` returns the dry-run NaN
     sentinel rather than raising, so reaching one would be silent.
 
-    The chain is ``track3p_source -> particles`` on purpose. Under dry-run the
+    The chain is ``track3p_source -> field_emission`` on purpose. Under dry-run the
     solver and acdtool modules park no state at all (they set their handle to
     ``None`` and write a marker), so a sweep of those would satisfy this
     vacuously; the ``particles`` step does genuine work with no binary, so its
@@ -209,7 +209,7 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
         for attr in _RUN_STATE_ATTRS:
             assert getattr(module, attr, None) is None, (
                 f'prototype {module.name!r} carries run state in {attr}')
-    # The last evaluation's own particles module does hold it — the state exists,
+    # The last evaluation's own field_emission module does hold it — the state exists,
     # it just lives on the context.
     assert _module_of(wf.last_context.modules, 'field_emission')._filtered is not None
 

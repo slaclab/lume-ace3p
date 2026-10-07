@@ -4,7 +4,7 @@ A single-evaluation run that does **field-emission particle weighting only**, on
 the declarative module/mode schema:
 
 ```
-workflow:  track3p_source -> particles
+workflow:  track3p_source -> field_emission
 mode:      single
 ```
 

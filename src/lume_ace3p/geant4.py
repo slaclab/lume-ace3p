@@ -56,9 +56,10 @@ def _read_detector_csv(path, columns):
 
 
 def read_detector_dose(path):
-    """Parse ``<prefix>_detector_dose.csv`` into ``{detector_id, z_mm,
-    edep_MeV, gamma_entries}`` (one entry per GM-tube detector), or ``None``
-    when the file is absent.
+    """Parse the per-detector dose CSV (``<prefix>_detector_dose.csv``).
+
+    Returns ``{detector_id, z_mm, edep_MeV, gamma_entries}`` with one entry per
+    GM-tube detector, or ``None`` when the file is absent.
 
     A zero ``edep_MeV`` is a result, not a gap: in a short run most detectors
     legitimately record no energy deposit while still counting gamma entries."""
@@ -66,8 +67,10 @@ def read_detector_dose(path):
 
 
 def read_gamma_spectrum(path):
-    """Parse ``<prefix>_detector_gamma_spectrum.csv`` into ``{detector_id,
-    energy_MeV, weighted_fluence}``, or ``None`` when the file is absent.
+    """Parse the gamma-spectrum CSV (``<prefix>_detector_gamma_spectrum.csv``).
+
+    Returns ``{detector_id, energy_MeV, weighted_fluence}``, or ``None`` when
+    the file is absent.
 
     Long/tidy, not a matrix: the application writes only the non-empty bins of
     its 100 log-spaced bins per detector (``run.cc:168``), so the row count per

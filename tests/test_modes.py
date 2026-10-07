@@ -153,7 +153,7 @@ def test_omega3p_ace3p_axis_sweep_matches_baseline(tmp_path):
 
 
 def test_geant4_beta_broadcast_sweep(tmp_path):
-    """track3p_source -> particles -> geant4, dry-run geant4 with real particle
+    """track3p_source -> field_emission -> geant4, dry-run geant4 with real particle
     weighting. 'beta_input' broadcasts the swept beta scalar to all 8 bins, so
     each grid point writes a distinct particles.data. The per-point beta=40 and
     beta=60 outputs must match the frozen digests, proving the mode drives

@@ -1503,11 +1503,28 @@ def level_from_filename(name, prefix):
         return None
 
 
-def merge_levels(*groups, rtol=1e-9):
+# How close two spellings of a field level must be to count as the same level.
+# The output file names carry ostream's default six significant figures
+# (``ImpactsInfo_2.34568e+07`` for a declared 2.3456789e7), the tables five
+# (``2.30000e+07``), and the input an exact ``Minimum + k * Interval`` sum; the
+# six-figure spelling is off by up to 5e-6 relative, so anything tighter than
+# that splits one level into two axis rows -- or, in ``field_level:``, fails to
+# find a dump that exists. Scan intervals are percent-scale, nowhere near this.
+LEVEL_RTOL = 1e-5
+
+
+def same_level(a, b):
+    """Whether two field-level spellings name the same level (:data:`LEVEL_RTOL`).
+    Works elementwise when `a` is an array."""
+    return np.isclose(a, b, rtol=LEVEL_RTOL, atol=0.0)
+
+
+def merge_levels(*groups, rtol=LEVEL_RTOL):
     """One sorted array of distinct field levels from several sources -- file
     names, table columns, the log, the input -- which spell the same level with
     different rounding (``2.3e+07`` in a name, ``2.30000e+07`` in a column, and a
-    ``Minimum + k * Interval`` sum in the input)."""
+    ``Minimum + k * Interval`` sum in the input). The first spelling seen wins,
+    so callers pass the exact (declared) levels first."""
     levels = []
     for group in groups:
         for value in group:
@@ -1582,9 +1599,13 @@ def read_track3p_results(results, declared_levels=()):
     log_path = os.path.join(results, 'track3p.log')
     if not os.path.isfile(log_path):
         raise FileNotFoundError(
-            'no track3p.log in ' + results + ': Track3P writes it on every run, '
-            'so the solver did not run or wrote to another results directory '
-            "(set 'results_dir' on the track3p module to match the job).")
+            'no track3p.log in ' + results + ': Track3P writes it as soon as it '
+            'starts, so the solver aborted before opening its results directory '
+            '-- usually because the fields it was pointed at are missing or '
+            'incomplete (an upstream Omega3P/S3P step that failed), which its '
+            'own message in the module log (track3p.log in the workdir) will '
+            'say -- or it wrote to another results directory (set '
+            "'results_dir' on the track3p module to match the job).")
     with open(log_path) as file:
         log = parse_track3p_log(file.read())
     if not log['Done']:

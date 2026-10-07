@@ -642,7 +642,7 @@ def test_t3p_transwake_chain_evaluate(tmp_path):
 
 
 def test_geant4_chain_evaluate_and_baseline(tmp_path):
-    """track3p_source -> particles -> geant4, dry-run geant4 with real particle
+    """track3p_source -> field_emission -> geant4, dry-run geant4 with real particle
     weighting. The declared workflow produces particles.data whose numeric digest
     matches the frozen beta=40 baseline (the real-compute equivalence check)."""
     staged = _stage('geant4_track3p_beta')
@@ -957,7 +957,7 @@ _CHAIN_PARTICLES = {'module': 'field_emission', 'work_function': 4.2,
 
 
 def _chain_entries(tmp_path, geant4=False, **track3p_keys):
-    """mesh -> omega3p -> track3p -> particles on the Pillbox, the shape
+    """mesh -> omega3p -> track3p -> field_emission on the Pillbox, the shape
     `examples/track3p_geant4_chain/` runs.
 
     `geant4=True` appends the dose step the example stops short of (it needs

@@ -1,7 +1,7 @@
 # Single-shot runnable multi-step chain: external Track3P dump -> field-emission
 # weighting -> Geant4 dose, evaluated once (not swept) with a fixed per-bin beta
 # vector, and pulling scalar dose/edep totals out of the Geant4 output:
-#   workflow:  track3p_source -> particles -> geant4
+#   workflow:  track3p_source -> field_emission -> geant4
 #   mode:      single  (one evaluation, one result row)
 #
 # This is the declarative expression of the full downstream-dose pipeline the

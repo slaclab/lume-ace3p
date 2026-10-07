@@ -25,7 +25,7 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
 | `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
 | `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
-| `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#particles-module-keys). |
+| `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#field-emission-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:`, `geant4_seed:` and related keys. Voxel dose/edep grids, plus per-detector output when the application scores detectors; see [](#geant4-module-keys). |
 
@@ -641,7 +641,7 @@ log ends with `Done!`.
 The `track3p_particles` artifact this module records is its **results
 directory**, under run and dry run alike — never a single dump file, however
 many levels the run produced. A `field_emission` step downstream resolves the
-dump out of it (see [](#particles-module-keys)).
+dump out of it (see [](#field-emission-module-keys)).
 
 Two keys serve that chain:
 
@@ -840,7 +840,7 @@ replacement:
 The list cannot express the whole-axis case (no `at:`).
 :::
 
-(particles-module-keys)=
+(field-emission-module-keys)=
 ### `field_emission` module keys
 
 The `field_emission` module (Fowler–Nordheim weighting of a Track3P dump)
@@ -1139,7 +1139,7 @@ letting the module derive one; a value here wins over the module's
 ## `particle_parameters`
 
 The keys accepted by a `field_emission` module entry (see
-[](#particles-module-keys)).
+[](#field-emission-module-keys)).
 They are set directly on the module's `workflow:` entry, not in a separate
 top-level block.
 
@@ -1237,7 +1237,7 @@ keys below live in the `mode:` block.
 
 ### `collect_training_data`
 
-Drives the full `track3p_source -> particles -> geant4` chain once per
+Drives the full `track3p_source -> field_emission -> geant4` chain once per
 design-of-experiments sample, persisting a `(beta, dose_grid)` pair each time.
 Requires a `workflow:` list.
 

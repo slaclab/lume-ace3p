@@ -136,7 +136,7 @@ def test_generic_neldermead(tmp_path):
 
 
 def test_generic_geant4_objective_dry_run(tmp_path):
-    """A Geant4 chain (track3p_source -> particles -> geant4) is driven as the
+    """A Geant4 chain (track3p_source -> field_emission -> geant4) is driven as the
     scalar_optimize objective in dry-run. The objective (`total_weight` off the
     real Particles pre-step) is a genuine number even with the Geant4 binary
     absent, so this proves evaluate->objective wiring works with zero

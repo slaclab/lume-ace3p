@@ -144,10 +144,18 @@ On SLAC S3DF:
 sbatch run_lume-ace3p_track3p_geant4_chain_s3df.batch
 ```
 
-Both solves take about two minutes. The batch script exports
-`OMP_NUM_THREADS=8` to match the YAML's `cores: 8`: `srun` carries `-n`/`-c`
-but nothing carries the OpenMP environment, and there is no per-module `env:`
-key to keep in sync. Keep the two in step if you change either.
+The validated run (job 39928306) took **16 minutes**: Omega3P finished in
+16 s and the Track3P step took the rest at 2 MPI ranks × 8 OpenMP threads. That
+launch shape is Lixin Ge's cryomodule launcher (2 × 60 on a whole node) scaled
+down, kept here so the example exercises the hybrid path; it is not the fast way
+to run a pillbox. The same Track3P case finished in about a minute on 16 flat
+MPI ranks (`tasks: 16, cores: 4, opts: '--cpu-bind=cores'`, as
+`track3p_multipacting` runs it), so switch to that if the runtime matters.
+
+The batch script exports `OMP_NUM_THREADS=8` to match the YAML's `cores: 8`:
+`srun` carries `-n`/`-c` but nothing carries the OpenMP environment, and there
+is no per-module `env:` key to keep in sync. Keep the two in step if you change
+either, and drop the exports if you move to flat MPI.
 
 ## Not frozen as a baseline
 

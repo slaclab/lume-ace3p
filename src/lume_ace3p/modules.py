@@ -44,7 +44,7 @@ from lume_ace3p.cubit import Cubit
 from lume_ace3p.ace3p import (
     ALWAYS, MONITORS, Omega3P, S3P, T3P, Track3P, declared_field_levels,
     declared_monitors, impacts_summary, input_job_name, level_files,
-    parse_ace3p, results_path,
+    parse_ace3p, results_path, same_level,
 )
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
@@ -1590,7 +1590,7 @@ class Track3PModule(_SolverModule):
 
     def _level_index(self, level):
         levels = self._levels()
-        hits = np.flatnonzero(np.isclose(levels, level, rtol=1e-9, atol=0.0))
+        hits = np.flatnonzero(same_level(levels, level))
         if not len(hits):
             raise ValueError(
                 'at: {field_level: ' + repr(level) + '} is not a level of this '
@@ -1614,7 +1614,7 @@ class Track3PModule(_SolverModule):
             column_values = np.asarray(table[column], dtype=float)
             out = np.full(len(levels), float('nan'))
             for i, level in enumerate(levels):
-                mask = np.isclose(column_values, level, rtol=1e-9, atol=0.0)
+                mask = same_level(column_values, level)
                 if mask.any():
                     out[i] = float(reduce(table, mask))
             return out
@@ -1638,7 +1638,7 @@ class Track3PModule(_SolverModule):
         """:func:`impacts_summary` of the dump for `level`, cached per path;
         ``None`` when the run wrote no file for that level."""
         path = next((p for lv, p in files.items()
-                     if np.isclose(lv, level, rtol=1e-9, atol=0.0)), None)
+                     if same_level(lv, level)), None)
         if path is None:
             return None
         if path not in self._summaries:
@@ -2359,7 +2359,7 @@ class FieldEmissionModule(Module):
         wanted = ctx.field_levels.get(TRACK3P_PARTICLES)
         if wanted is not None:
             match = next((path for level, path in dumps.items()
-                          if np.isclose(level, wanted, rtol=1e-9, atol=0.0)),
+                          if same_level(level, wanted)),
                          None)
             if match is None:
                 raise ValueError(

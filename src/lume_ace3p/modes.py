@@ -582,9 +582,9 @@ def _number(value):
 def _require_fixed_bin_edges(workflow):
     """Validate correctness constraint #1 on the resolved ``particles`` module.
 
-    The β→dose binning is governed by ``bin_edges`` on the *particles* module
-    entry (``particles.py`` reads it there), NOT by any mode-dict key — so this
-    inspects the built workflow's particles module directly and hard-fails if
+    The β→dose binning is governed by ``bin_edges`` on the *field_emission*
+    module entry (``particles.py`` reads it there), NOT by any mode-dict key — so
+    this inspects the built workflow's field_emission module directly and hard-fails if
     ``bin_edges`` is absent or not length ``num_bins + 1``. This is deliberately
     stronger than :func:`_mc_noise_guards` (which only checks a mode-dict key and
     does not plumb into the field_emission module); do not substitute one for the
@@ -719,7 +719,7 @@ def collect_training_data(mode_cfg, workflow):
 
     Samples ``num_samples`` scattered points in the D-dimensional β space via a
     Latin-Hypercube / Sobol DOE (:func:`surrogate_data.sample_beta_doe`), and
-    for each point drives the declarative ``track3p_source → particles →
+    for each point drives the declarative ``track3p_source → field_emission →
     geant4`` chain once through :meth:`Workflow.evaluate` (β passed as an
     override dict, one value per ``beta_inputs`` bin). The full dose/edep voxel
     grid is captured with :meth:`Workflow.field` and persisted per sample with

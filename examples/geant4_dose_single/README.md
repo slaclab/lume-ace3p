@@ -4,7 +4,7 @@ A single-evaluation run of the full downstream-dose pipeline on the declarative
 module/mode schema:
 
 ```
-workflow:  track3p_source -> particles -> geant4
+workflow:  track3p_source -> field_emission -> geant4
 mode:      single
 ```
 

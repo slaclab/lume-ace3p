@@ -1,7 +1,7 @@
 # Track3P field-emission particle weighting on the declarative module/mode
 # schema. The weighting is the 'particles' post-processing module fed by an
 # external Track3P dump; there is no ACE3P solver in this chain:
-#   workflow:  track3p_source -> particles
+#   workflow:  track3p_source -> field_emission
 #   mode:      single  (one evaluation — the weighting is pure Python)
 # 'output_format: track3p' writes the 19-column weighted Track3P dump (vs the
 # 10-column 'geant4' source file the Geant4 chain uses). 'beta' is an explicit

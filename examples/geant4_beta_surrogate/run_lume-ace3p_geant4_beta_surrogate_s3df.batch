@@ -3,7 +3,7 @@
 # LUME-ACE3P Geant4 surrogate training-data COLLECTION -- S3DF (SLAC).
 #
 # mode: collect_training_data -- scatters a 16-point DOE over the 8-D beta
-# vector and runs the track3p_source -> particles -> geant4 chain once per
+# vector and runs the track3p_source -> field_emission -> geant4 chain once per
 # sample, each Geant4 step launched as
 #     srun -n 1 -c <geant4_threads> <geant4-app> <input>
 # with geant4_threads = 120. The 16 samples run sequentially in this single

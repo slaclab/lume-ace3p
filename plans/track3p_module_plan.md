@@ -1086,8 +1086,9 @@ Found and fixed along the way, none of it in the plan:
   heading it targets (`field_emission-module-keys`) while docutils' section id
   hyphenates it (`field-emission-module-keys`), so the href resolved but the
   link *text* came back blank. Both references now use the MyST spelling and
-  render with text. `sphinx -b html -W` is clean apart from one pre-existing
-  autosummary warning, and a scan of the built HTML finds no dangling
+  render with text. `sphinx -b html -W` is clean apart from two
+  autosummary warnings (the first docstring lines of the two Phase 4 detector
+  readers in `geant4.py`; fixed in the 0.6.0 review), and a scan of the built HTML finds no dangling
   cross-document anchor anywhere.
 - **A §10 question in `beta_localization_plan.md` answered for free.** That plan
   flagged "does `InitialNormalField` include the `sin φ` factor?" as something

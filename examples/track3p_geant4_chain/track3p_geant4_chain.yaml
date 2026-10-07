@@ -5,7 +5,7 @@
 # The use-case-B counterpart of examples/geant4_track3p_beta, which supplies a
 # pre-run dump through 'track3p_source'. Here Track3P runs *in* the pipeline:
 # Omega3P solves the CW23 pillbox eigenmodes, Track3P tracks field-emitted
-# electrons off the cavity wall at 23 MV/m, and the particles module reweights
+# electrons off the cavity wall at 23 MV/m, and the field_emission module reweights
 # the resulting dump into a Geant4 source file.
 #
 # WHICH HEAD TO USE. This one costs a full Track3P solve per evaluation --
