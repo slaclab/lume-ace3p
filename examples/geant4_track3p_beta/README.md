@@ -4,7 +4,7 @@ A beta *sweep* of the full downstream-dose pipeline on the declarative
 module/mode schema:
 
 ```
-workflow:  track3p_source -> particles -> geant4
+workflow:  track3p_source -> field_emission -> geant4
 mode:      parameter_sweep
 ```
 
@@ -15,11 +15,30 @@ dose/edep voxel grids. Under `parameter_sweep` it executes one Geant4 run per
 swept `beta` value. The sweep declared under `input_parameters` steps `beta`
 from 40 to 60 in 5 points (40, 45, 50, 55, 60), one workdir per value.
 
-There is **no in-pipeline Track3P/T3P solver**: particle tracking is done
-externally and the dump is supplied to the `track3p_source` module. Unlike
+The weighting uses the plain Fowler–Nordheim form of the LCLS-II reference
+converter (`fn_model: fn`, the default): work function 4.2 eV, an emission time
+of one RF period at 1.2999 GHz, impacts below 1 keV dropped, real-valued
+weights, and macroparticles standing for less than one electron left out of
+`particles.data`. With those settings the `field_emission` module reproduces that
+study's shipped particle files.
+
+**Why 40–60 and not the study's own 100–150.** The weight depends on the
+*enhanced* field `β·E`, and this shared dump is not the study's cavity: its
+`InitialNormalField` averages 3.7e7 V/m, roughly 4× Lixin Ge's cryomodule, so the
+`β·E` the study reaches at β = 120 is reached here near β = 30. Swept over
+100–150, every macroparticle clears the one-electron cut at every point and the
+sweep writes a flat 144 732 rows — nothing varies. Across 40 → 60 the surviving
+count climbs 2055 → 60 736 → 124 428 → 144 732 → 144 732 and the summed weight
+spans six decades, which is the onset this example exists to show. Transplanting a
+β range between dumps does not work; size it against the dump's own fields.
+
+Particle tracking is done externally and the dump is supplied to the
+`track3p_source` module (a `track3p` module can run Track3P in the pipeline, but a
+cryomodule-scale run costs about 50 node-minutes per field level, so studies
+over pre-run dumps start here). Unlike
 `geant4_dose_single`, which uses a fixed per-bin `beta` vector and runs once,
-here the `particles` module's `beta_input: beta` broadcasts the single swept
-scalar to all `num_bins` bins (run 1 → `[40]*8`, run 2 → `[45]*8`, …). Unlike
+here the `field_emission` module's `beta_input: beta` broadcasts the single swept
+scalar to all `num_bins` bins (run 1 → `[35]*8`, run 2 → `[41.25]*8`, …). Unlike
 [`../geant4_beta_surrogate`](../geant4_beta_surrogate), which scatters a DOE over
 an 8-D per-bin `beta` vector, this is a one-axis tensor sweep of a single knob.
 

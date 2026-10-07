@@ -14,6 +14,8 @@ This folder is **not a runnable example**: it has no YAML and nothing to run.
   [`../geant4_track3p_beta`](../geant4_track3p_beta),
   [`../geant4_beta_surrogate`](../geant4_beta_surrogate)), listed under
   `geant4_geometry_files` so the module stages them into the workdir.
+- `Pillbox.ncdf` — the CW23 pillbox cavity mesh (63 091 elements), consumed by
+  [`../track3p_multipacting`](../track3p_multipacting) through its `mesh` module.
 - `sample_track3p_particles.txt` — the external Track3P particle dump fed to the
   `track3p_source` module. Consumed by every `geant4_*` example above and by
   [`../track3p_particle_weight`](../track3p_particle_weight).

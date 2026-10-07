@@ -17,13 +17,15 @@ Design notes
 * **Additive rules.** The only structural rules are "one producer per artifact"
   and "every requirement has a producer". The per-module ``requires``/``provides``
   sets in :mod:`lume_ace3p.modules` carry the rest (solver needs ``mesh``,
-  ``acdtool`` needs ``em_solution``, ``particles`` needs ``track3p_particles``,
-  ``geant4`` needs ``particle_source``). ``t3p`` was added this way — it provides
-  ``td_solution``, distinct from ``em_solution``, so listing ``acdtool`` after a
-  T3P solver is a validation error rather than RF postprocessing pointed at
-  time-domain output. A future runnable Track3P solver that ``provides
-  {track3p_particles}`` slots in the same way, with no rule change: it simply
-  becomes the producer that satisfies ``particles``.
+  ``acdtool`` needs ``em_solution``, ``field_emission`` needs
+  ``track3p_particles``, ``geant4`` needs ``particle_source``). ``t3p`` was added
+  this way — it provides ``td_solution``, distinct from ``em_solution``, so
+  listing ``acdtool`` after a T3P solver is a validation error rather than RF
+  postprocessing pointed at time-domain output. The runnable ``track3p`` solver
+  slotted in the same way, with no rule change: it
+  ``provides {track3p_particles}`` and so is simply a second producer of what
+  ``field_emission`` consumes (a workflow lists it *or* ``track3p_source``,
+  never both).
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
   input point and returns ``(outputs, ctx)`` — the structured output dict plus the
   :class:`~lume_ace3p.modules.RunContext` that produced it. Sweep / Xopt loops
@@ -51,8 +53,10 @@ import os
 import numpy as np
 
 from lume_ace3p.modules import (
-    Geant4Module, RunContext, acdtool_spec, build_module, STAGE_MODES, T3PModule,
+    FieldEmissionModule, Geant4Module, RunContext, TRACK3P_PARTICLES,
+    acdtool_spec, build_module, STAGE_MODES, T3PModule, Track3PModule,
 )
+from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 from lume_ace3p.config import warn_unrecognized
@@ -71,7 +75,7 @@ class WorkflowValidationError(ValueError):
 # Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/t3p/
 # acdtool) vs. the Geant4 binary — used only to auto-enable dry-run when the
 # matching environment is absent, mirroring the legacy per-workflow behavior.
-_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'acdtool'})
+_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'track3p', 'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
 
 # How an evaluation's working directory is named. ``manual`` shares one directory
@@ -117,9 +121,13 @@ def _infer_output_module(spec):
       * a mapping (``{quantity: 'S(0,0)', at: {...}}``) or an S-parameter string
         -> ``s3p``,
       * anything naming a Geant4 scoring grid — ``{section: dose, quantity:
-        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` ->
+        total}`` or the positional ``['dose'|'edep'|'scoring', ...]`` — or one of
+        its per-detector quantities (``'detector_edep_MeV'``,
+        ``'detector_gammas'``, or a mapping keyed ``at: {detector: ...}``) ->
         ``geant4``,
-      * ``'count'``/``'total_weight'`` -> ``particles``,
+      * ``'count'``/``'total_weight'`` -> ``field_emission``,
+      * a Track3P quantity (``'max_enhancement'``, ``'mp_onset_level'``, ...) or
+        a mapping keyed ``at: {field_level: ...}`` -> ``track3p``,
       * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
         key — -> ``t3p``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
@@ -153,21 +161,119 @@ def _infer_output_module(spec):
             return 't3p'
         quantity = spec.get('quantity')
         at = spec.get('at') or {}
+        # The per-detector quantities name one table rather than a scoring grid,
+        # so they carry no 'section:' and route on the quantity (or on the
+        # 'detector' axis their 'at:' narrows).
+        if quantity in Geant4Module.DETECTOR_QUANTITIES or 'detector' in at:
+            return 'geant4'
         if quantity in T3PModule.QUANTITIES or 's' in at:
             return 't3p'
+        if quantity in Track3PModule.QUANTITIES or 'field_level' in at:
+            return 'track3p'
         return 's3p'
     if isinstance(spec, str):
         if spec in ('count', 'total_weight'):
-            return 'particles'
+            return FieldEmissionModule.type
+        if spec in Geant4Module.DETECTOR_QUANTITIES:
+            return 'geant4'
+        if spec in Track3PModule.QUANTITIES:
+            return 'track3p'
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
-        if head in Geant4Module.SECTIONS:
+        if head in Geant4Module.SECTIONS or head in Geant4Module.DETECTOR_QUANTITIES:
             return 'geant4'
         if head in ('count', 'total_weight'):
-            return 'particles'
+            return FieldEmissionModule.type
+        if head in Track3PModule.QUANTITIES:
+            return 'track3p'
         return 't3p' if head in T3PModule.QUANTITIES else 's3p'
     raise WorkflowValidationError(f"cannot route output spec {spec!r}.")
+
+
+# The first line of a dump in the layout the field-emission weighting needs.
+# Checked by name, not by width: both layouts are 17 columns wide, and it is
+# the two trailing field-emission columns that distinguish them.
+_FE_COLUMNS = ('InitialNormalField', 'InitialFaceArea')
+
+
+def _validate_impacts_layout(modules, producer):
+    """Reject a field-emission chain whose Track3P dump is in the wrong layout,
+    at build time rather than after a 45-minute solve.
+
+    ``Particles.load`` reads the ``Initials-Impacts`` layout: 17 columns ending
+    ``InitialNormalField InitialFaceArea``. Handed the *default* layout — same
+    width, but ending ``FaceID volID`` and with no field emission in it at all —
+    it does not fail. It reads the uncommented header as a data row and weights
+    whatever the columns happen to contain, which Phase 0 pinned as silent
+    garbage. Both heads of the chain are checked:
+
+    * ``track3p`` — the input tree, after accounting for what the module itself
+      injects. ``impacts_format: initials-impacts`` is the fix, and the message
+      names it.
+    * ``track3p_source`` — one ``readline()`` of the supplied dump. The
+      higher-value check of the two: every shipped Geant4 example enters this
+      way, and the chain example cannot be frozen, so this is the chain's only
+      CI coverage.
+
+    A source file that does not exist yet is skipped silently. No module input
+    file is opened at build time and ``files:`` paths are checked only at run
+    time, so a missing file is run time's error to report, not this one's."""
+    consumer = next((m for m in modules
+                     if TRACK3P_PARTICLES in m.requires), None)
+    if consumer is None or TRACK3P_PARTICLES not in producer:
+        return
+    head = modules[producer[TRACK3P_PARTICLES]]
+
+    if head.type == 'track3p':
+        if head.impacts_format == 'initials-impacts':
+            return          # the module injects the selector itself
+        try:
+            with open(head.input_file) as file:
+                tree = parse_ace3p(file.read())
+        except (OSError, TypeError, ValueError):
+            return          # unreadable input: run time's error to report
+        container = tree.find('OutputImpactsInfo')
+        declared = container.get_leaf('Type') if container is not None else None
+        if declared and declared.strip().lower() == 'initials-impacts':
+            return
+        raise WorkflowValidationError(
+            f"module '{consumer.name}' reweights a Track3P dump, but "
+            f"'{head.name}' would write the default impact layout, which has "
+            f"no field-emission columns ({', '.join(_FE_COLUMNS)}) and which "
+            f"the weighting silently misreads rather than rejecting. Either "
+            f"set\n    impacts_format: initials-impacts\n"
+            f"on the '{head.name}' module, or add these two lines to "
+            f"{head.input_file}:\n"
+            f"    OutputImpacts: on\n"
+            f"    OutputImpactsInfo: {{ Type: Initials-Impacts }}\n"
+            f"(the selector is a container; the scalar spelling "
+            f"'OutputImpactsInfo: Initials-Impacts' is silently ignored.)")
+
+    if head.type == 'track3p_source':
+        path = head.config.get('file')
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            with open(path) as file:
+                header = file.readline()
+        except OSError:
+            return
+        columns = header.lstrip('#').split()
+        if all(name in columns for name in _FE_COLUMNS):
+            return
+        raise WorkflowValidationError(
+            f"module '{consumer.name}' reweights the Track3P dump "
+            f"'{path}', but that file's first line is not the "
+            f"'Initials-Impacts' header: it has no "
+            f"{' / '.join(_FE_COLUMNS)} column, so there is no field to weight "
+            f"by. Its header is:\n    {header.strip()}\n"
+            f"A dump in the default layout (ending 'FaceID volID') cannot be "
+            f"converted after the fact — the field-emission columns were never "
+            f"written. Re-run Track3P with\n"
+            f"    OutputImpacts: on\n"
+            f"    OutputImpactsInfo: {{ Type: Initials-Impacts }}\n"
+            f"or point 'file:' at a dump that already has them.")
 
 
 def _resolve_order(modules):
@@ -220,6 +326,8 @@ def _resolve_order(modules):
                 "entry in the run manifest, so it must be unique within a "
                 "workflow. Give one of them a different 'name:'.")
         seen[m.name] = m.type
+
+    _validate_impacts_layout(modules, producer)
 
     deps = {i: {producer[k] for k in m.requires} for i, m in enumerate(modules)}
 
@@ -472,16 +580,22 @@ class Workflow:
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = (workdir if workdir is not None
                         else self._getworkdir(inputs, sweep_scalars))
+        current_hash = config_hash(self.entries, inputs, self.output_spec)
         # A fresh module list per evaluation: module instances hold run state, so
         # sharing them across points is what would let row i report row j's
         # results once two evaluations overlap.
+        #
+        # The hash is computed before the context rather than after because the
+        # context carries it: it identifies this evaluation's configuration and
+        # input point, which is what 'geant4_seed: auto' needs to derive a seed
+        # that differs between sweep points and reproduces across re-runs.
         ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
                          paths=self.paths, stage_mode=self.stage_mode,
                          modules=self._build_modules(),
-                         capture_output=self.capture_output)
+                         capture_output=self.capture_output,
+                         config_hash=current_hash)
         ctx.ensure_workdir()
 
-        current_hash = config_hash(self.entries, inputs, self.output_spec)
         # Read before the new manifest overwrites it.
         previous = self._resume_state(current_hash) if resume else None
 
@@ -568,9 +682,9 @@ class Workflow:
         Asked lazily, one module at a time, rather than planned up front: by the
         time this is asked about module *k*, modules 0..*k*-1 have re-recorded
         their artifacts and job names on ``ctx``, which is exactly what
-        ``particles`` needs to name its output file and what an ``acdtool`` step
-        needs to name its jobname. Asked before any of them had run, both would
-        have to answer "cannot tell"."""
+        ``field_emission`` needs to name its output file and what an ``acdtool``
+        step needs to name its jobname. Asked before any of them had run, both
+        would have to answer "cannot tell"."""
         entry = module_entry(previous, module.name)
         if not is_complete(previous, module.name):
             if entry is None:
@@ -725,7 +839,14 @@ class Workflow:
         ctx = self.last_context if ctx is None else ctx
         if ctx is None:
             return None
-        for module in ctx.modules:
+        # DAG order, except that a module may declare its axis takes precedence
+        # over an upstream one (``index_precedence``): a Track3P run is tabulated
+        # over its field levels, not over the Omega3P modes it read its fields
+        # from. Everything else keeps the first-producer rule that pins the
+        # s3p -> acdtool table to S3P's frequency scan.
+        ranked = sorted(ctx.modules,
+                        key=lambda m: -getattr(m, 'index_precedence', 0))
+        for module in ranked:
             idx = module.field_index(ctx)
             if idx is not None:
                 return idx

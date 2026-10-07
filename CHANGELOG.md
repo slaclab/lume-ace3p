@@ -11,6 +11,121 @@ coarser grain than the entries above them.
 
 Nothing yet.
 
+## [0.6.0] — 2026-10-07
+
+**Track3P runs in the pipeline.** A new `track3p` module (`requires
+em_solution`, `provides track3p_particles`) runs the ACE3P particle tracker
+after `omega3p` or `s3p`, points its `Domain.FieldDir` at the upstream results
+directory, and reads Track3P's own postprocess tables and run log. Field level
+is its index axis, so a `single` or `parameter_sweep` table goes one row per
+`FieldScales` level, with `max_enhancement`, `mean_enhancement`,
+`total_impacts`, `resonant_count`, `resonant_particles`, `max_resonant_energy`,
+`impact_count`, `max_impact_energy`, `lost_count`, per-cup `captured_electrons`,
+the log scalars, and a derived `mp_onset_level` objective. New example
+`examples/track3p_multipacting` (the CW23 pillbox scan, validated on S3DF).
+**The Track3P → Geant4 chain runs in the pipeline too.** A `track3p` step can
+now feed the field-emission weighting directly. The `track3p_particles`
+artifact a `track3p` step provides is always its **results directory**, and the
+consumer resolves the `ImpactsInfo_<level>` dump out of it: one is used as-is,
+several need `field_level:` on the `track3p` module, none raises and quotes the
+log's emitted-particle count. The dump is read in place rather than staged (at
+cryomodule scale each is ~137 MB). New key `impacts_format:
+initials-impacts` injects `OutputImpacts: on` and the `OutputImpactsInfo`
+container that selects the 17-column layout the weighting needs; the workflow
+now **refuses to build** when a field-emission step sits downstream of a dump in
+the default layout, which the weighting used to misread silently rather than
+reject — including a `track3p_source` file, checked by sniffing its header. New
+example `examples/track3p_geant4_chain` (validated on S3DF); it stops at the
+weighting step because no Pillbox Geant4 geometry exists. `track3p_source`
+remains the intended head for β studies over pre-run dumps, since one dump
+reweights analytically for any β.
+
+**BREAKING: the `particles` module is now `field_emission`.** Its job is the
+Fowler–Nordheim field-emission weighting of a Track3P dump; `particles` said
+none of that and collided with `particle_source`, `particle_output` and the
+`particles:` input bucket. There is **no alias**: `module: particles` fails at
+build with the "Unknown module type" error, which lists the new key. Rename the
+key in any YAML that uses it. The module's default `name` is its type, so its
+log file becomes `field_emission.log` and a workdir written before this change
+will not resume. **Not** renamed: the `particles:` input bucket (a namespace for
+β variables, not the module), the `particle_source` artifact and module, the
+`geant4_particle_cmd` default, and the `particles.py` module / `Particles`
+class. Baseline data does not move — same code, same outputs.
+
+**The `geant4` module reads GM-tube detector output and can seed its own runs.**
+Lixin Ge's LCLS-II polycone dose application adds a random `seed`, concentric
+cryostat layers and `detectors = on`: 8 detector volumes whose per-detector
+energy deposit and gamma spectrum land in two CSVs beside the voxel grids. The
+module now exposes `detector_edep_MeV` and `detector_gammas` as outputs, with
+`detector` as an index axis (no `at:` gives the whole vector and a long-format
+table, one row per detector; `at: {detector: n}` narrows to a scalar), and
+carries the ragged gamma spectrum out in the run's field artifact under
+`gamma_spectrum`. New keys `geant4_seed` (`'auto'` derives a distinct,
+reproducible seed per evaluation — a sweep whose points share a seed reproduces
+identical particle histories — or an integer), `geant4_detector_output` and
+`geant4_spectrum_output`. Output filenames are now also derived from the input
+file's `output_prefix` when it names no `output_dose` / `output_edep`, which is
+how that application is driven; before this a prefix-only input resolved to no
+filenames at all and both `extract` and `verify` came up empty. Runs that score
+no detectors — every shipped example — are unaffected: the CSVs are only looked
+for when the input turns detectors on, and such a table stays one wide row.
+
+**New page: [Track3P reference](docs/track3p_reference.md).** Both of the
+solver's uses — multipacting onset and field emission into Geant4 — in one
+place: what a run writes and which of it is read, both 17-column `ImpactsInfo`
+layouts with the container-vs-scalar selector trap, the full extractable-quantity
+table, the two Fowler–Nordheim models and why the default is the plain form, and
+when to run Track3P in the pipeline rather than reweighting a dump you already
+have. It also records the two failure modes that look like bugs and are not: a
+`Type: 7` run that emits nothing is almost always its emitter *bounding box*
+selecting low-field faces (never the `N` threshold), and a β range is a property
+of the dump it was derived on — transplanting the LCLS-II study's 100–150 onto
+another dump saturates the one-electron cut and flatlines a sweep without
+failing anything.
+
+**Fixed:** a cross-document documentation link rendered as an empty link.
+`[](yaml_reference.md#particles-module-keys)` in the parameter-sweep guide
+resolved its href but produced no link text: MyST's cross-document anchor keeps
+the underscore of the heading it targets while docutils' section id hyphenates
+it. Both spellings exist in the built HTML, so the link worked while being
+invisible.
+
+**Fixed:** eight prose references to the old `particles` module name, left
+behind by the rename above in docstrings and in four documentation pages — the
+rename moved every identifier but not the sentences describing them. The
+bare-output-spec routing list also now mentions the `track3p` and per-detector
+quantities, which it never had.
+
+**Fixed:** the weighting step's default output filename was derived with
+`particle_file.replace('.txt', '_modified.txt')`, so a Track3P dump named
+`ImpactsInfo_<level>` (no `.txt`) got an output name *equal to its input* and
+the write destroyed the dump — through the symlink to the original under
+`stage_mode: symlink`. The default now appends `_modified` before the extension,
+and an output path that resolves to the input is refused outright.
+
+**Fixed (0.6.0 review):** matching a Track3P field level across its spellings
+used a 1e-9 relative tolerance, but the build names its dumps with ostream's
+default six significant figures (`ImpactsInfo_2.34568e+07` for a declared
+2.3456789e7) while the input and log carry the exact value. A non-round level
+therefore appeared as two `FieldLevel` rows, and `field_level:` reported "no
+ImpactsInfo for it" for a dump that existed. The tolerance is now 1e-5
+(`LEVEL_RTOL`), far below any scan interval, and the exact declared spelling is
+the one kept. Also: the two detector-reader docstrings broke the Sphinx `-W`
+build, the `track3p_geant4_chain` README's "about two minutes" was 16 (the
+2 × 8 hybrid launch; flat 16-rank MPI takes about a minute), the missing-log
+error now points at the upstream solver rather than at `results_dir`, and the
+remaining `particles → geant4` diagrams in READMEs, YAML comments and docstrings
+say `field_emission`.
+
+**Fixed:** the ACE3P input parser misread one-line blocks (`Key: { A: x  B: y }`),
+reading the value to end of line and swallowing the sibling keys and the closing
+brace; Track3P tutorial inputs and generated LCLS-II inputs use that style.
+The `Track3P` wrapper's output file was `track3p.out`, which no build writes; it
+is now `track3p.log` in the results directory. `parse_column_file` keeps the
+column names of a header-only table instead of returning an empty dict. Solver
+modules take a `files:` list of auxiliary inputs (an SEY table) to stage into
+the workdir.
+
 ## [0.5.1] — 2026-09-10
 
 **Every example run for real on SLAC S3DF.** Until now most examples had only

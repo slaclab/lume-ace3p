@@ -4,11 +4,11 @@ Two things are verified for every module:
 
 1. **Isolation dry-run** — each module runs from a hand-built ``RunContext``,
    consuming the artifact keys it ``requires`` and producing the keys it
-   ``provides``. The source modules and the pure-Python ``ParticlesModule`` run
+   ``provides``. The source modules and the pure-Python ``FieldEmissionModule`` run
    for real; the solver/geant4 modules run their dry-run path.
 2. **extract** — for the modules that expose scalars (``S3PModule``,
    ``AcdtoolModule``, ``Geant4Module``), ``extract`` is checked to pull the
-   expected values out of synthetic solver-output fixtures. ``ParticlesModule``
+   expected values out of synthetic solver-output fixtures. ``FieldEmissionModule``
    is checked against a direct ``Particles`` invocation (the wrapper it adapts).
 
 No ACE3P / Geant4 binary is needed: solver objects are constructed pointing at
@@ -28,14 +28,14 @@ from lume_ace3p.results import load_field, save_field
 from lume_ace3p.modules import (
     RunContext, build_module, MODULE_REGISTRY,
     CubitModule, MeshSourceModule, Omega3PModule, S3PModule, T3PModule,
-    AcdtoolModule,
-    Track3PSourceModule, ParticlesModule, ParticleSourceModule, Geant4Module,
+    Track3PModule, AcdtoolModule,
+    Track3PSourceModule, FieldEmissionModule, ParticleSourceModule, Geant4Module,
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
 from lume_ace3p.ace3p import (
-    Omega3P, S3P, S3POutputWarning, T3P, T3POutputWarning, Section,
+    Omega3P, S3P, S3POutputWarning, T3P, T3POutputWarning, Section, parse_ace3p,
 )
 from lume_ace3p.workflow_graph import _infer_output_module
 from lume_ace3p.acdtool import (
@@ -235,8 +235,11 @@ def test_registry_edges_match_plan():
         # than RF postprocessing pointed at time-domain output.
         't3p': ({MESH}, {TD_SOLUTION}),
         'acdtool': ({EM_SOLUTION}, {RF_POST}),
+        # The runnable tracker is an alternative producer of the same artifact
+        # the source module supplies, so a workflow lists one or the other.
+        'track3p': ({EM_SOLUTION}, {TRACK3P_PARTICLES}),
         'track3p_source': (set(), {TRACK3P_PARTICLES}),
-        'particles': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
+        'field_emission': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
         'particle_source': (set(), {PARTICLE_SOURCE}),
         'geant4': ({PARTICLE_SOURCE}, {DOSE_GRID, EDEP_GRID}),
     }
@@ -1132,6 +1135,301 @@ def test_t3p_monitor_key_routes_without_naming_the_module():
 
 
 # --------------------------------------------------------------------------- #
+# Track3P (Track3P Phase 1) -- fake-solver runs off the Phase-0 fixtures
+# --------------------------------------------------------------------------- #
+
+TRACK3P_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'fixtures', 'track3p')
+
+
+def _track3p_module(tmp_path, fixture_dir='pillbox_scan', input_name='Pillbox.track3p',
+                    results_dir=None, job_name='omega3p_results',
+                    producer_type='omega3p', config=None):
+    """A Track3PModule whose solver has already 'run': the fixture results are
+    copied into the workdir under the results-directory name, the upstream
+    solver's job name is recorded, and run(skip_execution=True) re-parses --
+    exactly the resume path. Returns (module, ctx)."""
+    wd = str(tmp_path / 'wd')
+    results = results_dir or 'track3p_results'
+    shutil.copytree(os.path.join(TRACK3P_FIXTURES, fixture_dir),
+                    os.path.join(wd, results))
+    input_path = str(tmp_path / input_name)
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'inputs', input_name), input_path)
+    producer = build_module(producer_type, {'input': 'unused.' + producer_type})
+    cfg = {'input': input_path}
+    if results_dir:
+        cfg['results_dir'] = results_dir
+    cfg.update(config or {})
+    module = Track3PModule(cfg)
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, paths=_paths(),
+                     modules=[producer, module])
+    ctx.job_names[EM_SOLUTION] = job_name
+    return module, ctx
+
+
+def test_track3p_module_requires_em_solution(tmp_path):
+    ctx = RunContext(str(tmp_path / 'wd'), dry_run=True)
+    with pytest.raises(ValueError, match='em_solution'):
+        Track3PModule({'input': 'in.track3p'}).run(ctx)
+
+
+def test_track3p_module_does_not_require_a_mesh(tmp_path):
+    """Track3P reads its mesh out of the upstream results directory."""
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    Track3PModule({'input': 'in.track3p'}).run(ctx)
+    assert TRACK3P_PARTICLES in ctx.artifacts
+
+
+def test_track3p_resume_reparses_the_scan(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    module.run(ctx, skip_execution=True)
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'track3p_results'
+    assert TRACK3P_PARTICLES in ctx.reparse
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel'
+    assert np.allclose(levels, [2.3e7, 2.4e7, 2.5e7])
+    assert module.verify(ctx) is True
+
+    ec = module.extract(ctx, 'max_enhancement')
+    assert np.allclose(ec, [0.552538, 0.686169, 0.700063], atol=1e-6)
+    assert np.allclose(module.extract(ctx, {'quantity': 'total_impacts'}),
+                       [2, 11, 10])
+    assert np.allclose(module.extract(ctx, ['resonant_count']), [1, 3, 3])
+    # 40 rows per level in the fixture, two per particle ID (each resonant
+    # particle is listed at two positions), so 20 distinct particles per level.
+    assert module.extract(ctx, 'resonant_particles').tolist() == [20, 20, 20]
+    assert module.extract(ctx, 'max_resonant_energy')[0] == pytest.approx(
+        np.max(module.field(ctx)['ResonantParticles']['Energy'][:40]))
+    # Only the 2.3e7 dump exists: the other two levels are NaN, not an error.
+    count = module.extract(ctx, 'impact_count')
+    assert count[0] == 100 and np.isnan(count[1:]).all()
+    lost = module.extract(ctx, 'lost_count')
+    assert lost[0] == 50 and np.isnan(lost[1:]).all()
+    energy = module.extract(ctx, {'quantity': 'max_impact_energy',
+                                  'at': {'field_level': 2.3e7}})
+    assert energy == 631818.0
+    # Scalars.
+    assert module.extract(ctx, 'emitting_faces') == 14
+    assert np.isnan(module.extract(ctx, 'total_emitted'))     # secondary run
+    assert np.isnan(module.extract(ctx, 'survived'))
+    # No level reaches enhancement 1 -> no onset; a lower threshold finds one.
+    assert np.isnan(module.extract(ctx, 'mp_onset_level'))
+    assert module.extract(ctx, {'quantity': 'mp_onset_level',
+                                'at': {'threshold': 0.6}}) == 2.4e7
+    assert module.extract(ctx, {'quantity': 'mp_onset_level',
+                                'at': {'threshold': 0.5}}) == 2.3e7
+
+
+def test_track3p_at_field_level_off_grid_names_the_grid(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    module.run(ctx, skip_execution=True)
+    with pytest.raises(ValueError, match='23000000.0, 24000000.0, 25000000.0'):
+        module.extract(ctx, {'quantity': 'max_enhancement',
+                             'at': {'field_level': 2.35e7}})
+    with pytest.raises(ValueError, match="narrows on"):
+        module.extract(ctx, {'quantity': 'max_enhancement', 'at': {'mode': 0}})
+    with pytest.raises(ValueError, match='Unknown track3p quantity'):
+        module.extract(ctx, 'loss_factor')
+
+
+def test_track3p_field_emission_run(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='pillbox_fieldemission',
+        input_name='Pillbox-w4_type7_model2_fcup.track3p')
+    module.run(ctx, skip_execution=True)
+    assert module.extract(ctx, 'total_emitted') == 0
+    for boundary in (1, 2, 6):
+        assert module.extract(ctx, {'quantity': 'captured_electrons',
+                                    'at': {'boundary': boundary}}) == 0.0
+    with pytest.raises(ValueError, match=r'at: \{boundary'):
+        module.extract(ctx, 'captured_electrons')
+    with pytest.raises(ValueError, match=r'faradaycup_3; it wrote \[1, 2, 6\]'):
+        module.extract(ctx, {'quantity': 'captured_electrons',
+                             'at': {'boundary': 3}})
+    # Header-only tables: every per-level quantity is NaN, nothing raises.
+    assert np.isnan(module.extract(ctx, 'max_enhancement')).all()
+    assert module.extract(ctx, 'impact_count').tolist() == [0]
+
+
+def test_track3p_missing_table_names_the_token(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='lcls_c3_16MV',
+        input_name='lcls_c3_16MV.track3p')
+    module.run(ctx, skip_execution=True)
+    assert module.extract(ctx, 'survived') == 11
+    assert module.extract(ctx, 'total_emitted') == 350990
+    with pytest.raises(ValueError, match='Postprocess.EnhancementCounter.Token'):
+        module.extract(ctx, 'max_enhancement')
+    with pytest.raises(ValueError, match='Postprocess.ResonantParticles.Token'):
+        module.extract(ctx, 'resonant_particles')
+    # The 1 020-row excerpt: 1 000 impacts.
+    assert module.extract(ctx, 'impact_count').tolist() == [1000]
+
+
+def test_track3p_results_dir_config(tmp_path):
+    module, ctx = _track3p_module(
+        tmp_path, fixture_dir='pillbox_initials_impacts',
+        input_name='Pillbox-b1_initials_impacts.track3p',
+        results_dir='b1_initials_impacts')
+    assert module.verify(ctx) is True
+    module.run(ctx, skip_execution=True)
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'b1_initials_impacts'
+    assert module.extract(ctx, 'impact_count').tolist() == [136]
+
+
+def test_track3p_verify_wants_done(tmp_path):
+    module, ctx = _track3p_module(tmp_path)
+    log = os.path.join(ctx.workdir, 'track3p_results', 'track3p.log')
+    with open(log) as f:
+        text = f.read()
+    _write(log, text.replace('Done!\n', ''))
+    assert module.verify(ctx) is False
+    os.remove(log)
+    assert module.verify(ctx) is False
+    assert Track3PModule({'input': 'x'}).verify(
+        RunContext(ctx.workdir, dry_run=True)) is None
+
+
+def test_track3p_injects_field_dir_from_the_producer(tmp_path):
+    """The input's './omega3p_results' does not exist in the workdir, so
+    FieldDir is pointed at the job name the upstream solver recorded."""
+    module, ctx = _track3p_module(tmp_path, job_name='omega3p_run7')
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './omega3p_run7'
+    # The rest of the input is untouched by the injection.
+    assert len(tree.children('Material')) == 3
+    assert tree.find('FieldScales').get_leaf('Interval') == '1.0e+6'
+
+
+def test_track3p_respects_an_existing_field_dir(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='omega3p_run7')
+    os.makedirs(os.path.join(ctx.workdir, 'omega3p_results'))
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './omega3p_results'
+
+
+def test_track3p_adds_field_dir_when_the_input_has_none(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='s3p_results',
+                                  producer_type='s3p')
+    with open(module.input_file) as f:
+        text = f.read()
+    _write(module.input_file, text.replace('  FieldDir: ./omega3p_results\n', ''))
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.find('Domain').get_leaf('FieldDir') == './s3p_results'
+
+
+def test_track3p_injects_the_initials_impacts_selector(tmp_path):
+    """`impacts_format: initials-impacts` adds both lines the 17-column
+    field-emission layout needs -- the dump is only written at all with
+    `OutputImpacts: on`, and the container is what selects the layout."""
+    module, ctx = _track3p_module(
+        tmp_path, config={'impacts_format': 'initials-impacts'})
+    module.run(ctx, skip_execution=True)
+    tree = parse_ace3p(module._solver.input_data)
+    assert tree.get_leaf('OutputImpacts') == 'on'
+    assert tree.find('OutputImpactsInfo').get_leaf('Type') == 'Initials-Impacts'
+
+    # Default: the input's own layout is left exactly as it was.
+    plain, plain_ctx = _track3p_module(tmp_path / 'b')
+    plain.run(plain_ctx, skip_execution=True)
+    plain_tree = parse_ace3p(plain._solver.input_data)
+    assert plain_tree.find('OutputImpactsInfo') is None
+
+
+def test_track3p_rejects_an_unknown_impacts_format():
+    with pytest.raises(ValueError, match='impacts_format'):
+        Track3PModule({'input': 'x.track3p', 'impacts_format': 'geant4'})
+
+
+def test_track3p_dry_run_records_the_injection(tmp_path):
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    Track3PModule({'input': 'in.track3p',
+                   'impacts_format': 'initials-impacts'}).run(ctx)
+    marker = open(os.path.join(wd, 'DRY_RUN.txt')).read()
+    assert 'OutputImpactsInfo' in marker and 'Initials-Impacts' in marker
+
+
+def test_track3p_records_the_requested_field_level(tmp_path):
+    """`field_level:` travels beside the job name, not in the artifact: the
+    artifact is the results directory under run and dry run alike (plan 3.4)."""
+    module, ctx = _track3p_module(tmp_path, config={'field_level': 2.4e7})
+    module.run(ctx, skip_execution=True)
+    assert ctx.artifacts[TRACK3P_PARTICLES] == ctx.workdir
+    assert ctx.field_levels[TRACK3P_PARTICLES] == 2.4e7
+    # Absent by default -- nothing to disambiguate.
+    plain, plain_ctx = _track3p_module(tmp_path / 'b')
+    plain.run(plain_ctx, skip_execution=True)
+    assert TRACK3P_PARTICLES not in plain_ctx.field_levels
+
+
+def test_track3p_warns_on_a_multi_point_s3p_scan(tmp_path):
+    module, ctx = _track3p_module(tmp_path, job_name='s3p_results',
+                                  producer_type='s3p')
+    s3p_input = os.path.join(str(tmp_path), 'unused.s3p')
+    _write(s3p_input, 'FrequencyScan: { Start: 9.5e9  End: 12.5e9  Interval: 0.25e9 }\n')
+    ctx.modules[0].input_file = s3p_input
+    with pytest.warns(UserWarning, match='13 frequencies'):
+        module.run(ctx, skip_execution=True)
+    # A single-frequency scan (the CW23 shape) is silent.
+    _write(s3p_input, 'FrequencyScan: { Start: 2.856e9  End: 2.856e9  Interval: 0.1e9 }\n')
+    module2, ctx2 = _track3p_module(tmp_path / 'b', job_name='s3p_results',
+                                    producer_type='s3p')
+    ctx2.modules[0].input_file = s3p_input
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        module2.run(ctx2, skip_execution=True)
+
+
+def test_track3p_dry_run_axis_comes_from_the_input(tmp_path):
+    wd = str(tmp_path / 'wd')
+    input_path = str(tmp_path / 'Pillbox.track3p')
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'inputs', 'Pillbox.track3p'),
+                input_path)
+    module = Track3PModule({'input': input_path})
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True,
+                     modules=[build_module('omega3p', {'input': 'x'}), module])
+    ctx.job_names[EM_SOLUTION] = 'omega3p_results'
+    module.run(ctx)
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel' and np.allclose(levels, [2.3e7, 2.4e7, 2.5e7])
+    value = module.extract(ctx, 'max_enhancement')
+    assert value.shape == (3,) and np.isnan(value).all()
+    assert np.isnan(module.extract(ctx, 'total_emitted')).all()
+    assert module.field(ctx) is None
+    assert module.verify(ctx) is None
+    assert ctx.job_names[TRACK3P_PARTICLES] == 'track3p_results'
+    marker = open(os.path.join(wd, 'DRY_RUN.txt')).read()
+    assert 'Track3P step skipped' in marker
+    assert 'Track3P FieldDir: ./omega3p_results' in marker
+
+
+def test_track3p_dry_run_axis_falls_back_to_a_sentinel(tmp_path):
+    wd = str(tmp_path / 'wd')
+    module = Track3PModule({'input': 'does_not_exist.track3p'})
+    ctx = RunContext(wd, artifacts={EM_SOLUTION: wd}, dry_run=True)
+    module.run(ctx)
+    label, levels = module.field_index(ctx)
+    assert label == 'FieldLevel' and levels.tolist() == [0.0]
+
+
+def test_track3p_specs_route_without_naming_the_module():
+    assert _infer_output_module('max_enhancement') == 'track3p'
+    assert _infer_output_module(['mp_onset_level']) == 'track3p'
+    assert _infer_output_module({'quantity': 'total_impacts'}) == 'track3p'
+    assert _infer_output_module({'quantity': 'impact_count',
+                                 'at': {'field_level': 2.3e7}}) == 'track3p'
+    # Unchanged neighbours.
+    assert _infer_output_module('loss_factor') == 't3p'
+    assert _infer_output_module({'quantity': 'S(0,0)'}) == 's3p'
+    assert _infer_output_module('count') == 'field_emission'
+
+
+# --------------------------------------------------------------------------- #
 # Acdtool
 # --------------------------------------------------------------------------- #
 
@@ -1664,9 +1962,9 @@ def test_particles_module_runs_and_extracts(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
     params = {'impact_order': 1, 'impact_face_id': 6, 'work_function': 4.5,
-              'dt': 1.0e-10, 'num_bins': 8, 'beta': [50, 55, 60, 65, 65, 60, 55, 50],
+              'frequency': 1.0e10, 'num_bins': 8, 'beta': [50, 55, 60, 65, 65, 60, 55, 50],
               'output': 'particles.data'}
-    module = ParticlesModule(params)
+    module = FieldEmissionModule(params)
     module.run(ctx)
 
     assert PARTICLE_SOURCE in ctx.artifacts
@@ -1682,7 +1980,7 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
     dump = tmp_path / 'dump.txt'
     _make_track3p_dump(str(dump))
     params = {'impact_order': 1, 'impact_face_id': 6, 'work_function': 4.5,
-              'dt': 1.0e-10, 'num_bins': 8,
+              'frequency': 1.0e10, 'num_bins': 8,
               'beta': [50, 55, 60, 65, 65, 60, 55, 50], 'output_format': 'geant4'}
 
     # Ground-truth: direct wrapper.
@@ -1697,7 +1995,7 @@ def test_particles_module_matches_direct_wrapper(tmp_path):
     # Module path.
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
-    ParticlesModule(dict(params, output='particles.data')).run(ctx)
+    FieldEmissionModule(dict(params, output='particles.data')).run(ctx)
     mod_arr = np.loadtxt(ctx.artifacts[PARTICLE_SOURCE])
 
     assert np.allclose(ref_arr, mod_arr)
@@ -1711,8 +2009,8 @@ def test_particles_module_beta_input_broadcast(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, inputs=WorkflowInputs(particles={'beta': 50.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
-                              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
+                              'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
     assert resolved['beta'] == [50.0] * 8
@@ -1725,8 +2023,8 @@ def test_particles_module_beta_falls_back_to_cubit(tmp_path):
     wd = str(tmp_path / 'wd')
     ctx = RunContext(wd, inputs=WorkflowInputs(cubit={'beta': 42.0}),
                      artifacts={TRACK3P_PARTICLES: str(dump)})
-    module = ParticlesModule({'impact_order': 1, 'impact_face_id': 6,
-                              'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
+                              'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
                               'beta_input': 'beta', 'output': 'particles.data'})
     resolved = module._resolve_beta(ctx.inputs)
     assert resolved['beta'] == [42.0] * 8
@@ -1735,8 +2033,246 @@ def test_particles_module_beta_falls_back_to_cubit(tmp_path):
 def test_particles_module_requires_track3p(tmp_path):
     ctx = RunContext(str(tmp_path / 'wd'))
     with pytest.raises(ValueError):
-        ParticlesModule({'num_bins': 1, 'beta': [1.0], 'work_function': 4.5,
-                         'dt': 1e-10}).run(ctx)
+        FieldEmissionModule({'num_bins': 1, 'beta': [1.0], 'work_function': 4.5,
+                         'frequency': 1e10}).run(ctx)
+
+
+# --------------------------------------------------------------------------- #
+# Resolving the two shapes of the track3p_particles artifact (Phase 3 step 3)
+# --------------------------------------------------------------------------- #
+
+PARTICLES_PARAMS = {'impact_order': 1, 'impact_face_id': 6,
+                    'work_function': 4.5, 'frequency': 1.0e10,
+                    'num_bins': 1, 'beta': [50.0]}
+
+
+def _track3p_results(workdir, levels=('2.3e+07',), results='track3p_results',
+                     log=True):
+    """A Track3P results directory inside `workdir`, as the solver module
+    leaves it: one Initials-Impacts dump per level."""
+    directory = os.path.join(workdir, results)
+    os.makedirs(directory, exist_ok=True)
+    for level in levels:
+        _make_track3p_dump(os.path.join(directory, 'ImpactsInfo_' + level),
+                           impact_order=1, impact_face_id=6)
+    if log:
+        shutil.copy(os.path.join(TRACK3P_FIXTURES, 'pillbox_scan', 'track3p.log'),
+                    os.path.join(directory, 'track3p.log'))
+    return directory
+
+
+def _chain_ctx(workdir, results='track3p_results', field_level=None, **kwargs):
+    """A context shaped like the one a `track3p -> field_emission` chain builds:
+    the artifact is the workdir, the job name is the results directory."""
+    ctx = RunContext(workdir, artifacts={TRACK3P_PARTICLES: workdir}, **kwargs)
+    ctx.job_names[TRACK3P_PARTICLES] = results
+    if field_level is not None:
+        ctx.field_levels[TRACK3P_PARTICLES] = field_level
+    return ctx
+
+
+def test_particles_resolves_a_single_dump_in_a_results_directory(tmp_path):
+    """The in-pipeline shape: one ImpactsInfo under the solver's results
+    directory is used without anything having to name it."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd)
+    ctx = _chain_ctx(wd)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    module.run(ctx)
+
+    assert module.extract(ctx, 'count') == 24
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+    assert module.verify(ctx) is True
+
+
+def test_particles_does_not_copy_a_dump_that_is_already_in_the_workdir(tmp_path):
+    """The dump is handed over as a relative subpath, not staged: staging would
+    copy a 137 MB file to a second name in the same workdir."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd)
+    ctx = _chain_ctx(wd)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.3e+07'))
+    module.run(ctx)
+    assert not os.path.exists(os.path.join(wd, 'ImpactsInfo_2.3e+07'))
+
+
+def test_particles_ambiguous_scan_raises_naming_both_ways_out(tmp_path):
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert '3 ImpactsInfo dumps' in message
+    assert '2.3e+07' in message and '2.5e+07' in message
+    assert 'field_level:' in message and 'FieldScales' in message
+    # With no explicit `output:` there is no name to derive either, and verify
+    # declines to answer rather than guessing one of the three dumps.
+    assert FieldEmissionModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
+
+
+def test_particles_uses_the_field_level_the_track3p_module_named(tmp_path):
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.4e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd, field_level=2.4e7)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.4e+07'))
+    module.run(ctx)
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+
+
+def test_particles_field_level_matches_a_six_figure_dump_name(tmp_path):
+    """The dump is named with six significant figures (``2.34568e+07``) while
+    ``field_level:`` carries the exact declared value; the two must match."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.34568e+07',))
+    ctx = _chain_ctx(wd, field_level=2.3456789e7)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert (module._resolve_dump(ctx)
+            == os.path.join('track3p_results', 'ImpactsInfo_2.34568e+07'))
+
+
+def test_particles_named_level_without_a_dump_raises_rather_than_falling_through(
+        tmp_path):
+    """A `field_level:` whose dump is missing never silently uses another
+    level's -- a sweep would then reweight fields it did not ask for."""
+    wd = str(tmp_path / 'wd')
+    _track3p_results(wd, levels=('2.3e+07', '2.5e+07'))
+    ctx = _chain_ctx(wd, field_level=2.4e7)
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert 'field level 2.4e+07' in message
+    assert '2.3e+07' in message and '2.5e+07' in message
+
+
+def test_particles_no_dump_at_all_raises_and_quotes_the_emitted_count(tmp_path):
+    """The usual reason a field-emission results directory has no dump is that
+    the emitter produced nothing, and track3p.log says so outright. The Phase 3
+    step 2 probe hit exactly this."""
+    wd = str(tmp_path / 'wd')
+    results = _track3p_results(wd, levels=(), log=False)
+    shutil.copy(os.path.join(TRACK3P_FIXTURES, 'pillbox_fieldemission',
+                             'track3p.log'),
+                os.path.join(results, 'track3p.log'))
+    producer, producer_ctx = _track3p_module(
+        tmp_path / 'producer', fixture_dir='pillbox_fieldemission',
+        input_name='Pillbox-w4_type7_model2_fcup.track3p')
+    producer.run(producer_ctx, skip_execution=True)
+
+    ctx = _chain_ctx(wd, modules=[producer])
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module.run(ctx)
+    message = str(excinfo.value)
+    assert 'no ImpactsInfo_<level> dump' in message
+    assert 'impacts_format: initials-impacts' in message
+    assert 'Total Emitted Particles = 0' in message
+
+
+def test_particles_resolves_a_dump_path_that_is_not_staged_yet(tmp_path):
+    """With no producer in the context the two shapes fall back to `isdir`, not
+    `isfile`.
+
+    `verify` runs before the dump is staged (that is the point of a resume
+    check), so a recorded path that does not exist yet must still resolve to a
+    *file* name. Dispatching on `isfile` sent it down the results-directory
+    branch instead, and `verify` could no longer derive an output name."""
+    ctx = RunContext(str(tmp_path / 'wd'),
+                     artifacts={TRACK3P_PARTICLES: str(tmp_path / 'dump.txt')})
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS))
+    assert module._resolve_dump(ctx) == 'dump.txt'
+    assert module.verify(ctx) is False
+    os.makedirs(ctx.workdir, exist_ok=True)
+    open(os.path.join(ctx.workdir, 'dump_modified.txt'), 'w').close()
+    assert module.verify(ctx) is True
+
+
+def test_particles_shape_follows_the_producer_not_the_filesystem(tmp_path):
+    """Which shape the artifact has is the *producer's* class, not what is on
+    disk at the moment of asking.
+
+    Both halves matter. A `track3p_source` head whose dump happens to be a
+    directory is still read as a file (the user named a file; a directory there
+    is their error to see, not something to reinterpret), and an in-pipeline
+    `track3p` head is read as a results directory even when the directory is
+    gone -- which is the case that used to be silently misread as an unstaged
+    dump file."""
+    source = build_module('track3p_source', {'file': 'whatever.txt'})
+    as_dir = tmp_path / 'looks_like_results'
+    as_dir.mkdir()
+    ctx = RunContext(str(tmp_path / 'wd'),
+                    artifacts={TRACK3P_PARTICLES: str(as_dir)},
+                    modules=[source])
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS))
+    assert module._resolve_dump(ctx) == 'looks_like_results'
+
+
+def test_particles_missing_results_directory_raises_naming_the_path(tmp_path):
+    """An in-pipeline producer whose results directory has vanished gets an
+    error that names the path, rather than `verify` quietly returning False.
+
+    Before the dispatch moved to the producer, `isdir` on the missing directory
+    was False, so this fell into the *file* branch and resolved to a basename
+    that meant nothing."""
+    wd = str(tmp_path / 'wd')
+    producer, _ = _track3p_module(tmp_path / 'producer')
+    ctx = _chain_ctx(wd, modules=[producer])
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    with pytest.raises(ValueError) as excinfo:
+        module._resolve_dump(ctx)
+    message = str(excinfo.value)
+    assert 'track3p_results' in message
+    assert 'is not a directory' in message
+    assert 'results_dir:' in message
+    # With an explicit `output:` verify never has to resolve the dump, so it
+    # answers the question it was asked: that file is not there.
+    assert module.verify(ctx) is False
+    # Without one there is no name to derive, and verify declines to answer
+    # rather than inventing a basename from the vanished directory -- run()
+    # will raise the message above and say why.
+    assert FieldEmissionModule(dict(PARTICLES_PARAMS)).verify(ctx) is None
+
+
+def test_particles_still_reads_a_plain_dump_file(tmp_path):
+    """The track3p_source shape is unchanged: a file is staged into the workdir
+    and read by basename, exactly as before Phase 3."""
+    dump = tmp_path / 'supplied.txt'
+    _make_track3p_dump(str(dump), impact_order=1, impact_face_id=6)
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
+    module = FieldEmissionModule(dict(PARTICLES_PARAMS, output='particles.data'))
+    assert module._resolve_dump(ctx) == 'supplied.txt'
+    module.run(ctx)
+    assert os.path.isfile(os.path.join(wd, 'supplied.txt'))   # staged
+    assert module.extract(ctx, 'count') == 24
+
+
+def test_particles_default_output_does_not_eat_the_dump(tmp_path):
+    """A dump named ``ImpactsInfo_<level>`` has no extension, so the pre-Phase-3
+    default output name *was* the input name and ``write_output`` overwrote the
+    staged dump — through the symlink to the original. The derived name is now a
+    new file, and ``verify`` agrees on it without an ``output:`` key."""
+    dump = tmp_path / 'ImpactsInfo_2.3e+07'
+    _make_track3p_dump(str(dump), impact_order=1, impact_face_id=6)
+    original = dump.read_bytes()
+    wd = str(tmp_path / 'wd')
+    ctx = RunContext(wd, artifacts={TRACK3P_PARTICLES: str(dump)})
+    module = FieldEmissionModule({'impact_order': 1, 'impact_face_id': 6,
+                              'work_function': 4.5, 'frequency': 1.0e10,
+                              'num_bins': 1, 'beta': [50.0]})
+    module.run(ctx)
+
+    assert (os.path.basename(ctx.artifacts[PARTICLE_SOURCE])
+            == 'ImpactsInfo_2.3e+07_modified')
+    assert os.path.isfile(ctx.artifacts[PARTICLE_SOURCE])
+    assert dump.read_bytes() == original
+    assert module.verify(ctx) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -1839,6 +2375,353 @@ def test_geant4_mapping_form_without_a_section_names_the_sections(tmp_path):
     with pytest.raises(ValueError, match="'dose'"):
         module.extract(ctx, {'quantity': 'total'})
     assert np.isnan(module.extract(ctx, ['dose']))     # unchanged list behavior
+
+
+# --------------------------------------------------------------------------- #
+# Geant4, polycone application: output_prefix, detectors, seed
+# (Track3P plan Phase 4 step 1)
+# --------------------------------------------------------------------------- #
+
+GEANT4_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'fixtures', 'geant4')
+
+# The polycone application is driven by output_prefix and names no output_dose
+# key at all; 'detectors = on' is what makes it write the two CSVs.
+GEANT4_POLYCONE_INPUT = """\
+# synthetic polycone-shaped geant4 input
+particles = particles.data
+cavity_stl = nb_wall_profile.dat
+nthreads = 4
+passes = 10
+output_prefix = run7
+cryostat = on
+detectors = on
+detector_r = 1000.0
+"""
+
+
+def _stage_polycone(workdir, detectors='on', prefix='run7', scoring=True):
+    """A workdir shaped like a finished polycone run: a prefix-driven input
+    file, the two prefix-named scoring grids, and the real detector CSVs copied
+    in under the names the prefix implies."""
+    os.makedirs(workdir, exist_ok=True)
+    text = GEANT4_POLYCONE_INPUT
+    if detectors is None:
+        text = text.replace('detectors = on\n', '')
+    else:
+        text = text.replace('detectors = on', 'detectors = ' + detectors)
+    if prefix is None:
+        text = text.replace('output_prefix = run7\n', '')
+    else:
+        text = text.replace('output_prefix = run7', 'output_prefix = ' + prefix)
+    input_path = os.path.join(workdir, 'input_polycone.geant4')
+    _write(input_path, text)
+    stem = (prefix + '_') if prefix else ''
+    if scoring:
+        _write(os.path.join(workdir, stem + 'doseDeposit.txt'), DOSE_OUT)
+        _write(os.path.join(workdir, stem + 'energyDeposit.txt'), EDEP_OUT)
+        for name, fixture in (('detector_dose.csv', 'detector_dose.csv'),
+                              ('detector_gamma_spectrum.csv',
+                               'detector_gamma_spectrum.csv')):
+            shutil.copy(os.path.join(GEANT4_FIXTURES, fixture),
+                        os.path.join(workdir, stem + name))
+    psrc = os.path.join(workdir, 'particles.data')
+    _write(psrc, '0.0 0.0 0.0 0.0 1.0 1 0 0 1 6\n')
+    return input_path, psrc
+
+
+def _polycone_module(workdir, config=None, **stage):
+    """A run Geant4Module over a staged polycone workdir. Dry-run, so the
+    binary is skipped and the pre-placed outputs are what get read -- the same
+    shape every other geant4 test here uses."""
+    input_path, psrc = _stage_polycone(workdir, **stage)
+    ctx = RunContext(workdir, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path, **(config or {})})
+    module.run(ctx)
+    return module, ctx
+
+
+def test_geant4_output_names_derive_from_the_prefix(tmp_path):
+    """The polycone application names every output off `output_prefix` and
+    writes no `output_dose` key, so before this a prefix-only input resolved to
+    no filenames at all and both verify and extract came up empty."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    files = module._output_files()
+    assert files['dose'] == 'run7_doseDeposit.txt'
+    assert files['edep'] == 'run7_energyDeposit.txt'
+    assert files['detector'] == 'run7_detector_dose.csv'
+    assert files['spectrum'] == 'run7_detector_gamma_spectrum.csv'
+    # And the grids really are readable under those names.
+    assert module.extract(ctx, ['dose', 'total']) == pytest.approx(8.0)
+    assert module.verify(ctx) is None             # dry run: binary was skipped
+
+
+def test_geant4_output_names_fall_back_to_the_bare_defaults(tmp_path):
+    """No prefix and no explicit keys: the application's own default names."""
+    module, _ = _polycone_module(str(tmp_path / 'wd'), prefix=None)
+    files = module._output_files()
+    assert files['dose'] == 'doseDeposit.txt'
+    assert files['edep'] == 'energyDeposit.txt'
+    assert files['detector'] == 'detector_dose.csv'
+
+
+def test_geant4_explicit_output_keys_still_win(tmp_path):
+    """Precedence is unchanged: the input file's own `output_dose` beats the
+    prefix, and a YAML override beats both."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    with open(input_path, 'a') as file:
+        file.write('output_dose = named_in_the_input.txt\n')
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path,
+                           'geant4_edep_output': 'named_in_the_yaml.txt',
+                           'geant4_detector_output': 'dets.csv'})
+    module.run(ctx)
+    files = module._output_files()
+    assert files['dose'] == 'named_in_the_input.txt'      # input file beats prefix
+    assert files['edep'] == 'named_in_the_yaml.txt'       # YAML beats input file
+    assert files['detector'] == 'dets.csv'
+
+
+@pytest.mark.parametrize('detectors', ['on', 'ON', 'true', '1', 'yes'])
+def test_geant4_detector_files_named_when_detectors_are_on(tmp_path, detectors):
+    """Every spelling the application accepts (sim.cc:128-132), so the two
+    cannot disagree about what `detectors = yes` means."""
+    module, _ = _polycone_module(str(tmp_path / 'wd' / detectors),
+                                 detectors=detectors)
+    assert module._output_files()['detector'] == 'run7_detector_dose.csv'
+
+
+@pytest.mark.parametrize('detectors', [None, 'off', 'false', '0'])
+def test_geant4_detector_files_unnamed_when_detectors_are_off(tmp_path,
+                                                              detectors):
+    """A grid-only run must not have `verify` start demanding detector CSVs it
+    was never going to write -- which is every shipped example today."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd' / str(detectors)),
+                                   detectors=detectors)
+    files = module._output_files()
+    assert files['detector'] is None and files['spectrum'] is None
+    assert files['dose'] == 'run7_doseDeposit.txt'
+    # No detector axis, so such a table stays one wide row.
+    assert module.field_index(ctx) is None
+    assert 'gamma_spectrum' not in (module.field(ctx) or {})
+
+
+def test_geant4_extract_detector_quantities(tmp_path):
+    """The 8-vector and the narrowed scalar, against the real CSV."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+
+    edep = module.extract(ctx, {'quantity': 'detector_edep_MeV'})
+    assert len(edep) == 8
+    # Detector 5 is the only one that deposited energy in this run; the other
+    # seven zeros are results, not gaps.
+    assert edep[4] == pytest.approx(20107900.0)
+    assert np.count_nonzero(edep) == 1
+
+    gammas = module.extract(ctx, {'quantity': 'detector_gammas'})
+    assert gammas.tolist() == [5., 18., 10., 11., 9., 4., 1., 4.]
+
+    # Narrowed to one detector -> a scalar.
+    assert module.extract(
+        ctx, {'quantity': 'detector_edep_MeV', 'at': {'detector': 5}}
+    ) == pytest.approx(20107900.0)
+    assert module.extract(
+        ctx, {'quantity': 'detector_gammas', 'at': {'detector': 2}}
+    ) == pytest.approx(18.0)
+    # A real zero comes back as a zero, not as NaN.
+    assert module.extract(
+        ctx, {'quantity': 'detector_edep_MeV', 'at': {'detector': 1}}) == 0.0
+
+
+def test_geant4_detector_at_off_grid_raises_naming_the_detectors(tmp_path):
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    with pytest.raises(ValueError) as excinfo:
+        module.extract(ctx, {'quantity': 'detector_gammas',
+                             'at': {'detector': 9}})
+    message = str(excinfo.value)
+    assert 'at: {detector: 9}' in message
+    assert '[1, 2, 3, 4, 5, 6, 7, 8]' in message
+    # And an 'at:' on an axis this module does not have says so.
+    with pytest.raises(ValueError, match="narrows on \\['detector'\\]"):
+        module.extract(ctx, {'quantity': 'detector_gammas',
+                             'at': {'field_level': 2.3e7}})
+
+
+def test_geant4_detector_quantities_are_nan_without_a_csv(tmp_path):
+    """Detectors off, or a run that has not happened: a declared output still
+    produces a cell, as the NaN sentinel every other module uses."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'), detectors='off')
+    whole = module.extract(ctx, {'quantity': 'detector_edep_MeV'})
+    assert np.isnan(whole).all() and len(whole) == 1
+    assert np.isnan(module.extract(
+        ctx, {'quantity': 'detector_gammas', 'at': {'detector': 3}}))
+
+
+def test_geant4_detector_spec_forms_agree(tmp_path):
+    """Mapping, bare string and single-element list all name the same
+    quantity -- the detector quantities carry no 'section:', so there is only
+    one thing a bare name can mean."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    mapped = module.extract(ctx, {'module': 'geant4',
+                                  'quantity': 'detector_gammas'})
+    assert mapped.tolist() == module.extract(ctx, 'detector_gammas').tolist()
+    assert mapped.tolist() == module.extract(ctx, ['detector_gammas']).tolist()
+
+
+def test_geant4_detector_index_axis(tmp_path):
+    """A detector-scored run is tabulated over its detectors."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    label, values = module.field_index(ctx)
+    assert label == 'detector'
+    assert values.tolist() == [1, 2, 3, 4, 5, 6, 7, 8]
+    # It outranks an upstream Track3P field-level axis: the dose at a detector
+    # is the end product of the chain, the field level one scalar per run.
+    assert module.index_precedence > Track3PModule.index_precedence
+
+
+def test_geant4_dose_only_run_keeps_its_wide_table(tmp_path):
+    """The three shipped examples run the older application, which writes no
+    detector CSV -- so nothing about their tables moves."""
+    wd = str(tmp_path / 'mod')
+    m_input, m_psrc = _stage_geant4(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: m_psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': m_input})
+    module.run(ctx)
+    assert module.field_index(ctx) is None
+    assert sorted(module.field(ctx)) == ['dose', 'edep']
+
+
+def test_geant4_field_carries_the_gamma_spectrum(tmp_path):
+    """The spectrum is ragged per detector, so it rides out through field()
+    rather than becoming a detector-indexed column -- and round-trips through
+    the field artifact the mode layer persists."""
+    module, ctx = _polycone_module(str(tmp_path / 'wd'))
+    field = module.field(ctx)
+    assert sorted(field) == ['dose', 'edep', 'gamma_spectrum']
+    spectrum = field['gamma_spectrum']
+    assert sorted(spectrum) == ['detector_id', 'energy_MeV', 'weighted_fluence']
+    assert len(spectrum['detector_id']) == 52
+
+    handle = save_field(field, os.path.join(str(tmp_path), 'field_0.npz'))
+    loaded = load_field(handle)
+    # The nested dict goes out as JSON and comes back rehydrated to arrays,
+    # the same route S3P's IndexMap takes.
+    assert np.allclose(loaded['gamma_spectrum']['weighted_fluence'],
+                       spectrum['weighted_fluence'])
+    assert np.allclose(loaded['gamma_spectrum']['detector_id'],
+                       spectrum['detector_id'])
+    assert np.allclose(loaded['dose']['values'], field['dose']['values'])
+
+
+# ---- seeds ---------------------------------------------------------------- #
+
+
+def test_geant4_seed_auto_is_written_and_follows_the_config_hash(tmp_path):
+    """'auto' derives the seed from the evaluation's config hash: distinct
+    between sweep points, reproducible across re-runs of the same point.
+
+    Not the point's position in the sweep -- no point index reaches Workflow by
+    design, and an index is not stable across a re-ordered or partially resumed
+    sweep."""
+    def seed_for(name, config_hash):
+        wd = str(tmp_path / name)
+        input_path, psrc = _stage_polycone(wd)
+        ctx = RunContext(wd, inputs=WorkflowInputs(),
+                         artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                         paths=_paths(), config_hash=config_hash)
+        module = Geant4Module({'geant4_input': input_path,
+                               'geant4_seed': 'auto'})
+        module.run(ctx)
+        return int(module.geant4_obj.get_value('seed'))
+
+    first = seed_for('a', 'sha256:aaaa')
+    again = seed_for('b', 'sha256:aaaa')
+    other = seed_for('c', 'sha256:bbbb')
+
+    assert first == again                  # same configuration -> same seed
+    assert first != other                  # different point    -> different seed
+    # seed = 0 means 'use the wall clock' to the application, so auto never
+    # produces it, and it must fit the int32 the macro takes.
+    for seed in (first, other):
+        assert 0 < seed < 2 ** 31
+
+
+def test_geant4_seed_explicit_integer_is_passed_through(tmp_path):
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths())
+    module = Geant4Module({'geant4_input': input_path, 'geant4_seed': 20260926})
+    module.run(ctx)
+    assert module.geant4_obj.get_value('seed') == '20260926'
+
+
+def test_geant4_no_seed_key_leaves_the_input_alone(tmp_path):
+    """Default: the input file's own seed (or its absence) is untouched, so
+    nothing about the three shipped examples moves."""
+    module, _ = _polycone_module(str(tmp_path / 'wd'))
+    assert 'seed' not in module.geant4_obj.get_values()
+
+
+def test_geant4_swept_seed_input_overrides_the_module_key(tmp_path):
+    """A swept 'geant4: {seed: ...}' input is the per-point seed mechanism, and
+    it is the more specific statement of the two, so it wins."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(macro={'seed': 4242}),
+                     artifacts={PARTICLE_SOURCE: psrc}, dry_run=True,
+                     paths=_paths(), config_hash='sha256:aaaa')
+    module = Geant4Module({'geant4_input': input_path, 'geant4_seed': 'auto'})
+    module.run(ctx)
+    assert module.geant4_obj.get_value('seed') == '4242'
+
+
+def test_geant4_seed_rejects_a_value_that_is_neither(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        Geant4Module({'geant4_input': 'x.geant4', 'geant4_seed': 'random'})
+    message = str(excinfo.value)
+    assert "'auto'" in message and 'input_parameters' in message
+
+
+def test_geant4_detector_specs_route_without_naming_the_module():
+    """The detector quantities name one table rather than a scoring grid, so
+    they carry no 'section:' and must route on the quantity (or on the
+    'detector' axis their 'at:' narrows)."""
+    for quantity in ('detector_edep_MeV', 'detector_gammas'):
+        assert _infer_output_module(quantity) == 'geant4'
+        assert _infer_output_module([quantity]) == 'geant4'
+        assert _infer_output_module({'quantity': quantity}) == 'geant4'
+        assert _infer_output_module(
+            {'quantity': quantity, 'at': {'detector': 5}}) == 'geant4'
+    # Unchanged neighbours: the grid sections still route by 'section:', and
+    # nothing else claims these shapes.
+    assert _infer_output_module({'section': 'dose', 'quantity': 'total'}) == 'geant4'
+    assert _infer_output_module(['dose', 'total']) == 'geant4'
+    assert _infer_output_module('max_enhancement') == 'track3p'
+    assert _infer_output_module({'quantity': 'S(0,0)'}) == 's3p'
+
+
+def test_geant4_verify_checks_the_detector_csvs(tmp_path):
+    """A detector-scored run whose CSV is gone is not complete -- and the same
+    run with detectors off is, since it was never going to write one."""
+    wd = str(tmp_path / 'wd')
+    input_path, psrc = _stage_polycone(wd)
+    ctx = RunContext(wd, inputs=WorkflowInputs(),
+                     artifacts={PARTICLE_SOURCE: psrc}, paths=_paths())
+    module = Geant4Module({'geant4_input': input_path})
+    module.run(ctx, skip_execution=True)
+    assert module.verify(ctx) is True
+
+    os.remove(os.path.join(wd, 'run7_detector_dose.csv'))
+    module._detector_cache.clear()
+    assert module.verify(ctx) is False
 
 
 # --------------------------------------------------------------------------- #

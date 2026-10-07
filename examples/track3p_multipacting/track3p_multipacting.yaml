@@ -1,0 +1,51 @@
+# Track3P multipacting scan on the declarative module/mode schema:
+#   workflow:  mesh -> omega3p -> track3p
+#   mode:      single  (one evaluation; the table has one row per field level)
+# Omega3P solves the CW23 pillbox cavity's eigenmodes, then Track3P tracks
+# secondary electrons emitted from the wall at each field level of the
+# FieldScales scan (23, 24, 25 MV/m). The track3p module points the input's
+# Domain.FieldDir at the omega3p results directory and reads the enhancement
+# counter and resonant-particle tables Track3P's own Postprocess block writes.
+# Every output below is per field level, so the table is long-format over the
+# FieldLevel column; 'mp_onset' is one number per run (the lowest level whose
+# enhancement counter reaches the threshold, NaN when none does) and repeats
+# down the rows.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_track3p_workdir'
+  'workdir_mode' : 'manual'
+
+workflow :
+  # The pillbox mesh is shared with nothing else yet but lives in ../assets/
+  # because it is 2 MB. Omega3P's input names it by bare filename.
+  - module : mesh
+    file : '../assets/Pillbox.ncdf'
+  - module : omega3p
+    input : 'Pillbox.omega3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+  # 'files' stages the secondary-emission-yield table the input's
+  # EnhancementCounter block names (SEYFileName1: copper.dat) into the workdir.
+  - module : track3p
+    input : 'Pillbox.track3p'
+    files : ['copper.dat']
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : single
+  output_file : 'track3p_multipacting_output.txt'
+
+# Per-level quantities come from OUTPUT/enhancementCounter (max_enhancement,
+# mean_enhancement, total_impacts) and OUTPUT/resonantparticles
+# (resonant_particles). 'at: {field_level: x}' would narrow any of them to one
+# level; 'at: {threshold: t}' sets the enhancement counter that counts as onset
+# (default 1.0, i.e. growth).
+output_parameters :
+  'EC_max'   : { module: track3p, quantity: max_enhancement }
+  'EC_mean'  : { module: track3p, quantity: mean_enhancement }
+  'impacts'  : { module: track3p, quantity: total_impacts }
+  'resonant' : { module: track3p, quantity: resonant_particles }
+  'mp_onset' : { module: track3p, quantity: mp_onset_level, at: { threshold: 1.0 } }

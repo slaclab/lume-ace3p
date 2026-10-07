@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lume-ace3p"
-version = "0.5.1"
+version = "0.6.0"
 requires-python = ">=3.9"
 dependencies = [
     "lume-base>=0.3.3",
@@ -15,6 +15,9 @@ dependencies = [
     "scipy",
     "scikit-learn",
     "numpyro",
+    # Imported directly by tests/conftest.py to pin BLAS/OpenMP threads; also a
+    # transitive scikit-learn dependency, declared here so it is not implicit.
+    "threadpoolctl>=3.2.0",
 ]
 
 [project.scripts]

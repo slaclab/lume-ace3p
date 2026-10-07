@@ -14,8 +14,8 @@ walkthrough of a sweep or an optimization, see [](parameter_sweep.md) and
 Regardless of mode, two top-level blocks are mandatory:
 
 - **`workflow:`**: an ordered list of module entries (`cubit`, `omega3p`,
-  `s3p`, `acdtool`, `particles`, `geant4`, …). The run order is resolved from
-  artifact dependencies, not list order.
+  `s3p`, `track3p`, `acdtool`, `field_emission`, `geant4`, …). The run order is
+  resolved from artifact dependencies, not list order.
 - **`mode:`**: a block with a `type:` key naming one of the modes below.
 
 `workflow_parameters:` (workdir and executable paths) is always optional. It

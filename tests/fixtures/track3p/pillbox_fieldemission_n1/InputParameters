@@ -1,0 +1,128 @@
+
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ /********************     Total running time in RF cycles     ********************/
+TotalTime: 20  //default: 20 RF cycles 
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ /********************     Particles Trajectory, only apply for scan token = 0      ********************/
+ParticlesTrajectories: 
+{
+  ParticleFile       : partpath                // Particles file name, default partpath 
+  Start              : 0                       //Start timestep for writting particle file, default 0
+  Stop               : 1000000                 //End timestep for writting particle file, default 1000000
+  Skip               : 1                       //Skip timesteps for writting particle file, default 1 - no skip
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/*********      FieldScales: Field level scans, three types     ********************/
+/*********        1. FieldGradient: average field gradient as field scale parameter, unit: v/m     ********************/
+/*********        2. InputPortPower: input port power as field scale parameter, unit: W.           ********************/
+/*********        3. StorEnergy: store energy as field scale parameter, unit: Joul.                ********************/
+FieldScales:
+{
+  Type               : FieldGradient
+  ScanToken          : 0 // 1: scan, 0: no scan
+  Scale              : 2.3e+07  //field scale for particle trajectory
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/************* NormalizedField, only for FieldGradient case, normalize average field gradient between StartPoint and EndPoint     ******************/
+NormalizedField:
+{
+  Beta               : 1 //beta parameter for field calculation, default = 1.0 
+  StartPoint         :  0.00000e+00  0.00000e+00 -5.70000e-02      //start point of the line for field integral calculation, default (0,0,0)
+  EndPoint           :  0.00000e+00  0.00000e+00  5.70000e-02      //end point of the line for field integral calculation, default (0,0,0)
+  N                  : 300                                //number of inner points in the line, default 300 
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**************************************     Primary particles emission     ****************************************/
+Emitter:
+{
+  t0                 : 0            //time(in RF cycle) for start emission, default 0.0 
+  t1                 : 1            //time(in RF cycle) for end emission, default 1.0 - first RF cycle
+  Type               : 7          // emission type
+                                      // 2: ElectronicSurface, default
+                                      // 5: SolideElectronicSurface
+                                      // 7: FieldEmission
+  x0                 : -1.00000e+10     // default -1.0e10
+  x1                 :  1.00000e+10     // default 1.0e10
+  y0                 : -1.00000e+10     // default -1.0e10
+  y1                 :  1.00000e+10     // default 1.0e10
+  z0                 : -1.00000e+10     // default -1.0e10
+  z1                 :  1.00000e+10     // default 1.0e10
+  BoundaryID         :      6
+  Beta               :   5.0000e+01      //Field enhancement factor. Typical: 60 to 300
+  WorkFunction        :   4.2000e+00       //Work function, default is Cu = 4.4 
+  NumberParticlesPerFace :      1       //Number of Particles per face, default is 1 
+  N                  :      1       //Less than half of this number, the macromparticle will not be emitted. default is 1 
+  SkipTimeSteps     :      1       // emission skip time steps, default 1, no skip 
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**************************************     Field informaction container     ****************************************/
+Domain:
+{
+  FieldDir           : ./omega3p_results
+  dt                 :   1.0000e+00             // parameter used for time step, default dt = 1.0, timestep = dt/frequency/100, default timestep = 1.0/frequency/100 
+  MaxImpacts         :   50         // maximum impact number, particles died beyond this number, default 50 
+  LowEnergy          :  5.00000e+00         // minimum impact energy, particles died if impact energy less than LowEnergy, default 5.0 (eV) 
+  HighEnergy         :  1.00000e+09         // maximum impact energy, particles died if impact energy greater than HighEnergy, default 1000000000 (eV) 
+  InitialEnergy      :  2.00000e+00         // particles' initial energy, default 2.0 (eV) 
+  Bins               :     64                    // parameter used for localize particles, the maximum bins among x, y, z directions. the other two directions' bins derived from it. Default = 64 
+  Voltage            :   0.0000e+00   0.0000e+00   0.0000e+00                   //external voltage, default 0 - no external voltage. Format: a ra rb, voltage = a/log(rb/ra) 
+  ModeID1            :    0                   //mode ID, default 0 - the first mode 
+  ExternalMagneticField:   0.0000e+00   0.0000e+00   0.0000e+00              //external magetic field, unit: Tesla 
+}
+
+// Boundary Material
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**************************************     boundary surface information container     ****************************************/
+/**************************************     Three types boundary surface     ****************************************/
+/**************************************             2 / Absorber             ****************************************/
+/**************************************             3 / Secondary            ****************************************/
+/**************************************             4 / Primary              ****************************************/
+Material:{
+  Type               : Primary
+  BoundarySurfaceID  :  6                //Boundary surface ID
+}
+
+Material:{
+  Type               : Secondary
+  BoundarySurfaceID  :  6                //Boundary surface ID
+  Model              : 2            // model 1: multipacting; 2: darkcurrent. Only for secondary emission
+  Sigma0             :              // Secondary emission yield coefficient
+  Einit              :              //  Energy of incident particles
+  ElasticThreshold   :   2.0000e+00                 // elastic threshold 
+  ElasticEmitterCoefficient    :   4.0000e-01                 // parameter for elastic emitter 
+  MinimumNumElectrons :   1.0000e+00               // threshold for true secondary emission. 
+}
+
+Material:{
+  Type               : Absorber
+  BoundarySurfaceID  :  1 2                //Boundary surface ID
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+OutputImpacts    : on // token for impacts output. default = off - no impacts output 
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**************************************              Postprocess              ****************************************/
+Postprocess: // Postprocess
+{
+  Toggle             : on                       // on: postprocess, off: no postprocess
+  ResonantParticles: // postprocess for resonant particles
+  {
+    Token                 : on                       // on: analysis resonant particles, no: no analysis is done for resonant particles 
+    InitialImpacts        :    4                 // particles with impacts number greater than initial impacts are considered, default is 4 
+    EnergyRange           :   1.0000e+01   1.0000e+04                  //particles with impact energy fall in this region is considered, default value: >10ev, <10000ev
+    PhaseTolerance        :   1.0000e-02                  //phaseTolerance for calculate resonant particles
+  }
+  EnhancementCounter:             // postprocess for enhancement counter 
+  {
+    Token                 : on                       // on: do enhancement counter calculation. Default off  
+    MinimumEC        :   1.0000e-02                 // minimum enhancement counter, less than it will not be written, default: 10
+    SEYFileName1          : copper.dat                 // SEY file name 
+    BoundarySurfaceID1    :    6                 // boundary surface ID for SEYFileName1 
+}
+

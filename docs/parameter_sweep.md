@@ -18,7 +18,8 @@ A parameter sweep input file needs:
   - `cubit:` names and vector values for Cubit journal (geometry) knobs.
   - `ace3p:` (optional) parameters inside the ACE3P input file.
   - `geant4:` (optional) overrides for the Geant4 input file.
-  - `particles:` (optional) knobs of the `particles` module.
+  - `particles:` (optional) knobs of the `field_emission` module. The bucket
+    keeps its name: it is a namespace for β variables, not the module.
 
   A single sweep can span all four sub-blocks; every array-valued leaf across
   them multiplies into the tensor product. The old flat keys
@@ -383,12 +384,30 @@ table.
 
 ## Track3P particle weighting
 
-Field-emission particle weighting is the `particles` module, a post-processing
+Field-emission particle weighting is the `field_emission` module, a post-processing
 step that reads a Track3P particle dump, filters by impact order and face id,
 bins by axial position, and writes a weighted-particle file usable as a Geant4
 source. There is no ACE3P solver in this chain: a `track3p_source` module
 supplies the external dump, and the pure-Python weighting runs in `single`
-mode. This is
+mode.
+
+Two Fowler–Nordheim forms are available. The default `fn_model: fn` is the plain
+FN form of the LCLS-II reference converter: the emission time is one RF period
+(`frequency`, in Hz), weights are real-valued, and a macroparticle standing for
+less than one electron is left out of the Geant4 source file. `fn_model:
+wang-loew` is the form this module used before 2026-09-14, with whole-electron
+weights, kept so existing studies reproduce; the two differ by about two orders
+of magnitude in weight, so a β fitted with one is not comparable with the other.
+The deprecated `dt` key sets the emission time directly instead of through
+`frequency`.
+
+The weight depends on the *enhanced* field `β·E`, so a useful `beta` range is a
+property of the dump, not of the model: size it against that dump's own
+`InitialNormalField`. Push β high enough and every macroparticle clears the
+one-electron cut, at which point a sweep over β writes the same row count at
+every point and shows nothing.
+
+This is
 [`examples/track3p_particle_weight`](https://github.com/slaclab/lume-ace3p/blob/main/examples/track3p_particle_weight/track3p_particle_weight.yaml):
 
 ```yaml
@@ -399,11 +418,12 @@ workflow_parameters :
 workflow :
   - module : track3p_source
     file : '../assets/sample_track3p_particles.txt'
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 4
     work_function : 4.5
-    dt : 1.0e-10
+    fn_model : 'wang-loew'    # legacy FN form; new studies use the default 'fn'
+    frequency : 1.0e10        # emission time is one RF period, 1/frequency
     num_bins : 8
     beta : [50, 55, 60, 65, 65, 60, 55, 50]
     output_format : 'track3p'
@@ -416,23 +436,23 @@ mode :
 `output_format: 'track3p'` writes the weighted Track3P dump (all filtered
 columns plus `Bin` and `ParticleWeight`); the module default `'geant4'` writes
 the 10-column Geant4 source file. See
-[](yaml_reference.md#particles-module-keys) for the full key list.
+[](yaml_reference.md#field_emission-module-keys) for the full key list.
 
 ## Geant4 dose-calculation workflow
 
 The `geant4` module drives a Geant4 application using a single plain-text input
 file (`key = value` lines, `#` comments) that names its own geometry STL files,
 scoring mesh, thread count, and output files. The particle source comes from an
-upstream module: either a `particles` weighting step (fed by a
-`track3p_source`) or a `particle_source` module naming a prebuilt Geant4-format
-file. The module writes the source filename into the input file (the executable
+upstream module: either a `field_emission` weighting step (fed by a
+`track3p_source` or an in-pipeline `track3p`) or a `particle_source` module
+naming a prebuilt Geant4-format file. The module writes the source filename into the input file (the executable
 derives the event count from the particle file), stages the STL files it names
 into each working directory, and reads the dose and energy-deposit output files
 after the run. STLs named in the input file are located next to it by default.
 When they live elsewhere (e.g. a shared `assets/` directory), list them under
 `geant4_geometry_files` so the module can find and stage them.
 
-The full runnable chain (`track3p_source → particles → geant4`) is shipped as
+The full runnable chain (`track3p_source → field_emission → geant4`) is shipped as
 [`examples/geant4_track3p_beta`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_track3p_beta/geant4_track3p_beta.yaml)
 (a `beta` sweep) and
 [`examples/geant4_dose_single`](https://github.com/slaclab/lume-ace3p/blob/main/examples/geant4_dose_single/geant4_dose_single.yaml)
@@ -446,13 +466,14 @@ workflow_parameters :
 workflow :
   - module : track3p_source
     file : '../assets/sample_track3p_particles.txt'
-  - module : particles
+  - module : field_emission
     impact_order : 1
     impact_face_id : 6
-    work_function : 4.5
-    dt : 1.0e-10
+    work_function : 4.2
+    frequency : 1.2999e9      # emission time is one RF period, 1/frequency
+    min_energy_ev : 1000.0
     num_bins : 8
-    beta : [50, 55, 60, 65, 65, 60, 55, 50]
+    beta : [44, 46, 48, 50, 50, 48, 46, 44]
     output_format : 'geant4'
     output : 'particles.data'      # must match the 'particles = ...' line in the Geant4 input
   - module : geant4
@@ -474,5 +495,5 @@ sweep axis alongside any `cubit:`/`ace3p:` axes. Geant4 paths are resolved
 through the same precedence chain as ACE3P; see
 [](installation.md#executable-paths). If `GEANT4_APP_PATH` / `GEANT4_APP_EXE`
 (or YAML / site-default equivalents) are unset, dry-run mode is auto-enabled:
-the `particles` weighting still runs for real and only the Geant4 binary is
+the `field_emission` weighting still runs for real and only the Geant4 binary is
 skipped.

@@ -28,6 +28,15 @@ own output file formats — S3P's `Reflection.out`, `SParameter.out` and
 `maxFieldsOnSurface` blocks. Output formats have to come from real runs; the
 frozen examples in `tests/fixtures/acdtool/` are this repo's substitute.
 
+**`track3p-commands.pdf` is inputs-only and behind the build.** It documents
+none of `OutputImpactsInfo` (the container that selects the `ImpactsInfo_*`
+column layout), `LostParticles_*`, `PtrackMonitor`, `Domain.Mode` (solo-mode
+cavity excitation) or the `Emitter` keys `N M Q d SuppressionFactor`. The
+`InputParameters` file every Track3P run writes echoes each key the build
+recognises with its default and is the closest thing to a reference for them;
+`tests/fixtures/track3p/` holds real copies and `SOURCES.md` there records what
+each shows.
+
 **`JobName` is not a documented input container** for omega3p, s3p, t3p, track3p,
 pic3p or TEM3P. Only `gun3p` documents it, inside its `Tracker` container, noting
 it must match the name used in the job submission script. The per-solver default

@@ -74,7 +74,7 @@ def _s3p_workflow(tmp_path, cubit_inputs, workdir_mode='auto'):
 
 
 def _particles_workflow(root, workdir_mode, betas):
-    """A ``track3p_source -> particles`` sweep over β, rooted at ``root``.
+    """A ``track3p_source -> field_emission`` sweep over β, rooted at ``root``.
 
     Chosen over a solver chain wherever a test needs the *table* to carry real
     numbers: the field-emission weighting is pure Python, so it produces genuine
@@ -84,16 +84,16 @@ def _particles_workflow(root, workdir_mode, betas):
                           'sample_track3p_particles.txt')
     return Workflow(
         [{'module': 'track3p_source', 'file': source},
-         {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-          'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+         {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
+          'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(root / 'wd'),
                          'workdir_mode': workdir_mode, 'dry_run': True},
         inputs=WorkflowInputs(particles={'beta': np.array(betas)}),
-        output_spec={'weight': {'module': 'particles',
+        output_spec={'weight': {'module': 'field_emission',
                                 'quantity': 'total_weight'},
-                     'count': {'module': 'particles', 'quantity': 'count'}})
+                     'count': {'module': 'field_emission', 'quantity': 'count'}})
 
 
 # --------------------------------------------------------------------------- #
@@ -180,7 +180,7 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
     ``ctx.modules`` safe: a prototype's ``extract`` returns the dry-run NaN
     sentinel rather than raising, so reaching one would be silent.
 
-    The chain is ``track3p_source -> particles`` on purpose. Under dry-run the
+    The chain is ``track3p_source -> field_emission`` on purpose. Under dry-run the
     solver and acdtool modules park no state at all (they set their handle to
     ``None`` and write a marker), so a sweep of those would satisfy this
     vacuously; the ``particles`` step does genuine work with no binary, so its
@@ -190,14 +190,14 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
                           'sample_track3p_particles.txt')
     wf = Workflow(
         [{'module': 'track3p_source', 'file': source},
-         {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-          'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+         {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
+          'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
           'beta_input': 'beta', 'output_format': 'geant4',
           'output': 'particles.data'}],
         workflow_params={'workdir': str(tmp_path / 'wd'),
                          'workdir_mode': 'auto', 'dry_run': True},
         inputs=WorkflowInputs(particles={'beta': np.array([40.0, 60.0])}),
-        output_spec={'weight': {'module': 'particles',
+        output_spec={'weight': {'module': 'field_emission',
                                 'quantity': 'total_weight'}})
     df = modes.parameter_sweep(wf)
     assert len(df) == 2
@@ -209,9 +209,9 @@ def test_prototype_modules_hold_no_run_state_after_a_sweep(tmp_path):
         for attr in _RUN_STATE_ATTRS:
             assert getattr(module, attr, None) is None, (
                 f'prototype {module.name!r} carries run state in {attr}')
-    # The last evaluation's own particles module does hold it — the state exists,
+    # The last evaluation's own field_emission module does hold it — the state exists,
     # it just lives on the context.
-    assert _module_of(wf.last_context.modules, 'particles')._filtered is not None
+    assert _module_of(wf.last_context.modules, 'field_emission')._filtered is not None
 
 
 # --------------------------------------------------------------------------- #

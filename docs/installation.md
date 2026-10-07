@@ -107,6 +107,15 @@ step with `More processors requested than permitted` and the run fails on its
 first point. The Perlmutter scripts are sized for 256 logical CPUs and use
 larger products; do not copy their `tasks`/`cores` onto S3DF unchanged.
 
+**Why the S3DF scripts pin the OS.** Every S3DF batch script carries
+`#SBATCH --constraint=OS_VER:8.10`. The ACE3P binaries (`omega3p`, `s3p`,
+`t3p`, `acdtool`) link `libgsl.so.23` from the node's `/lib64`, and only RHEL
+8.10 provides that soname — EL9 ships gsl 2.7 as `libgsl.so.25`. The milano
+partition is a mix of both, so an unpinned job can land on an EL9 node where
+the solver exits before `main` with `cannot open shared object file`. Keep the
+constraint until ACE3P is rebuilt against the EL9 gsl; a job that sits
+`PENDING` unusually long is the cost of it, since it restricts the node pool.
+
 (executable-paths)=
 ## Executable paths
 

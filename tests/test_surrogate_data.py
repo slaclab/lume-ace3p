@@ -133,8 +133,8 @@ def test_mesh_fingerprints_match():
 
 
 def _particles_entry(**overrides):
-    entry = {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+    entry = {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
+             'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
              'beta_inputs': list(BETA_NAMES), 'output_format': 'geant4',
              'output': 'particles.data', 'bin_edges': list(BIN_EDGES)}
     entry.update(overrides)
@@ -142,7 +142,7 @@ def _particles_entry(**overrides):
 
 
 def _staged_beta_workflow(tmp_path, particles_overrides=None):
-    """A dry-run track3p_source -> particles -> geant4 Workflow staged in
+    """A dry-run track3p_source -> field_emission -> geant4 Workflow staged in
     tmp_path: the shared assets (particle dump + STL geometry) come from
     examples/assets/, while the Geant4 input file lives with its example. All
     are symlinked into tmp_path by basename so bare-name entries resolve."""
@@ -310,7 +310,7 @@ def test_run_mode_dispatches_collect(tmp_path):
 
 
 class _FakeModule:
-    type = 'particles'
+    type = 'field_emission'
 
     def __init__(self):
         self.params = {'num_bins': 8, 'beta_inputs': list(BETA_NAMES),
@@ -318,7 +318,7 @@ class _FakeModule:
 
 
 class _FakeWorkflow:
-    """Minimal Workflow surface the collection loop drives: a particles module
+    """Minimal Workflow surface the collection loop drives: a field_emission module
     with fixed bin_edges, and evaluate/field that emit a synthetic dose grid
     which is a deterministic function of β (so the loader's β↔dose alignment is
     checkable). Records evaluate() calls to prove resume skips re-evaluation.

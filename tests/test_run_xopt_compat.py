@@ -136,7 +136,7 @@ def test_generic_neldermead(tmp_path):
 
 
 def test_generic_geant4_objective_dry_run(tmp_path):
-    """A Geant4 chain (track3p_source -> particles -> geant4) is driven as the
+    """A Geant4 chain (track3p_source -> field_emission -> geant4) is driven as the
     scalar_optimize objective in dry-run. The objective (`total_weight` off the
     real Particles pre-step) is a genuine number even with the Geant4 binary
     absent, so this proves evaluate->objective wiring works with zero
@@ -146,8 +146,8 @@ def test_generic_geant4_objective_dry_run(tmp_path):
     def run():
         entries = [
             {'module': 'track3p_source', 'file': '../assets/sample_track3p_particles.txt'},
-            {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+            {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
+             'work_function': 4.5, 'frequency': 1.0e10, 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',
@@ -158,7 +158,7 @@ def test_generic_geant4_objective_dry_run(tmp_path):
                       workflow_params={'workdir': 'wd', 'workdir_mode': 'auto',
                                        'dry_run': True},
                       inputs=WorkflowInputs(),
-                      output_spec={'weight': {'module': 'particles',
+                      output_spec={'weight': {'module': 'field_emission',
                                               'quantity': 'total_weight'}})
         # evaluate -> objective returns a real scalar under dry-run.
         out, _ctx = wf.evaluate({'beta': 50.0})

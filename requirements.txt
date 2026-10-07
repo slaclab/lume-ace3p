@@ -4,3 +4,4 @@ ruamel.yaml
 scipy
 scikit-learn
 numpyro
+threadpoolctl>=3.2.0

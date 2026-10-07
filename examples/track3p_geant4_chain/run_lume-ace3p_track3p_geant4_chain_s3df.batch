@@ -1,0 +1,36 @@
+#!/bin/bash
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+# ACE3P binaries (omega3p, s3p, t3p, acdtool) link libgsl.so.23 from the
+# node's /lib64, which only RHEL 8.10 provides -- EL9 ships gsl 2.7 as
+# libgsl.so.25. Without this constraint the job can land on an EL9 node and
+# the solver dies before main with 'cannot open shared object file'. Remove
+# it once ACE3P is rebuilt against the EL9 gsl.
+#SBATCH --constraint=OS_VER:8.10
+#SBATCH --job-name=lume-ace3p_track3p_geant4_chain
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --mem=480gb
+#SBATCH --ntasks-per-node=120
+#SBATCH --time=0-00:30:00
+
+module load openmpi/v4.1.6-spack
+export OMPI_MCA_sharedfp=^lockedfile
+
+# The track3p step launches 2 MPI ranks x 8 OpenMP threads ('tasks: 2,
+# cores: 8, opts: --overlap --cpu-bind=none' in the YAML), the shape Lixin Ge's
+# LCLS-II launcher uses. srun carries -n/-c, but nothing carries the OpenMP
+# environment, so it is exported here: every solver in the job inherits it, and
+# there is no per-module 'env:' key to keep in sync. Raise to match 'cores:' if
+# that changes.
+#
+# Verified on milano 2026-10-01 (job 39649793): both ranks reported
+# OMP_NUM_THREADS=8 and ran 8 OpenMP threads each. No Track3P log line reports
+# the thread count, so it was sampled from /proc rather than read from the log.
+export OMP_NUM_THREADS=8
+export OMP_PROC_BIND=spread
+export OMP_PLACES=cores
+
+run-lume-ace3p track3p_geant4_chain.yaml

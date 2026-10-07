@@ -23,10 +23,11 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
 | `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
-| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. There is no in-pipeline Track3P solver. |
-| `particles`       | particle_source     | track3p_particles  | Field-emission weighting keys; see [](#particles-module-keys). |
-| `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `particles` weighting step. |
-| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:` and related keys; see [](#geant4-module-keys). |
+| `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
+| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
+| `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#field-emission-module-keys). |
+| `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
+| `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:`, `geant4_seed:` and related keys. Voxel dose/edep grids, plus per-detector output when the application scores detectors; see [](#geant4-module-keys). |
 
 An optional `name:` labels the instance (default: the module type). It names
 the step's log file (`<workdir>/<name>.log`) and its run-manifest entry, which is
@@ -596,6 +597,74 @@ checkpoint or set `Action: restart`. A sweep point that exceeds its wall time
 restarts from scratch on re-run.
 :::
 
+(track3p-module)=
+### `track3p` module
+
+Track3P is the ACE3P particle tracker. It requires an `em_solution` (not a
+mesh: it reads the mesh out of the upstream solver's results directory), so the
+minimal workflow is `mesh → omega3p → track3p` or `mesh → s3p → track3p`. It
+takes the same MPI keys as the other solvers (`input:`, `tasks:`, `cores:`,
+`opts:`, `results_dir:`) plus `files:`, a list of auxiliary files the input
+names by bare filename and Track3P reads from its working directory, such as
+the secondary-emission-yield table `SEYFileName1: copper.dat`. See
+`examples/track3p_multipacting`.
+
+The module sets the input's `Domain.FieldDir` to `./<upstream results dir>`
+unless the input already names a `FieldDir` that exists in the workdir. When the
+upstream solver is `s3p` and its `FrequencyScan` has more than one point, the run
+warns: Track3P documents no way to choose a scan frequency, and every CW23
+S3P-driven Track3P case runs S3P at a single frequency.
+
+**Field level is the index axis** (`FieldLevel`), declared by the input's
+`FieldScales` block and known before the run. Per-level quantities are arrays
+aligned to it, so the table is long-format (one row per level); `at:
+{field_level: x}` narrows one to a scalar and must name a declared level. A
+Track3P table keeps this axis even though the `omega3p` step upstream exposes a
+`ModeID` axis; an Omega3P quantity in the same table must be narrowed with `at:
+{mode: n}`.
+
+| Quantity | From | Per | Meaning |
+|---|---|---|---|
+| `max_enhancement`, `mean_enhancement`, `total_impacts`, `resonant_count` | `OUTPUT/enhancementCounter` | level | largest `maxEnhancement`, mean `averageEnhancement`, sum of `totalImpactNum`, and row count (particles above `MinimumEC`) among the level's rows |
+| `resonant_particles`, `max_resonant_energy` | `OUTPUT/resonantparticles` | level | distinct particle IDs; largest `Energy` |
+| `impact_count`, `max_impact_energy` | `ImpactsInfo_<level>` (read on demand) | level | rows with impact ordinal ≥ 1; largest `ImpactEnergy` among them |
+| `lost_count` | `LostParticles_<level>` | level | particles that left the domain |
+| `mp_onset_level` | derived | run | lowest level whose `max_enhancement` reaches `at: {threshold: t}` (default 1.0); NaN when none does |
+| `captured_electrons` | `OUTPUT/faradaycup_<id>` | cup | `sum(NumElectrons)`; `at: {boundary: id}` is required |
+| `total_emitted`, `emitting_faces`, `survived` | `track3p.log` | run | NaN when the build did not write the line (a secondary-emission run reports no `Total Emitted Particles`) |
+
+A table the run did not write raises naming the `Postprocess` token that
+enables it; a level with no rows in a table is NaN. The run log is
+`<results_dir>/track3p.log`, and a resume trusts a finished run only when that
+log ends with `Done!`.
+
+The `track3p_particles` artifact this module records is its **results
+directory**, under run and dry run alike — never a single dump file, however
+many levels the run produced. A `field_emission` step downstream resolves the
+dump out of it (see [](#field-emission-module-keys)).
+
+Two keys serve that chain:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `impacts_format` | `default` | `initials-impacts` injects `OutputImpacts: on` and the container `OutputImpactsInfo: { Type: Initials-Impacts }`, the 17-column layout carrying `InitialNormalField` / `InitialFaceArea`. `default` leaves the input's own layout alone. |
+| `field_level` | — | Which level's `ImpactsInfo_<level>` a downstream `field_emission` step should reweight, when the scan produced several. |
+
+`impacts_format: initials-impacts` is not optional for a field-emission chain:
+Track3P's default dump is the same width but has no field-emission columns, and
+the weighting step **misreads it silently** rather than rejecting it (it reads
+the uncommented header as a data row). The workflow therefore refuses to build
+when a `field_emission` step is downstream of a `track3p` step that would write the
+default layout — naming both this key and the two input lines — and the same
+check rejects a `track3p_source` file whose first line is the default header.
+The selector is a *container*; the scalar spelling `OutputImpactsInfo:
+Initials-Impacts` is silently ignored by the build.
+
+Running Track3P in-pipeline costs a full solve per evaluation (~50 node-minutes
+per field level at cryomodule scale). Since one dump reweights analytically for
+any β, prefer `track3p_source` over a pre-run dump for β studies and use this
+head when the fields themselves change. See `examples/track3p_geant4_chain`.
+
 (acdtool-module)=
 ### `acdtool` module
 
@@ -771,15 +840,36 @@ replacement:
 The list cannot express the whole-axis case (no `at:`).
 :::
 
-(particles-module-keys)=
-### `particles` module keys
+(field-emission-module-keys)=
+### `field_emission` module keys
 
-The `particles` module (field-emission weighting) accepts the keys documented
+The `field_emission` module (Fowler–Nordheim weighting of a Track3P dump)
+accepts the keys documented
 under [](#particle_parameters) directly on its `workflow:` entry: `impact_order`,
-`impact_face_id`, `work_function`, `dt`, `beta` / `beta_input` / `beta_inputs`,
+`impact_face_id`, `min_energy_ev`, `work_function`, `frequency`, `fn_model`,
+`beta` / `beta_input` / `beta_inputs`,
 `num_bins`, `bin_edges`, `output_format`, and `output` (default
-`<input>_modified.txt`). `output_format` defaults to `'geant4'` (the 10-column
+`<input>_modified<ext>`). `output_format` defaults to `'geant4'` (the 10-column
 Geant4 source file); set `'track3p'` explicitly for the weighted-Track3P dump.
+
+**The dump it reads** comes from whichever module provides
+`track3p_particles`, and the two provide different shapes:
+
+- `track3p_source` provides a **dump file**, staged into the workdir.
+- `track3p` provides its **results directory**. This module then finds the
+  `ImpactsInfo_<level>` dump inside it: exactly one is used as-is; several
+  raises unless `field_level:` on the `track3p` module names one (a named level
+  with no dump raises rather than falling through to another); none raises,
+  quoting the log's `Total Emitted Particles` when the run wrote one, since an
+  emitter that produced nothing is the usual cause.
+
+A dump found inside a results directory is read **in place**, not staged — at
+cryomodule scale each is ~137 MB, and staging would copy it to a second name in
+the same workdir.
+
+Either way the dump must be in the `Initials-Impacts` layout; see
+[](#track3p-module) for the `impacts_format` key that guarantees it and the
+build-time check that enforces it.
 
 (geant4-module-keys)=
 ### `geant4` module keys
@@ -793,11 +883,31 @@ Used on a `geant4` `workflow:` entry.
 | `geant4_opts`             | `str`  | `''`                   | Additional `mpirun`/`srun` arguments when launching the Geant4 application. |
 | `geant4_particle_cmd`     | `str`  | `'particles'`          | Input-file key that receives the particle-source filename. The executable derives the event count from the particle file. |
 | `geant4_geometry_files`   | `list` | `[]`                   | Extra geometry/auxiliary files copied into the working directory, in addition to the STL files named by `*_stl` keys in the input file. The two sets are unioned and de-duplicated by basename. |
-| `geant4_dose_output`      | `str`  | `None`                 | Overrides the `output_dose` filename read for the `dose` output section (default: the input file's `output_dose` value). `geant4_scoring_output` is a back-compat alias. |
-| `geant4_edep_output`      | `str`  | `None`                 | Overrides the `output_edep` filename read for the `edep` output section (default: the input file's `output_edep` value). |
+| `geant4_dose_output`      | `str`  | `None`                 | Overrides the filename read for the `dose` output section. `geant4_scoring_output` is a back-compat alias. |
+| `geant4_edep_output`      | `str`  | `None`                 | Overrides the filename read for the `edep` output section. |
+| `geant4_detector_output`  | `str`  | `None`                 | Overrides the per-detector CSV filename. Setting it also makes the module read detector output from a run whose input file does not say `detectors = on`. |
+| `geant4_spectrum_output`  | `str`  | `None`                 | Overrides the gamma-spectrum CSV filename, same effect. |
+| `geant4_seed`             | `str` / `int` | `None`          | `'auto'` derives a distinct, reproducible random seed per evaluation; an integer is written verbatim. Unset leaves the input file's own `seed` (or its absence) untouched. |
+
+Output filenames are resolved per output as: the override above, else the input
+file's own `output_dose` / `output_edep` key, else a name derived from its
+`output_prefix` (`<prefix>_doseDeposit.txt`, `<prefix>_energyDeposit.txt`,
+`<prefix>_detector_dose.csv`, `<prefix>_detector_gamma_spectrum.csv`), else the
+application's bare defaults. The two detector files are only looked for when the
+run scores detectors, so a grid-only run is never reported incomplete for
+lacking them.
+
+**Seeds.** Every evaluation of a sweep needs its own seed, or the runs reproduce
+identical particle histories. `geant4_seed: auto` derives one from the
+evaluation's resolved configuration and input point, so it differs between sweep
+points and reproduces when the same point is re-run or resumed. Two *identical*
+points therefore share a seed, which is the correct answer for an identical
+configuration. To drive the seed as a swept variable instead, declare it under
+[`input_parameters.geant4`](#geant4_input_parameters) — an input-space value
+wins over this key.
 
 To supply a prebuilt Geant4 source file directly instead of generating one with a
-`particles` module, use a `particle_source` module with a `file:` key. The old
+`field_emission` module, use a `particle_source` module with a `file:` key. The old
 `geant4_particle_file` / `particle_input` / `particle_output` keys are not read.
 
 (input_parameters)=
@@ -814,7 +924,7 @@ input_parameters :
     FrequencyScan : {Start: 9.5e9}
   geant4 :                      # Geant4 input-file overrides
     nthreads : 8
-  particles :                   # particles-module knobs (e.g. field-enhancement β)
+  particles :                   # field_emission knobs (e.g. field-enhancement β)
     beta : {min: 40.0, max: 60.0, num: 5}
 ```
 
@@ -823,7 +933,7 @@ If any leaf is vector-like, the workflow can only be run as a parameter sweep. T
 four sub-blocks map to the four [`WorkflowInputs`](workflow_inputs.md) buckets
 (`geant4:` is the *macro* bucket); see [](#ace3p_input_parameters) (duplicate-key
 aware) and [](#geant4_input_parameters). The `particles:` bucket holds the
-field-enhancement variables read by the `particles` module's `beta_input` /
+field-enhancement variables read by the `field_emission` module's `beta_input` /
 `beta_inputs`; see [](#particle_parameters).
 
 :::{important}
@@ -861,8 +971,11 @@ that can satisfy it.
   use; see [](#output-specs-for-postprocess-rf).
 - **Bare form**: a positional list `['section', string1, string2, ...]` or a bare
   quantity string, with no `module` key. The shape of the spec identifies the
-  module. `dose`/`edep`/`scoring` → `geant4` (see [](#geant4-output-specs));
-  `count`/`total_weight` → `particles`; a `monitor:` key or a T3P wakefield
+  module. `dose`/`edep`/`scoring`, and the `detector_*` quantities → `geant4`
+  (see [](#geant4-output-specs));
+  `count`/`total_weight` → `field_emission`; a Track3P quantity
+  (`max_enhancement`, `mp_onset_level`, …) or an `at: {field_level: …}` →
+  `track3p`; a `monitor:` key or a T3P wakefield
   quantity (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`; a `.rfpost`
   block name (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool`
   (deprecated; use the mapping form); a bare S-parameter string or any other
@@ -884,8 +997,8 @@ acdtool's is deprecated (it cannot express the whole-axis case).
 **Older configs may use the list form.** `['RoverQ', '0', 'RoQ']` is block, mode,
 column, the nesting of the postprocess result dict. The middle element is an
 index axis, so the mapping form expresses the same scalar and can also ask for
-the whole axis by dropping `at:`. `particles` specs are a single bare quantity
-name and have no positional form.
+the whole axis by dropping `at:`. `field_emission` specs are a single bare
+quantity name and have no positional form.
 :::
 
 (geant4-output-specs)=
@@ -917,6 +1030,49 @@ Both output files use the Geant4 box-mesh scorer format: three `#`-comment heade
 lines followed by comma-separated rows
 `iX, iY, iZ, total(value), total(val^2), entry`. The fourth column
 (`total(value)`) is read as the per-bin scored quantity.
+
+#### Per-detector quantities
+
+An application that scores GM-tube detectors (`detectors = on`) writes a
+per-detector CSV beside the grids. Those quantities name **no section** — there
+is one detector table, and the quantity names it:
+
+```yaml
+output_parameters :
+  'det_edep'    : {module: geant4, quantity: detector_edep_MeV}
+  'det_gammas'  : {module: geant4, quantity: detector_gammas}
+  'det5_gammas' : {module: geant4, quantity: detector_gammas, at: {detector: 5}}
+```
+
+- `detector_edep_MeV` — energy deposited in each detector volume, MeV.
+- `detector_gammas` — gamma entries counted crossing into each detector.
+
+**Detector is an index axis.** Without an `at:` the whole per-detector vector
+comes back and the result table goes long-format, one row per detector, with a
+`detector` column — the same rule as S3P's `Frequency` and Track3P's
+`FieldLevel`. With `at: {detector: n}` it is that detector's scalar; a detector
+the run did not write raises, naming those it did. The detector count and their
+Z positions are compiled into the application, not set from the input file.
+
+A quantity is `NaN` when the run scored no detectors or has not run (dry-run),
+and a zero is a real result: in a short run most detectors legitimately deposit
+no energy while still counting gammas.
+
+The gamma spectrum (`<prefix>_detector_gamma_spectrum.csv`) is **not** an
+extractable column: the application writes only each detector's non-empty energy
+bins, so its rows are ragged. It rides out with the scoring grids as part of the
+run's [field artifact](workflow_inputs.md) under the key `gamma_spectrum`, as
+`{detector_id, energy_MeV, weighted_fluence}`.
+
+:::{note}
+A field artifact is written only for a **wide** table — in the long form the
+field values are the rows, so no artifact is stored (the same rule that leaves
+an S3P long-format sweep without its `PortRef` mode profiles). A run that asks
+for a whole per-detector vector therefore goes long-format and gets the detector
+columns but no `gamma_spectrum` artifact. Narrow the detector outputs with
+`at: {detector: n}` when the spectrum is wanted as well; the CSV is in the
+working directory either way.
+:::
 
 More sections and entries will be added in future updates.
 
@@ -975,26 +1131,33 @@ key becomes a sweep axis alongside any `cubit:`/`ace3p:` axes. Keys not present 
 the input file are appended. The deprecated top-level `geant4_input_parameters:`
 key is equivalent.
 
+This is also how to drive the random `seed` as an input variable rather than
+letting the module derive one; a value here wins over the module's
+[`geant4_seed`](#geant4-module-keys) key.
+
 (particle_parameters)=
 ## `particle_parameters`
 
-The keys accepted by a `particles` module entry (see [](#particles-module-keys)).
+The keys accepted by a `field_emission` module entry (see
+[](#field-emission-module-keys)).
 They are set directly on the module's `workflow:` entry, not in a separate
 top-level block.
 
 | Keyword          | Type               | Default               | Description |
 |------------------|--------------------|-----------------------|-------------|
-| `impact_order`   | `int` or `list`    | *(required)*          | Track3P `ImpactOrder` value(s) to retain. Single int or list of ints. |
-| `impact_face_id` | `int` or `list`    | *(required)*          | Track3P `ImpactFaceID` value(s) to retain. |
+| `impact_order`   | `int` or `list`    | `None` (no filter)    | Track3P `ImpactOrder` value(s) to retain. Single int or list of ints. |
+| `impact_face_id` | `int` or `list`    | `None` (no filter)    | Track3P `ImpactFaceID` value(s) to retain. |
+| `min_energy_ev`  | `float`            | `0.0` (no filter)     | Drop impacts below this `ImpactEnergy` (eV). The reference converter uses 1000. |
 | `work_function`  | `float`            | *(required)*          | Surface work function (eV) used in the Fowler-Nordheim weighting. |
-| `dt`             | `float`            | *(required)*          | Time step (s) used to convert current density to particles per emission event. |
+| `frequency`      | `float`            | *(required)*          | RF frequency (Hz). The emission time one macroparticle's current flows is one RF period, `1/frequency`. The deprecated `dt` (that time in seconds, given directly) is still accepted and warns; set one or the other, not both. |
+| `fn_model`       | `str`              | `'fn'`                | Fowler-Nordheim form. `'fn'` is the plain FN form of the LCLS-II reference converter (`A = 1.541434e-6`, `B = 6.830890e9`) with real-valued weights. `'wang-loew'` is the form this module used before 2026-09-14 (prefactor `1.54e-6 · 10^(4.52/√φ)/φ`, `B = 6.53e9`) with weights rounded to whole electrons, kept so existing studies reproduce. The two differ by about two orders of magnitude in weight at `βE ≈ 2e9 V/m`, so a β fitted with one is not comparable with the other. |
 | `beta`           | `list[float]`      | *(required)*          | Field-enhancement factor per axial bin. Length must equal `num_bins`. Not needed when `beta_input`/`beta_inputs` supplies the values. |
 | `num_bins`       | `int`              | `len(beta)`           | Number of axial (`Initial_z`) bins applied to the filtered particles. |
 | `bin_edges`      | `list[float]`      | `None` (auto-spaced)  | Explicit bin edges. If supplied, must have length `num_bins + 1`; otherwise edges are linearly spaced between the min and max `Initial_z` of the filtered particles. |
 | `beta_input`     | `str`              | `None`                | Name of one input-space variable (declared under `input_parameters.particles`; a `cubit:` declaration is also honored) whose scalar value is broadcast to all `num_bins` bins, so a `parameter_sweep` or Xopt can drive `beta` uniformly. Mutually exclusive with `beta_inputs`. |
 | `beta_inputs`    | `list[str]`        | `None`                | Names of `num_bins` input-space variables (declared under `input_parameters.particles`), one per bin, for independent per-bin `beta` exploration (e.g. an 8-dimensional Xopt run). Length must equal `num_bins`. Mutually exclusive with `beta_input`. |
 | `output_format`  | `str`              | `'geant4'` (module default) | Particle-file layout. `'track3p'` writes all filtered Track3P columns plus `Bin` and `ParticleWeight`, with a `#`-commented header. `'geant4'` writes the 10-column source file consumed by the Geant4 `/lume/particleFile` reader (see below). |
-| `output`         | `str`              | `<input>_modified.txt` | Output filename for the generated particle file, written into the workdir. |
+| `output`         | `str`              | `<input>_modified<ext>` | Output filename for the generated particle file, written into the workdir. The derived default appends `_modified` before the extension, so `dump.txt` gives `dump_modified.txt` and an extensionless Track3P dump `ImpactsInfo_2.3e+07` gives `ImpactsInfo_2.3e+07_modified` — never the input's own name, which would overwrite the dump. An `output:` that resolves to the input path is refused. |
 
 With `output_format: 'geant4'` (the module default) the file contains 10
 whitespace-separated columns and no header, one primary per row:
@@ -1004,13 +1167,19 @@ whitespace-separated columns and no header, one primary per row:
 | 1   | `x`           | m     | `Impact_x`              |
 | 2   | `y`           | m     | `Impact_y`              |
 | 3   | `z`           | m     | `Impact_z`              |
-| 4   | `phase`       | rad   | `ImpactPhaseinRFcycle`  |
+| 4   | `phase`       | RF cycles | `ImpactPhaseinRFcycle`  |
 | 5   | `energy`      | eV    | `ImpactEnergy`          |
-| 6   | `n_electrons` | -     | `ParticleWeight` (event weight; written as an integer) |
-| 7   | `px`          | -     | `momentum_x`            |
-| 8   | `py`          | -     | `momentum_y`            |
-| 9   | `pz`          | -     | `momentum_z`            |
+| 6   | `n_electrons` | -     | `ParticleWeight` (event weight; real-valued for `fn_model: fn`) |
+| 7   | `dx`          | -     | `momentum_x`, normalised to a unit direction |
+| 8   | `dy`          | -     | `momentum_y`, normalised to a unit direction |
+| 9   | `dz`          | -     | `momentum_z`, normalised to a unit direction |
 | 10  | `face_id`     | -     | `ImpactFaceID`          |
+
+Rows whose weight is below one electron are dropped: they would emit no primary
+but still be counted as a row for `/run/beamOn`. The reader ignores columns 4 and
+10 (the reference converter writes 0 in both). With `output_format: 'track3p'`
+every filtered row is written, sub-electron weights included — that is the study
+file, not the Geant4 source.
 
 (vocs_parameters)=
 ## `vocs_parameters`
@@ -1068,7 +1237,7 @@ keys below live in the `mode:` block.
 
 ### `collect_training_data`
 
-Drives the full `track3p_source -> particles -> geant4` chain once per
+Drives the full `track3p_source -> field_emission -> geant4` chain once per
 design-of-experiments sample, persisting a `(beta, dose_grid)` pair each time.
 Requires a `workflow:` list.
 
@@ -1082,7 +1251,7 @@ Requires a `workflow:` list.
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
 | `resume`      | `bool` | `False` | Restart a sample that stopped midway through the chain at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless; see [](#resume). |
 
-Two constraints are enforced and hard-fail otherwise: the `particles` module
+Two constraints are enforced and hard-fail otherwise: the `field_emission` module
 must fix `bin_edges` explicitly (length `num_bins + 1`) and declare per-bin
 `beta_inputs`, and the `geant4` input file's scoring mesh must be readable and
 unchanged for the whole campaign (it is fingerprinted into the manifest and

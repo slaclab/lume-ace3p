@@ -14,6 +14,12 @@
 
 #SBATCH --partition=milano
 #SBATCH --account=rfar:regular
+# ACE3P binaries (omega3p, s3p, t3p, acdtool) link libgsl.so.23 from the
+# node's /lib64, which only RHEL 8.10 provides -- EL9 ships gsl 2.7 as
+# libgsl.so.25. Without this constraint the job can land on an EL9 node and
+# the solver dies before main with 'cannot open shared object file'. Remove
+# it once ACE3P is rebuilt against the EL9 gsl.
+#SBATCH --constraint=OS_VER:8.10
 #SBATCH --job-name=lume-ace3p_geant4_track3p_beta
 #SBATCH --output=output-%j.txt
 #SBATCH --error=error-%j.txt

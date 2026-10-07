@@ -364,6 +364,47 @@ def test_s3p_long_format_has_no_field_artifact_column(tmp_path):
     assert FIELD_ARTIFACT_COLUMN not in df.columns
 
 
+def test_long_format_drops_the_whole_field_not_just_the_indexed_part(tmp_path):
+    """What a long-format table costs: a field key that is NOT aligned to the
+    index axis is dropped with the rest, not kept as an artifact beside it.
+
+    This is the rule's documented consequence and it bites two modules. An S3P
+    long sweep loses its ``PortRef`` port-mode profiles, and a Geant4 run that
+    asks for a whole per-detector vector loses its ragged ``gamma_spectrum`` --
+    so a user who wants both narrows the detector outputs with
+    ``at: {detector: n}`` and keeps the wide row. Pinned here because the Geant4
+    detector work (Track3P plan Phase 4) relies on the behaviour being this and
+    not something that quietly changed: moving it would add a field-artifact
+    column to every frozen long-format baseline."""
+    field = {'Frequency': np.array([1.0, 2.0]),
+             'ragged_extra': {'a': [1, 2, 3]}}
+
+    class StubWorkflow:
+        output_spec = {}
+
+        def __init__(self):
+            self.workdir = str(tmp_path)
+
+        def sweep_axes(self):
+            return [('p', np.array([1.0, 2.0]), lambda materialized, s: None)]
+
+        def evaluate(self, scalars, workdir=None):
+            return {}, RunContext(str(tmp_path))
+
+        def field_index(self, ctx=None):
+            return 'Frequency', np.array([1.0, 2.0])
+
+        def field(self, ctx=None):
+            return field
+
+    df = modes.parameter_sweep(StubWorkflow())
+    assert 'Frequency' in df.columns
+    assert FIELD_ARTIFACT_COLUMN not in df.columns
+    # Nothing was written for the un-indexed key either.
+    assert not [name for name in os.listdir(str(tmp_path))
+                if name.startswith('field_')]
+
+
 # --------------------------------------------------------------------------- #
 # No sweep_data in the new code path
 # --------------------------------------------------------------------------- #

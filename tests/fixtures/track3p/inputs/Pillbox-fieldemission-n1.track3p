@@ -1,0 +1,62 @@
+// Phase 3 step 2 probe: does Pillbox field emission with N: 1 populate the
+// Initials-Impacts field-emission columns? (plans/track3p_module_plan.md)
+// Same Pillbox mesh / omega3p_results / emitter box as track3p_probe3/w4, with
+// N: 100 -> N: 1 and the Initials-Impacts dump of track3p_probe4/b1.
+FieldScales:{
+  Type: FieldGradient
+  ScanToken: 0
+  Scale: 23.00e+6
+  EmissionOutput: 1
+}
+
+NormalizedField:{
+  StartPoint: 0.0 0.0 -0.057
+  EndPoint: 0.0 0.0 0.057
+}
+
+Domain:{
+  FieldDir: ./omega3p_results
+}
+
+// Diagnostic: no bounding box at all -- every face of boundary 6 emits.
+Emitter:{
+  Type: 7
+  BoundaryID: 6
+  t0: 0
+  t1: 1
+  N: 1
+  WorkFunction: 4.2
+  Beta: 50
+}
+
+Material:{
+  Type: Primary
+  BoundarySurfaceID: 6
+}
+
+Material:{
+  Type: Secondary
+  BoundarySurfaceID: 6
+  Model: 2
+}
+
+Material: {
+  Type: Absorber
+  BoundarySurfaceID: 1 2
+}
+
+Postprocess:{
+  Toggle: on
+  ResonantParticles:{
+    Token: on
+  }
+  EnhancementCounter:{
+    Token: on
+    MinimumEC: 0.01
+    SEYFileName1: copper.dat
+    BoundarySurfaceID1: 6
+  }
+}
+
+OutputImpacts: on
+OutputImpactsInfo: { Type: Initials-Impacts }

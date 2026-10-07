@@ -1,0 +1,113 @@
+# In-pipeline dark-current chain on the declarative module/mode schema:
+#   workflow:  mesh -> omega3p -> track3p -> field_emission
+#   mode:      single  (one evaluation)
+#
+# The use-case-B counterpart of examples/geant4_track3p_beta, which supplies a
+# pre-run dump through 'track3p_source'. Here Track3P runs *in* the pipeline:
+# Omega3P solves the CW23 pillbox eigenmodes, Track3P tracks field-emitted
+# electrons off the cavity wall at 23 MV/m, and the field_emission module reweights
+# the resulting dump into a Geant4 source file.
+#
+# WHICH HEAD TO USE. This one costs a full Track3P solve per evaluation --
+# ~50 node-minutes per field level for a cryomodule mesh, and Track3P has to
+# re-run for every geometry or field change. A beta sweep does not need that:
+# the same dump reweights analytically for any beta, which is exactly what
+# 'track3p_source' over a pre-run dump does in geant4_track3p_beta. Use this
+# head to *produce* a dump in-pipeline (a geometry sweep, a new cavity); use
+# track3p_source to explore beta over one you already have.
+#
+# THE GEANT4 STEP IS NOT IN THIS CHAIN -- see the commented block at the bottom
+# of 'workflow:' and the README. It needs Pillbox STL geometry that does not
+# exist; nothing in this repo or the Geant4 app ships it.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_track3p_chain_workdir'
+  'workdir_mode' : 'manual'
+
+workflow :
+  # The pillbox mesh lives in ../assets/ because it is 2 MB; Omega3P's input
+  # names it by bare filename. Shared with examples/track3p_multipacting.
+  - module : mesh
+    file : '../assets/Pillbox.ncdf'
+
+  - module : omega3p
+    input : 'Pillbox.omega3p'
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+  # Track3P reads the fields Omega3P just wrote: the module points the input's
+  # Domain.FieldDir at the omega3p results directory, so the input does not
+  # hardcode a job name.
+  #
+  # 'impacts_format: initials-impacts' injects 'OutputImpacts: on' and the
+  # container 'OutputImpactsInfo: { Type: Initials-Impacts }'. Without it
+  # Track3P writes its default 17-column layout, which has no
+  # InitialNormalField/InitialFaceArea to weight by -- and which the weighting
+  # step misreads *silently* rather than rejecting. The workflow refuses to
+  # build without the selector, so this cannot be forgotten.
+  #
+  # 'files' stages the SEY table the input's EnhancementCounter block names.
+  #
+  # Hybrid launch: 2 MPI ranks x 8 OpenMP threads, which is the shape Lixin
+  # Ge's LCLS-II launcher uses (2 x 60 on a whole node). The OMP_* exports live
+  # in the batch script, where every solver in the job inherits them --
+  # verified on milano 2026-10-01, both ranks saw OMP_NUM_THREADS=8.
+  - module : track3p
+    input : 'Pillbox-fe.track3p'
+    impacts_format : 'initials-impacts'
+    files : ['copper.dat']
+    tasks : 2
+    cores : 8
+    opts : '--overlap --cpu-bind=none'
+
+  # Fowler-Nordheim field-emission weighting -> Geant4-format source file.
+  # The artifact Track3P provides is its *results directory*; this module finds
+  # the ImpactsInfo dump inside it. The input declares one field level
+  # (ScanToken: 0), so there is exactly one dump and nothing has to name it. A
+  # multi-level scan would need 'field_level:' on the track3p module above.
+  #
+  # beta 45 is sized from THIS dump, not from the LCLS-II study's 100-150: its
+  # InitialNormalField averages 3.7e7 V/m, so the one-electron cut bites
+  # between 35 and 50 and every macroparticle clears it by 50. At beta 120
+  # every row survives and the weighting demonstrates nothing. See the README.
+  - module : field_emission
+    impact_order : 1
+    impact_face_id : 6
+    work_function : 4.2
+    frequency : 1.3138172e9     # the Pillbox Omega3P mode-0 frequency
+    fn_model : 'fn'
+    beta : 45.0
+    output_format : 'geant4'
+    output : 'particles.data'
+
+  # - module : geant4
+  #   geant4_input : 'input_pillbox.geant4'
+  #   geant4_threads : 120
+  #   geant4_geometry_files :
+  #     - '../assets/Pillbox_solid.stl'      # DOES NOT EXIST
+  #     - '../assets/Pillbox_cavity.stl'     # DOES NOT EXIST
+  #
+  # The dose app needs a copper body ('solid_stl') and a vacuum cavity
+  # ('cavity_stl') as STL meshes. Only 7cell STLs ship in ../assets/, and they
+  # are a different cavity: this dump's primaries sit at r = 0.079-0.10 m,
+  # |z| <= 0.05 m, nowhere near the 7cell wall, so pointing at them would
+  # produce a dose number with no physical meaning. The cavity surface could be
+  # extracted from Pillbox.ncdf exactly, but the copper body cannot -- the mesh
+  # describes only the vacuum volume, so a wall thickness would have to be
+  # invented. Deferred rather than guessed; see the README.
+
+mode :
+  type : single
+  output_file : 'track3p_geant4_chain_output.txt'
+
+# Columns from both solved steps. The track3p quantities are per field level,
+# so with one declared level the table has a single row. 'count' and
+# 'total_weight' come from the weighting step: how many macroparticles survived
+# the filters, and how many real electrons they stand for.
+output_parameters :
+  'EC_max'       : { module: track3p, quantity: max_enhancement }
+  'impacts'      : { module: track3p, quantity: total_impacts }
+  'emitted'      : { module: track3p, quantity: total_emitted }
+  'primaries'    : { module: field_emission, quantity: count }
+  'electrons'    : { module: field_emission, quantity: total_weight }

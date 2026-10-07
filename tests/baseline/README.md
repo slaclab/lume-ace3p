@@ -64,6 +64,23 @@ from fixed-width 6 significant figures to the shared writer's full precision —
 the self-check passed against the *un*-regenerated fixtures first, which is what
 establishes that no numbers moved.
 
+**One set has moved numerically, on purpose:** `geant4_track3p_beta`, re-frozen
+2026-10-01 for Phase 2 of `plans/track3p_module_plan.md`. The `field_emission` module
+now defaults to the plain Fowler–Nordheim form of the LCLS-II reference
+converter (`fn_model: 'fn'`) rather than the Wang–Loew form it used before, so
+`particles.data` carries real-valued weights instead of whole electrons, unit
+momentum directions instead of raw momenta, and only rows standing for at least
+one electron. The example moved with it: work function 4.5 → 4.2 eV, the
+emission time from `dt: 1e-10` to one RF period at `frequency: 1.2999e9`, and a
+new `min_energy_ev: 1000` filter. The swept β grid stayed at 40–60, so the
+digest names are unchanged. (The LCLS-II study scans 100–150, but on this shared
+dump — `InitialNormalField` ≈ 3.7e7 V/m, about 4× Lixin Ge's cryomodule — every
+macroparticle clears the one-electron cut above β ≈ 55, so that range would
+freeze a flat 144 732 rows at every point and check nothing.) The old fixtures
+are not recoverable from the current code: `fn_model: 'wang-loew'` is what
+reproduces that arithmetic, and `track3p_particle_weight` pins it — that
+baseline did **not** move.
+
 ## Per-example checkability
 
 | Example | Path / producer | Numerically checkable | Reachability only |
@@ -72,11 +89,12 @@ establishes that no numbers moved.
 | `s3p_sweep_no_s3p_file` | s3p sweep, dry-run | swept input grid + Frequency; ACE3P `Section` leaves in marker | solver step |
 | `omega3p_sweep` | omega3p sweep, dry-run | swept grid (cav_radius × ellipticity) | R/Q, Mode_freq, E_max, loc_* (NaN without acdtool) |
 | `omega3p_ace3p_param_sweep` | omega3p sweep, dry-run | swept cubit grid **and** the ACE3P `Sigma` list, which becomes a 3rd sweep axis (4×4×2 = 32 runs); ACE3P leaves in marker | solver outputs |
-| `track3p_particle_weight` | **real** `Particles` compute | field-emission `ParticleWeight` + all track columns (digest) | — |
-| `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest); swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
+| `track3p_particle_weight` | **real** `Particles` compute | field-emission `ParticleWeight` + all track columns (digest), on the legacy `fn_model: 'wang-loew'` form this example exists to pin | — |
+| `geant4_track3p_beta` | Geant4 sweep, dry-run + **real** `Particles` pre-step | the generated Geant4 source `particles.data` per beta (digest), on the default `fn_model: 'fn'` form; swept beta grid | Geant4 solver (marker records input/particle/geometry/output files) |
 | `s3p_optimization` | scalar_optimize, synthetic solver (seeded) | full NelderMead trajectory (cornercut, rcorner1, objective) | — |
 | `omega3p_dispersion_sweep` | omega3p sweep, dry-run | the swept ACE3P `Theta` axis — the one example with **no** cubit axis; also pins that the dry-run table stays wide (Omega3P has no field index until it has solved) | `f`, `Q` |
 | `s3p_window_rfpost` | s3p + acdtool sweep, dry-run | swept `wdwt` grid, and the `Frequency` column that pins which of the chain's **two** index-axis producers wins (S3P, by DAG order) | S-parameters, `m_factor` |
+| `track3p_multipacting` | mesh + omega3p + track3p, dry-run | the three-row `FieldLevel` index (2.3e7 / 2.4e7 / 2.5e7) read from the input's `FieldScales` before any solve, pinning that a track3p table is long-format over field level; structurally that `[mesh, omega3p, track3p]` validates | `EC_max`, `EC_mean`, `impacts`, `resonant`, `mp_onset` (NaN without a solver) |
 | `t3p_transwake` | t3p + acdtool(transwake), dry-run | nominal geometry + the transwake `args` in the marker; structurally, that `[cubit, t3p, acdtool]` validates at all and that the jobname is injected | `K`, `W_trans` |
 | `t3p_sweep` | t3p sweep, dry-run | swept grid (cell_radius × iris_radius) and the `s` wake-coordinate column, which pins that a T3P table goes long-format the way an S3P one goes over `Frequency` | `loss_factor`, `W` |
 | `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision | `P_in`, `P_out`, `P_wall` |

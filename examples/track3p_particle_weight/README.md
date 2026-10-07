@@ -4,7 +4,7 @@ A single-evaluation run that does **field-emission particle weighting only**, on
 the declarative module/mode schema:
 
 ```
-workflow:  track3p_source -> particles
+workflow:  track3p_source -> field_emission
 mode:      single
 ```
 
@@ -20,6 +20,13 @@ than the 10-column `geant4` source file that
 [`../geant4_track3p_beta`](../geant4_track3p_beta) produce. Here `beta` is an
 explicit per-bin vector (length `num_bins`), not a broadcast input variable that
 a mode sweeps.
+
+This example pins the **legacy Wang–Loew Fowler–Nordheim form**
+(`fn_model: wang-loew`, weights rounded to whole electrons; emission time
+`1/frequency` = 1e-10 s) so its frozen baseline stands. New studies should use
+the default `fn` model, which reproduces the LCLS-II reference converter; the two
+forms differ by about two orders of magnitude in weight and a β fitted with one
+is not comparable with the other.
 
 ## Assets
 

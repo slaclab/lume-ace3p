@@ -153,10 +153,10 @@ def test_omega3p_ace3p_axis_sweep_matches_baseline(tmp_path):
 
 
 def test_geant4_beta_broadcast_sweep(tmp_path):
-    """track3p_source -> particles -> geant4, dry-run geant4 with real particle
+    """track3p_source -> field_emission -> geant4, dry-run geant4 with real particle
     weighting. 'beta_input' broadcasts the swept beta scalar to all 8 bins, so
     each grid point writes a distinct particles.data. The per-point beta=40 and
-    beta=60 outputs must match the Phase-0.5 digests, proving the mode drives
+    beta=60 outputs must match the frozen digests, proving the mode drives
     the beta-broadcast correctly end-to-end."""
     cwd = os.getcwd()
     try:
@@ -165,8 +165,9 @@ def test_geant4_beta_broadcast_sweep(tmp_path):
         entries = [
             {'module': 'track3p_source',
              'file': '../assets/sample_track3p_particles.txt'},
-            {'module': 'particles', 'impact_order': 1, 'impact_face_id': 6,
-             'work_function': 4.5, 'dt': 1.0e-10, 'num_bins': 8,
+            {'module': 'field_emission', 'impact_order': 1, 'impact_face_id': 6,
+             'work_function': 4.2, 'frequency': 1.2999e9,
+             'min_energy_ev': 1000.0, 'fn_model': 'fn', 'num_bins': 8,
              'beta_input': 'beta', 'output_format': 'geant4',
              'output': 'particles.data'},
             {'module': 'geant4', 'geant4_input': 'input_7cell.geant4',

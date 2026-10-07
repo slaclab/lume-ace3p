@@ -70,6 +70,7 @@ from lume_ace3p.results import (
 )
 from lume_ace3p import surrogate_data
 from lume_ace3p.config import warn_unrecognized
+from lume_ace3p.modules import FieldEmissionModule
 from lume_ace3p.state import point_status, read_state
 from lume_ace3p.xopt_state import (
     best_point, evaluation_count, read_xopt_state, restore_xopt, set_aside,
@@ -581,33 +582,35 @@ def _number(value):
 def _require_fixed_bin_edges(workflow):
     """Validate correctness constraint #1 on the resolved ``particles`` module.
 
-    The β→dose binning is governed by ``bin_edges`` on the *particles* module
-    entry (``particles.py`` reads it there), NOT by any mode-dict key — so this
-    inspects the built workflow's particles module directly and hard-fails if
+    The β→dose binning is governed by ``bin_edges`` on the *field_emission*
+    module entry (``particles.py`` reads it there), NOT by any mode-dict key — so
+    this inspects the built workflow's field_emission module directly and hard-fails if
     ``bin_edges`` is absent or not length ``num_bins + 1``. This is deliberately
     stronger than :func:`_mc_noise_guards` (which only checks a mode-dict key and
-    does not plumb into the particles module); do not substitute one for the
+    does not plumb into the field_emission module); do not substitute one for the
     other. Returns ``(beta_names, num_bins)`` — the per-bin β variable order the
     DOE must sample, taken from the module's ``beta_inputs``."""
-    particles = [m for m in workflow.modules if m.type == 'particles']
+    particles = [m for m in workflow.modules if m.type == FieldEmissionModule.type]
     if not particles:
         raise ValueError(
-            "collect_training_data requires a 'particles' module in the "
-            "workflow (the β→dose weighting step).")
+            f"collect_training_data requires a "
+            f"'{FieldEmissionModule.type}' module in the workflow (the β→dose "
+            f"weighting step).")
     if len(particles) > 1:
         raise ValueError(
-            "collect_training_data expects exactly one 'particles' module; "
-            f"found {len(particles)}.")
+            f"collect_training_data expects exactly one "
+            f"'{FieldEmissionModule.type}' module; found {len(particles)}.")
     params = particles[0].params
     num_bins = params.get('num_bins')
     if num_bins is None:
         raise ValueError(
-            "the 'particles' module must set 'num_bins' for training-data "
-            "collection.")
+            f"the '{FieldEmissionModule.type}' module must set 'num_bins' for "
+            f"training-data collection.")
     bin_edges = params.get('bin_edges')
     if bin_edges is None:
         raise ValueError(
-            "correctness constraint #1: the 'particles' module must fix "
+            f"correctness constraint #1: the '{FieldEmissionModule.type}' module "
+            f"must fix "
             "'bin_edges' explicitly for training-data collection. The default "
             "data-driven edges drift per run and poison the surrogate. Provide "
             f"an explicit 'bin_edges' of length num_bins + 1 ({num_bins + 1}).")
@@ -619,7 +622,8 @@ def _require_fixed_bin_edges(workflow):
     beta_inputs = params.get('beta_inputs')
     if not beta_inputs:
         raise ValueError(
-            "collect_training_data needs the 'particles' module to declare "
+            f"collect_training_data needs the '{FieldEmissionModule.type}' module "
+            f"to declare "
             "'beta_inputs: [beta0, ...]' (one input-space variable per bin) so "
             "the DOE has a per-bin β to sample. A scalar 'beta_input' broadcast "
             "collapses the 8-D design to 1-D and is not a valid training design.")
@@ -715,7 +719,7 @@ def collect_training_data(mode_cfg, workflow):
 
     Samples ``num_samples`` scattered points in the D-dimensional β space via a
     Latin-Hypercube / Sobol DOE (:func:`surrogate_data.sample_beta_doe`), and
-    for each point drives the declarative ``track3p_source → particles →
+    for each point drives the declarative ``track3p_source → field_emission →
     geant4`` chain once through :meth:`Workflow.evaluate` (β passed as an
     override dict, one value per ``beta_inputs`` bin). The full dose/edep voxel
     grid is captured with :meth:`Workflow.field` and persisted per sample with
@@ -830,7 +834,7 @@ def collect_training_data(mode_cfg, workflow):
 
 
 def _particles_params(workflow):
-    return [m for m in workflow.modules if m.type == 'particles'][0].params
+    return [m for m in workflow.modules if m.type == FieldEmissionModule.type][0].params
 
 
 def _mesh_shape(handle):
