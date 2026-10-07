@@ -7,7 +7,9 @@ were **closed rather than implemented**, by decision 2026-10-07: that app's
 geometry is the LCLS-II cryomodule and fits neither the repo's 7cell STLs nor
 its shared Track3P dump, and a shipped polycone example is a possible future
 extension rather than part of this plan. The module-side capability it would
-need is in place and tested. See the status note at the end of each phase. Written 2026-09-14 on S3DF. Decision taken
+need is in place and tested. See the status note at the end of each phase.
+
+Written 2026-09-14 on S3DF. Decision taken
 2026-09-14: the Fowler–Nordheim model is Lixin Ge's plain-FN form with `1/f`
 (§3.6, §6); the `geant4_track3p_beta` baseline will move in Phase 2. Follows
 `plans/t3p_monitor_plan.md` and `plans/acdtool_rework_plan.md` (both COMPLETE)
