@@ -143,7 +143,9 @@ The `output_file` is a tab-delimited table with one column per input or output
 and one row per workflow evaluation. Here it has 9 columns: one per swept axis
 (`cav_radius`, `ellipticity`, and the swept ACE3P leaf, labeled by its path
 `ace3p:ModelInfo.SurfaceMaterial.Sigma`) followed by the 6 declared outputs
-(`R/Q`, `Mode_freq`, `E_max`, `loc_x`, `loc_y`, `loc_z`). See
+(`R/Q`, `Mode_freq`, `E_max`, `loc_x`, `loc_y`, `loc_z`). A leaf scoped to one
+module also carries the module name, for example `ace3p:fine/FiniteElement.Order`
+(see [module-scoped inputs](yaml_reference.md#module-scoped-inputs)). See
 [](yaml_reference.md) for the full list of supported output sections.
 
 Without `output_parameters` the sweep still runs, but nothing from

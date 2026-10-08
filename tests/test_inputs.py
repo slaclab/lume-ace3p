@@ -250,11 +250,11 @@ def test_unregistered_name_falls_back_to_cubit():
 
 
 # --------------------------------------------------------------------------- #
-# Characterization: one ace3p: tree reaches every solver
+# Module-scoped inputs (plans/multi_instance_workflow_plan.md Phase 1)
 # --------------------------------------------------------------------------- #
 
 
-LEAK_YAML = """
+SCOPED_YAML = """
 workflow_parameters :
   workdir : wd
 workflow :
@@ -266,27 +266,16 @@ workflow :
     input : 'cav.t3p'
 input_parameters :
   ace3p :
-    'EigenSolver' :
-      'NumEigenvalues' : 5
+    omega3p :
+      'EigenSolver' :
+        'NumEigenvalues' : 5
 """
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason='an ace3p: override is merged into every solver; '
-                          'module-scoped inputs fix it in Phase 1 of '
-                          'plans/multi_instance_workflow_plan.md')
-def test_an_eigensolver_override_stays_out_of_the_t3p_input(tmp_path,
-                                                             monkeypatch):
-    """``EigenSolver`` is an Omega3P container, and the ``.t3p`` file has none —
-    yet ``merge_overrides`` appends a missing container rather than skipping it,
-    so the staged ``.t3p`` gains a brand-new ``EigenSolver`` block (§1.A).
-
-    Asserts the fixed behavior, so it fails today; when Phase 1 lands it passes,
-    ``strict`` turns that into a failure, and the test is rewritten as the
-    positive scoped-input test. Solvers are stubbed to write their input file and
-    nothing else, which is the step the leak is visible in."""
+def _stage_two_solvers(tmp_path, monkeypatch):
+    """A mesh + Omega3P + T3P chain whose solvers are stubbed to write their
+    input file and nothing else, which is the step an override is visible in."""
     from lume_ace3p.ace3p import ACE3P
-    from lume_ace3p.workflow_graph import Workflow
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'cav.ncdf').write_text('')
@@ -298,10 +287,183 @@ def test_an_eigensolver_override_stays_out_of_the_t3p_input(tmp_path,
         'TimeStepping: {\n  MaximumTime: 1e-9\n}\n')
     monkeypatch.setattr(ACE3P, 'run', lambda self: self.write_input())
 
-    Workflow.from_config(load_yaml(_write(tmp_path, LEAK_YAML))).evaluate()
+
+def test_a_scoped_eigensolver_override_stays_out_of_the_t3p_input(
+        tmp_path, monkeypatch):
+    """An ``EigenSolver`` override scoped to ``omega3p`` reaches the ``.omega3p``
+    file and nothing else. Unscoped, ``merge_overrides`` appends a missing
+    container rather than skipping it, so the ``.t3p`` would gain a brand-new
+    ``EigenSolver`` block (§1.A) — the Phase-0 characterization this replaces."""
+    from lume_ace3p.workflow_graph import Workflow
+
+    _stage_two_solvers(tmp_path, monkeypatch)
+    Workflow.from_config(load_yaml(_write(tmp_path, SCOPED_YAML))).evaluate()
 
     assert 'NumEigenvalues : 5' in (tmp_path / 'wd' / 'cav.omega3p').read_text()
     assert 'EigenSolver' not in (tmp_path / 'wd' / 'cav.t3p').read_text()
+
+
+def test_an_unscoped_container_missing_from_one_solver_warns(
+        tmp_path, monkeypatch, capsys):
+    """The shared spelling still merges everywhere (§3.2) — a deliberate
+    addition is legal — but with two solvers it says so, naming the solver it
+    is appended to and the scoped spelling."""
+    from lume_ace3p.workflow_graph import Workflow
+
+    _stage_two_solvers(tmp_path, monkeypatch)
+    text = SCOPED_YAML.replace("    omega3p :\n      'EigenSolver' :\n"
+                               "        'NumEigenvalues' : 5",
+                               "    'EigenSolver' :\n      'NumEigenvalues' : 5")
+    Workflow.from_config(load_yaml(_write(tmp_path, text)))
+    out = capsys.readouterr().out
+    assert "'EigenSolver' is not in the input file of 't3p'" in out
+    assert 'omega3p:' in out
+
+
+def test_one_solver_never_warns_about_a_missing_container(
+        tmp_path, monkeypatch, capsys):
+    """With a single ACE3P solver nothing changes: adding a container the file
+    lacks is the no-input-file case, not a leak."""
+    from lume_ace3p.workflow_graph import Workflow
+
+    _stage_two_solvers(tmp_path, monkeypatch)
+    text = """
+workflow :
+  - module : mesh
+    file : 'cav.ncdf'
+  - module : t3p
+    input : 'cav.t3p'
+input_parameters :
+  ace3p :
+    'EigenSolver' :
+      'NumEigenvalues' : 5
+"""
+    Workflow.from_config(load_yaml(_write(tmp_path, text)))
+    assert 'Warning' not in capsys.readouterr().out
+
+
+def test_scoped_wins_over_shared_at_the_same_path():
+    """A module's effective inputs are ``shared ⊕ scoped[name]``: a scoped leaf
+    replaces the shared one at the same path, shared leaves it does not name
+    survive, and a module without a scope sees the shared buckets unchanged."""
+    from lume_ace3p.ace3p import Section
+
+    shared = Section()
+    fe = Section()
+    fe.append('Order', '1')
+    fe.append('CurvedSurfaces', 'on')
+    shared.append('FiniteElement', fe)
+    scoped_fe = Section()
+    scoped_fe.append('Order', '2')
+    scope = Section()
+    scope.append('FiniteElement', scoped_fe)
+    inp = WorkflowInputs(cubit={'r': 1.0}, ace3p=shared,
+                         scoped={'fine': {'ace3p': scope,
+                                          'cubit': {'r': 2.0}}})
+
+    fine = inp.for_module('fine')
+    assert _ace3p_leaves(fine) == {'FiniteElement.Order': '2',
+                                   'FiniteElement.CurvedSurfaces': 'on'}
+    assert fine.cubit == {'r': 2.0}
+    assert inp.for_module('coarse') is inp
+    assert _ace3p_leaves(inp)['FiniteElement.Order'] == '1'   # not mutated
+
+
+def test_build_inputs_splits_scopes_only_for_declared_module_names():
+    """A key under a bucket is a scope only when it names a declared module and
+    holds a mapping; a ``{min, max, num}`` range named like a module is still a
+    shared variable, and with no module names nothing is scoped (the call every
+    existing caller makes)."""
+    data = {'input_parameters': {'cubit': {
+                'fine': {'radius': [1.0, 2.0]},
+                'coarse': {'min': 0, 'max': 1, 'num': 2},
+                'length': 3.0}},
+            'ace3p_input_parameters': [
+                ('fine', [('FiniteElement', [('Order', 2)])]),
+                ('ModelInfo', [('File', 'cav.ncdf')])]}
+
+    scoped = build_inputs(data, module_names=['fine', 'coarse'])
+    assert set(scoped.cubit) == {'coarse', 'length'}
+    assert scoped.scoped['fine']['cubit'] == {'radius': [1.0, 2.0]}
+    assert [name for name, _ in scoped.ace3p.entries] == ['ModelInfo']
+    assert [name for name, _ in scoped.scoped['fine']['ace3p'].entries] == \
+        ['FiniteElement']
+
+    unscoped = build_inputs(data)
+    assert unscoped.scoped == {}
+    assert set(unscoped.cubit) == {'fine', 'coarse', 'length'}
+
+
+def test_a_scope_shaped_particles_block_warns(capsys):
+    """``particles:`` is not scoped (§3.1): a block named like a module is read
+    as one variable holding a mapping, so it says so."""
+    build_inputs({'input_parameters': {'particles': {
+        'field_emission': {'beta': 50}}}}, module_names=['field_emission'])
+    assert "particles bucket is not scoped" in capsys.readouterr().out
+
+
+def _scoped_inputs():
+    data = {'input_parameters': {'cubit': {
+                'radius': 1.0,
+                'fine': {'mesh_size': [0.1, 0.2]}},
+            'geant4': {'dose2': {'nthreads': 4}}},
+            'ace3p_input_parameters': [
+                ('coarse', [('FiniteElement', [('Order', [1, 2])])]),
+                ('fine', [('FiniteElement', [('Order', 3)])]),
+                ('ModelInfo', [('Sigma', 5.8e7)])]}
+    return build_inputs(data, module_names=['coarse', 'fine', 'dose2'])
+
+
+def test_scoped_sweep_axes_carry_the_module_segment():
+    """Scoped axes are labelled ``cubit:fine/x`` / ``ace3p:fine/Sec.Leaf`` and
+    follow the shared ones, whose labels do not change (§3.3); materializing a
+    point sets the scoped leaf and nothing else."""
+    inp = _scoped_inputs()
+    labels = [label for label, _values, _setter in inp.sweep_axes()]
+    assert labels == ['cubit:fine/mesh_size', 'ace3p:coarse/FiniteElement.Order']
+
+    point = inp.materialize([0.2, 2])
+    assert point.scoped['fine']['cubit']['mesh_size'] == 0.2
+    assert _ace3p_leaves(point.for_module('coarse'))['FiniteElement.Order'] == '2'
+    assert _ace3p_leaves(point.for_module('fine'))['FiniteElement.Order'] == '3'
+    assert inp.scoped['fine']['cubit']['mesh_size'] == [0.1, 0.2]  # base intact
+
+
+def test_vocs_routes_scoped_labels_and_unique_bare_leaves():
+    """The VOCS registry routes every scoped leaf by its qualified label, a bare
+    leaf unique across buckets *and* scopes by its bare name, and refuses a bare
+    leaf two scopes share, listing both qualified spellings."""
+    inp = _scoped_inputs()
+    out = inp.apply_overrides({'ace3p:fine/FiniteElement.Order': 4,
+                               'mesh_size': 0.15,
+                               'nthreads': 8,
+                               'geant4:dose2/nthreads': 9})
+    assert _ace3p_leaves(out.for_module('fine'))['FiniteElement.Order'] == '4'
+    assert out.scoped['fine']['cubit']['mesh_size'] == 0.15
+    assert out.scoped['dose2']['macro']['nthreads'] == 9
+    assert 'mesh_size' not in out.cubit
+
+    with pytest.raises(ValueError, match='ace3p:coarse/FiniteElement.Order'):
+        inp.apply_overrides({'Order': 2})
+
+
+def test_canonical_is_the_pre_scope_shape_without_scopes():
+    """``config_hash`` hashes :meth:`WorkflowInputs.canonical`; without scopes it
+    must be exactly what rendering the attributes gave before scopes existed, or
+    every resumable campaign on disk reads ``stale`` (§3.7). With one, the scope
+    is in the hash."""
+    from lume_ace3p import state
+
+    plain = WorkflowInputs(cubit={'r': 1.0}, particles={'beta': 2})
+    legacy = {'WorkflowInputs': state._canonical(
+        {'cubit': plain.cubit, 'ace3p': plain.ace3p, 'macro': plain.macro,
+         'particles': plain.particles})}
+    assert state._canonical(plain) == legacy
+
+    scoped = _scoped_inputs()
+    a = state.config_hash([], scoped, {})
+    scoped.scoped['fine']['cubit']['mesh_size'] = 0.3
+    assert state.config_hash([], scoped, {}) != a
 
 
 if __name__ == '__main__':

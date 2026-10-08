@@ -1145,3 +1145,123 @@ def test_track3p_axis_beats_omega3p_modes(tmp_path):
     tracker.run(ctx, skip_execution=True)
     label, levels = wf.field_index(ctx)
     assert label == 'FieldLevel' and len(levels) == 3
+
+
+# --------------------------------------------------------------------------- #
+# Module-scoped inputs (plans/multi_instance_workflow_plan.md Phase 1)
+# --------------------------------------------------------------------------- #
+
+
+_SCOPED_SWEEP_YAML = """\
+workflow_parameters :
+  workdir : wd
+  workdir_mode : indexed
+  dry_run : True
+workflow :
+  - module : cubit
+    journal : 'cav.jou'
+  - module : omega3p
+    name : coarse
+    input : 'cav.omega3p'
+input_parameters :
+  cubit :
+    'radius' : 1.0
+  ace3p :
+    coarse :
+      'FiniteElement' :
+        'Order' : [1, 2]
+"""
+
+
+def _scoped_sweep(tmp_path, monkeypatch, text=_SCOPED_SWEEP_YAML):
+    from lume_ace3p.inputs import load_yaml
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'cav.omega3p').write_text(
+        'ModelInfo: {\n  File: cav.ncdf\n}\n'
+        'FiniteElement: {\n  Order: 1\n}\n')
+    (tmp_path / 'sweep.yaml').write_text(text)
+    return Workflow.from_config(load_yaml(str(tmp_path / 'sweep.yaml')))
+
+
+def test_a_scoped_sweep_axis_is_a_table_column(tmp_path, monkeypatch):
+    """A scoped ACE3P leaf is a sweep axis like any other, labelled with its
+    module (``ace3p:coarse/FiniteElement.Order``); the sweep table carries it as
+    a column and the dry-run marker shows the per-module view."""
+    from lume_ace3p.modes import parameter_sweep
+
+    wf = _scoped_sweep(tmp_path, monkeypatch)
+    df = parameter_sweep(wf)
+    assert df['ace3p:coarse/FiniteElement.Order'].tolist() == [1, 2]
+    assert "('Order', 0)), '2')" in (tmp_path / 'wd_1' / 'DRY_RUN.txt').read_text()
+
+
+def test_status_names_a_scoped_axis_column(tmp_path, monkeypatch, capsys):
+    """``--status`` labels a scoped axis the way the sweep table does."""
+    from lume_ace3p.modes import status
+
+    df = status(_scoped_sweep(tmp_path, monkeypatch))
+    assert 'ace3p:coarse/FiniteElement.Order' in df.columns
+    assert df['status'].tolist() == ['absent', 'absent']
+
+
+@pytest.mark.parametrize('name', ['fine/1', 'a b', 'x:y', 'p.q'])
+def test_a_module_name_outside_the_label_alphabet_is_rejected(name):
+    """A name is a scope key and a label segment, so ``/``, ``:``, spaces and
+    dots are refused at build time."""
+    with pytest.raises(WorkflowValidationError, match='may contain only'):
+        Workflow([{'module': 'mesh', 'file': 'a.ncdf', 'name': name}],
+                 workflow_params={'dry_run': True})
+
+
+def test_a_module_named_like_its_own_input_container_is_rejected(
+        tmp_path, monkeypatch):
+    """Under ``ace3p:`` a ``ModelInfo:`` key would be read as the module's scope
+    if a module were called that; module names win, so the name is refused."""
+    text = _SCOPED_SWEEP_YAML.replace('name : coarse', 'name : ModelInfo') \
+                             .replace('    coarse :', '    ModelInfo :')
+    with pytest.raises(WorkflowValidationError, match='top-level container'):
+        _scoped_sweep(tmp_path, monkeypatch, text)
+
+
+def test_a_scope_for_a_module_that_does_not_read_it_warns(
+        tmp_path, monkeypatch, capsys):
+    """A ``cubit:`` block scoped to a solver is never applied, so it warns."""
+    text = _SCOPED_SWEEP_YAML.replace(
+        "    'radius' : 1.0\n",
+        "    'radius' : 1.0\n    coarse :\n      'mesh_size' : 0.1\n")
+    _scoped_sweep(tmp_path, monkeypatch, text)
+    out = capsys.readouterr().out
+    assert "'input_parameters: cubit:' has a block for module 'coarse'" in out
+    assert 'never applied' in out
+
+
+def test_a_scoped_cubit_value_names_the_auto_workdir_and_the_point(
+        tmp_path, monkeypatch):
+    """Under ``workdir_mode: auto`` a single run is named from its cubit and
+    particles values, and the scoped cubit values count too; the manifest's
+    ``point`` records them under their scoped labels."""
+    from lume_ace3p.inputs import load_yaml
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'c.yaml').write_text("""\
+workflow_parameters :
+  workdir : wd
+  workdir_mode : auto
+  dry_run : True
+workflow :
+  - module : cubit
+    name : fine
+    journal : 'cav.jou'
+input_parameters :
+  cubit :
+    'radius' : 1.0
+    fine :
+      'mesh_size' : 0.2
+""")
+    wf = Workflow.from_config(load_yaml(str(tmp_path / 'c.yaml')))
+    assert wf.resolved_workdir() == 'wd_1.0_0.2'
+    record = wf._point_record(wf.inputs, None)
+    assert record['axes']['cubit:fine/mesh_size'] == 0.2

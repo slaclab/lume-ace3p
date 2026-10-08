@@ -23,6 +23,22 @@ coarser grain than the entries above them.
   and the campaign hash (a `python:` callable by its source text); a config
   without it hashes exactly as before. See `docs/yaml_reference.md`
   "`derived_parameters`".
+- **Module-scoped inputs.** A key under `input_parameters.cubit` / `.ace3p` /
+  `.geant4` that names a workflow module (`ace3p: {omega3p: {EigenSolver: …}}`)
+  reaches that module only, layered over the shared values. Scoped axes are
+  labelled `ace3p:<name>/Sec.Leaf` / `cubit:<name>/x` / `geant4:<name>/x`, in the
+  sweep table, `--status` and VOCS alike; shared labels are unchanged, and a
+  config without scopes hashes exactly as before. See `docs/yaml_reference.md`
+  "Module-scoped inputs".
+
+### Changed
+
+- Module names may contain only letters, digits, `_` and `-`, and a solver may
+  not be named like a top-level container of its own input file.
+- A workflow with two or more ACE3P solvers warns when a shared `ace3p:`
+  container is missing from one of their input files, since it is appended there
+  as a new block (an `EigenSolver` override used to land in the `.t3p` file
+  silently).
 
 ## [0.6.0] — 2026-10-07
 

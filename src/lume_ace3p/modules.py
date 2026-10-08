@@ -471,6 +471,7 @@ class CubitModule(Module):
     def run(self, ctx, skip_execution=False):
         if self.journal is None:
             raise ValueError("cubit module requires a 'journal'.")
+        inputs = ctx.inputs.for_module(self.name)
         if ctx.dry_run:
             # Legacy dry-run skipped Cubit entirely; record a nominal mesh path
             # (side-effect-free) so a downstream solver's requirement is met.
@@ -478,7 +479,7 @@ class CubitModule(Module):
             ctx.artifacts[MESH] = os.path.join(ctx.workdir, base + '.genesis')
             _append_marker(ctx, 'Dry run mode: Cubit step skipped.\n'
                                 f'Cubit journal: {self.journal}\n'
-                                f'Cubit inputs: {ctx.inputs.cubit}\n')
+                                f'Cubit inputs: {inputs.cubit}\n')
             return
         if skip_execution:
             # Resumed: the mesh this step exported is already in the workdir. Cubit
@@ -496,8 +497,8 @@ class CubitModule(Module):
                       cubit_path=ctx.paths.get('cubit', ''),
                       mpi_caller=ctx.paths.get('mpi', ''),
                       log_file=self.log_file(ctx))
-        if ctx.inputs.cubit:
-            cubit.set_value(ctx.inputs.cubit)
+        if inputs.cubit:
+            cubit.set_value(inputs.cubit)
         cubit.run(mcflag=self.meshconvert)
         self._cubit = cubit
         mesh = getattr(cubit, 'exportfile', None)
@@ -604,11 +605,13 @@ class _SolverModule(Module):
                     "there is no such file (paths resolve from the directory "
                     "run-lume-ace3p was started in).")
             _stage_file(ctx, path)
+        # The shared ``ace3p:`` tree with this module's own scope over it.
+        inputs = ctx.inputs.for_module(self.name)
         if ctx.dry_run:
             self._solver = None
-            leaves = _ace3p_leaf_pairs(ctx.inputs.ace3p)
+            leaves = _ace3p_leaf_pairs(inputs.ace3p)
             _append_marker(ctx, f'Dry run mode: {self._label} step skipped.\n'
-                                f'Cubit: {ctx.inputs.cubit}\n'
+                                f'Cubit: {inputs.cubit}\n'
                                 f'ACE3P: {[(_, v) for _, v in leaves]}\n')
             ctx.artifacts[self._artifact] = ctx.workdir
             # No solver instance to ask, so fall back to the declared override or
@@ -628,7 +631,7 @@ class _SolverModule(Module):
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''),
                                log_file=self.log_file(ctx))
-        solver.set_value(ctx.inputs.ace3p)
+        solver.set_value(inputs.ace3p)
         self._prepare_solver(ctx, solver)
         if skip_execution:
             # Resumed: this solve already finished in this workdir, so read its
@@ -2587,7 +2590,8 @@ class Geant4Module(Module):
         # the binary re-ran, so drop what was cached then.
         self._detector_cache.clear()
         particle_file_path = ctx.artifacts[PARTICLE_SOURCE]
-        macro_inputs = dict(ctx.inputs.macro) if ctx.inputs.macro else None
+        inputs = ctx.inputs.for_module(self.name)
+        macro_inputs = dict(inputs.macro) if inputs.macro else None
 
         # Build the Geant4 object first so we can read the input file's own
         # settings (STL geometry names, output filenames) before copying files.

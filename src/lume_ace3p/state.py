@@ -321,7 +321,8 @@ def _canonical(value):
     Deliberately duck-typed rather than importing the types it renders: an
     object with a ``__dict__`` (a :class:`~lume_ace3p.inputs.WorkflowInputs`, an
     :class:`~lume_ace3p.ace3p.Section`) is rendered from its attributes, keyed by
-    its class name so two different shapes cannot collide. That keeps this module
+    its class name so two different shapes cannot collide; one with a
+    ``canonical()`` method is rendered from what that returns. That keeps this module
     free of a dependency on the input model — and means a new field on either
     class is picked up here without a change, which is the safe default for a
     hash whose job is to notice that something moved."""
@@ -331,6 +332,11 @@ def _canonical(value):
         return value
     if hasattr(value, 'tolist'):                 # numpy array / scalar
         return value.tolist()
+    if callable(getattr(value, 'canonical', None)):
+        # An object that chooses its own rendering — WorkflowInputs, so a field
+        # added for a new feature can stay out of the hash of a config that does
+        # not use it.
+        return _canonical(value.canonical())
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):

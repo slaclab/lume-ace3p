@@ -1,6 +1,6 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0 and Phase D done 2026-10-08**, Phase 1 next. Written
+**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08**, Phase 2 next. Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -524,6 +524,18 @@ no behavior changes for any config without scopes.
 
 **Acceptance.** All baselines byte-identical (`tests/test_baseline_selfcheck.py`);
 the three pinned hashes unchanged; the leak test passes positively.
+
+**Done 2026-10-08.** As planned, with these deviations:
+- `for_module(name)` returns the object itself when the module has no scope, so
+  an unscoped chain hands every module the very `WorkflowInputs` it did before.
+- `canonical()` is §3.7's hook (the §3.6 reference in item 1 was a typo); it adds
+  a `scoped` key only when a scope is declared.
+- A `{min, max, num}` mapping named like a module is a shared range, not a scope.
+- The scope checks run in `Workflow.__init__` (`_validate_scopes`), not in
+  `_resolve_order`, because they need the inputs. The container-name check
+  covers ACE3P solvers only, since only they have an input tree to collide with.
+- `_point_record` records scoped `cubit` / `geant4` scalars; the `auto` workdir
+  suffix adds scoped `cubit` values (the shared rule names by cubit + particles).
 
 ### Phase 2 — Per-instance artifact identity and `from:`
 

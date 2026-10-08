@@ -942,6 +942,47 @@ field-enhancement variables read by the `field_emission` module's `beta_input` /
 `cubit:` keys must exactly match the variable names in the Cubit journal file.
 :::
 
+(module-scoped-inputs)=
+### Module-scoped inputs
+
+By default every `cubit:` value reaches every `cubit` module, every `ace3p:` value
+every ACE3P solver, and every `geant4:` value every `geant4` module. To give one
+module its own value, nest it under that module's `name:`:
+
+```yaml
+workflow :
+  - module : omega3p
+    input : 'cav.omega3p'
+  - module : t3p
+    input : 'cav.t3p'
+
+input_parameters :
+  ace3p :
+    'ModelInfo' :                 # not a module name: shared, reaches both
+      'SurfaceMaterial' : { 'ReferenceNumber' : 6, 'Sigma' : 5.8e7 }
+    omega3p :                     # a module name: reaches omega3p only
+      'EigenSolver' : { 'NumEigenvalues' : 5 }
+```
+
+A key directly under `cubit:`, `ace3p:` or `geant4:` that equals a declared
+module name (the type, unless the entry sets `name:`) and holds a mapping is a
+scope. Every other key is shared. A module reads the shared values with its own
+scope layered over them; where both set the same path, the scoped value wins.
+`particles:` is not scoped, since each `field_emission` module names its own
+variables (`beta_input` / `beta_inputs`).
+
+- A scoped leaf's sweep axis and table column carry the module name:
+  `cubit:fine/mesh_size`, `ace3p:fine/FiniteElement.Order`, `geant4:dose2/nthreads`.
+  Shared labels do not change.
+- Module names may contain only letters, digits, `_` and `-`. A solver named like
+  a top-level container of its own input file (`ModelInfo`) is an error.
+- A scope for a module that does not read that bucket (a `cubit:` block for a
+  solver) warns, since nothing applies it.
+- With two or more ACE3P solvers, a shared top-level container that is missing
+  from one of their input files warns. It is still appended to that file (adding
+  a container is legal), but an `EigenSolver` block meant for Omega3P does not
+  belong in a `.t3p` file, and scoping it is the fix.
+
 A parameter sweep evaluates the full tensor product of the array-valued leaves
 across all sub-blocks. Three swept leaves with lists of lengths 10, 12, and 15,
 in any sub-blocks, run the workflow 10 × 12 × 15 = 1800 times.
@@ -1182,6 +1223,9 @@ The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`, etc.
 entries. Use a `ReferenceNumber:` (or other discriminating leaf) inside each block
 to keep the YAML readable.
 
+To send a container to one solver only, nest it under that module's name; see
+[](#module-scoped-inputs).
+
 Fast path: when the solver module's `input:` names a separate ACE3P input file and
 the `ace3p:` block does not override or sweep any values inside it, the file is
 copied to each working directory unchanged.
@@ -1270,12 +1314,14 @@ a `variables` mapping of name → `[low, high]` bounds, plus `objectives` (name 
 ace3p / geant4 / particles), so one optimization can drive several codes.
 
 - A bare variable name (`cornercut`) routes to its declaring bucket when that
-  name is unique across all buckets.
+  name is unique across all buckets and [module scopes](#module-scoped-inputs).
 - If the same bare name is declared in more than one bucket (a `cubit:` knob and
   an `ace3p:` leaf both named `start`), a bare reference is a hard error. Qualify
   it with its bucket label: `cubit:start`, `ace3p:FrequencyScan.Start`,
   `geant4:nthreads`, or `particles:beta0`. The ACE3P label is the dotted section
-  path, matching the sweep-table column label.
+  path, matching the sweep-table column label. A scoped leaf is qualified with
+  its module name, as its column is: `ace3p:fine/FiniteElement.Order`,
+  `cubit:fine/mesh_size`.
 - A variable not declared in any `input_parameters` bucket falls back to the
   cubit bucket, so a config that only lists `vocs_parameters.variables` works.
 
@@ -1475,6 +1521,11 @@ YAML. The four buckets correspond to the four `input_parameters` sub-blocks:
 Array-valued leaves in any bucket become sweep axes; scalar leaves are written
 through to the matching input file unchanged. During optimization, each VOCS
 variable is routed to the bucket where it is declared (see [](#vocs_parameters)).
+
+A fifth attribute, `scoped`, holds the [module-scoped blocks](#module-scoped-inputs)
+as `{module name: {cubit, ace3p, macro}}`. `for_module(name)` returns the view one
+module reads, which is the shared buckets with that module's scope layered over
+them. Without scopes it returns the object itself.
 
 (results)=
 ### Results

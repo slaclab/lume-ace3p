@@ -6,7 +6,9 @@ a runnable :class:`Workflow`: the modules are instantiated from
 ``requires``/``provides`` artifact edges, and executed in order against a single
 :class:`RunContext` to produce artifacts and extracted ``output_parameters``.
 
-``WorkflowInputs`` (from ``inputs.py``) is reused unchanged as the input model.
+``WorkflowInputs`` (from ``inputs.py``) is the input model; each module reads its
+own view of it (:meth:`~lume_ace3p.inputs.WorkflowInputs.for_module`), the
+shared buckets with that module's scoped block layered over them.
 
 Design notes
 ------------
@@ -49,12 +51,14 @@ Design notes
 """
 
 import os
+import re
 
 import numpy as np
 
 from lume_ace3p.modules import (
-    FieldEmissionModule, Geant4Module, RunContext, TRACK3P_PARTICLES,
-    acdtool_spec, build_module, STAGE_MODES, T3PModule, Track3PModule,
+    CubitModule, FieldEmissionModule, Geant4Module, RunContext,
+    TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
+    Track3PModule, _SolverModule,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.derived import DerivedSpec
@@ -91,6 +95,11 @@ WORKDIR_MODES = ('manual', 'auto', 'indexed')
 # mistake worth catching.
 WORKFLOW_PARAM_KEYS = frozenset({'workdir', 'workdir_mode', 'stage_mode',
                                  'capture_output', 'dry_run', 'paths'})
+
+# What a module ``name:`` may be made of. A name is also a scope key under
+# ``input_parameters`` and a segment of a scoped label (``ace3p:fine/Sec.Leaf``),
+# so ``/`` and ``:`` would make a label ambiguous.
+_MODULE_NAME = re.compile(r'[A-Za-z0-9_-]+')
 
 # The workdir name used when no ``workdir`` is configured at all.
 DEFAULT_WORKDIR_BASE = 'lume-ace3p_workflow_output'
@@ -277,6 +286,79 @@ def _validate_impacts_layout(modules, producer):
             f"or point 'file:' at a dump that already has them.")
 
 
+def _top_level_names(module):
+    """The top-level container names of an ACE3P module's input file, or
+    ``None`` when it has no readable one (run time's error to report)."""
+    try:
+        with open(module.input_file) as file:
+            tree = parse_ace3p(file.read())
+    except (OSError, TypeError, ValueError):
+        return None
+    return {name for name, _child in tree.entries}
+
+
+def _validate_scopes(modules, inputs):
+    """Build-time checks on the module-scoped ``input_parameters`` blocks
+    (plans/multi_instance_workflow_plan.md §3.1-3.2).
+
+    * A module named like a top-level container of its own input file is an
+      error: under ``ace3p:`` that key would be read as the module's scope, not
+      as the container.
+    * A scope for a module that does not read that bucket warns — a ``cubit:``
+      block for a solver, an ``ace3p:`` block for an ``acdtool`` step — since
+      nothing would ever read it.
+    * With two or more ACE3P solvers, a *shared* top-level container missing from
+      one of their input files warns: it is appended to that file as a new block,
+      which is right for a deliberate addition and wrong for a container meant
+      for another solver. The message names the scoped spelling.
+
+    Input files are opened here, as :func:`_validate_impacts_layout` does; one
+    that cannot be read is skipped."""
+    solvers = [m for m in modules if isinstance(m, _SolverModule)]
+    tops = {m.name: _top_level_names(m) for m in solvers}
+
+    for m in solvers:
+        if tops[m.name] and m.name in tops[m.name]:
+            raise WorkflowValidationError(
+                f"module '{m.name}' has the name of a top-level container of "
+                f"its own input file {m.input_file}, so under "
+                f"'input_parameters: ace3p:' a '{m.name}:' block would be read "
+                "as that module's scope rather than as the container. Give the "
+                "module a different 'name:'.")
+
+    readers = {'cubit': (CubitModule, 'cubit'),
+               'ace3p': (_SolverModule, 'ace3p'),
+               'macro': (Geant4Module, 'geant4')}
+    by_name = {m.name: m for m in modules}
+    for name, scope in inputs.scoped.items():
+        module = by_name.get(name)
+        for bucket, (reader, label) in readers.items():
+            content = scope[bucket]
+            if not (content.entries if bucket == 'ace3p' else content):
+                continue
+            if module is not None and not isinstance(module, reader):
+                print(f"Warning: 'input_parameters: {label}:' has a block for "
+                      f"module '{name}', but '{name}' is a '{module.type}' "
+                      f"module, which does not read the {label} inputs, so the "
+                      "block is never applied.")
+
+    if len(solvers) < 2:
+        return
+    for container in dict.fromkeys(name for name, _ in inputs.ace3p.entries):
+        missing = [m.name for m in solvers
+                   if tops[m.name] is not None and container not in tops[m.name]]
+        if not missing:
+            continue
+        others = [m.name for m in solvers if m.name not in missing]
+        target = others[0] if others else solvers[0].name
+        print(f"Warning: the shared 'input_parameters: ace3p:' container "
+              f"'{container}' is not in the input file of "
+              f"{', '.join(repr(n) for n in missing)}, so it is appended there "
+              "as a new block. If it is meant for one solver only, scope it "
+              f"under that module's name:\n"
+              f"    ace3p:\n      {target}:\n        '{container}': {{…}}")
+
+
 def _resolve_order(modules):
     """Validate the module list and return it topologically ordered.
 
@@ -327,6 +409,14 @@ def _resolve_order(modules):
                 "entry in the run manifest, so it must be unique within a "
                 "workflow. Give one of them a different 'name:'.")
         seen[m.name] = m.type
+
+    for m in modules:
+        if not _MODULE_NAME.fullmatch(m.name):
+            raise WorkflowValidationError(
+                f"module name '{m.name}' (type '{m.type}') may contain only "
+                "letters, digits, '_' and '-': a name is also a scope key under "
+                "'input_parameters' and a segment of a scoped sweep label "
+                "('ace3p:<name>/Section.Leaf').")
 
     _validate_impacts_layout(modules, producer)
 
@@ -390,6 +480,7 @@ class Workflow:
         # its own list on the RunContext (see :meth:`evaluate`).
         self.modules = self._build_modules()
         self.module_types = {m.type for m in self.modules}
+        _validate_scopes(self.modules, self.inputs)
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
         if self.workdir_mode not in WORKDIR_MODES:
@@ -450,7 +541,8 @@ class Workflow:
 
         Reads the ``workflow:`` list, ``workflow_parameters`` block,
         ``output_parameters`` spec and ``derived_parameters`` block, and builds
-        ``WorkflowInputs`` via ``inputs.build_inputs`` (reused unchanged).
+        ``WorkflowInputs`` via ``inputs.build_inputs``, which needs the module
+        names to tell a module-scoped block from a shared one.
         ``config_dir`` is the config file's directory, where a
         ``derived_parameters`` ``python:`` module is looked for besides
         ``sys.path`` (the working directory by default)."""
@@ -459,6 +551,10 @@ class Workflow:
         if entries is None:
             raise WorkflowValidationError(
                 "YAML has no 'workflow:' list to build a Workflow from.")
+        # The names a scope key under input_parameters may match. A malformed
+        # entry contributes none; the constructor reports it.
+        names = [entry.get('name') or str(entry.get('module', '')).lower()
+                 for entry in entries if isinstance(entry, dict)]
         output_spec = yaml_data.get('output_parameters')
         derived = yaml_data.get('derived_parameters')
         if derived is not None:
@@ -466,7 +562,7 @@ class Workflow:
                                               base_dir=config_dir)
         return cls(entries,
                    workflow_params=yaml_data.get('workflow_parameters'),
-                   inputs=build_inputs(yaml_data),
+                   inputs=build_inputs(yaml_data, module_names=names),
                    output_spec=output_spec,
                    derived_spec=derived)
 
@@ -546,7 +642,8 @@ class Workflow:
             # names each evaluation by its iteration index instead (see
             # point_workdir), so it no longer comes through here at all.
             parts = []
-            for value in (*inputs.cubit.values(), *inputs.particles.values()):
+            for value in (*inputs.cubit.values(), *inputs.particles.values(),
+                          *inputs.scoped_scalars(('cubit',)).values()):
                 if isinstance(value, (list, tuple, np.ndarray)):
                     raise ValueError("Workflow cannot run with non-scalar "
                                      "inputs; drive it through a sweep mode.")
@@ -826,7 +923,8 @@ class Workflow:
             axes = {label: value for (label, _values, _setter), value
                     in zip(self.sweep_axes(), sweep_scalars)}
         else:
-            axes = {**inputs.cubit, **inputs.particles, **inputs.macro}
+            axes = {**inputs.cubit, **inputs.particles, **inputs.macro,
+                    **inputs.scoped_scalars()}
         # numpy scalars and all: new_state renders the block JSON-writable.
         return {'axes': {str(name): value for name, value in axes.items()}}
 
