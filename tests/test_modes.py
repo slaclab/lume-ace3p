@@ -301,5 +301,70 @@ def test_run_mode_rejects_unknown_mode(tmp_path):
         os.chdir(cwd)
 
 
+# --------------------------------------------------------------------------- #
+# Characterization: two index axes in one chain
+# --------------------------------------------------------------------------- #
+
+
+def _omega3p_t3p_rows(tmp_path):
+    """``(index, rows)`` for one ``omega3p + t3p`` point with whole-axis outputs
+    from both, over the synthetic two-mode Omega3P and three-sample T3P results
+    of ``test_modules``."""
+    from lume_ace3p.modes import _rows_for_point
+    from test_modules import _make_omega3p_solver, _make_t3p_solver
+
+    (tmp_path / 'x.ncdf').write_text('')
+    os.chdir(tmp_path)
+    spec = {'f': {'module': 'omega3p', 'quantity': 'Frequency'},
+            'W': {'module': 't3p', 'quantity': 'W'}}
+    wf = Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
+                   {'module': 'omega3p', 'input': 'x.omega3p'},
+                   {'module': 't3p', 'input': 'x.t3p'}],
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec=spec)
+    _outputs, ctx = wf.evaluate()
+    modules = {m.type: m for m in ctx.modules}
+    modules['omega3p']._solver = _make_omega3p_solver(ctx.workdir)
+    modules['t3p']._solver = _make_t3p_solver(ctx.workdir)
+    outputs = {}
+    for name, entry in spec.items():
+        module, cleaned = wf._route_output(name, entry, ctx.modules)
+        outputs[name] = module.extract(ctx, cleaned)
+    index = wf.field_index(ctx)
+    return index, _rows_for_point(wf, index, [], [], outputs)
+
+
+def test_a_t3p_array_is_sampled_on_the_omega3p_mode_axis_today(tmp_path):
+    """What the table layer does today (§2.6 of
+    plans/multi_instance_workflow_plan.md): the first axis wins, so T3P's
+    three-sample ``W`` is read at ``ModeID`` positions 0 and 1 and its third
+    sample is dropped without a word. Phase 3 replaces this with an error; this
+    test is then deleted with the xfail below flipping."""
+    cwd = os.getcwd()
+    try:
+        (label, ids), rows = _omega3p_t3p_rows(tmp_path)
+    finally:
+        os.chdir(cwd)
+    assert label == 'ModeID' and list(ids) == [0, 1]
+    assert [r['f'] for r in rows] == pytest.approx([1.1e9, 2.2e9])
+    assert [r['W'] for r in rows] == pytest.approx([-1e-7, -2e-7])
+
+
+@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception,
+                   reason='an array output off the table axis is sampled '
+                          'silently; it becomes an error in Phase 3 of '
+                          'plans/multi_instance_workflow_plan.md')
+def test_a_t3p_array_off_the_mode_axis_is_an_error(tmp_path):
+    """The Phase 3 behavior: an array extracted from a module that does not own
+    the table axis raises rather than being sampled on someone else's."""
+    cwd = os.getcwd()
+    try:
+        with pytest.raises(ValueError, match='t3p'):
+            _omega3p_t3p_rows(tmp_path)
+    finally:
+        os.chdir(cwd)
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

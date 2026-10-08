@@ -249,5 +249,60 @@ def test_unregistered_name_falls_back_to_cubit():
     assert out.cubit['newvar'] == 3.0
 
 
+# --------------------------------------------------------------------------- #
+# Characterization: one ace3p: tree reaches every solver
+# --------------------------------------------------------------------------- #
+
+
+LEAK_YAML = """
+workflow_parameters :
+  workdir : wd
+workflow :
+  - module : mesh
+    file : 'cav.ncdf'
+  - module : omega3p
+    input : 'cav.omega3p'
+  - module : t3p
+    input : 'cav.t3p'
+input_parameters :
+  ace3p :
+    'EigenSolver' :
+      'NumEigenvalues' : 5
+"""
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason='an ace3p: override is merged into every solver; '
+                          'module-scoped inputs fix it in Phase 1 of '
+                          'plans/multi_instance_workflow_plan.md')
+def test_an_eigensolver_override_stays_out_of_the_t3p_input(tmp_path,
+                                                             monkeypatch):
+    """``EigenSolver`` is an Omega3P container, and the ``.t3p`` file has none —
+    yet ``merge_overrides`` appends a missing container rather than skipping it,
+    so the staged ``.t3p`` gains a brand-new ``EigenSolver`` block (§1.A).
+
+    Asserts the fixed behavior, so it fails today; when Phase 1 lands it passes,
+    ``strict`` turns that into a failure, and the test is rewritten as the
+    positive scoped-input test. Solvers are stubbed to write their input file and
+    nothing else, which is the step the leak is visible in."""
+    from lume_ace3p.ace3p import ACE3P
+    from lume_ace3p.workflow_graph import Workflow
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.ncdf').write_text('')
+    (tmp_path / 'cav.omega3p').write_text(
+        'ModelInfo: {\n  File: cav.ncdf\n}\n'
+        'EigenSolver: {\n  NumEigenvalues: 2\n}\n')
+    (tmp_path / 'cav.t3p').write_text(
+        'ModelInfo: {\n  File: cav.ncdf\n}\n'
+        'TimeStepping: {\n  MaximumTime: 1e-9\n}\n')
+    monkeypatch.setattr(ACE3P, 'run', lambda self: self.write_input())
+
+    Workflow.from_config(load_yaml(_write(tmp_path, LEAK_YAML))).evaluate()
+
+    assert 'NumEigenvalues : 5' in (tmp_path / 'wd' / 'cav.omega3p').read_text()
+    assert 'EigenSolver' not in (tmp_path / 'wd' / 'cav.t3p').read_text()
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

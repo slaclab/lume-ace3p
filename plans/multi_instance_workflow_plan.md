@@ -1,9 +1,8 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: PROPOSED, decisions complete** — written 2026-10-07 on S3DF,
-nothing implemented. `derived_parameters` (Phase D) added the same day at
-David's request; every §6 decision that gates a phase was taken the same day,
-so Phase 0 can start.
+**Status: IN PROGRESS — Phase 0 done 2026-10-08**, Phase D next. Written
+2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
+David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
 `plans/acdtool_rework_plan.md` design decision 3 put out of scope: artifact
 identity is per *kind* today, and this plan makes it per *instance*. It reuses

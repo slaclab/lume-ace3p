@@ -301,6 +301,58 @@ def test_output_targets_absent_module(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Characterization: which chains validate under one-producer-per-kind
+#
+# The truth table of §1.B of plans/multi_instance_workflow_plan.md, kept as a
+# table so Phase 2 rewrites the verdicts in one place rather than chasing
+# individual messages: the three rejections become acceptances (or a name /
+# ambiguity error) once artifacts are keyed by producer.
+# --------------------------------------------------------------------------- #
+
+
+_CUBIT = {'module': 'cubit', 'journal': 'x.jou'}
+_OMEGA3P = {'module': 'omega3p', 'input': 'x.omega3p'}
+_T3P = {'module': 't3p', 'input': 'x.t3p'}
+
+_ONE_PRODUCER_TABLE = [
+    pytest.param([_CUBIT, _OMEGA3P, {'module': 's3p', 'input': 'x.s3p'}],
+                 EM_SOLUTION, id='omega3p+s3p'),
+    pytest.param([_CUBIT, _OMEGA3P,
+                  {'module': 'omega3p', 'name': 'fine', 'input': 'x.omega3p'}],
+                 EM_SOLUTION, id='two-omega3p'),
+    pytest.param([_CUBIT, _OMEGA3P, _T3P,
+                  {'module': 'acdtool', 'input': 'x.rfpost'},
+                  {'module': 'acdtool', 'name': 'transwake',
+                   'command': 'postprocess transwake',
+                   'args': [0.0, 0.0, 0.0, 0.0125]}],
+                 RF_POST, id='acdtool-rf+transwake'),
+    pytest.param([_CUBIT, _OMEGA3P, _T3P,
+                  {'module': 'track3p', 'input': 'x.track3p'},
+                  {'module': 'acdtool', 'input': 'x.rfpost'}],
+                 ['cubit', 'omega3p', 't3p', 'track3p', 'acdtool'],
+                 id='one-of-each-kind'),
+    pytest.param([_CUBIT, {'module': 's3p', 'input': 'x.s3p'},
+                  {'module': 'track3p_source', 'file': 'p.txt'},
+                  {'module': 'field_emission'}],
+                 ['cubit', 's3p', 'track3p_source', 'field_emission'],
+                 id='two-disjoint-subchains'),
+]
+
+
+@pytest.mark.parametrize('entries, verdict', _ONE_PRODUCER_TABLE)
+def test_which_chains_validate_today(entries, verdict):
+    """A ``str`` verdict is the artifact kind whose second producer is rejected;
+    a ``list`` is the resolved module order of an accepted chain."""
+    if isinstance(verdict, str):
+        with pytest.raises(WorkflowValidationError,
+                           match=f"'{verdict}' is provided by more than one"):
+            Workflow(entries, workflow_params={'dry_run': True})
+    else:
+        wf = Workflow(entries, workflow_params={'dry_run': True})
+        assert _types(wf.modules) == verdict
+
+
+# --------------------------------------------------------------------------- #
 # Legacy-chain equivalence (dry-run) + Phase-0.5 baseline diff
 # --------------------------------------------------------------------------- #
 
