@@ -57,6 +57,7 @@ from lume_ace3p.modules import (
     acdtool_spec, build_module, STAGE_MODES, T3PModule, Track3PModule,
 )
 from lume_ace3p.ace3p import parse_ace3p
+from lume_ace3p.derived import DerivedSpec
 from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 from lume_ace3p.config import warn_unrecognized
@@ -360,12 +361,21 @@ class Workflow:
     layer)."""
 
     def __init__(self, entries, workflow_params=None, inputs=None,
-                 output_spec=None):
+                 output_spec=None, derived_spec=None):
         self.workflow_params = dict(workflow_params) if workflow_params else {}
         warn_unrecognized("'workflow_parameters'", self.workflow_params,
                           WORKFLOW_PARAM_KEYS)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
         self.output_spec = dict(output_spec) if output_spec else {}
+        # ``derived_parameters``: a resolved DerivedSpec, or the raw mapping
+        # (resolved here against output_spec), or None. An empty block is None,
+        # so declaring one with no entries does not move the config hash.
+        if derived_spec is not None and not isinstance(derived_spec,
+                                                       DerivedSpec):
+            derived_spec = DerivedSpec.from_config(derived_spec,
+                                                   self.output_spec)
+        self.derived_spec = derived_spec if derived_spec and \
+            derived_spec.entries else None
 
         self.entries = list(entries)
         # Deprecated output specs already warned about, shared across every
@@ -435,21 +445,30 @@ class Workflow:
         return modules
 
     @classmethod
-    def from_config(cls, yaml_data):
+    def from_config(cls, yaml_data, config_dir=None):
         """Build from a loaded LUME-ACE3P YAML mapping.
 
-        Reads the ``workflow:`` list, ``workflow_parameters`` block, and
-        ``output_parameters`` spec, and builds ``WorkflowInputs`` via
-        ``inputs.build_inputs`` (reused unchanged)."""
+        Reads the ``workflow:`` list, ``workflow_parameters`` block,
+        ``output_parameters`` spec and ``derived_parameters`` block, and builds
+        ``WorkflowInputs`` via ``inputs.build_inputs`` (reused unchanged).
+        ``config_dir`` is the config file's directory, where a
+        ``derived_parameters`` ``python:`` module is looked for besides
+        ``sys.path`` (the working directory by default)."""
         from lume_ace3p.inputs import build_inputs
         entries = yaml_data.get('workflow')
         if entries is None:
             raise WorkflowValidationError(
                 "YAML has no 'workflow:' list to build a Workflow from.")
+        output_spec = yaml_data.get('output_parameters')
+        derived = yaml_data.get('derived_parameters')
+        if derived is not None:
+            derived = DerivedSpec.from_config(derived, output_spec or {},
+                                              base_dir=config_dir)
         return cls(entries,
                    workflow_params=yaml_data.get('workflow_parameters'),
                    inputs=build_inputs(yaml_data),
-                   output_spec=yaml_data.get('output_parameters'))
+                   output_spec=output_spec,
+                   derived_spec=derived)
 
     def _resolve_dry_run(self):
         """Honor an explicit ``dry_run`` in workflow_parameters; otherwise
@@ -580,7 +599,8 @@ class Workflow:
         inputs, sweep_scalars = self._materialize(input_scalars)
         self.workdir = (workdir if workdir is not None
                         else self._getworkdir(inputs, sweep_scalars))
-        current_hash = config_hash(self.entries, inputs, self.output_spec)
+        current_hash = config_hash(self.entries, inputs, self.output_spec,
+                                   self._derived_payload())
         # A fresh module list per evaluation: module instances hold run state, so
         # sharing them across points is what would let row i report row j's
         # results once two evaluations overlap.
@@ -640,6 +660,11 @@ class Workflow:
             # would yield silently wrong numbers.
             module, cleaned = self._route_output(name, spec, ctx.modules)
             outputs[name] = module.extract(ctx, cleaned)
+        if self.derived_spec is not None:
+            # After extraction and before recording, so a derived value is an
+            # output like any other: manifest, table column, VOCS lookup, and
+            # the resume comparison below.
+            outputs.update(self.derived_spec.compute(outputs))
         ctx.outputs = outputs
         if previous is not None:
             self._compare_recorded_outputs(previous, outputs)
@@ -666,7 +691,8 @@ class Workflow:
             print(f" - resume: '{self.workdir}' was written for a different "
                   "configuration (its config_hash does not match this one), so "
                   "this point is re-run from the start. The hash covers the "
-                  "module entries, the input point and output_parameters — not "
+                  "module entries, the input point, output_parameters and "
+                  "derived_parameters — not "
                   "paths, dry_run or comments.")
             return None
         return previous
@@ -732,7 +758,8 @@ class Workflow:
         to be resumable. Used by the ``--status`` walk, which reads manifests
         without running anything."""
         inputs, _sweep_scalars = self._materialize(input_scalars)
-        return config_hash(self.entries, inputs, self.output_spec)
+        return config_hash(self.entries, inputs, self.output_spec,
+                           self._derived_payload())
 
     def campaign_config_hash(self, variables=()):
         """The hash an *optimization* over ``variables`` must match to be resumable
@@ -752,7 +779,22 @@ class Workflow:
         nowhere lands in the ``cubit`` bucket as ``0.0`` (the documented fallback),
         which is stable run-to-run and so harmless here."""
         inputs, _sweep = self._materialize({str(name): 0.0 for name in variables})
-        return campaign_hash(self.entries, inputs, self.output_spec)
+        return campaign_hash(self.entries, inputs, self.output_spec,
+                             self._derived_payload())
+
+    def _derived_payload(self):
+        """The ``derived_parameters`` block as the hash covers it, or ``None``
+        when none is declared — which keeps the hash of every config without one
+        where it was (plans/multi_instance_workflow_plan.md §3.7)."""
+        return (None if self.derived_spec is None
+                else self.derived_spec.canonical())
+
+    @property
+    def output_names(self):
+        """Every output an evaluation returns, in table-column order: the
+        ``output_parameters`` names, then the ``derived_parameters`` names."""
+        derived = self.derived_spec.names if self.derived_spec else []
+        return list(self.output_spec) + derived
 
     def resolved_workdir(self, input_scalars=None, point_index=None):
         """The workdir a point *would* run in, resolved without running it.

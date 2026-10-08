@@ -95,8 +95,10 @@ workdir's `DRY_RUN.txt` rather than in the table.
 P_balance = P_in - P_out - P_wall
 ```
 
-appended. `output_parameters` names quantities to extract and does not evaluate
-expressions, so this arithmetic lives in a script.
+appended. The same line as a
+[`derived_parameters`](../../docs/yaml_reference.md#derived_parameters) entry,
+`'P_balance' : 'P_in - P_out - P_wall'`, would put the column in the result table
+itself; the script computes it after the run, next to the plot.
 
 While the pulse is inside the structure the difference is energy in flight; the
 three should only balance after it has cleared. A balance that stays large

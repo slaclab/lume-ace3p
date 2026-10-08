@@ -9,7 +9,20 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`derived_parameters`**, a top-level block of quantities computed from the
+  extracted outputs: constants, expressions (`'abs(mode_freq - f_target)'`) and a
+  `{python: 'module:callable'}` hatch whose callable receives only the outputs.
+  A derived name is an output like any other: a table column after the extracted
+  ones, a VOCS objective or constraint, a manifest entry. Expressions are parsed
+  with `ast` and interpreted over a closed grammar (arithmetic, comparisons,
+  `and`/`or`/`not`, and `abs sqrt exp log log10 min max sum mean where clip`),
+  never `eval`; backticks quote non-identifier names (`` `R/Q` ``). Every name
+  is checked when the workflow is built. The block is covered by `config_hash`
+  and the campaign hash (a `python:` callable by its source text); a config
+  without it hashes exactly as before. See `docs/yaml_reference.md`
+  "`derived_parameters`".
 
 ## [0.6.0] — 2026-10-07
 

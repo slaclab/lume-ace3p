@@ -28,7 +28,9 @@ returns "unknown" for a mutating command rather than checking for its output.
 What ``config_hash`` covers
 ---------------------------
 The **resolved per-point configuration**: the module entries (type + config
-mapping), the materialized input point, and the ``output_parameters`` spec.
+mapping), the materialized input point, the ``output_parameters`` spec and,
+when one is declared, the ``derived_parameters`` block (a ``python:`` callable by
+its source text).
 Deliberately excluded — none of these is passed in, so the exclusion is
 structural rather than a filter that can rot:
 
@@ -269,13 +271,17 @@ def read_state(workdir):
 # --------------------------------------------------------------------------- #
 
 
-def config_hash(entries, inputs, output_spec):
+def config_hash(entries, inputs, output_spec, derived=None):
     """``'sha256:<hex>'`` over the resolved per-point configuration.
 
     ``entries`` is the ``workflow:`` list (each entry's ``module`` type plus its
     config mapping), ``inputs`` the **materialized** :class:`WorkflowInputs` for
-    this point, and ``output_spec`` the ``output_parameters`` mapping. See the
-    module docstring for what is deliberately *not* in here and why.
+    this point, ``output_spec`` the ``output_parameters`` mapping, and
+    ``derived`` the ``derived_parameters`` block as
+    :meth:`~lume_ace3p.derived.DerivedSpec.canonical` renders it. ``derived`` is
+    left out of the payload when ``None``, so a config without the block hashes
+    exactly as it did before the block existed. See the module docstring for
+    what is deliberately *not* in here and why.
 
     Mappings are hashed order-insensitively (keys are sorted) while sequences
     keep their order — so re-ordering the keys of a module entry is not a change
@@ -284,11 +290,13 @@ def config_hash(entries, inputs, output_spec):
     payload = {'entries': _canonical(entries),
                'inputs': _canonical(inputs),
                'output_parameters': _canonical(output_spec)}
+    if derived is not None:
+        payload['derived'] = _canonical(derived)
     text = json.dumps(payload, sort_keys=True, separators=(',', ':'))
     return 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
 
 
-def campaign_hash(entries, inputs, output_spec):
+def campaign_hash(entries, inputs, output_spec, derived=None):
     """``'sha256:<hex>'`` over a *campaign's* resolved configuration.
 
     Identical machinery to :func:`config_hash` — a different name because it answers
@@ -304,7 +312,7 @@ def campaign_hash(entries, inputs, output_spec):
     :meth:`~lume_ace3p.workflow_graph.Workflow.campaign_config_hash`). So editing a
     variable's nominal starting value does not invalidate a campaign, while editing a
     fixed input that the physics depends on does."""
-    return config_hash(entries, inputs, output_spec)
+    return config_hash(entries, inputs, output_spec, derived)
 
 
 def _canonical(value):

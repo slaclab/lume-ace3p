@@ -167,7 +167,7 @@ _INPUT_BUCKETS = ('cubit', 'ace3p', 'geant4', 'particles')
 # (singular) block is simply never read, so the run extracts nothing and says nothing.
 TOP_LEVEL_KEYS = frozenset({
     'workflow', 'workflow_parameters', 'mode', 'input_parameters',
-    'output_parameters', 'vocs_parameters', 'xopt_parameters', 'sweep_parameters',
+    'output_parameters', 'derived_parameters', 'vocs_parameters', 'xopt_parameters', 'sweep_parameters',
     # Deprecated flat aliases, still honored by build_inputs below.
     'cubit_input_parameters', 'ace3p_input_parameters',
     'geant4_input_parameters', 'particles_input_parameters'})

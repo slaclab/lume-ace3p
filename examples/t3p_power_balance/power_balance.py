@@ -7,9 +7,9 @@ The result table LUME-ACE3P writes is long-format over time: one row per
 
     P_balance = P_in - P_out - P_wall
 
-is arithmetic over columns that are already there, so it is computed here rather
-than in the YAML: ``output_parameters`` names quantities to extract, it does not
-evaluate expressions over them.
+is arithmetic over columns that are already there. A ``derived_parameters`` entry
+(``'P_balance' : 'P_in - P_out - P_wall'``) would put it in the result table
+itself; this script computes it after the run, next to the plot.
 
 Writes ``<table>_balanced.txt`` (the input table plus a ``P_balance`` column) and
 ``power_balance.png`` (one panel per swept thickness). Under dry-run every power

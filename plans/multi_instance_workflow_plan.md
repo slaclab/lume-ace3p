@@ -1,6 +1,6 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0 done 2026-10-08**, Phase D next. Written
+**Status: IN PROGRESS — Phase 0 and Phase D done 2026-10-08**, Phase 1 next. Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -467,6 +467,21 @@ can carry arithmetic over its columns. No shipped table changes.
 
 **Acceptance.** Baselines byte-identical; pinned hashes unchanged; the
 power-balance example's table unchanged *until* Phase 4 adds the column.
+
+**Done 2026-10-08.** As planned, with these deviations:
+- `Workflow.output_names` (output_parameters then derived_parameters) is the one
+  list `_rows_for_point` and `_frame` read. `_table_index` needed no change:
+  derived values are in `outputs`, so an array-valued one goes long like an
+  extracted one. The §3.5 owner check is Phase 3's.
+- The `python:` hatch's source is read with `ast` from the file `PathFinder`
+  locates, **without importing**; the import happens on the first `compute`, and
+  the module is not registered in `sys.modules`. A target bound other than by
+  `def`/`class` hashes the whole file.
+- An empty `derived_parameters: {}` is treated as absent (hash unchanged).
+- `from_config(yaml_data, config_dir=None)`: the CLI passes the config file's
+  directory for the hatch's lookup.
+- `power_balance.py` / README now point at the one-line entry, but the example
+  config still does not declare it (Phase 4).
 
 ### Phase 1 — Module-scoped input parameters
 

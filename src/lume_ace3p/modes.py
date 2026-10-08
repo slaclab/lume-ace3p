@@ -1469,7 +1469,7 @@ def _rows_for_point(workflow, index, input_names, scalars, outputs,
     index value, each output array sampled at that index — the tidy
     ``(inputs..., Frequency, S(m,n)...)`` frame the plan calls out (no
     field-artifact column; the field values already are the rows)."""
-    output_names = list(workflow.output_spec.keys())
+    output_names = _output_names(workflow)
     base = dict(zip(input_names, scalars))
     if index is None:
         row = dict(base)
@@ -1501,7 +1501,7 @@ def _frame(workflow, input_names, rows, index):
     from, passed in rather than re-derived: asking the workflow again after the
     loop would read whichever point happened to run last, which stops being the
     same answer as soon as points can run out of order."""
-    output_names = list(workflow.output_spec.keys())
+    output_names = _output_names(workflow)
     columns = list(input_names)
     if index is not None:
         columns.append(index[0])
@@ -1509,6 +1509,14 @@ def _frame(workflow, input_names, rows, index):
     if index is None and any(FIELD_ARTIFACT_COLUMN in r for r in rows):
         columns.append(FIELD_ARTIFACT_COLUMN)
     return pd.DataFrame(rows, columns=columns)
+
+
+def _output_names(workflow):
+    """The table's output columns: ``output_parameters`` then
+    ``derived_parameters``, in declaration order. A workflow double that only
+    carries ``output_spec`` gets those names."""
+    names = getattr(workflow, 'output_names', None)
+    return list(names) if names is not None else list(workflow.output_spec)
 
 
 def _input_tensor(axes):
@@ -1701,7 +1709,8 @@ def _objective_from_workflow(workflow, vocs, xopt_dict, first_index=0):
         if missing:
             raise KeyError(
                 f"workflow.evaluate did not return VOCS output(s) {missing}; "
-                f"declare them in output_parameters. Got {list(outputs)}.")
+                "declare them in output_parameters or derived_parameters. "
+                f"Got {list(outputs)}.")
         return {n: outputs[n] for n in output_names}
 
     return sim_function

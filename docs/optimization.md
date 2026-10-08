@@ -322,9 +322,29 @@ vocs_parameters :
 `variables` are the workflow input parameters and their bounds; `objectives`
 selects an `output_parameters` name to maximize or minimize; `observables` are
 tracked by Xopt but not optimized. `constraints` (optional) are inequality
-constraints on any declared output. To constrain a derived quantity such as a
-target-frequency error, declare the underlying quantity (`mode_freq`) as an
-observable and constrain it.
+constraints on any declared output.
+
+To optimize a **computed** quantity, declare it in
+[`derived_parameters`](yaml_reference.md#derived_parameters) and name it in VOCS
+like any output. Tuning the cavity onto a target frequency:
+
+```yaml
+output_parameters :
+    'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+
+derived_parameters :
+    'f_target' : 1.3e9
+    'f_error'  : 'abs(mode_freq - f_target)'
+
+vocs_parameters :
+    'variables' :
+        'cav_radius' : [95, 105]
+    'objectives' :
+        'f_error' : 'MINIMIZE'
+```
+
+`f_target` is part of the campaign hash, so retargeting the frequency starts a
+new campaign rather than resuming the old one.
 
 A VOCS `variables` entry declares only a **name and bounds**;
 `input_parameters` routes that name to a bucket (`cubit` / `ace3p` / `geant4` /

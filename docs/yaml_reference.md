@@ -3,7 +3,8 @@
 `lume-ace3p` is driven by a YAML configuration file. A top-level **`workflow:`**
 list declares the module chain and a **`mode:`** block drives it.
 `input_parameters` and `output_parameters` declare the swept inputs and the
-extracted scalars. An optimization adds `vocs_parameters` and `xopt_parameters`.
+extracted scalars, and `derived_parameters` computes new quantities from those
+outputs. An optimization adds `vocs_parameters` and `xopt_parameters`.
 `workflow_parameters` holds directory and path settings; solver and file settings
 live on the `workflow:` module entries.
 
@@ -213,7 +214,8 @@ is always written (there is no YAML key); `resume` and `--status` read it back.
 It is updated after each module, so a half-finished run's file says how far it
 got. Modules are listed in the order they ran; one that never started is absent,
 which is distinct from `"failed"`. `config_hash` covers the module entries, the
-materialized input point, and the `output_parameters` spec. It does not cover
+materialized input point, the `output_parameters` spec and, when declared, the
+[`derived_parameters`](#derived_parameters) block. It does not cover
 `paths`, `dry_run`, `workdir`, or comments, so a workdir stays recognizable on a
 different machine and reformatting a config does not invalidate a campaign.
 
@@ -1076,6 +1078,80 @@ working directory either way.
 
 More sections and entries will be added in future updates.
 
+(derived_parameters)=
+## `derived_parameters`
+
+Computes quantities from the extracted outputs. `output_parameters` says what
+to extract; `derived_parameters` says what to calculate from it:
+
+```yaml
+output_parameters :
+  'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+
+derived_parameters :
+  'f_target' : 1.3e9                              # a constant
+  'f_error'  : 'abs(mode_freq - f_target)'        # an expression over outputs
+  'f_ppm'    : '1e6 * f_error / f_target'         # earlier entries are usable
+  'RoQ_norm' : '`R/Q` / 100'                      # backticks quote a name
+  'balance'  : {python: 'power_balance:balance'}  # module:callable
+```
+
+A derived name works anywhere an `output_parameters` name does: as a table
+column (after the extracted columns, in declaration order), as a VOCS
+objective, constraint or observable, and in the run manifest. Entries are
+evaluated in order after every output has been extracted. Each entry can read
+the outputs and any entry declared above it.
+
+**Values.** An entry is one of:
+
+- a **number**, a constant;
+- a **string**, an expression;
+- **`{python: 'module:callable'}`**, a function of the outputs (see below).
+
+**Expressions** take numeric literals, names, `+ - * / ** %`, unary `-`,
+comparisons (`<`, `<=`, `==`, `!=`, `>=`, `>`, chained like `1 < x < 3`),
+`and` / `or` / `not`, and calls to this fixed set of functions:
+
+| Function | Meaning |
+|---|---|
+| `abs(x)`, `sqrt(x)`, `exp(x)`, `log(x)`, `log10(x)` | elementwise |
+| `min(x)`, `max(x)` | reduce an array to its smallest / largest value |
+| `min(a, b)`, `max(a, b)` | elementwise minimum / maximum |
+| `sum(x)`, `mean(x)` | reduce an array |
+| `where(cond, a, b)` | `a` where `cond` holds, else `b` |
+| `clip(x, lo, hi)` | `x` limited to `[lo, hi]` |
+
+`nan` is also a name. Arithmetic is numpy's, so a whole-axis output (every mode,
+a spectrum) works elementwise and reduces with `min` / `max` / `mean`. A comparison
+evaluates to `1.0` / `0.0`. A dry run's `NaN` outputs propagate, so a dry-run
+derived column is `NaN` too. Nothing else is accepted: attribute access,
+subscripts, lambdas, keyword arguments and any other call are rejected when the
+workflow is built, with a message naming the construct.
+
+**Names.** A name an expression reads must be an `output_parameters` name or a
+`derived_parameters` entry declared above it. Wrap a name that is not a Python
+identifier in backticks: `` `R/Q` ``, `` `S(0,0)` ``. Without them, `R/Q` reads as
+`R` divided by `Q`. All names are checked before anything runs, so a misspelling
+or a forward reference fails at startup. A derived name may not repeat an
+`output_parameters` name.
+
+**`{python: 'module:callable'}`** is for what an expression cannot express. The
+callable takes exactly one argument, a dict of the outputs and the earlier
+derived values, and returns the value. It gets nothing else (no workdir, no input
+values), so it is a pure function of the outputs. The module is looked up beside
+the config file first, then on `sys.path`. It is imported the first time a point
+is evaluated, not when the workflow is built, so `--status` never runs it. Its
+names cannot be checked ahead of time, and a `KeyError` inside it surfaces at
+the end of the first point.
+
+**Hashing.** The block is part of the [`config_hash`](#run-manifest)
+and the optimization campaign hash: its constants, its expression texts, and the
+source text of each `python:` callable. Retargeting `f_target`, or editing the
+function, makes a different campaign, and `resume` re-runs it instead of
+continuing. A config without the block (or with an empty one) hashes exactly as
+it did before the block existed.
+
 (ace3p_input_parameters)=
 ## `input_parameters.ace3p`
 
@@ -1187,7 +1263,7 @@ file, not the Geant4 source.
 Declares the Xopt VOCS for the `scalar_optimize` and `gp_parameter_sweep` modes:
 a `variables` mapping of name → `[low, high]` bounds, plus `objectives` (name →
 `MINIMIZE`/`MAXIMIZE`/`explore`) and optional `constraints`. Objective names are
-`output_parameters` names.
+`output_parameters` or [`derived_parameters`](#derived_parameters) names.
 
 **Variable routing.** Each Xopt variable is written into the
 [`input_parameters`](#input_parameters) bucket where it is declared (cubit /
