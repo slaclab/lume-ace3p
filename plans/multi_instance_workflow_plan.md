@@ -1,7 +1,7 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phases 2,
-3 and 4 done 2026-10-12**, Phase 5 next. Written
+**Status: COMPLETE — Phase 0, Phase D and Phase 1 done 2026-10-08; Phases 2–5
+done 2026-10-12, released as 0.7.0.** Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -692,6 +692,12 @@ declares `from:`); every shipped example builds without `from:`.
 line 88; `docs/troubleshooting.md` gets "my override went into the wrong
 solver" and "two instances need `name:` and `from:`"; this plan's status
 header; the `acdtool_rework_plan.md` decision-3 paragraph gets a pointer here.
+
+**Done 2026-10-12.** As planned, and `pyproject.toml` goes to 0.7.0. The
+`ByProducer` docstring (Phase 2) broke `sphinx -W` by splitting an inline
+literal across its summary line. It is fixed, and the docs build clean with
+`-W`. No new pytest run: the only `src/` change is that docstring, and the
+Phase 4 milano run covers the code.
 
 ---
 

@@ -54,6 +54,56 @@ large, check the Cubit journal for errors, particularly in the meshing routine.
 Also check the Omega3P input file for typos in the key-value containers and
 for sideset/ID inconsistencies with the Cubit journal `export`.
 
+### My `ace3p:` override went into the wrong solver
+
+A shared `input_parameters: ace3p:` container reaches every ACE3P solver in the
+workflow. With `omega3p` and `t3p` in one chain, an `EigenSolver` block meant for
+Omega3P is also appended to the `.t3p` file. The workflow warns when this happens:
+
+```text
+Warning: the shared 'input_parameters: ace3p:' container 'EigenSolver' is not in
+the input file of 't3p', so it is appended there as a new block. ...
+```
+
+Nest the block under the solver's module name so it reaches that solver only:
+
+```yaml
+input_parameters :
+  ace3p :
+    omega3p :
+      'EigenSolver' : { 'NumEigenvalues' : 5 }
+```
+
+`cubit:` and `geant4:` blocks scope the same way. See
+[](#module-scoped-inputs).
+
+### Two instances of one module fail to build
+
+Two entries of one type both default to the type as their name, so the build
+fails with `two modules are named 'omega3p'`. Give each a `name:`. A module that
+reads an artifact both instances provide, such as an `acdtool` after two
+`omega3p` steps, then fails with `requires artifact 'em_solution', which 2
+modules provide`. Name the one it reads with `from:`:
+
+```yaml
+workflow :
+  - module : omega3p
+    name : coarse
+    input : 'cav.omega3p'
+    results_dir : 'coarse_results'
+  - module : omega3p
+    name : fine
+    input : 'cav.omega3p'
+    results_dir : 'fine_results'
+  - module : acdtool
+    input : 'cav.rfpost'
+    from : fine
+```
+
+The two solvers also need different `results_dir:` values, and an
+`output_parameters` spec that says `module: omega3p` must use the instance name
+instead. See [](#several-instances-of-one-module).
+
 ### Why does `lume-ace3p` fail for specific parameter values?
 
 Parametric Cubit journals need care. Past certain values a variable can make

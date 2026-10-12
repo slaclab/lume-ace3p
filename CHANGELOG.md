@@ -9,6 +9,17 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-12
+
+**A workflow can hold several instances of one solver, each with its own
+inputs, and compute quantities from its outputs.** Inputs scoped by module name
+reach one module only, artifacts are identified per producing instance with a
+`from:` binding to choose between them, and a `derived_parameters` block turns
+extracted outputs into new columns and objectives. A config that uses none of
+this hashes exactly as in 0.6.0, so resumable campaigns stay `fresh` on upgrade.
+The design and its verified facts are in
+[`plans/multi_instance_workflow_plan.md`](plans/multi_instance_workflow_plan.md).
+
 ### Added
 
 - **`derived_parameters`**, a top-level block of quantities computed from the

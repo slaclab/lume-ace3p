@@ -102,8 +102,10 @@ _MISSING = object()
 
 
 class ByProducer:
-    """One per-evaluation side table, keyed by ``(artifact kind, producer
-    name)`` (plans/multi_instance_workflow_plan.md §3.4).
+    """One per-evaluation side table, keyed by artifact kind and producer.
+
+    Entries are keyed by ``(artifact kind, producer name)``
+    (plans/multi_instance_workflow_plan.md §3.4).
 
     The exact form is :meth:`of` / :meth:`record`. The dict-like form —
     ``table[kind]``, ``kind in table``, ``table.get(kind)``, ``table[kind] =

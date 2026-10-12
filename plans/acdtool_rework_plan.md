@@ -643,6 +643,12 @@ already has to explain that acdtool's `kickFactor` and T3P's `kick_factor` are
    this plan touches `mesh deform`, stop at making the command invocable; do not
    wire it as a mesh producer.
 
+   *Update 2026-10-12:* per-instance artifact identity landed in 0.7.0 via
+   `plans/multi_instance_workflow_plan.md` — artifacts are keyed by
+   `(kind, producer name)` and a consumer binds with `from:`, so two `omega3p`
+   modules and two meshes are now allowed. A TEM3P module and acdtool `mesh
+   deform` as a mesh producer remain unbuilt.
+
 4. **Keep DataFrames scoped to result tables** — same rule as the module
    refactor. Never DataFrame-ify the `Section` tree or the curve/grid outputs.
 
