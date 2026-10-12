@@ -79,6 +79,7 @@ track3p_reference
 plotting
 testing
 troubleshooting
+releasing
 ```
 
 ```{toctree}

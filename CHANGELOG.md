@@ -9,6 +9,15 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-12
+
+### Added
+
+- `scripts/tag_release.sh` tags `origin/main` as `v<version>`, and
+  `scripts/deploy_release.sh` installs a tag into the shared S3DF or
+  Perlmutter environment and checks the version and file permissions. See
+  `docs/releasing.md`.
+
 ## [0.7.0] — 2026-10-12
 
 **A workflow can hold several instances of one solver, each with its own
