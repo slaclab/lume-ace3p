@@ -486,9 +486,9 @@ class Module:
         Geant4 ``{dose/edep: {indices, values}}`` voxel grids). The mode layer
         persists it per row via :func:`lume_ace3p.results.save_field` and stores
         only the returned handle in the table's field-artifact column; the arrays
-        reload on demand with :func:`lume_ace3p.results.load_field`. Modules that
-        expose a :meth:`field_index` (S3P) are emitted long-format instead, so
-        their :meth:`field` is not used for the sweep table."""
+        reload on demand with :func:`lume_ace3p.results.load_field`, keyed by
+        module name when several modules of the chain produce one. A long-format
+        table stores no artifact: its field values are the rows."""
         return None
 
     def __repr__(self):
@@ -2315,12 +2315,12 @@ class AcdtoolModule(Module):
         **It is the only axis acdtool ever offers** (design decision 2 of
         ``plans/acdtool_rework_plan.md``). Surface-indexed sections resolve to
         scalars through an ``at: {surface: n}``, so one acdtool module cannot put
-        two axes on one table; across modules the collision falls out of DAG
-        order, since :meth:`Workflow.field_index` takes the first producer — so
-        ``[cubit, s3p, acdtool]`` stays indexed on S3P's ``Frequency`` (the
-        ``window`` case is a frequency scan postprocessed at one ``FreqScanID``,
-        so that is also the right answer) and acdtool's per-mode arrays ride as a
-        field artifact instead.
+        two axes on one table. Across modules a table still has one axis
+        (:meth:`Workflow.table_axis`): in ``[cubit, s3p, acdtool]`` with a
+        whole-scan S3P output the table is on S3P's ``Frequency``, so a per-mode
+        acdtool output must be narrowed with ``at: {mode: n}`` and the per-mode
+        arrays ride in the field artifact. Behind ``omega3p`` the two ``ModeID``
+        axes are the same modes, so both may be whole arrays.
 
         Returns ``None`` under dry-run rather than S3P/T3P's single-row sentinel,
         for the reason :meth:`Omega3PModule.field_index` records: the mode count

@@ -302,21 +302,17 @@ def test_run_mode_rejects_unknown_mode(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Characterization: two index axes in one chain
+# One index axis per table (plans/multi_instance_workflow_plan.md §3.5)
 # --------------------------------------------------------------------------- #
 
 
-def _omega3p_t3p_rows(tmp_path):
-    """``(index, rows)`` for one ``omega3p + t3p`` point with whole-axis outputs
-    from both, over the synthetic two-mode Omega3P and three-sample T3P results
-    of ``test_modules``."""
-    from lume_ace3p.modes import _rows_for_point
+def _omega3p_t3p_point(tmp_path, spec):
+    """``(wf, ctx, outputs)`` for one ``omega3p + t3p`` point over the synthetic
+    two-mode Omega3P and three-sample T3P results of ``test_modules``."""
     from test_modules import _make_omega3p_solver, _make_t3p_solver
 
     (tmp_path / 'x.ncdf').write_text('')
     os.chdir(tmp_path)
-    spec = {'f': {'module': 'omega3p', 'quantity': 'Frequency'},
-            'W': {'module': 't3p', 'quantity': 'W'}}
     wf = Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
                    {'module': 'omega3p', 'input': 'x.omega3p'},
                    {'module': 't3p', 'input': 'x.t3p'}],
@@ -331,39 +327,46 @@ def _omega3p_t3p_rows(tmp_path):
     for name, entry in spec.items():
         module, cleaned = wf._route_output(name, entry, ctx.modules)
         outputs[name] = module.extract(ctx, cleaned)
-    index = wf.field_index(ctx)
-    return index, _rows_for_point(wf, index, [], [], outputs)
+    return wf, ctx, outputs
 
 
-def test_a_t3p_array_is_sampled_on_the_omega3p_mode_axis_today(tmp_path):
-    """What the table layer does today (§2.6 of
-    plans/multi_instance_workflow_plan.md): the first axis wins, so T3P's
-    three-sample ``W`` is read at ``ModeID`` positions 0 and 1 and its third
-    sample is dropped without a word. Phase 3 replaces this with an error; this
-    test is then deleted with the xfail below flipping."""
-    cwd = os.getcwd()
-    try:
-        (label, ids), rows = _omega3p_t3p_rows(tmp_path)
-    finally:
-        os.chdir(cwd)
-    assert label == 'ModeID' and list(ids) == [0, 1]
-    assert [r['f'] for r in rows] == pytest.approx([1.1e9, 2.2e9])
-    assert [r['W'] for r in rows] == pytest.approx([-1e-7, -2e-7])
-
-
-@pytest.mark.xfail(strict=True, raises=pytest.fail.Exception,
-                   reason='an array output off the table axis is sampled '
-                          'silently; it becomes an error in Phase 3 of '
-                          'plans/multi_instance_workflow_plan.md')
 def test_a_t3p_array_off_the_mode_axis_is_an_error(tmp_path):
-    """The Phase 3 behavior: an array extracted from a module that does not own
-    the table axis raises rather than being sampled on someone else's."""
+    """An array extracted from a module that does not own the table axis raises
+    rather than being sampled on someone else's: T3P's three-sample ``W`` used
+    to be read at ``ModeID`` positions 0 and 1, its third sample dropped."""
+    from lume_ace3p.modes import _table_index
     cwd = os.getcwd()
     try:
-        with pytest.raises(ValueError, match='t3p'):
-            _omega3p_t3p_rows(tmp_path)
+        wf, ctx, outputs = _omega3p_t3p_point(
+            tmp_path, {'f': {'module': 'omega3p', 'quantity': 'Frequency'},
+                       'W': {'module': 't3p', 'quantity': 'W'}})
+        with pytest.raises(ValueError,
+                           match=r"'W' is a whole array from 't3p' \(its own "
+                                 r"'s' axis\).*'ModeID' from 'omega3p'.*'at:'"):
+            _table_index(wf, ctx, outputs)
     finally:
         os.chdir(cwd)
+
+
+def test_the_axis_belongs_to_the_module_its_arrays_come_from(tmp_path):
+    """With every Omega3P output narrowed, the T3P array owns the table: the
+    axis is ``s`` even though Omega3P comes first in DAG order, and the Omega3P
+    scalar repeats down the rows."""
+    from lume_ace3p.modes import _rows_for_point, _table_index
+    cwd = os.getcwd()
+    try:
+        wf, ctx, outputs = _omega3p_t3p_point(
+            tmp_path, {'f0': {'module': 'omega3p', 'quantity': 'Frequency',
+                              'at': {'mode': 0}},
+                       'W': {'module': 't3p', 'quantity': 'W'}})
+        assert wf.field_index(ctx)[0] == 'ModeID'
+        index = _table_index(wf, ctx, outputs)
+        rows = _rows_for_point(wf, index, [], [], outputs)
+    finally:
+        os.chdir(cwd)
+    assert index[0] == 's' and len(rows) == 3
+    assert [r['f0'] for r in rows] == pytest.approx([1.1e9] * 3)
+    assert [r['W'] for r in rows] == pytest.approx([-1e-7, -2e-7, -3e-7])
 
 
 if __name__ == '__main__':

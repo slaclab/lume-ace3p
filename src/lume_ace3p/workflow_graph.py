@@ -1093,35 +1093,103 @@ class Workflow:
         ctx = self.last_context if ctx is None else ctx
         if ctx is None:
             return None
-        # DAG order, except that a module may declare its axis takes precedence
-        # over an upstream one (``index_precedence``): a Track3P run is tabulated
-        # over its field levels, not over the Omega3P modes it read its fields
-        # from. Everything else keeps the first-producer rule that pins the
-        # s3p -> acdtool table to S3P's frequency scan.
-        ranked = sorted(ctx.modules,
-                        key=lambda m: -getattr(m, 'index_precedence', 0))
-        for module in ranked:
-            idx = module.field_index(ctx)
-            if idx is not None:
-                return idx
-        return None
+        axes = _ranked_axes(ctx)
+        return axes[0][1] if axes else None
+
+    def table_axis(self, ctx, outputs):
+        """The ``(label, values)`` a long-format table of this evaluation is
+        indexed by, or ``None`` when no module exposes an axis. Raises
+        ``ValueError`` for an array output that is not aligned to it.
+
+        **One index axis per table** (plans/multi_instance_workflow_plan.md
+        §3.5). Its *owner* is the highest-ranked module (``index_precedence``,
+        then DAG order, as :meth:`field_index`) among those an array output came
+        from; when no output is an array, the ranked-first module with an axis.
+        An array from any other module must sit on an axis identical to the
+        owner's — same label, same values, as an acdtool ``RoverQ`` over the
+        modes of the Omega3P solve it postprocessed — and otherwise raises naming
+        both modules and both axes, since sampling it at the owner's positions
+        would put its values in rows labelled with another axis's coordinates.
+        Every array output must also have one value per axis position."""
+        axes = _ranked_axes(ctx)
+        if not axes:
+            return None
+        own_axis = {id(module): index for module, index in axes}
+        sources = self._array_sources(ctx, outputs)
+        carrying = {id(m) for modules in sources.values() for m in modules}
+        owner, (label, values) = next(
+            ((module, index) for module, index in axes
+             if id(module) in carrying), axes[0])
+        for name, value in outputs.items():
+            if not _is_array(value):
+                continue
+            for source in sources.get(name, ()):
+                axis = own_axis.get(id(source))
+                if source is owner or _same_axis(axis, (label, values)):
+                    continue
+                where = (f"its own '{axis[0]}' axis" if axis is not None
+                         else 'no index axis of its own')
+                raise ValueError(
+                    f"output '{name}' is a whole array from '{source.name}' "
+                    f"({where}), but this table is indexed by '{label}' from "
+                    f"'{owner.name}', and a table has one index axis. Narrow "
+                    f"'{name}' to a scalar with 'at:', or narrow the whole-axis "
+                    f"outputs of '{owner.name}' so that '{source.name}' owns the "
+                    f"axis; the full arrays stay in the run's results "
+                    f"directory.")
+            if len(value) != len(values):
+                raise ValueError(
+                    f"output '{name}' has {len(value)} values, but this table's "
+                    f"'{label}' axis (from '{owner.name}') has {len(values)}. "
+                    f"Each row would read '{name}' at a position it was not "
+                    f"computed at; narrow it to a scalar.")
+        return label, values
+
+    def _array_sources(self, ctx, outputs):
+        """``{output name: [module]}`` for every array-valued output: the module
+        an extracted array came from, and for a derived expression the modules
+        of the array outputs it reads. A ``python:`` derived output names
+        nothing it reads, so it has no entry and gets the length check alone."""
+        sources = {}
+        for name, spec in self.output_spec.items():
+            if _is_array(outputs.get(name)):
+                sources[name] = [self._route_output(name, spec, ctx.modules)[0]]
+        entries = self.derived_spec.entries if self.derived_spec else []
+        for name, kind, value in entries:
+            if kind != 'expression' or not _is_array(outputs.get(name)):
+                continue
+            modules = []
+            for dependency in sorted(value.names):
+                for module in sources.get(dependency, ()):
+                    if all(module is not m for m in modules):
+                        modules.append(module)
+            sources[name] = modules
+        return sources
 
     def field(self, ctx=None):
         """Return the structured *field* output of the evaluation ``ctx``
         describes (:meth:`Module.field`), or ``None`` if no module in the chain
-        produces one. Scans that evaluation's modules like :meth:`field_index`,
-        and defaults to ``self.last_context`` the same way. The mode layer
-        persists this per row as a field artifact (see
-        :mod:`lume_ace3p.results`) — the hybrid model's structured half — instead
-        of flattening it into the scalar table."""
+        produces one. Defaults to ``self.last_context`` like
+        :meth:`field_index`. The mode layer persists this per row as a field
+        artifact (see :mod:`lume_ace3p.results`) — the hybrid model's structured
+        half — instead of flattening it into the scalar table.
+
+        One producing module's field is returned as it is. When several modules
+        produce one (an ``omega3p -> acdtool`` run, two ``s3p`` instances) it is
+        ``{module name: field}``, so none of them is dropped."""
         ctx = self.last_context if ctx is None else ctx
         if ctx is None:
             return None
+        fields = {}
         for module in ctx.modules:
             fld = module.field(ctx)
             if fld is not None:
-                return fld
-        return None
+                fields[module.name] = fld
+        if not fields:
+            return None
+        if len(fields) == 1:
+            return next(iter(fields.values()))
+        return fields
 
     # ---- helpers ---------------------------------------------------------
 
@@ -1174,6 +1242,44 @@ class Workflow:
                 f"({[m.name for m in candidates]}). Name one with "
                 f"'module: <name>' in the spec.")
         return candidates[0], cleaned
+
+
+def _ranked_axes(ctx):
+    """``[(module, (label, values))]`` for every module of ``ctx`` exposing an
+    index axis, best first.
+
+    DAG order, except that a module may declare its axis takes precedence over an
+    upstream one (``index_precedence``): a Track3P run is tabulated over its field
+    levels, not over the Omega3P modes it read its fields from. Everything else
+    keeps the first-producer rule that pins the s3p -> acdtool table to S3P's
+    frequency scan."""
+    ranked = sorted(ctx.modules,
+                    key=lambda m: -getattr(m, 'index_precedence', 0))
+    axes = []
+    for module in ranked:
+        index = module.field_index(ctx)
+        if index is not None:
+            axes.append((module, index))
+    return axes
+
+
+def _is_array(value):
+    """True for an index-aligned array output (as opposed to a scalar)."""
+    if isinstance(value, np.ndarray):
+        return value.ndim > 0
+    return isinstance(value, (list, tuple))
+
+
+def _same_axis(axis, other):
+    """Whether two ``(label, values)`` axes are the same axis: same label and
+    the same coordinates, so a row of one is a row of the other."""
+    if axis is None or axis[0] != other[0]:
+        return False
+    try:
+        return bool(np.array_equal(np.asarray(axis[1], dtype=float),
+                                   np.asarray(other[1], dtype=float)))
+    except (TypeError, ValueError):
+        return False
 
 
 def _same_output(recorded, value):

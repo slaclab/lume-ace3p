@@ -54,6 +54,16 @@ coarser grain than the entries above them.
   and two `cubit` journals exporting the same mesh filename, fail at build time.
 - `output_parameters` `module: <type>` is an error when several instances
   have that type. It used to take the last one silently.
+- A result table has one index axis. A whole-array output from a module
+  whose axis is not the table's raises, naming both modules and axes. It used
+  to be sampled at the other axis's positions, and the surplus values were
+  dropped silently (a T3P `W` in an `omega3p + t3p` table). The axis goes to the
+  module the array outputs come from, so narrowing every Omega3P output in that
+  chain puts the table on T3P's `s`.
+- When several modules produce a field (`omega3p` + `acdtool`, two `s3p`
+  instances), the per-row field artifact is keyed by module name:
+  `load_field(h)['omega3p']`. It used to hold the first producer's field
+  alone. A chain with one field producer is unchanged.
 - `RunContext.artifacts` / `job_names` / `reparse` / `field_levels` are
   `ByProducer` tables. Reading a kind with a single producer works as on a
   dict. A module records with `ctx.provide(module, kind, path)` and the

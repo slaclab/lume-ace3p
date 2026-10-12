@@ -435,3 +435,153 @@ def test_a_p_refinement_sweep_tabulates_both_instances(staged):
     assert df['f_fine'].tolist() == [100.0, 101.0]
 
 
+# --------------------------------------------------------------------------- #
+# One index axis per table (Phase 3)
+# --------------------------------------------------------------------------- #
+
+
+def _two_s3p_point(tmp_path, spec, shift=0.5e9, derived=None):
+    """``(wf, ctx, outputs)`` for one ``coarse`` + ``fine`` S3P point over the
+    synthetic three-frequency scan of ``test_modules``; ``fine`` scans the same
+    count of points ``shift`` Hz higher, so the two axes differ in value only."""
+    from lume_ace3p.derived import DerivedSpec
+    from test_modules import _make_s3p_solver
+
+    tmp_path.mkdir(exist_ok=True)
+    (tmp_path / 'x.ncdf').write_text('')
+    wf = Workflow([{'module': 'mesh', 'file': str(tmp_path / 'x.ncdf')},
+                   {'module': 's3p', 'name': 'coarse', 'input': 'x.s3p',
+                    'results_dir': 'coarse_results'},
+                   {'module': 's3p', 'name': 'fine', 'input': 'x.s3p',
+                    'results_dir': 'fine_results'}],
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec=spec,
+                  derived_spec=(DerivedSpec.from_config(derived, spec)
+                                if derived else None))
+    _outputs, ctx = wf.evaluate()
+    by_name = {m.name: m for m in ctx.modules}
+    by_name['coarse']._solver = _make_s3p_solver(ctx.workdir)
+    by_name['fine']._solver = _make_s3p_solver(ctx.workdir)
+    data = by_name['fine']._solver.output_data
+    data['Frequency'] = np.asarray(data['Frequency']) + shift
+    outputs = {name: by_name[entry['module']].extract(
+                   ctx, {k: v for k, v in entry.items() if k != 'module'})
+               for name, entry in spec.items()}
+    if wf.derived_spec is not None:
+        outputs.update(wf.derived_spec.compute(outputs))
+    return wf, ctx, outputs
+
+
+def test_two_s3p_instances_narrowed_stay_wide_and_keep_both_spectra(tmp_path):
+    """Every output narrowed: one wide row, and the field artifact carries each
+    instance's spectrum under its module name."""
+    from lume_ace3p.modes import _persist_field, _rows_for_point, _table_index
+    from lume_ace3p.results import FIELD_ARTIFACT_COLUMN, load_field
+    wf, ctx, outputs = _two_s3p_point(tmp_path, {
+        'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)',
+                       'at': {'frequency': 12.0e9}},
+        'S11_fine': {'module': 'fine', 'quantity': 'S(0,0)',
+                     'at': {'frequency': 12.5e9}}})
+    index = _table_index(wf, ctx, outputs)
+    assert index is None
+    handle = _persist_field(wf, ctx, 0, index)
+    rows = _rows_for_point(wf, index, [], [], outputs, handle)
+    assert rows == [{'S11_coarse': 0.10, 'S11_fine': 0.10,
+                     FIELD_ARTIFACT_COLUMN: handle}]
+    field = load_field(handle)
+    assert set(field) == {'coarse', 'fine'}
+    assert field['coarse']['Frequency'] == pytest.approx([12.0e9, 12.5e9, 13.0e9])
+    assert field['fine']['Frequency'] == pytest.approx([12.5e9, 13.0e9, 13.5e9])
+
+
+def test_a_single_field_producer_keeps_the_unkeyed_shape(tmp_path):
+    """One module with a field: the artifact is that field, as before."""
+    wf, ctx, _outputs = _two_s3p_point(tmp_path, {})
+    next(m for m in ctx.modules if m.name == 'fine')._solver = None
+    assert set(wf.field(ctx)) >= {'Frequency', 'S(0,0)', 'IndexMap'}
+
+
+def test_two_s3p_instances_go_long_on_the_instance_with_the_array(tmp_path):
+    """``fine`` asks for its whole scan and ``coarse`` is narrowed: the table is
+    indexed by ``fine``'s frequencies, though ``coarse`` comes first."""
+    from lume_ace3p.modes import _rows_for_point, _table_index
+    wf, ctx, outputs = _two_s3p_point(tmp_path, {
+        'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)',
+                       'at': {'frequency': 12.0e9}},
+        'S21_fine': {'module': 'fine', 'quantity': 'S(0,1)'}})
+    assert wf.field_index(ctx)[1] == pytest.approx([12.0e9, 12.5e9, 13.0e9])
+    label, values = _table_index(wf, ctx, outputs)
+    assert label == 'Frequency'
+    assert values == pytest.approx([12.5e9, 13.0e9, 13.5e9])
+    rows = _rows_for_point(wf, (label, values), [], [], outputs)
+    assert [r['S21_fine'] for r in rows] == pytest.approx([0.20, 0.60, 1.00])
+    assert [r['S11_coarse'] for r in rows] == pytest.approx([0.10] * 3)
+
+
+def test_whole_scans_of_two_instances_on_different_axes_are_an_error(tmp_path):
+    """Same label, different frequencies: compared by module, not by label."""
+    from lume_ace3p.modes import _table_index
+    wf, ctx, outputs = _two_s3p_point(tmp_path, {
+        'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)'},
+        'S11_fine': {'module': 'fine', 'quantity': 'S(0,0)'}})
+    with pytest.raises(ValueError,
+                       match=r"'S11_fine' is a whole array from 'fine' \(its "
+                             r"own 'Frequency' axis\).*indexed by 'Frequency' "
+                             r"from 'coarse'"):
+        _table_index(wf, ctx, outputs)
+
+
+def test_whole_scans_of_two_instances_on_one_axis_share_the_table(tmp_path):
+    """Two instances scanning the same frequencies are on one axis."""
+    from lume_ace3p.modes import _rows_for_point, _table_index
+    wf, ctx, outputs = _two_s3p_point(tmp_path, {
+        'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)'},
+        'S11_fine': {'module': 'fine', 'quantity': 'S(0,0)'}}, shift=0.0)
+    index = _table_index(wf, ctx, outputs)
+    rows = _rows_for_point(wf, index, [], [], outputs)
+    assert len(rows) == 3
+
+
+def test_a_derived_array_rides_the_axis_of_what_it_reads(tmp_path):
+    """A derived array over ``fine``'s scan is on ``fine``'s axis: alone it
+    makes ``fine`` the owner, and beside a whole ``coarse`` scan it is the same
+    error an extracted ``fine`` array would be."""
+    from lume_ace3p.modes import _table_index
+    narrowed = {'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)',
+                               'at': {'frequency': 12.0e9}},
+                'S21_fine': {'module': 'fine', 'quantity': 'S(0,1)'}}
+    wf, ctx, outputs = _two_s3p_point(
+        tmp_path / 'a', narrowed, derived={'T': 'S21_fine ** 2'})
+    assert _table_index(wf, ctx, outputs)[1] == pytest.approx(
+        [12.5e9, 13.0e9, 13.5e9])
+
+    whole = {'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)'},
+             'S11_fine': {'module': 'fine', 'quantity': 'S(0,0)',
+                          'at': {'frequency': 12.5e9}},
+             'S21_fine': {'module': 'fine', 'quantity': 'S(0,1)',
+                          'at': {'frequency': 12.5e9}}}
+    wf, ctx, outputs = _two_s3p_point(
+        tmp_path / 'b', whole, derived={'T': 'S21_fine * S11_coarse'})
+    # 'T' reads an array of 'coarse' (the owner): on the axis.
+    assert _table_index(wf, ctx, outputs)[1] == pytest.approx(
+        [12.0e9, 12.5e9, 13.0e9])
+    narrowed['S11_coarse'] = whole['S11_coarse']
+    wf, ctx, outputs = _two_s3p_point(
+        tmp_path / 'c', narrowed, derived={'T': 'S21_fine ** 2'})
+    with pytest.raises(ValueError, match="'S21_fine' is a whole array"):
+        _table_index(wf, ctx, outputs)
+
+
+def test_an_array_of_the_wrong_length_is_an_error(tmp_path):
+    """A ``python:`` derived output names nothing it reads, so it gets the
+    length check: one value per axis position or an error, never a short
+    array passed into the wrong rows."""
+    from lume_ace3p.modes import _table_index
+    wf, ctx, outputs = _two_s3p_point(tmp_path, {
+        'S11_coarse': {'module': 'coarse', 'quantity': 'S(0,0)'}})
+    outputs['extra'] = np.array([1.0, 2.0])
+    with pytest.raises(ValueError,
+                       match=r"'extra' has 2 values.*'Frequency' axis \(from "
+                             r"'coarse'\) has 3"):
+        _table_index(wf, ctx, outputs)

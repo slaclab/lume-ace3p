@@ -1,7 +1,7 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phase 2
-done 2026-10-12**, Phase 3 next. Written
+**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phases 2
+and 3 done 2026-10-12**, Phase 4 next. Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -620,6 +620,27 @@ declares `from:`); every shipped example builds without `from:`.
    output go long on that instance's axis.
 3. Docs: `yaml_reference.md` "Results" and the T3P "One index axis per module"
    note generalize to "one index axis per table".
+
+**Done 2026-10-12.** As planned, with these deviations:
+- The check is a new `Workflow.table_axis(ctx, outputs)`, which `_table_index`
+  calls; `field_index` keeps returning the first ranked axis, so its callers do
+  not change. The owner is the highest-ranked module that an array output came
+  from, not the first ranked module overall. That is what lets
+  `fine`'s whole scan index a table when `coarse` is narrowed, and an
+  `omega3p (narrowed) + t3p (whole W)` chain go long on `s`.
+- An array from a non-owner passes when its module's axis is *identical*
+  (label and values): `omega3p -> acdtool` with both whole-mode arrays, which
+  `test_omega3p_acdtool_table_indexes_on_modeid` relies on. Two `s3p` scans over
+  the same frequencies also pass.
+- A derived array's modules are those of the array outputs its expression reads.
+  A `python:` derived array, and any array whose module cannot be named, gets
+  only the length check.
+- `Workflow.field` keys the artifact by module name whenever **two or more**
+  modules produce a field (David's choice, 2026-10-12). Before, it was the first
+  producer's field alone. One producer keeps the unkeyed shape. So a real
+  `omega3p -> acdtool` run's `.npz` is now `{omega3p: …, acdtool: …}`. No
+  baseline moves: under dry run neither produces a field. The Geant4 surrogate
+  chain has one producer, and its stores are unchanged.
 
 ### Phase 4 — Example, baseline, S3DF validation
 

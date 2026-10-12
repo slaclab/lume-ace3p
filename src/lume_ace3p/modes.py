@@ -71,6 +71,7 @@ from lume_ace3p.results import (
 from lume_ace3p import surrogate_data
 from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.modules import FieldEmissionModule
+from lume_ace3p.workflow_graph import _is_array
 from lume_ace3p.state import point_status, read_state
 from lume_ace3p.xopt_state import (
     best_point, evaluation_count, read_xopt_state, restore_xopt, set_aside,
@@ -426,20 +427,21 @@ def _table_index(workflow, ctx, outputs):
     structured field is persisted beside it instead (:func:`_persist_field`).
 
     Under dry-run the S3P/T3P sentinel axis has one value and their ``extract``
-    returns a one-element array, so dry-run tables keep their index column."""
-    index = workflow.field_index(ctx)
+    returns a one-element array, so dry-run tables keep their index column.
+
+    A table has **one** index axis: :meth:`Workflow.table_axis` picks it from
+    the modules the array outputs came from and raises for an array that is not
+    on it (plans/multi_instance_workflow_plan.md §3.5). A workflow double without
+    that seam gets :meth:`Workflow.field_index`'s axis, unchecked."""
+    if hasattr(workflow, 'table_axis'):
+        index = workflow.table_axis(ctx, outputs)
+    else:
+        index = workflow.field_index(ctx)
     if index is None or not outputs:
         return index
     if any(_is_array(value) for value in outputs.values()):
         return index
     return None
-
-
-def _is_array(value):
-    """True for an index-aligned array output (as opposed to a scalar)."""
-    if isinstance(value, np.ndarray):
-        return value.ndim > 0
-    return isinstance(value, (list, tuple))
 
 
 def _persist_field(workflow, ctx, point_index, index):
@@ -1530,13 +1532,12 @@ def _input_tensor(axes):
 
 
 def _sample(value, j):
-    """Sample the j-th element of a field-indexed output array; pass a scalar
-    through unchanged (so a mis-declared scalar output still lands in the row
-    rather than raising)."""
-    if isinstance(value, np.ndarray):
-        return value[j] if value.ndim and value.shape[0] > j else value
-    if isinstance(value, (list, tuple)):
-        return value[j] if len(value) > j else value
+    """Sample the j-th element of a field-indexed output array; a scalar repeats
+    down the point's rows. An array is aligned to the axis by then
+    (:meth:`Workflow.table_axis` checked it), so a too-short one is an
+    ``IndexError`` here rather than a value passed through to the wrong row."""
+    if _is_array(value):
+        return value[j]
     return value
 
 

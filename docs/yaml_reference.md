@@ -611,7 +611,7 @@ A wake run reports either a loss factor (longitudinal) or a kick factor
 (transverse), depending on the beam offset and the monitor contour. Asking for the
 wrong one raises an error naming what is available.
 
-#### One index axis per module, `s` before `t`
+#### One index axis, `s` before `t`
 
 T3P exposes a field index, so a sweep over a T3P workflow emits a long-format
 table (one row per `(grid point, index)`) as long as at least one declared output
@@ -628,7 +628,8 @@ The two axes are incompatible (tens of wake samples against thousands of
 timesteps), so a run declaring both keeps `s`, and everything on the `t` axis
 must be narrowed to a scalar with `at:`. Requesting an off-axis array raises an
 error naming both axes. The full arrays remain in the per-run field artifact (see
-[](plotting.md)), together with a `Volume` monitor's filenames.
+[](plotting.md)), together with a `Volume` monitor's filenames. The same rule
+holds across modules: a table has one index axis (see [](#results)).
 
 `at: {s: <position>}` and `at: {t: <seconds>}` both take the nearest sample, since
 both T3P grids follow from `TimeStepping: DT`. Per-run scalars like `loss_factor`
@@ -879,9 +880,10 @@ mode.
 naming the surfaces the run reported. The input block pins the surface it
 evaluates (`maxFieldsOnSurface { surfaceID = 6 }`).
 
-When another module in the chain owns the table axis (`[cubit, s3p, acdtool]`,
-where S3P's `Frequency` comes first in resolved DAG order), a per-mode array is
-exposed as a field artifact instead of a table column (see [](#results)).
+When another module in the chain owns the table axis (`[cubit, s3p, acdtool]`
+with a whole-scan S3P output), a per-mode array cannot be a column: narrow it
+with `at: {mode: n}`, and the per-mode arrays ride in the field artifact (see
+[](#results)).
 
 :::{note}
 **The positional list form is deprecated.** `['RoverQ', '0', 'RoQ']` still works
@@ -1597,8 +1599,23 @@ by at least one declared output or no outputs are declared at all. When
 Structured field outputs of a wide row (an Omega3P run with all outputs narrowed
 to one mode, a Geant4 dose grid) are persisted separately as `.npz` and
 referenced by a `field_artifact` column; load one with
-{py:func}`~lume_ace3p.results.load_field`. The Xopt modes return the
+{py:func}`~lume_ace3p.results.load_field`. When one module in the chain produces
+a field, the artifact is that field. When several do (`omega3p` and `acdtool`,
+two `s3p` instances), it is keyed by module name:
+`load_field(h)['fine']['Frequency']`. The Xopt modes return the
 {py:class}`xopt.Xopt` object and log its `X.data` table through the same writer.
+
+**A table has one index axis.** It belongs to the module the whole-array outputs
+come from. When those come from several modules, it goes to the highest-ranked
+of them: Geant4 detectors, then Track3P field levels, then the first in DAG
+order. With no array output it goes to the highest-ranked module that has an
+axis. An array from any other module must be on the *same* axis: same label and
+same values, as acdtool's `RoverQ` is over the modes of the Omega3P solve it
+postprocessed. Otherwise the run raises an error naming both modules and both
+axes. Narrow the stray output with `at:`. Two instances of one solver are
+compared by their values, so two `s3p` scans over different frequencies cannot
+both be whole-scan columns. A derived array follows the outputs it reads, and
+every array must have one value per axis position.
 
 For full class- and method-level documentation, see the
 [API reference](api/index).
