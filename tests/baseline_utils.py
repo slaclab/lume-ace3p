@@ -395,6 +395,20 @@ _T3P_MONITOR = ('Phase 3 of plans/t3p_monitor_plan.md (2026-08-19). First freeze
                 "example whose field index is 't' rather than 's'/'Frequency', "
                 'which is what makes the axis label worth checking here.')
 
+# Provenance for the power-balance sweep after derived_parameters landed.
+_T3P_POWER_BALANCE = (
+    _T3P_MONITOR + ' Re-frozen 2026-10-12 for Phase 4 of '
+    'plans/multi_instance_workflow_plan.md: the example now declares '
+    "derived_parameters 'P_balance' : 'P_in - P_out - P_wall', so ONE COLUMN "
+    'WAS APPENDED (NaN under dry run, as the powers it reads). Every existing '
+    'column is unchanged, and power_balance.py reads the column instead of '
+    'computing it.')
+
+# Provenance for the example the multi-instance plan added.
+_MULTI_INSTANCE = (
+    'Phase 4 of plans/multi_instance_workflow_plan.md (2026-10-12). First '
+    'freeze -- a new example, so nothing was regenerated.')
+
 # Provenance for the Geant4 beta sweep after the Fowler-Nordheim reconciliation.
 _GEANT4_TRACK3P_BETA = (
     _PHASE_05 + ' Re-frozen 2026-10-01 for Phase 2 of '
@@ -475,12 +489,15 @@ EXAMPLES = {
             'power_balance_output.txt': ('power_balance_output.txt', 'table'),
         },
         'digests': {},
-        'frozen': _T3P_MONITOR,
+        'frozen': _T3P_POWER_BALANCE,
         'checkable': ('NUMERIC: the swept coating-thickness axis (an ACE3P input '
                       "parameter, not a cubit one) and the 't' index column. The "
-                      'three power columns are NaN under dry-run -> '
-                      'reachability-only. STRUCTURALLY this is the one example '
-                      "whose field index is 't': it declares no WakeField "
+                      'three power columns and the derived P_balance are NaN '
+                      'under dry-run -> reachability-only. STRUCTURALLY the '
+                      'P_balance column pins that an array-valued derived output '
+                      "rides the 't' axis of the outputs it reads. This is also "
+                      "the one example whose field index is 't': it declares "
+                      'no WakeField '
                       'monitor, so an axis label of \'s\' here would be a '
                       'regression in the dry-run axis decision.'),
     },
@@ -558,6 +575,27 @@ EXAMPLES = {
         'checkable': ('NUMERIC (synthetic workflow, seeded): full NelderMead '
                       'trajectory (cornercut, rcorner1, objective). '
                       'Seed-reproducible and cluster-independent.'),
+    },
+    # ---- added by Phase 4 of the multi-instance plan --------------------- #
+    'omega3p_p_refinement': {
+        'kind': 'sweep',
+        'yaml': 'omega3p_p_refinement.yaml',
+        'files': {
+            'p_refinement_output.txt': ('p_refinement_output.txt', 'table'),
+            # The marker is the only output that shows each solver received its
+            # own FiniteElement.Order (1 for coarse, 2 for fine).
+            'dry_run_marker.txt': (
+                'lume-ace3p_p_refinement_workdir_95.0/DRY_RUN.txt', 'marker'),
+        },
+        'digests': {},
+        'frozen': _MULTI_INSTANCE,
+        'checkable': ('NUMERIC: the swept cav_radius grid and, in the marker, '
+                      'the scoped FiniteElement.Order each omega3p instance '
+                      'received (1 then 2). The four outputs and f_shift_ppm are '
+                      'NaN without a solver -> reachability-only. Structurally '
+                      'this pins that two named omega3p instances on one input '
+                      'file validate, that output module: routes by instance '
+                      'name, and that the dry-run table stays wide.'),
     },
     # ---- added by Phase 6 of the acdtool rework -------------------------- #
     'omega3p_dispersion_sweep': {
@@ -701,6 +739,15 @@ NOT_FROZEN = {
         'testing nothing Omega3P-specific. Its two sweep siblings '
         '(omega3p_sweep, omega3p_ace3p_param_sweep) are frozen and share the '
         'same pillbox-rtop.* inputs, so the chain itself is covered.'),
+    'omega3p_frequency_target': (
+        'RECORDED 2026-10-12, Phase 4 of plans/multi_instance_workflow_plan.md. '
+        "Same two reasons as omega3p_optimization: the objective 'f_error' is "
+        "derived from omega3p's mode_freq, which is NaN under dry run, so "
+        'NelderMead would walk a constant-NaN surface, and the synthetic '
+        'xopt_scalar route would re-freeze the generic NelderMead path. The '
+        'derived objective reaching VOCS is covered by tests/test_derived.py; '
+        'the example was validated by one real S3DF run (see '
+        'plans/multi_instance_workflow_plan.md, Phase 4).'),
     'geant4_dose_single': (
         'RECORDED 2026-08-20 (previously an undocumented gap, not a decision). '
         "'mode: single' with all three output_parameters ('total_dose', "

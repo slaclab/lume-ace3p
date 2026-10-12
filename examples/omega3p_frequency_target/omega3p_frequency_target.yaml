@@ -1,0 +1,51 @@
+# Omega3P frequency targeting: tune the pillbox radius until the fundamental
+# sits at 1.3 GHz.
+#   workflow:  cubit -> omega3p          (no acdtool step)
+#   mode:      scalar_optimize           (Nelder-Mead over cav_radius)
+#
+# The objective is not a quantity any solver writes. It is computed from one by
+# derived_parameters, after extraction, and is then an output like any other:
+# a VOCS objective, a column of sim_output.txt and a manifest entry.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_frequency_target_workdir'
+  # One directory per evaluation: _0, _1, _2, ...
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 12
+    cores : 8
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : scalar_optimize
+
+input_parameters :
+  cubit :
+    'cav_radius' : 100.0
+
+output_parameters :
+  'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+
+derived_parameters :
+  'f_target' : 1.3e9                          # a constant, Hz
+  'f_error'  : 'abs(mode_freq - f_target)'    # Hz from the target
+  'f_ppm'    : '1e6 * f_error / f_target'
+
+vocs_parameters :
+  'variables' :
+    'cav_radius' : [90, 105]
+  'objectives' :
+    'f_error' : 'MINIMIZE'
+  'observables' :
+    - 'mode_freq'
+    - 'f_ppm'
+
+xopt_parameters :
+  'generator' : 'NelderMeadGenerator'
+  'num_random' : 0
+  'num_step' : 15

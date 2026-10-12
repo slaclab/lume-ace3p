@@ -38,6 +38,10 @@ coarser grain than the entries above them.
   `module:` accepts an instance name. Two solvers sharing an input file each
   write their merged copy as `<stem>_<name><ext>`. See `docs/yaml_reference.md`
   "Several instances of one module".
+- Examples `omega3p_p_refinement` (two `omega3p` instances at element orders 1
+  and 2, kept apart by scoped `FiniteElement.Order` blocks) and
+  `omega3p_frequency_target` (Nelder-Mead on `cav_radius` minimizing a derived
+  `f_error = abs(mode_freq - 1.3e9)`). Both validated on S3DF.
 
 ### Changed
 
@@ -64,6 +68,10 @@ coarser grain than the entries above them.
   instances), the per-row field artifact is keyed by module name:
   `load_field(h)['omega3p']`. It used to hold the first producer's field
   alone. A chain with one field producer is unchanged.
+- `examples/t3p_power_balance` computes `P_balance` in `derived_parameters`,
+  so the result table gains that column; `power_balance.py` reads it instead of
+  writing a `_balanced.txt` copy of the table. The example's config hash moves
+  with the new block, so a 0.6.0 campaign of it reads `stale`.
 - `RunContext.artifacts` / `job_names` / `reparse` / `field_levels` are
   `ByProducer` tables. Reading a kind with a single producer works as on a
   dict. A module records with `ctx.provide(module, kind, path)` and the

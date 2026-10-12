@@ -64,6 +64,10 @@ from fixed-width 6 significant figures to the shared writer's full precision —
 the self-check passed against the *un*-regenerated fixtures first, which is what
 establishes that no numbers moved.
 
+**`t3p_power_balance` gained a column on purpose**, re-frozen 2026-10-12 for
+Phase 4 of `plans/multi_instance_workflow_plan.md`: its `derived_parameters`
+block appends `P_balance`. The existing columns are unchanged.
+
 **One set has moved numerically, on purpose:** `geant4_track3p_beta`, re-frozen
 2026-10-01 for Phase 2 of `plans/track3p_module_plan.md`. The `field_emission` module
 now defaults to the plain Fowler–Nordheim form of the LCLS-II reference
@@ -97,7 +101,8 @@ baseline did **not** move.
 | `track3p_multipacting` | mesh + omega3p + track3p, dry-run | the three-row `FieldLevel` index (2.3e7 / 2.4e7 / 2.5e7) read from the input's `FieldScales` before any solve, pinning that a track3p table is long-format over field level; structurally that `[mesh, omega3p, track3p]` validates | `EC_max`, `EC_mean`, `impacts`, `resonant`, `mp_onset` (NaN without a solver) |
 | `t3p_transwake` | t3p + acdtool(transwake), dry-run | nominal geometry + the transwake `args` in the marker; structurally, that `[cubit, t3p, acdtool]` validates at all and that the jobname is injected | `K`, `W_trans` |
 | `t3p_sweep` | t3p sweep, dry-run | swept grid (cell_radius × iris_radius) and the `s` wake-coordinate column, which pins that a T3P table goes long-format the way an S3P one goes over `Frequency` | `loss_factor`, `W` |
-| `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision | `P_in`, `P_out`, `P_wall` |
+| `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision. The derived `P_balance` column pins that a derived array rides the `t` axis | `P_in`, `P_out`, `P_wall`, `P_balance` |
+| `omega3p_p_refinement` | cubit + two named omega3p, dry-run | swept `cav_radius`, and in the marker the scoped `FiniteElement.Order` each instance received (1, then 2); structurally that two instances on one input file validate and that `module:` routes by name | `f_*`, `Q_*`, `f_shift_ppm` |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 
@@ -126,6 +131,10 @@ baseline did **not** move.
   example YAML, so a second entry would re-freeze the same generic
   `modes.scalar_optimize` path under different variable names. Its two frozen
   sweep siblings share the same `pillbox-rtop.*` inputs.
+- **`omega3p_frequency_target`** — *recorded 2026-10-12.* The same two reasons
+  as `omega3p_optimization`: its objective `f_error` is derived from Omega3P's
+  `mode_freq`, NaN under dry run, and the synthetic route would re-freeze the
+  generic NelderMead path. Validated by one real S3DF run instead.
 - **`geant4_dose_single`** — *recorded 2026-08-20.* `mode: single`, all three
   outputs from the `geant4` module (NaN under dry run) and no swept axis, so a
   dry-run freeze captures a one-row table of NaNs. `geant4_track3p_beta` is

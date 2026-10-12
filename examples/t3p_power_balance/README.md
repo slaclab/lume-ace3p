@@ -51,7 +51,7 @@ The mode iterates it like a geometry axis.
 | `coating.jou` | Cubit journal — builds the quarter model and exports `test-sibc.gen` |
 | `SIBC.t3p` | T3P input: pulse loading, surface material + coating, the three `Power` monitors |
 | `t3p_power_balance.yaml` | The sweep configuration |
-| `power_balance.py` | Adds the `P_balance` column to the result table and plots it |
+| `power_balance.py` | Plots the three powers and `P_balance` per thickness |
 | `run_lume-ace3p_t3p_power_balance_perlmutter.batch` | NERSC Perlmutter job script |
 | `run_lume-ace3p_t3p_power_balance_s3df.batch` | SLAC S3DF job script |
 
@@ -65,13 +65,13 @@ editing both files.
 
 ```bash
 run-lume-ace3p t3p_power_balance.yaml     # or sbatch one of the .batch scripts
-python power_balance.py                   # adds P_balance, writes power_balance.png
+python power_balance.py                   # writes power_balance.png
 ```
 
 Without an ACE3P environment the workflow auto-enables dry-run: each sweep
 point's workdir gets a `DRY_RUN.txt` describing the step that would have run, and
-the result table is produced with the power columns as `NaN`. `power_balance.py`
-says so rather than plotting an empty figure.
+the result table is produced with the power columns, and so `P_balance`, as
+`NaN`. `power_balance.py` says so rather than plotting an empty figure.
 
 ## Output
 
@@ -85,20 +85,21 @@ says so rather than plotting an empty figure.
 | `P_out` | power leaving the far port, W |
 | `P_wall` | power dissipated on the coated wire, W |
 | `P_wall_at_5ns` | per-run scalar: `P_wall` at the sample nearest `t = 5 ns` |
+| `P_balance` | `P_in - P_out - P_wall`, W, from `derived_parameters` |
 
 Only swept axes become columns, so the fixed `meshsize` appears in each
 workdir's `DRY_RUN.txt` rather than in the table.
 
-`power_balance.py` then writes `power_balance_output_balanced.txt` with
+`P_balance` is one line of the YAML:
 
-```
-P_balance = P_in - P_out - P_wall
+```yaml
+derived_parameters :
+  'P_balance' : 'P_in - P_out - P_wall'
 ```
 
-appended. The same line as a
-[`derived_parameters`](../../docs/yaml_reference.md#derived_parameters) entry,
-`'P_balance' : 'P_in - P_out - P_wall'`, would put the column in the result table
-itself; the script computes it after the run, next to the plot.
+It is computed after the powers are extracted, row by row along `t`, so it is a
+column like the others (see
+[`derived_parameters`](../../docs/yaml_reference.md#derived_parameters)).
 
 While the pulse is inside the structure the difference is energy in flight; the
 three should only balance after it has cleared. A balance that stays large

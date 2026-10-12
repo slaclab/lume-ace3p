@@ -86,6 +86,9 @@ output_parameters :
   each can carry its own [scoped overrides](#module-scoped-inputs).
 - **Meshes.** Two `cubit` modules must export different mesh filenames.
 
+`examples/omega3p_p_refinement` runs two `omega3p` instances on one mesh and one
+input file, at element orders 1 and 2.
+
 To skip a step, omit its module. To supply a prebuilt artifact, use a source
 module (`mesh`, `track3p_source`, `particle_source`). The old `skip_cubit` /
 `skip_solver` / `skip_acdtool` / `geant4_particle_file` flags are not read.
@@ -443,7 +446,8 @@ workflow is `cubit → omega3p`.
 
 A run writes `<results_dir>/omega3p.out`, whose top-level `Mode` sections carry
 one eigenmode each. These are parsed directly, so a mode frequency or Q needs no
-`acdtool` step; `examples/omega3p_dispersion_sweep` is `cubit → omega3p` alone.
+`acdtool` step; `examples/omega3p_dispersion_sweep` and
+`examples/omega3p_frequency_target` are `cubit → omega3p` alone.
 An `acdtool` `RoverQ` block returns the same frequency; the shipped examples use
 acdtool only for what it alone produces, such as R/Q and peak surface fields.
 

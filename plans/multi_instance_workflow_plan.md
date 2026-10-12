@@ -1,7 +1,7 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phases 2
-and 3 done 2026-10-12**, Phase 4 next. Written
+**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phases 2,
+3 and 4 done 2026-10-12**, Phase 5 next. Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -665,6 +665,26 @@ declares `from:`); every shipped example builds without `from:`.
    validated run's table plus the computed column, no new S3DF run needed.
 4. Full `pytest` on milano (not `iana`), per the standing rule. (A cross-solver
    `omega3p → t3p` example was considered and declined — §6.)
+
+**Done 2026-10-12.** As planned, with these deviations:
+- `omega3p_p_refinement` sweeps `cav_radius` 95–105 mm (3 points) and adds a
+  derived `f_shift_ppm` column. Its frozen baseline also keeps the first
+  point's `DRY_RUN.txt` as a marker, the one output that shows each instance
+  got its own `Order`. Real run: job 40635587, 59 s. Order 1 sits 683–720 ppm
+  below order 2.
+- `omega3p_frequency_target` bounds `cav_radius` at `[90, 105]` (the target
+  is 1.3 GHz, about 96.8 mm at ellipticity 0.5) and runs 15 Nelder-Mead steps.
+  Real run: job 40636448, 2m56s, 125 kHz from target at the last step. Recorded
+  in `NOT_FROZEN`.
+- `t3p_power_balance`'s config hash moves with its new block, which is what
+  §3.7 says a new block should do. Its literal pin is kept: the pin test now
+  drops the blocks added since 0.6.0 (`_ADDED_SINCE_PIN`) before hashing, and a
+  new test asserts that the shipped config hashes differently.
+  `power_balance.py` no longer writes a `_balanced.txt` copy.
+- Real runs are recorded in `plans/s3df_example_validation_plan.md`.
+- Full `pytest` on milano: job 40637424, 972 passed, 2 skipped, 6m52s. The
+  first run (40636789) failed one test: `test_derived.py` also pins the
+  `t3p_power_balance` hash, and now drops the same blocks.
 
 ### Phase 5 — Docs, changelog, plan status
 

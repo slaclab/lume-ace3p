@@ -402,23 +402,48 @@ _PINNED_CAMPAIGN_HASH = (
     'sha256:49ec2b23953725f315668688446453abc336ac314f44acfd9b21699403d71602')
 
 
-def _staged_example_workflow(example, monkeypatch):
+# Blocks a pinned example has gained since 0.6.0. Each is a deliberate change of
+# campaign, so the pin is checked on the config with them removed (which is the
+# 0.6.0 config), and the shipped config must hash differently.
+_ADDED_SINCE_PIN = {
+    't3p_power_balance': ('derived_parameters',),   # P_balance, plan Phase 4
+}
+
+
+def _staged_example_workflow(example, monkeypatch, drop=()):
     """``(yaml_data, Workflow)`` for a shipped example, staged and built from
-    inside its staged directory, as ``run-lume-ace3p`` would."""
+    inside its staged directory, as ``run-lume-ace3p`` would, without the
+    top-level blocks named in ``drop``."""
     monkeypatch.chdir(bu._stage_example(example))
     data = load_yaml(f'{example}.yaml')
+    for key in drop:
+        data.pop(key)
     return data, Workflow.from_config(data)
+
+
+def _point_zero_hash(wf):
+    from lume_ace3p.modes import _input_tensor
+
+    point = _input_tensor(wf.sweep_axes())[0].tolist()
+    return wf.point_config_hash(point)
 
 
 @pytest.mark.parametrize('example', sorted(_PINNED_POINT_HASHES))
 def test_config_hash_of_a_shipped_sweep_is_pinned(example, monkeypatch):
     """Point 0 of each sweep — the hash a resumed point's manifest is matched
     against — is byte-for-byte what 0.6.0 wrote."""
-    from lume_ace3p.modes import _input_tensor
+    _data, wf = _staged_example_workflow(
+        example, monkeypatch, drop=_ADDED_SINCE_PIN.get(example, ()))
+    assert _point_zero_hash(wf) == _PINNED_POINT_HASHES[example]
 
+
+@pytest.mark.parametrize('example', sorted(_ADDED_SINCE_PIN))
+def test_a_block_added_since_the_pin_moves_the_hash(example, monkeypatch):
+    """The shipped config, with its new block, is a different campaign from the
+    0.6.0 one: a 0.6.0 workdir reads ``stale`` rather than resuming into a table
+    without the new column."""
     _data, wf = _staged_example_workflow(example, monkeypatch)
-    point = _input_tensor(wf.sweep_axes())[0].tolist()
-    assert wf.point_config_hash(point) == _PINNED_POINT_HASHES[example]
+    assert _point_zero_hash(wf) != _PINNED_POINT_HASHES[example]
 
 
 def test_campaign_config_hash_of_a_shipped_optimization_is_pinned(monkeypatch):

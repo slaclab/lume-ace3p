@@ -326,7 +326,8 @@ constraints on any declared output.
 
 To optimize a **computed** quantity, declare it in
 [`derived_parameters`](yaml_reference.md#derived_parameters) and name it in VOCS
-like any output. Tuning the cavity onto a target frequency:
+like any output. Tuning the cavity onto a target frequency (shipped as
+[`examples/omega3p_frequency_target`](https://github.com/slaclab/lume-ace3p/blob/main/examples/omega3p_frequency_target/omega3p_frequency_target.yaml)):
 
 ```yaml
 output_parameters :
@@ -338,7 +339,7 @@ derived_parameters :
 
 vocs_parameters :
     'variables' :
-        'cav_radius' : [95, 105]
+        'cav_radius' : [90, 105]
     'objectives' :
         'f_error' : 'MINIMIZE'
 ```

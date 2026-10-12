@@ -34,7 +34,9 @@ from lume_ace3p.workflow_graph import Workflow
 
 import baseline_utils as bu
 from test_resume import _fake_ace3p, posix_only, staged          # noqa: F401
-from test_state import _PINNED_POINT_HASHES, _staged_example_workflow
+from test_state import (
+    _ADDED_SINCE_PIN, _PINNED_POINT_HASHES, _staged_example_workflow,
+)
 from test_workdirs import _ace3p_workflow
 
 
@@ -265,10 +267,12 @@ def test_a_bad_python_target_is_a_build_time_error(tmp_path, target, match):
 def test_a_derived_block_moves_the_pinned_hash_and_a_constant_moves_it_again(
         example, monkeypatch):
     """No block: the literal pin (test_state.py). An *empty* block: still the
-    pin. A block: a different hash, and moving its constant another."""
+    pin. A block: a different hash, and moving its constant another. Blocks the
+    example gained since the pin are dropped first, as test_state.py does."""
     from lume_ace3p.modes import _input_tensor
 
-    data, wf = _staged_example_workflow(example, monkeypatch)
+    data, wf = _staged_example_workflow(
+        example, monkeypatch, drop=_ADDED_SINCE_PIN.get(example, ()))
     point = _input_tensor(wf.sweep_axes())[0].tolist()
     assert wf.point_config_hash(point) == _PINNED_POINT_HASHES[example]
 
