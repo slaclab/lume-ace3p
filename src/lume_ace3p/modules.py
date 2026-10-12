@@ -92,35 +92,132 @@ assert not _UNKNOWN_ACDTOOL_ARTIFACTS, (
 # --------------------------------------------------------------------------- #
 
 
+class AmbiguousArtifactError(LookupError):
+    """Raised when an artifact kind is asked for without naming a producer and
+    more than one producer recorded it. Deliberately not a ``KeyError``, so
+    ``table.get(kind)`` reports the ambiguity instead of returning the default."""
+
+
+_MISSING = object()
+
+
+class ByProducer:
+    """One per-evaluation side table, keyed by ``(artifact kind, producer
+    name)`` (plans/multi_instance_workflow_plan.md §3.4).
+
+    The exact form is :meth:`of` / :meth:`record`. The dict-like form —
+    ``table[kind]``, ``kind in table``, ``table.get(kind)``, ``table[kind] =
+    value`` — keeps a hand-built :class:`RunContext` (the module unit tests, a
+    direct driver) working: reading a kind returns the entry when exactly one
+    producer recorded it, raises ``KeyError`` when none did and
+    :class:`AmbiguousArtifactError` when several did; assigning records it under
+    an anonymous producer (``None``). Iteration yields the distinct kinds."""
+
+    def __init__(self, initial=None):
+        self._data = {}
+        for kind, value in (initial or {}).items():
+            self[kind] = value
+
+    def record(self, kind, producer, value):
+        self._data[(kind, producer)] = value
+
+    def of(self, kind, producer):
+        """The entry ``producer`` recorded for ``kind``; ``KeyError`` if none."""
+        return self._data[(kind, producer)]
+
+    def has(self, kind, producer):
+        return (kind, producer) in self._data
+
+    def producers(self, kind):
+        """The names (``None`` for anonymous) that recorded ``kind``."""
+        return [p for k, p in self._data if k == kind]
+
+    def lookup(self, kind, producer=None, default=_MISSING):
+        """The entry for ``kind`` from ``producer``, which a consumer passes from
+        its binding (:attr:`Module.sources`).
+
+        An anonymous entry stands in for a named producer that recorded nothing
+        — the hand-built context again — and with no producer named this is
+        ``table[kind]``. ``default``, when given, replaces a ``KeyError``."""
+        try:
+            if producer is not None:
+                if (kind, producer) in self._data:
+                    return self._data[(kind, producer)]
+                return self._data[(kind, None)]
+            return self[kind]
+        except KeyError:
+            if default is _MISSING:
+                raise
+            return default
+
+    def __getitem__(self, kind):
+        producers = self.producers(kind)
+        if not producers:
+            raise KeyError(kind)
+        if len(producers) > 1:
+            raise AmbiguousArtifactError(
+                f"artifact '{kind}' was recorded by several modules "
+                f"({sorted(str(p) for p in producers)}); ask for one by name.")
+        return self._data[(kind, producers[0])]
+
+    def __setitem__(self, kind, value):
+        self.record(kind, None, value)
+
+    def __contains__(self, kind):
+        return any(k == kind for k, _ in self._data)
+
+    def get(self, kind, default=None):
+        try:
+            return self[kind]
+        except KeyError:
+            return default
+
+    def __iter__(self):
+        return iter(dict.fromkeys(k for k, _ in self._data))
+
+    def __len__(self):
+        return len(set(k for k, _ in self._data))
+
+    def keys(self):
+        return list(self)
+
+    def __repr__(self):
+        return f'ByProducer({self._data!r})'
+
+
 class RunContext:
     """State for one evaluation of a module chain.
 
-    ``artifacts`` maps an artifact kind (see the vocabulary above) to the path
-    a module produced for it; ``outputs`` collects extracted scalar/structured
-    quantities. Modules read ``inputs`` (a materialized :class:`WorkflowInputs`
-    for this eval point), ``paths`` (resolved executable paths), and
-    ``dry_run``.
+    ``artifacts`` maps an artifact kind (see the vocabulary above) and the name
+    of the module that produced it to a path; ``outputs`` collects extracted
+    scalar/structured quantities. Modules read ``inputs`` (a materialized
+    :class:`WorkflowInputs` for this eval point), ``paths`` (resolved executable
+    paths), and ``dry_run``.
 
-    Two per-artifact side tables let a consumer reach back to its producer
-    without either module knowing about the other:
+    Three more per-artifact side tables let a consumer reach back to its
+    producer without either module knowing about the other. All four are
+    :class:`ByProducer` tables, so two producers of one kind (two ``omega3p``
+    instances) keep separate entries; a module records into them with
+    :meth:`provide` / :meth:`set_job_name` / :meth:`set_reparse` /
+    :meth:`set_field_level` and reads its producer's entry through its binding
+    (:meth:`Module.upstream`, :meth:`Module.bound`).
 
     ``job_names``
-        ``{artifact kind: results-directory name}``, recorded by each solver
-        module. ``acdtool``'s positional ``postprocess`` commands take that name
-        as their first argument, so this is what lets the jobname be *injected*
-        rather than repeated in the YAML.
+        the results-directory name, recorded by each solver module.
+        ``acdtool``'s positional ``postprocess`` commands take that name as their
+        first argument, so this is what lets the jobname be *injected* rather
+        than repeated in the YAML.
     ``reparse``
-        ``{artifact kind: callable}``, also registered by each solver module. A
-        consumer that **overwrites** its producer's output file in place calls the
-        hook so the producer re-reads it — see :class:`AcdtoolModule` for why
-        ``postprocess transwake`` needs this.
+        a callable, also registered by each solver module. A consumer that
+        **overwrites** its producer's output file in place calls the hook so the
+        producer re-reads it — see :class:`AcdtoolModule` for why ``postprocess
+        transwake`` needs this.
     ``field_levels``
-        ``{artifact kind: field level}``, recorded by :class:`Track3PModule`
-        when its ``field_level:`` key names which level of a multi-level scan a
-        consumer should take. The artifact itself is always the results
-        directory, so this is how the choice reaches
-        :class:`FieldEmissionModule` without the artifact's shape depending on how
-        many levels a run produced.
+        a field level, recorded by :class:`Track3PModule` when its
+        ``field_level:`` key names which level of a multi-level scan a consumer
+        should take. The artifact itself is always the results directory, so
+        this is how the choice reaches :class:`FieldEmissionModule` without the
+        artifact's shape depending on how many levels a run produced.
 
     ``config_hash``
         the ``'sha256:...'`` identity of this evaluation's resolved
@@ -156,14 +253,28 @@ class RunContext:
         self.modules = list(modules) if modules else []
         self.capture_output = bool(capture_output)
         self.inputs = inputs if inputs is not None else WorkflowInputs()
-        self.artifacts = dict(artifacts) if artifacts else {}
+        self.artifacts = (artifacts if isinstance(artifacts, ByProducer)
+                          else ByProducer(artifacts))
         self.outputs = dict(outputs) if outputs else {}
         self.dry_run = dry_run
         self.paths = dict(paths) if paths else {}
         self.stage_mode = stage_mode
-        self.job_names = {}
-        self.reparse = {}
-        self.field_levels = {}
+        self.job_names = ByProducer()
+        self.reparse = ByProducer()
+        self.field_levels = ByProducer()
+
+    def provide(self, module, kind, path):
+        """Record the artifact ``module`` produced for ``kind``."""
+        self.artifacts.record(kind, module.name, path)
+
+    def set_job_name(self, module, kind, job_name):
+        self.job_names.record(kind, module.name, job_name)
+
+    def set_reparse(self, module, kind, hook):
+        self.reparse.record(kind, module.name, hook)
+
+    def set_field_level(self, module, kind, level):
+        self.field_levels.record(kind, module.name, level)
 
     def ensure_workdir(self):
         if self.workdir and not os.path.exists(self.workdir):
@@ -256,6 +367,37 @@ class Module:
     def __init__(self, config=None, name=None):
         self.config = dict(config) if config else {}
         self.name = name or self.type
+        # The entry's raw ``from:`` value (``None`` when absent), and the
+        # ``{required kind: producer name}`` that ``workflow_graph._resolve_order``
+        # resolves from it or from the one producer of that kind. ``sources`` is
+        # empty on a module built outside a Workflow, which then reads the
+        # context's single entry for the kind.
+        self.binding = None
+        self.sources = {}
+
+    def producer(self, ctx, kind):
+        """The live module in ``ctx`` this one reads ``kind`` from, or ``None``.
+
+        The bound producer when there is a binding; otherwise the one module in
+        ``ctx.modules`` providing ``kind`` — ``None`` when there is not exactly
+        one (a context built from artifacts alone)."""
+        name = self.sources.get(kind)
+        if name is not None:
+            return next((m for m in ctx.modules if m.name == name), None)
+        candidates = [m for m in ctx.modules
+                      if kind in m.provides and m is not self]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def bound(self, table, kind, default=None):
+        """This module's producer's entry for ``kind`` in one of the context's
+        :class:`ByProducer` tables (``ctx.job_names``, ``ctx.reparse``, …), or
+        ``default`` when it recorded none."""
+        return table.lookup(kind, self.sources.get(kind), default)
+
+    def upstream(self, ctx, kind):
+        """``(producer module or None, artifact path or None)`` for a required
+        ``kind`` — the one lookup every consumer makes of its producer."""
+        return self.producer(ctx, kind), self.bound(ctx.artifacts, kind)
 
     def run(self, ctx, skip_execution=False):
         """Run this step for the evaluation ``ctx`` describes.
@@ -390,15 +532,15 @@ class MeshSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("mesh source module requires a 'file'.")
-        ctx.artifacts[MESH] = _stage_file(ctx, src)
+        ctx.provide(self, MESH, _stage_file(ctx, src))
 
 
 class Track3PSourceModule(_SourceModule):
     """Provide ``track3p_particles`` from an externally-produced Track3P dump.
 
     The *source* counterpart of :class:`Track3PModule`, which runs Track3P in
-    the pipeline: a workflow lists one or the other, since both provide the same
-    artifact. This one is the intended head for modelling studies over pre-run
+    the pipeline: both provide the same artifact, so a workflow usually lists
+    one or the other (with both, a consumer names one with ``from:``). This one is the intended head for modelling studies over pre-run
     dumps (a cryomodule-scale Track3P run costs ~50 node-minutes per field
     level), the runnable one for producing new dumps or for multipacting sweeps.
     """
@@ -410,7 +552,7 @@ class Track3PSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("track3p source module requires a 'file'.")
-        ctx.artifacts[TRACK3P_PARTICLES] = _stage_file(ctx, src)
+        ctx.provide(self, TRACK3P_PARTICLES, _stage_file(ctx, src))
 
 
 class ParticleSourceModule(_SourceModule):
@@ -425,7 +567,7 @@ class ParticleSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("particle source module requires a 'file'.")
-        ctx.artifacts[PARTICLE_SOURCE] = _stage_file(ctx, src)
+        ctx.provide(self, PARTICLE_SOURCE, _stage_file(ctx, src))
 
 
 # --------------------------------------------------------------------------- #
@@ -476,7 +618,7 @@ class CubitModule(Module):
             # Legacy dry-run skipped Cubit entirely; record a nominal mesh path
             # (side-effect-free) so a downstream solver's requirement is met.
             base = os.path.splitext(os.path.basename(self.journal))[0]
-            ctx.artifacts[MESH] = os.path.join(ctx.workdir, base + '.genesis')
+            ctx.provide(self, MESH, os.path.join(ctx.workdir, base + '.genesis'))
             _append_marker(ctx, 'Dry run mode: Cubit step skipped.\n'
                                 f'Cubit journal: {self.journal}\n'
                                 f'Cubit inputs: {inputs.cubit}\n')
@@ -489,7 +631,7 @@ class CubitModule(Module):
             # the journal's own export statement, the same place :meth:`verify`
             # reads it and the same value ``cubit.exportfile`` would give, so
             # neither the mesh built here nor the one resumed is found differently.
-            ctx.artifacts[MESH] = self._mesh_path(ctx)
+            ctx.provide(self, MESH, self._mesh_path(ctx))
             return
         ctx.ensure_workdir()
         cubit = Cubit(self.journal, workdir=ctx.workdir,
@@ -505,8 +647,8 @@ class CubitModule(Module):
         if mesh is None:
             cubit.get_export()
             mesh = getattr(cubit, 'exportfile', None)
-        ctx.artifacts[MESH] = (os.path.join(ctx.workdir, mesh) if mesh
-                               else ctx.workdir)
+        ctx.provide(self, MESH, (os.path.join(ctx.workdir, mesh) if mesh
+                                 else ctx.workdir))
 
     def _mesh_path(self, ctx):
         """The mesh this step exported, named without running Cubit.
@@ -519,7 +661,7 @@ class CubitModule(Module):
         mesh = _journal_export(self.journal)
         if mesh:
             return os.path.join(ctx.workdir or '', mesh)
-        return ctx.artifacts.get(MESH) or ctx.workdir
+        return ctx.artifacts.lookup(MESH, self.name, None) or ctx.workdir
 
     def verify(self, ctx):
         """Whether the mesh file is still in the workdir.
@@ -537,7 +679,7 @@ class CubitModule(Module):
             return None
         mesh = _journal_export(self.journal)
         path = (os.path.join(ctx.workdir or '', mesh) if mesh
-                else ctx.artifacts.get(MESH))
+                else ctx.artifacts.lookup(MESH, self.name, None))
         if not path:
             return None
         return os.path.isfile(path)
@@ -595,7 +737,7 @@ class _SolverModule(Module):
         self._solver = None
 
     def run(self, ctx, skip_execution=False):
-        if self._input_artifact not in ctx.artifacts:
+        if self.upstream(ctx, self._input_artifact)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
                              f"{self._input_artifact} artifact.")
         for path in self.files:
@@ -613,12 +755,12 @@ class _SolverModule(Module):
             _append_marker(ctx, f'Dry run mode: {self._label} step skipped.\n'
                                 f'Cubit: {inputs.cubit}\n'
                                 f'ACE3P: {[(_, v) for _, v in leaves]}\n')
-            ctx.artifacts[self._artifact] = ctx.workdir
+            ctx.provide(self, self._artifact, ctx.workdir)
             # No solver instance to ask, so fall back to the declared override or
             # the documented per-solver default. A dry-run acdtool step still
             # builds its command line from this.
-            ctx.job_names[self._artifact] = (self.results_dir
-                                             or self._wrapper.default_job_name)
+            ctx.set_job_name(self, self._artifact,
+                             self.results_dir or self._wrapper.default_job_name)
             self._prepare_dry_run(ctx)
             return
         ctx.ensure_workdir()
@@ -630,7 +772,8 @@ class _SolverModule(Module):
                                workdir=ctx.workdir,
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''),
-                               log_file=self.log_file(ctx))
+                               log_file=self.log_file(ctx),
+                               input_name=self._input_name(ctx))
         solver.set_value(inputs.ace3p)
         self._prepare_solver(ctx, solver)
         if skip_execution:
@@ -650,11 +793,28 @@ class _SolverModule(Module):
         else:
             solver.run()
         self._solver = solver
-        ctx.artifacts[self._artifact] = ctx.workdir
-        ctx.job_names[self._artifact] = solver.job_name()
+        ctx.provide(self, self._artifact, ctx.workdir)
+        ctx.set_job_name(self, self._artifact, solver.job_name())
         # Let a consumer that rewrites this solver's output in place ask for a
         # re-read (the acdtool wake commands overwrite wakefield.out).
-        ctx.reparse[self._artifact] = solver.output_parser
+        ctx.set_reparse(self, self._artifact, solver.output_parser)
+
+    def _input_name(self, ctx):
+        """The filename this instance writes its merged input under:
+        ``<stem>_<name><ext>`` when another solver in the chain reads an input
+        file of the same basename (two ``omega3p`` instances on one file, the
+        p-refinement case), else ``None`` — the basename, as before."""
+        if not self.input_file:
+            return None
+        base = os.path.basename(self.input_file)
+        shared = any(m is not self and isinstance(m, _SolverModule)
+                     and m.input_file
+                     and os.path.basename(m.input_file) == base
+                     for m in ctx.modules)
+        if not shared:
+            return None
+        stem, ext = os.path.splitext(base)
+        return f'{stem}_{self.name}{ext}'
 
     def _prepare_solver(self, ctx, solver):
         """Hook: edit the solver's input tree after the ``ace3p:`` overrides
@@ -681,7 +841,18 @@ class _SolverModule(Module):
         answer, from the object that actually resolved it."""
         if self._solver is not None:
             return self._solver.results_dir()
-        job = self.results_dir
+        return self._resolve_results_dir(self.results_dir)
+
+    def _written_results_dir(self):
+        """Where this solver *writes*, which differs from :meth:`_results_dir`
+        only for a solver that is not passed ``results_dir:`` on its command line
+        (T3P): there the override only says where to read. Used to tell two
+        instances that would write into one directory apart at build time."""
+        override = (self.results_dir if self._wrapper.accepts_results_dir_arg
+                    else None)
+        return self._resolve_results_dir(override)
+
+    def _resolve_results_dir(self, job):
         if not job:
             try:
                 with open(self.input_file) as file:
@@ -1293,8 +1464,8 @@ class Track3PModule(_SolverModule):
     """The ACE3P particle tracker: requires an ``em_solution``, provides
     ``track3p_particles``.
 
-    The runnable counterpart of :class:`Track3PSourceModule`: a workflow has one
-    or the other as the producer of ``track3p_particles``, never both. It runs
+    The runnable counterpart of :class:`Track3PSourceModule`; both provide
+    ``track3p_particles``. It runs
     ``track3p`` on the fields the upstream Omega3P or S3P step wrote, and exposes
     the run's multipacting and dark-current results as result-table columns::
 
@@ -1410,9 +1581,8 @@ class Track3PModule(_SolverModule):
     def _field_source(self, ctx):
         """``(producer module or None, its results directory name)`` for the
         ``em_solution`` this run reads."""
-        producer = next((m for m in ctx.modules if EM_SOLUTION in m.provides),
-                        None)
-        return producer, ctx.job_names.get(EM_SOLUTION)
+        return (self.producer(ctx, EM_SOLUTION),
+                self.bound(ctx.job_names, EM_SOLUTION))
 
     def _prepare_solver(self, ctx, solver):
         producer, job_name = self._field_source(ctx)
@@ -1440,7 +1610,7 @@ class Track3PModule(_SolverModule):
         run and dry run and leaves all resolution in the consumer."""
         super().run(ctx, skip_execution=skip_execution)
         if self.field_level is not None:
-            ctx.field_levels[self._artifact] = self.field_level
+            ctx.set_field_level(self, self._artifact, self.field_level)
 
     def _prepare_dry_run(self, ctx):
         producer, job_name = self._field_source(ctx)
@@ -1820,8 +1990,10 @@ class AcdtoolModule(Module):
     configs written before the command surface opened up run unchanged.
 
     The ``<jobname>`` the positional commands take is *injected* from
-    ``ctx.job_names`` — the results directory the producing solver actually
+    ``ctx.job_names`` — the results directory the bound producer actually
     resolved — rather than repeated in the YAML; ``jobname:`` overrides it.
+    With two producers of the required kind in the chain, ``from:`` on the
+    entry names which one (``from: coarse``).
 
     **Mutating consumers.** ``postprocess transwake`` (and ``wake_new`` /
     ``wake_direct``) write their result *over* ``<jobname>/OUTPUT/wakefield.out``,
@@ -1829,7 +2001,7 @@ class AcdtoolModule(Module):
     longitudinal wake, then acdtool overwrites it with the transverse one, so
     without intervention the workflow would report a wrong-but-plausible number.
     This module therefore calls the producer's re-parse hook
-    (``ctx.reparse[artifact]``) after such a command, and ``T3PModule`` remains
+    (``ctx.reparse``, through the binding) after such a command, and ``T3PModule`` remains
     the single owner of every wakefield quantity — one parser
     (:func:`~lume_ace3p.ace3p.parse_wakefield`), one place to ask, whether or not
     acdtool ran. See the Phase-2 decision in ``plans/acdtool_rework_plan.md``.
@@ -1895,12 +2067,12 @@ class AcdtoolModule(Module):
         if not self.spec.jobname:
             return None
         return (self.jobname
-                or ctx.job_names.get(self.spec.requires)
+                or self.bound(ctx.job_names, self.spec.requires)
                 or self.spec.default_jobname)
 
     def run(self, ctx, skip_execution=False):
         required = self.spec.requires
-        if required and required not in ctx.artifacts:
+        if required and self.upstream(ctx, required)[1] is None:
             raise ValueError(f"module 'acdtool' ({self.command}) requires a "
                              f"{required} artifact.")
         jobname = self._resolve_jobname(ctx)
@@ -1914,7 +2086,7 @@ class AcdtoolModule(Module):
             if jobname:
                 marker += f'Acdtool jobname: {jobname}\n'
             _append_marker(ctx, marker)
-            ctx.artifacts[RF_POST] = ctx.workdir
+            ctx.provide(self, RF_POST, ctx.workdir)
             return
         ctx.ensure_workdir()
         acdtool = Acdtool(self.input_file, workdir=ctx.workdir,
@@ -1936,7 +2108,7 @@ class AcdtoolModule(Module):
         else:
             acdtool.run()
         self._acdtool = acdtool
-        ctx.artifacts[RF_POST] = ctx.workdir
+        ctx.provide(self, RF_POST, ctx.workdir)
         # This command rewrote its producer's output in place; have the producer
         # re-read it so downstream extraction sees the new result, not the one
         # parsed before acdtool ran.
@@ -1948,8 +2120,10 @@ class AcdtoolModule(Module):
         # file on disk" true unconditionally rather than only on the path that
         # launched a subprocess. Skipping the re-parse instead would make the
         # invariant depend on how the point got here.
-        if self.spec.mutates and self.spec.mutates in ctx.reparse:
-            ctx.reparse[self.spec.mutates]()
+        reparse = (self.bound(ctx.reparse, self.spec.mutates)
+                   if self.spec.mutates else None)
+        if reparse is not None:
+            reparse()
 
     def verify(self, ctx):
         """Whether this command's output file is still there — **unless the
@@ -2294,7 +2468,7 @@ class FieldEmissionModule(Module):
         weighting is pure Python over a Track3P dump, so a resumed point pays
         milliseconds to have it rather than carrying a second, file-backed way to
         reconstruct it."""
-        if TRACK3P_PARTICLES not in ctx.artifacts:
+        if self.upstream(ctx, TRACK3P_PARTICLES)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
                              f"track3p_particles artifact.")
         dump = self._resolve_dump(ctx, stage=True)
@@ -2303,8 +2477,8 @@ class FieldEmissionModule(Module):
         particles = Particles(dump, params, output_file=self.output_file,
                               workdir=ctx.workdir)
         self._filtered = particles.run()
-        ctx.artifacts[PARTICLE_SOURCE] = os.path.join(ctx.workdir,
-                                                      particles.output_file)
+        ctx.provide(self, PARTICLE_SOURCE,
+                    os.path.join(ctx.workdir, particles.output_file))
 
     def _resolve_dump(self, ctx, stage=False):
         """The Track3P dump to reweight, as a path relative to the workdir.
@@ -2326,8 +2500,8 @@ class FieldEmissionModule(Module):
         the same name, only the former may create anything to get it.
 
         **Which shape it is follows from the producer, not from the
-        filesystem.** The module in ``ctx.modules`` that provides
-        ``track3p_particles`` is asked, the way :meth:`_emitted_note` already
+        filesystem.** The module this one is bound to (:meth:`Module.producer`)
+        is asked, the way :meth:`_emitted_note` already
         asks it: a :class:`Track3PSourceModule` means a file, a
         :class:`Track3PModule` means a results directory. The filesystem cannot
         answer this reliably — ``verify`` runs *before* staging, so a dump file
@@ -2342,13 +2516,15 @@ class FieldEmissionModule(Module):
         directory*. Not whether it is an existing file: a recorded path that does
         not exist yet is a dump file whose staging has not happened, and
         :meth:`verify` must still derive a name from it."""
-        src = ctx.artifacts[TRACK3P_PARTICLES]
+        src = self.upstream(ctx, TRACK3P_PARTICLES)[1]
+        if src is None:
+            raise KeyError(TRACK3P_PARTICLES)
         if not self._producer_is_solver(ctx, src):
             if stage:
                 _stage_file(ctx, src)
             return os.path.basename(src)
 
-        results = ctx.job_names.get(TRACK3P_PARTICLES)
+        results = self.bound(ctx.job_names, TRACK3P_PARTICLES)
         directory = os.path.join(src, results) if results else src
         if not os.path.isdir(directory):
             raise ValueError(
@@ -2359,7 +2535,7 @@ class FieldEmissionModule(Module):
                 f"'results_dir:' set to match.")
 
         dumps = _impacts_dumps(directory)
-        wanted = ctx.field_levels.get(TRACK3P_PARTICLES)
+        wanted = self.bound(ctx.field_levels, TRACK3P_PARTICLES)
         if wanted is not None:
             match = next((path for level, path in dumps.items()
                           if same_level(level, wanted)),
@@ -2388,32 +2564,23 @@ class FieldEmissionModule(Module):
                 f"input's FieldScales.")
         return os.path.relpath(next(iter(dumps.values())), ctx.workdir)
 
-    @staticmethod
-    def _producer(ctx):
-        """The module in this evaluation that provides ``track3p_particles``, or
-        ``None`` when the context was built from artifacts alone."""
-        return next((m for m in ctx.modules
-                     if TRACK3P_PARTICLES in m.provides), None)
-
-    @classmethod
-    def _producer_is_solver(cls, ctx, src):
+    def _producer_is_solver(self, ctx, src):
         """Whether the dump artifact is an in-pipeline Track3P **results
         directory** (as opposed to an externally supplied dump file).
 
         The producer's class is the answer when there is one; otherwise
         ``os.path.isdir`` — see :meth:`_resolve_dump` on why that order."""
-        producer = cls._producer(ctx)
+        producer = self.producer(ctx, TRACK3P_PARTICLES)
         if producer is None:
             return os.path.isdir(src)
         return isinstance(producer, Track3PModule)
 
-    @classmethod
-    def _emitted_note(cls, ctx):
+    def _emitted_note(self, ctx):
         """`` (track3p.log reports Total Emitted Particles = N)`` when the run
         wrote a log saying so — the usual reason a field-emission dump is
         missing is that the emitter produced nothing, and the log says it
         outright."""
-        producer = cls._producer(ctx)
+        producer = self.producer(ctx, TRACK3P_PARTICLES)
         data = getattr(getattr(producer, '_solver', None), 'output_data', None)
         total = (data or {}).get('TotalEmitted')
         if total is None:
@@ -2434,7 +2601,7 @@ class FieldEmissionModule(Module):
         has recorded that artifact. Before then, ``None``."""
         name = self.output_file
         if not name:
-            if TRACK3P_PARTICLES not in ctx.artifacts:
+            if self.upstream(ctx, TRACK3P_PARTICLES)[1] is None:
                 return None
             try:
                 dump = self._resolve_dump(ctx)
@@ -2582,14 +2749,14 @@ class Geant4Module(Module):
         return int.from_bytes(digest[:4], 'big') % (2 ** 31 - 1) + 1
 
     def run(self, ctx, skip_execution=False):
-        if PARTICLE_SOURCE not in ctx.artifacts:
+        particle_file_path = self.upstream(ctx, PARTICLE_SOURCE)[1]
+        if particle_file_path is None:
             raise ValueError("module 'geant4' requires a particle_source "
                              "artifact.")
         ctx.ensure_workdir()
         # A resume path may have read the detector CSV through verify() before
         # the binary re-ran, so drop what was cached then.
         self._detector_cache.clear()
-        particle_file_path = ctx.artifacts[PARTICLE_SOURCE]
         inputs = ctx.inputs.for_module(self.name)
         macro_inputs = dict(inputs.macro) if inputs.macro else None
 
@@ -2711,9 +2878,9 @@ class Geant4Module(Module):
     def _record_grid_artifacts(self, ctx):
         files = self._output_files()
         if files['dose']:
-            ctx.artifacts[DOSE_GRID] = os.path.join(ctx.workdir, files['dose'])
+            ctx.provide(self, DOSE_GRID, os.path.join(ctx.workdir, files['dose']))
         if files['edep']:
-            ctx.artifacts[EDEP_GRID] = os.path.join(ctx.workdir, files['edep'])
+            ctx.provide(self, EDEP_GRID, os.path.join(ctx.workdir, files['edep']))
 
     def _geometry_files(self):
         """Union of STL files named in the Geant4 input file ('*_stl' keys)

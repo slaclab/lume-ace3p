@@ -12,12 +12,14 @@ shared buckets with that module's scoped block layered over them.
 
 Design notes
 ------------
-* **Ordering from edges.** Each artifact kind has exactly one producer (see
-  :func:`_resolve_order`), so ordering is a plain dependency sort: a module is
-  scheduled once every module that provides one of its ``requires`` has run.
-  The YAML list order is only a stable-sort tiebreaker.
-* **Additive rules.** The only structural rules are "one producer per artifact"
-  and "every requirement has a producer". The per-module ``requires``/``provides``
+* **Ordering from edges.** Every requirement of every module is bound to one
+  producer (see :func:`_resolve_order`): the entry's ``from:`` when it names
+  one, else the only module of the list providing that kind. Ordering is then a
+  plain dependency sort over those bindings, with the YAML list order only a
+  stable-sort tiebreaker. Artifacts are identified by ``(kind, producer
+  name)``, so two producers of one kind (two ``omega3p`` instances) coexist.
+* **Additive rules.** The only structural rules are "every requirement binds
+  to exactly one producer" and "names are unique". The per-module ``requires``/``provides
   sets in :mod:`lume_ace3p.modules` carry the rest (solver needs ``mesh``,
   ``acdtool`` needs ``em_solution``, ``field_emission`` needs
   ``track3p_particles``, ``geant4`` needs ``particle_source``). ``t3p`` was added
@@ -26,8 +28,7 @@ Design notes
   postprocessing pointed at time-domain output. The runnable ``track3p`` solver
   slotted in the same way, with no rule change: it
   ``provides {track3p_particles}`` and so is simply a second producer of what
-  ``field_emission`` consumes (a workflow lists it *or* ``track3p_source``,
-  never both).
+  ``field_emission`` consumes.
 * **Decoupled from modes.** :meth:`Workflow.evaluate` runs the chain once for one
   input point and returns ``(outputs, ctx)`` — the structured output dict plus the
   :class:`~lume_ace3p.modules.RunContext` that produced it. Sweep / Xopt loops
@@ -58,7 +59,7 @@ import numpy as np
 from lume_ace3p.modules import (
     CubitModule, FieldEmissionModule, Geant4Module, RunContext,
     TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
-    Track3PModule, _SolverModule,
+    Track3PModule, _SolverModule, _journal_export,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.derived import DerivedSpec
@@ -74,7 +75,8 @@ from lume_ace3p.state import (
 
 class WorkflowValidationError(ValueError):
     """Raised when a declared ``workflow:`` list cannot be validated into a
-    runnable DAG (duplicate producer, unmet requirement, cycle, empty list)."""
+    runnable DAG (unmet or ambiguous requirement, duplicate name, disk
+    collision, cycle, empty list)."""
 
 
 # Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/t3p/
@@ -207,7 +209,7 @@ def _infer_output_module(spec):
 _FE_COLUMNS = ('InitialNormalField', 'InitialFaceArea')
 
 
-def _validate_impacts_layout(modules, producer):
+def _validate_impacts_layout(modules):
     """Reject a field-emission chain whose Track3P dump is in the wrong layout,
     at build time rather than after a 45-minute solve.
 
@@ -229,12 +231,16 @@ def _validate_impacts_layout(modules, producer):
     A source file that does not exist yet is skipped silently. No module input
     file is opened at build time and ``files:`` paths are checked only at run
     time, so a missing file is run time's error to report, not this one's."""
-    consumer = next((m for m in modules
-                     if TRACK3P_PARTICLES in m.requires), None)
-    if consumer is None or TRACK3P_PARTICLES not in producer:
-        return
-    head = modules[producer[TRACK3P_PARTICLES]]
+    for consumer in modules:
+        if TRACK3P_PARTICLES in consumer.requires:
+            head = next(m for m in modules
+                        if m.name == consumer.sources[TRACK3P_PARTICLES])
+            _check_impacts_layout(consumer, head)
 
+
+def _check_impacts_layout(consumer, head):
+    """:func:`_validate_impacts_layout` for one consumer and the producer it is
+    bound to."""
     if head.type == 'track3p':
         if head.impacts_format == 'initials-impacts':
             return          # the module injects the selector itself
@@ -359,50 +365,146 @@ def _validate_scopes(modules, inputs):
               f"    ace3p:\n      {target}:\n        '{container}': {{…}}")
 
 
-def _resolve_order(modules):
-    """Validate the module list and return it topologically ordered.
+def _binding_map(module):
+    """The entry's ``from:`` as ``{kind: producer name}``.
 
-    Raises :class:`WorkflowValidationError` (with the offending artifact/module
-    named) on a duplicate producer, a duplicate module *name*, an unmet
-    requirement, or a cycle."""
+    The string shorthand is the full form for a module with exactly one
+    requirement; on a module with several it is an error, since it would not
+    say which requirement it names."""
+    binding = module.binding
+    if binding is None:
+        return {}
+    if isinstance(binding, str):
+        if len(module.requires) != 1:
+            needs = sorted(module.requires) or ['nothing']
+            raise WorkflowValidationError(
+                f"module '{module.name}' has 'from: {binding}', but it requires "
+                f"{', '.join(needs)}, so a single name does not say which "
+                "requirement it binds. Use the mapping form, "
+                f"'from: {{<kind>: {binding}}}'.")
+        return {next(iter(module.requires)): binding}
+    if isinstance(binding, dict):
+        stray = sorted(str(k) for k in binding if k not in module.requires)
+        if stray:
+            raise WorkflowValidationError(
+                f"module '{module.name}' binds {stray} with 'from:', but it "
+                f"requires only {sorted(module.requires)}.")
+        return {str(k): str(v) for k, v in binding.items()}
+    raise WorkflowValidationError(
+        f"module '{module.name}': 'from:' must be a module name or a "
+        f"{{kind: module name}} mapping, got {binding!r}.")
+
+
+def _bind(module, producers, index, modules):
+    """``{required kind: producer name}`` for one module (§3.4): the ``from:``
+    name when given (it must exist and provide the kind), else the one producer
+    of the kind in the list. Several producers and no ``from:`` is an error
+    listing them."""
+    explicit = _binding_map(module)
+    sources = {}
+    for kind in sorted(module.requires):
+        candidates = [modules[i].name for i in producers.get(kind, [])
+                      if modules[i] is not module]
+        if kind in explicit:
+            name = explicit[kind]
+            if name not in index:
+                raise WorkflowValidationError(
+                    f"module '{module.name}' reads {kind} 'from: {name}', but "
+                    f"no module is named '{name}'. Producers of {kind}: "
+                    f"{candidates or 'none'}.")
+            if name not in candidates:
+                other = modules[index[name]]
+                raise WorkflowValidationError(
+                    f"module '{module.name}' reads {kind} 'from: {name}', but "
+                    f"'{name}' is a '{other.type}' module, which provides "
+                    f"{sorted(other.provides) or 'nothing'}. Producers of "
+                    f"{kind}: {candidates or 'none'}.")
+            sources[kind] = name
+        elif not candidates:
+            raise WorkflowValidationError(
+                f"module '{module.name}' requires artifact '{kind}' but no "
+                f"module in the workflow provides it.")
+        elif len(candidates) > 1:
+            raise WorkflowValidationError(
+                f"module '{module.name}' requires artifact '{kind}', which "
+                f"{len(candidates)} modules provide ({candidates}). Name the one "
+                f"it reads with 'from:' on its entry, e.g.\n"
+                f"    from: {candidates[0]}"
+                + ('' if len(module.requires) == 1 else
+                   f"\nor, since it requires several artifacts,\n"
+                   f"    from: {{{kind}: {candidates[0]}}}"))
+        else:
+            sources[kind] = candidates[0]
+    return sources
+
+
+def _validate_disk_collisions(modules):
+    """Two instances that would write to the same place in the workdir
+    (plans/multi_instance_workflow_plan.md §2.3).
+
+    * Two ACE3P solvers of one type must resolve distinct results directories:
+      ``results_dir:`` on one of them.
+    * Two ``cubit`` modules must export distinct mesh names — read from each
+      journal's last ``export`` statement; an unreadable journal is skipped.
+
+    A shared input *file* is not a collision: each instance writes its merged
+    copy under its own name (:meth:`_SolverModule._input_name`)."""
+    seen = {}
+    for m in modules:
+        if not isinstance(m, _SolverModule):
+            continue
+        key = (m.type, m._written_results_dir())
+        if key in seen:
+            raise WorkflowValidationError(
+                f"modules '{seen[key]}' and '{m.name}' (both '{m.type}') would "
+                f"both write their results to '{key[1]}'. Set 'results_dir:' on "
+                "one of them" + (
+                    " (for t3p, a JobName leaf in its input file, since t3p's "
+                    "results_dir: only says where to read)"
+                    if m.type == 't3p' else '') + '.')
+        seen[key] = m.name
+
+    meshes = {}
+    for m in modules:
+        if not isinstance(m, CubitModule):
+            continue
+        mesh = _journal_export(m.journal)
+        if mesh is None:
+            continue
+        if mesh in meshes:
+            raise WorkflowValidationError(
+                f"cubit modules '{meshes[mesh]}' and '{m.name}' both export "
+                f"'{mesh}', so the second would overwrite the first's mesh. "
+                "Give one journal a different export filename.")
+        meshes[mesh] = m.name
+
+
+def _resolve_order(modules):
+    """Validate the module list, bind every requirement to a producer, and
+    return the list topologically ordered.
+
+    Raises :class:`WorkflowValidationError` (naming the offending artifact or
+    module) on a duplicate module *name*, an unmet requirement, an ambiguous or
+    invalid ``from:`` binding, a disk collision between two instances, or a
+    cycle. Two producers of one kind are legal; a consumer of that kind then
+    names one with ``from:`` (plans/multi_instance_workflow_plan.md §3.4)."""
     if not modules:
         raise WorkflowValidationError('workflow contains no modules.')
 
-    # One producer per artifact kind. This is what makes "two mesh sources"
-    # (cubit + a mesh file, or two mesh files) a clear error.
-    producer = {}
-    for i, m in enumerate(modules):
-        for kind in m.provides:
-            if kind in producer:
-                other = modules[producer[kind]]
-                raise WorkflowValidationError(
-                    f"artifact '{kind}' is provided by more than one module "
-                    f"('{other.name}' and '{m.name}'); a workflow may declare "
-                    f"only one source for each artifact.")
-            producer[kind] = i
-
-    # Every requirement must have a producer somewhere in the list.
-    for m in modules:
-        for kind in m.requires:
-            if kind not in producer:
-                raise WorkflowValidationError(
-                    f"module '{m.name}' requires artifact '{kind}' but no "
-                    f"module in the workflow provides it.")
-
-    # Unique names. A module's name is its identity in three places outside the
-    # DAG — its log file (``<workdir>/<name>.log``), its entry in the run manifest,
-    # and the "resume from the first non-complete module" decision that reads that
-    # entry — and none of the three can tell two identically-named steps apart.
-    #
-    # Asked *after* the two rules above, which is what keeps the more specific
-    # diagnosis: two modules of one type collide on their artifact as well as on
-    # their name, and "you have two mesh producers" is the more useful of the two
-    # things to be told. What is left for this to catch is two entries of different
-    # types given the same explicit ``name:`` — which validates today, and leaves
-    # the two steps overwriting each other's log.
+    # Unique names, asked first: a module's name is its identity in the run
+    # manifest, its log file (``<workdir>/<name>.log``), the resume decision, a
+    # ``from:`` binding and a scope key under ``input_parameters``, and none of
+    # them can tell two identically-named steps apart. Two entries of one type
+    # both default to the type, so that is the common way to get here.
     seen = {}
     for m in modules:
         if m.name in seen:
+            if seen[m.name] == m.type:
+                raise WorkflowValidationError(
+                    f"two modules are named '{m.name}'; two '{m.type}' entries "
+                    "need distinct 'name:' keys (the name identifies a "
+                    "module's log file, its entry in the run manifest, and what "
+                    "a consumer's 'from:' refers to).")
             raise WorkflowValidationError(
                 f"two modules are named '{m.name}' (types '{seen[m.name]}' and "
                 f"'{m.type}'); a module's name identifies its log file and its "
@@ -418,9 +520,19 @@ def _resolve_order(modules):
                 "'input_parameters' and a segment of a scoped sweep label "
                 "('ace3p:<name>/Section.Leaf').")
 
-    _validate_impacts_layout(modules, producer)
+    producers = {}
+    for i, m in enumerate(modules):
+        for kind in m.provides:
+            producers.setdefault(kind, []).append(i)
+    index = {m.name: i for i, m in enumerate(modules)}
 
-    deps = {i: {producer[k] for k in m.requires} for i, m in enumerate(modules)}
+    deps = {}
+    for i, m in enumerate(modules):
+        m.sources = _bind(m, producers, index, modules)
+        deps[i] = {index[name] for name in m.sources.values()}
+
+    _validate_disk_collisions(modules)
+    _validate_impacts_layout(modules)
 
     # Stable topological sort: repeatedly schedule the first module (in YAML
     # order) whose dependencies have all been scheduled.
@@ -935,21 +1047,23 @@ class Workflow:
         directory rather than the machine that wrote it) and the results-directory
         name a solver resolved — the value acdtool's positional commands are given,
         and the one a later reader needs to find the output again."""
-        artifacts = {kind: relative(ctx.artifacts[kind], ctx.workdir)
+        # The module's own entries, by name: with two instances of one type in
+        # the chain, a by-kind read would be ambiguous or the other's.
+        artifacts = {kind: relative(ctx.artifacts.of(kind, module.name),
+                                    ctx.workdir)
                      for kind in sorted(module.provides)
-                     if kind in ctx.artifacts}
-        names = [ctx.job_names[kind] for kind in sorted(module.provides)
-                 if kind in ctx.job_names]
+                     if ctx.artifacts.has(kind, module.name)}
+        job_names = {kind: ctx.job_names.of(kind, module.name)
+                     for kind in sorted(module.provides)
+                     if ctx.job_names.has(kind, module.name)}
         record = {'artifacts': artifacts}
         # Only the solver modules register one, and they provide a single
         # solution artifact each; the plural form exists so a future producer of
         # two cannot silently lose one.
-        if len(names) == 1:
-            record['job_name'] = names[0]
-        elif names:
-            record['job_names'] = {kind: ctx.job_names[kind]
-                                   for kind in sorted(module.provides)
-                                   if kind in ctx.job_names}
+        if len(job_names) == 1:
+            record['job_name'] = next(iter(job_names.values()))
+        elif job_names:
+            record['job_names'] = job_names
         return record
 
     def sweep_axes(self):
@@ -1029,6 +1143,9 @@ class Workflow:
 
         An explicit ``module`` key in a mapping spec wins; otherwise the spec
         shape is used to infer the target module type (legacy bare specs).
+        ``module:`` names an instance first and a type second — names default to
+        types, so ``module: omega3p`` means what it always did — and a type that
+        matches several instances is an error listing their names.
 
         ``modules`` is passed rather than defaulted precisely because the two
         callers want different lists: :meth:`evaluate` must resolve against
@@ -1036,8 +1153,12 @@ class Workflow:
         :meth:`output_modules` asks a config-only question and the prototypes are
         the right answer there."""
         if isinstance(spec, dict) and 'module' in spec:
-            module_type = str(spec['module']).lower()
+            target = str(spec['module'])
             cleaned = {k: v for k, v in spec.items() if k != 'module'}
+            named = next((m for m in modules if m.name == target), None)
+            if named is not None:
+                return named, cleaned
+            module_type = target.lower()
         else:
             module_type = _infer_output_module(spec)
             cleaned = spec
@@ -1046,7 +1167,13 @@ class Workflow:
             raise WorkflowValidationError(
                 f"output '{name}' targets module type '{module_type}' but no "
                 f"such module is in the workflow.")
-        return candidates[-1], cleaned
+        if len(candidates) > 1:
+            raise WorkflowValidationError(
+                f"output '{name}' targets module type '{module_type}', which "
+                f"{len(candidates)} modules have "
+                f"({[m.name for m in candidates]}). Name one with "
+                f"'module: <name>' in the spec.")
+        return candidates[0], cleaned
 
 
 def _same_output(recorded, value):
@@ -1091,4 +1218,7 @@ def _build_entry(entry):
         raise WorkflowValidationError(
             f"workflow entry {entry!r} has no 'module' key.")
     name = config.pop('name', None)
-    return build_module(module_type, config=config, name=name)
+    binding = config.pop('from', None)
+    module = build_module(module_type, config=config, name=name)
+    module.binding = binding
+    return module

@@ -1,6 +1,7 @@
 # Module-Scoped Inputs and Per-Instance Artifacts — Implementation Plan
 
-**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08**, Phase 2 next. Written
+**Status: IN PROGRESS — Phase 0, Phase D and Phase 1 done 2026-10-08; Phase 2
+done 2026-10-12**, Phase 3 next. Written
 2026-10-07 on S3DF. `derived_parameters` (Phase D) added the same day at
 David's request; every §6 decision that gates a phase was taken the same day.
 Follows `plans/track3p_module_plan.md` (COMPLETE) and lifts the restriction that
@@ -586,6 +587,27 @@ explicitly or unambiguously.
 
 **Acceptance.** Baselines byte-identical; hash pins unchanged (no shipped config
 declares `from:`); every shipped example builds without `from:`.
+
+**Done 2026-10-12.** As planned, with these deviations:
+- `ByProducer` also has `lookup(kind, producer, default)`: the bound producer's
+  entry, falling back to an anonymous one (a hand-built context). Consumers read
+  through `Module.bound(table, kind)` and `Module.producer(ctx, kind)`, and
+  `Module.upstream(ctx, kind)` combines the two. The ambiguity error is
+  `AmbiguousArtifactError(LookupError)`, not a `KeyError`, so `.get` raises it
+  too.
+- `from:` is kept on the module as `module.binding`. The shorthand is refused on
+  any module with a requirement count other than one, including zero.
+- The results-dir collision check compares where each solver *writes*
+  (`_written_results_dir`). For `t3p` that ignores `results_dir:` (read-only
+  there), so two `t3p` instances need a `JobName` leaf, and the message says
+  so.
+- The per-instance input name is a new `input_name=` on the ACE3P wrapper,
+  which `run()` passes to `write_input`. `write_input`'s `_copy` guard now
+  tests the file being written rather than the original basename.
+- New tests are in `tests/test_multi_instance.py`. The two-instance resume, the
+  per-instance input files and a p-refinement sweep run through
+  `test_resume.py`'s fake binaries. `test_track3p_and_track3p_source_together_are_rejected`
+  was a fifth test whose verdict changed, and it was rewritten the same way.
 
 ### Phase 3 — One table axis, declared and enforced
 

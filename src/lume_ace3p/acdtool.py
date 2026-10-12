@@ -179,9 +179,9 @@ class Command:
 
 
 _MESH_PRODUCER_NOTE = (
-    'producing a mesh would make acdtool a second mesh producer, which the '
-    "one-producer-per-artifact rule forbids; meshconvert also already lives in "
-    'lume_ace3p.cubit')
+    'wiring acdtool as a mesh producer is a follow-on (a workflow may now hold '
+    'two meshes, but nothing feeds a converted mesh onward yet); meshconvert '
+    'also already lives in lume_ace3p.cubit')
 
 COMMANDS = {
     # ---- top level ------------------------------------------------------- #
@@ -203,8 +203,9 @@ COMMANDS = {
         POSITIONAL, nargs=(2, 2), note=_MESH_PRODUCER_NOTE),
     'mesh deform': Command(
         POSITIONAL, nargs=(3, 3),
-        note='invocable, but wiring it as a mesh producer needs per-instance '
-             'artifact identity (two meshes in one workflow); TEM3P\'s own '
+        note='invocable, but wiring it as a mesh producer is a follow-on '
+             '(per-instance artifacts now allow two meshes in one workflow); '
+             'TEM3P\'s own '
              'MeshDump: {MeshDeformScale, EMMeshInputDir} writes the deformed '
              'vacuum mesh directly and is the better route'),
     'mesh warpsurface': Command(

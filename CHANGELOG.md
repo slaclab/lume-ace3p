@@ -30,6 +30,14 @@ coarser grain than the entries above them.
   sweep table, `--status` and VOCS alike; shared labels are unchanged, and a
   config without scopes hashes exactly as before. See `docs/yaml_reference.md`
   "Module-scoped inputs".
+- **Several instances of one module type in a workflow.** Artifacts are
+  identified by the kind and the producing module's name, so two `omega3p`
+  steps (or `omega3p` + `s3p`, or two `acdtool` steps) can coexist. A module
+  that requires an artifact several modules provide names its producer with
+  `from:` (`from: fine`, or `from: {em_solution: fine}`). `output_parameters`
+  `module:` accepts an instance name. Two solvers sharing an input file each
+  write their merged copy as `<stem>_<name><ext>`. See `docs/yaml_reference.md`
+  "Several instances of one module".
 
 ### Changed
 
@@ -39,6 +47,17 @@ coarser grain than the entries above them.
   container is missing from one of their input files, since it is appended there
   as a new block (an `EigenSolver` override used to land in the `.t3p` file
   silently).
+- Two producers of one artifact are no longer a validation error. Instead, a
+  consumer of that artifact with no `from:` is one, and the error lists the
+  producers. Two entries of one type with no `name:` now fail on the duplicate
+  name. Two solvers of one type that would write to the same results directory,
+  and two `cubit` journals exporting the same mesh filename, fail at build time.
+- `output_parameters` `module: <type>` is an error when several instances
+  have that type. It used to take the last one silently.
+- `RunContext.artifacts` / `job_names` / `reparse` / `field_levels` are
+  `ByProducer` tables. Reading a kind with a single producer works as on a
+  dict. A module records with `ctx.provide(module, kind, path)` and the
+  `set_job_name` / `set_reparse` / `set_field_level` methods.
 
 ## [0.6.0] — 2026-10-07
 

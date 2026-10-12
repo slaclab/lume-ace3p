@@ -13,8 +13,11 @@ live on the `workflow:` module entries.
 A list of module entries, each a mapping with a `module` key naming the module
 type plus that module's own keys. List order is only a tiebreaker: run order
 comes from resolving each module's artifact dependencies into a DAG (mesh before
-solver, solver before acdtool, particle source before Geant4, …). Two producers
-of the same artifact, or a requirement nothing provides, is a validation error.
+solver, solver before acdtool, particle source before Geant4, …). A requirement
+nothing provides is a validation error. A workflow may hold two producers of one
+artifact (two `omega3p` instances, `omega3p` and `s3p`); a module that requires
+that artifact then names the one it reads with `from:` (see
+[](#several-instances-of-one-module)).
 
 | Module type       | Provides            | Requires           | Key config keys |
 |-------------------|---------------------|--------------------|-----------------|
@@ -23,9 +26,9 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Eigensolver; see [](#omega3p-module). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
-| `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
+| `acdtool`         | rf_post             | *depends on `command:`* (em_solution or td_solution) | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
 | `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
-| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
+| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline. |
 | `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#field-emission-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:`, `geant4_seed:` and related keys. Voxel dose/edep grids, plus per-detector output when the application scores detectors; see [](#geant4-module-keys). |
@@ -33,7 +36,55 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 An optional `name:` labels the instance (default: the module type). It names
 the step's log file (`<workdir>/<name>.log`) and its run-manifest entry, which is
 how a resume identifies the step. Two modules with the same `name:` is a
-validation error.
+validation error, so two entries of one type need distinct `name:` keys.
+
+Every module entry also accepts `from:`, which names the producer of an artifact
+it requires. It is needed only when several modules provide that artifact.
+
+(several-instances-of-one-module)=
+### Several instances of one module
+
+```yaml
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    name : coarse
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'coarse_results'
+  - module : omega3p
+    name : fine
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'fine_results'
+  - module : track3p
+    input : 'pillbox.track3p'
+    from : fine                       # one required artifact: the name alone
+  - module : acdtool
+    name : rf_coarse
+    input : 'pillbox-rtop.rfpost'
+    from : { em_solution : coarse }   # the general form: {artifact: name}
+
+output_parameters :
+  'f_coarse' : {module: coarse, quantity: Frequency, at: {mode: 0}}
+  'f_fine'   : {module: fine,   quantity: Frequency, at: {mode: 0}}
+```
+
+- **Binding.** For each artifact a module requires, `from:` names the module it
+  reads. Without `from:`, the one module that provides the artifact is used.
+  When several do, the error lists them. `from:` must name a module that exists
+  and provides the artifact, and the name-only form is accepted only on a
+  module with exactly one requirement. Two producers with no consumer are fine
+  (two eigensolves tabulated side by side).
+- **Outputs.** `module:` in an `output_parameters` spec names an instance first
+  and a type second, so `module: omega3p` still works when there is one
+  `omega3p`. When a type matches several instances, the error lists their names.
+- **Results directories.** Two solvers of one type must write to different
+  directories: set `results_dir:` on one. For `t3p`, whose `results_dir:` only
+  says where to read, use a `JobName` leaf in its input file instead.
+- **Input files.** Two solvers may share an input file. Each writes its merged
+  copy to the workdir as `<stem>_<name><ext>` (`pillbox-rtop_fine.omega3p`), so
+  each can carry its own [scoped overrides](#module-scoped-inputs).
+- **Meshes.** Two `cubit` modules must export different mesh filenames.
 
 To skip a step, omit its module. To supply a prebuilt artifact, use a source
 module (`mesh`, `track3p_source`, `particle_source`). The old `skip_cubit` /
@@ -495,8 +546,10 @@ It provides `td_solution`, not `em_solution`, so listing `acdtool`'s
 `postprocess rf` (which requires `em_solution`) after a T3P solver is a validation
 error. acdtool's time-domain commands (`postprocess transwake` / `coaxsignal` /
 `volmontomode`) require `td_solution` and chain after T3P; see
-[](#acdtool-module). A workflow may list both `s3p` and `t3p`; two `t3p` entries
-is a duplicate-producer error.
+[](#acdtool-module). A workflow may list both `s3p` and `t3p`. Two `t3p` entries
+need distinct `name:` keys and distinct results directories, which for `t3p`
+means a `JobName` leaf in one input file (see
+[](#several-instances-of-one-module)).
 
 T3P writes under `<results_dir>/OUTPUT` (default `t3p_results`) and names each
 monitor's files after that monitor's `Name`, read from the parsed `.t3p`.
@@ -612,7 +665,8 @@ the secondary-emission-yield table `SEYFileName1: copper.dat`. See
 `examples/track3p_multipacting`.
 
 The module sets the input's `Domain.FieldDir` to `./<upstream results dir>`
-unless the input already names a `FieldDir` that exists in the workdir. When the
+(the module named by `from:` when several provide `em_solution`) unless the input
+already names a `FieldDir` that exists in the workdir. When the
 upstream solver is `s3p` and its `FrequencyScan` has more than one point, the run
 warns: Track3P documents no way to choose a scan frequency, and every CW23
 S3P-driven Track3P case runs S3P at a single frequency.
@@ -708,8 +762,8 @@ The three time-domain commands chain after `t3p`; see
 The other 15 commands are recognized (an unknown command raises listing the known
 ones) but not available as a workflow step; each raises an error naming why:
 `postprocess track3p` needs the KVC `:` input dialect this wrapper does not parse,
-`mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a second mesh
-producer, and `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
+`mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a mesh producer,
+which is not wired yet, and `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
 module to attach to. The dispatchable ones can still be invoked directly through
 `lume_ace3p.acdtool.Acdtool`. [](acdtool_reference.md) has the full 19-command
 table with argument forms and status.
@@ -717,7 +771,9 @@ table with argument forms and status.
 The jobname is injected, not configured. Every positional `postprocess` command's
 first argument is the producing solver's job name (`t3p_results`,
 `omega3p_results`, …), taken from what that solver module resolved, so a `t3p`
-step with `results_dir: custom_results` moves acdtool's argument with it.
+step with `results_dir: custom_results` moves acdtool's argument with it. With
+two producers of the required artifact, `from:` picks the one whose job name is
+injected.
 
 :::{important}
 **`postprocess transwake` overwrites T3P's own wakefield output** at
@@ -1006,9 +1062,11 @@ that can satisfy it.
 (two-spec-syntaxes)=
 ### Two spec syntaxes
 
-- **Mapping form** (preferred): `{module: <type>, quantity: <name>, at: {...}}`,
-  with `section:` and `component:` where the module needs them. The `module` key
-  is stripped and the rest is handed to that module's `extract`. It is required
+- **Mapping form** (preferred): `{module: <type or name>, quantity: <name>, at:
+  {...}}`, with `section:` and `component:` where the module needs them. The
+  `module` key is stripped and the rest is handed to that module's `extract`. It
+  names an instance first and a type second; see
+  [](#several-instances-of-one-module). It is required
   for S3P/T3P scalar objectives, which need a keyed lookup (`quantity` +
   `at: {frequency}` / `at: {s}`), and is the form every acdtool quantity should
   use; see [](#output-specs-for-postprocess-rf).

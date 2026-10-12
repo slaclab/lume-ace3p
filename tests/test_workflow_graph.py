@@ -220,11 +220,10 @@ def test_time_domain_acdtool_commands_need_t3p_not_omega3p(command):
     assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
 
 
-def test_two_acdtool_steps_are_rejected():
-    """Both provide ``rf_post``, so a chain wanting both an rf postprocess and a
-    transwake is a duplicate producer today. Recorded rather than worked around:
-    lifting it needs per-instance artifact identity, which design decision 3 puts
-    out of scope for this plan."""
+def test_two_acdtool_steps_are_accepted():
+    """Both provide ``rf_post``; with per-instance artifact identity that is two
+    producers of one kind, which is legal while nothing consumes ``rf_post``.
+    Each binds its own ``td_solution`` from the one T3P."""
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 't3p', 'input': 'x.t3p'},
                {'module': 'acdtool', 'name': 'transwake',
@@ -232,9 +231,9 @@ def test_two_acdtool_steps_are_rejected():
                 'args': [0.0, 0.0, 0.0, 0.0125]},
                {'module': 'acdtool', 'name': 'coaxsignal',
                 'command': 'postprocess coaxsignal'}]
-    with pytest.raises(WorkflowValidationError,
-                       match=f"'{RF_POST}'.*more than one"):
-        Workflow(entries, workflow_params={'dry_run': True})
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['cubit', 't3p', 'acdtool', 'acdtool']
+    assert [m.sources for m in wf.modules[2:]] == [{TD_SOLUTION: 't3p'}] * 2
 
 
 def test_t3p_and_s3p_together_is_allowed():
@@ -247,21 +246,30 @@ def test_t3p_and_s3p_together_is_allowed():
     assert set(_types(wf.modules)) == {'cubit', 's3p', 't3p'}
 
 
-def test_two_t3p_solvers_rejected():
+def test_two_t3p_solvers_need_names():
+    """Two entries of one type both default to the type's name, so the name rule
+    is what rejects them now — and its message says what to add."""
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 't3p', 'input': 'a.t3p'},
                {'module': 't3p', 'input': 'b.t3p'}]
     with pytest.raises(WorkflowValidationError,
-                       match=f"'{TD_SOLUTION}'.*more than one"):
+                       match="two 't3p' entries need distinct 'name:' keys"):
         Workflow(entries, workflow_params={'dry_run': True})
 
 
-def test_two_mesh_sources():
-    # cubit journal XOR mesh file — declaring both is a duplicate producer.
+def test_two_mesh_sources_need_from_on_the_consumer():
+    # cubit journal + mesh file: two producers of mesh, legal on their own, but
+    # the solver reading one has to say which.
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
-               {'module': 'mesh', 'file': 'prebuilt.ncdf'}]
-    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+               {'module': 'mesh', 'file': 'prebuilt.ncdf'},
+               {'module': 'omega3p', 'input': 'x.omega3p'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=rf"(?s)'{MESH}', which 2 modules provide "
+                             r"\(\['cubit', 'mesh'\]\).*from: cubit"):
         Workflow(entries, workflow_params={'dry_run': True})
+    entries[2] = {**entries[2], 'from': 'mesh'}
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert wf.modules[-1].sources == {MESH: 'mesh'}
 
 
 def test_two_modules_sharing_a_name_are_rejected():
@@ -279,13 +287,14 @@ def test_two_modules_sharing_a_name_are_rejected():
         Workflow(entries, workflow_params={'dry_run': True})
 
 
-def test_the_duplicate_producer_diagnosis_wins_over_the_duplicate_name():
-    """Two modules of one type collide both ways, and "you have two mesh
-    producers" is the more useful of the two things to be told — so the name check
-    is asked last and this message is unchanged from before it existed."""
+def test_the_name_diagnosis_comes_first():
+    """Two modules of one type used to collide on their artifact first; that is
+    legal now, so the name check is asked first and is what they hit."""
     entries = [{'module': 'cubit', 'journal': 'a.jou'},
                {'module': 'cubit', 'journal': 'b.jou'}]
-    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+    with pytest.raises(WorkflowValidationError,
+                       match="two modules are named 'cubit'; two 'cubit' "
+                             "entries need distinct 'name:' keys"):
         Workflow(entries, workflow_params={'dry_run': True})
 
 
@@ -301,31 +310,44 @@ def test_output_targets_absent_module(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Characterization: which chains validate under one-producer-per-kind
+# Which chains validate, now that artifacts are keyed by producer
 #
-# The truth table of §1.B of plans/multi_instance_workflow_plan.md, kept as a
-# table so Phase 2 rewrites the verdicts in one place rather than chasing
-# individual messages: the three rejections become acceptances (or a name /
-# ambiguity error) once artifacts are keyed by producer.
+# The truth table of §1.B of plans/multi_instance_workflow_plan.md, rewritten by
+# Phase 2: the three Phase-0 rejections are acceptances, a name error, or an
+# ambiguity error that a ``from:`` resolves.
 # --------------------------------------------------------------------------- #
 
 
 _CUBIT = {'module': 'cubit', 'journal': 'x.jou'}
 _OMEGA3P = {'module': 'omega3p', 'input': 'x.omega3p'}
 _T3P = {'module': 't3p', 'input': 'x.t3p'}
+_FINE = {'module': 'omega3p', 'name': 'fine', 'input': 'x.omega3p',
+         'results_dir': 'fine_results'}
 
-_ONE_PRODUCER_TABLE = [
+_CHAIN_TABLE = [
     pytest.param([_CUBIT, _OMEGA3P, {'module': 's3p', 'input': 'x.s3p'}],
-                 EM_SOLUTION, id='omega3p+s3p'),
-    pytest.param([_CUBIT, _OMEGA3P,
-                  {'module': 'omega3p', 'name': 'fine', 'input': 'x.omega3p'}],
-                 EM_SOLUTION, id='two-omega3p'),
+                 ['cubit', 'omega3p', 's3p'], id='omega3p+s3p'),
+    pytest.param([_CUBIT, _OMEGA3P, {'module': 'omega3p', 'input': 'y.omega3p'}],
+                 "two 'omega3p' entries need distinct 'name:' keys",
+                 id='two-omega3p-unnamed'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE],
+                 ['cubit', 'omega3p', 'omega3p'], id='two-omega3p-named'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE,
+                  {'module': 'track3p', 'input': 'x.track3p'}],
+                 r"'em_solution', which 2 modules provide "
+                 r"\(\['omega3p', 'fine'\]\)",
+                 id='two-omega3p+track3p-no-from'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE,
+                  {'module': 'track3p', 'input': 'x.track3p', 'from': 'fine'}],
+                 ['cubit', 'omega3p', 'omega3p', 'track3p'],
+                 id='two-omega3p+track3p-from'),
     pytest.param([_CUBIT, _OMEGA3P, _T3P,
                   {'module': 'acdtool', 'input': 'x.rfpost'},
                   {'module': 'acdtool', 'name': 'transwake',
                    'command': 'postprocess transwake',
                    'args': [0.0, 0.0, 0.0, 0.0125]}],
-                 RF_POST, id='acdtool-rf+transwake'),
+                 ['cubit', 'omega3p', 't3p', 'acdtool', 'acdtool'],
+                 id='acdtool-rf+transwake'),
     pytest.param([_CUBIT, _OMEGA3P, _T3P,
                   {'module': 'track3p', 'input': 'x.track3p'},
                   {'module': 'acdtool', 'input': 'x.rfpost'}],
@@ -339,13 +361,12 @@ _ONE_PRODUCER_TABLE = [
 ]
 
 
-@pytest.mark.parametrize('entries, verdict', _ONE_PRODUCER_TABLE)
-def test_which_chains_validate_today(entries, verdict):
-    """A ``str`` verdict is the artifact kind whose second producer is rejected;
-    a ``list`` is the resolved module order of an accepted chain."""
+@pytest.mark.parametrize('entries, verdict', _CHAIN_TABLE)
+def test_which_chains_validate(entries, verdict):
+    """A ``str`` verdict is the pattern of the WorkflowValidationError; a
+    ``list`` is the resolved module order of an accepted chain."""
     if isinstance(verdict, str):
-        with pytest.raises(WorkflowValidationError,
-                           match=f"'{verdict}' is provided by more than one"):
+        with pytest.raises(WorkflowValidationError, match=verdict):
             Workflow(entries, workflow_params={'dry_run': True})
     else:
         wf = Workflow(entries, workflow_params={'dry_run': True})
@@ -953,15 +974,21 @@ def test_track3p_without_a_field_solver_is_rejected(tmp_path):
                  workflow_params={'dry_run': True})
 
 
-def test_track3p_and_track3p_source_together_are_rejected(tmp_path):
-    """Two producers of track3p_particles: the workflow has one or the other."""
+def test_track3p_and_track3p_source_together_need_a_binding(tmp_path):
+    """Two producers of track3p_particles are legal; a field_emission step
+    reading one of them has to say which."""
+    entries = [{'module': 'mesh', 'file': 'x.ncdf'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)},
+               {'module': 'track3p_source', 'file': 'dump.txt'}]
+    Workflow(entries, workflow_params={'dry_run': True})
+    entries.append({'module': 'field_emission'})
     with pytest.raises(WorkflowValidationError,
-                       match=f"'{TRACK3P_PARTICLES}'"):
-        Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
-                  {'module': 'omega3p', 'input': 'x.omega3p'},
-                  {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)},
-                  {'module': 'track3p_source', 'file': 'dump.txt'}],
-                 workflow_params={'dry_run': True})
+                       match=f"'{TRACK3P_PARTICLES}', which 2 modules provide"):
+        Workflow(entries, workflow_params={'dry_run': True})
+    entries[-1] = {'module': 'field_emission', 'from': 'track3p_source'}
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert wf.modules[-1].sources == {TRACK3P_PARTICLES: 'track3p_source'}
 
 
 def test_track3p_chain_evaluate_dry_run_table_shape(tmp_path):

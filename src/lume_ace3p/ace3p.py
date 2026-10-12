@@ -309,8 +309,13 @@ class ACE3P(CommandWrapper):
 
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
                  ace3p_path=None, mpi_caller=None, results_dir=None,
-                 log_file=None, **kwargs):
+                 log_file=None, input_name=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # The filename :meth:`run` writes the merged input under, in the
+        # workdir. ``None`` keeps the input's own basename; the module layer
+        # sets it when two solvers in one chain share an input file, so neither
+        # overwrites the other's merged copy.
+        self.input_name = input_name
         # Where this solver's stdout/stderr is teed (see lume_ace3p.logs); None
         # inherits the parent's streams, which is the legacy behavior.
         self.log_file = log_file
@@ -365,7 +370,7 @@ class ACE3P(CommandWrapper):
                 + ' '.join(command))
 
     def run(self):
-        self.write_input()
+        self.write_input(*([self.input_name] if self.input_name else []))
         completed = run_logged(self.solver_command(), cwd=self.workdir,
                                log_file=self.log_file)
         self.returncode = completed.returncode
@@ -444,8 +449,8 @@ class ACE3P(CommandWrapper):
             file = args[0]
         else:
             file = self.input_file
-        if os.path.isfile(os.path.join(self.workdir, self.input_file)):
-            if os.path.samefile(os.path.join(self.workdir, self.input_file), os.path.join(os.getcwd(), self.original_input_file)):
+        if os.path.isfile(os.path.join(self.workdir, file)):
+            if os.path.samefile(os.path.join(self.workdir, file), os.path.join(os.getcwd(), self.original_input_file)):
                 file = file + '_copy'
         self.input_file = file
         with open(os.path.join(self.workdir, file), 'w') as f:
