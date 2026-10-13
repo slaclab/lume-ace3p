@@ -59,12 +59,14 @@ main() {
 
     # Files inherit the clone's sharing: a group-writable clone (2775) means
     # several maintainers, so keep new files group-writable too.
-    local group
+    local group perms
     group=$(stat -c %G "$clone")
     if [ -n "$(find "$clone" -maxdepth 0 -perm -g+w)" ]; then
         umask 002
+        perms=g+rwX,o+rX
     else
         umask 022
+        perms=g+rX,o+rX
     fi
 
     cd "$clone"
@@ -142,7 +144,27 @@ print(m.version("lume-ace3p"), lume_ace3p.__file__)')
     esac
     [ -x "$env/bin/run-lume-ace3p" ] || die "$env/bin/run-lume-ace3p missing"
 
+    # The umask only covers files created now. Files from before (an env built
+    # under a stricter umask) or under a default ACL keep their modes,
+    # so open up every path we own: directories 2755 (2775 when shared), files
+    # 644, owner-executables 755. Paths owned by others are left to the check.
     # Symlink modes and groups are ignored by the kernel, so skip them.
+    local fixed
+    fixed=$(find "$clone" "$env" -user "$(id -u)" ! -type l \
+                \( ! -group "$group" -o ! -perm -o+r -o ! -perm -g+r \
+                   -o \( -type d \( ! -perm -o+x -o ! -perm -g+s \) \) \
+                   -o \( -perm -u+x ! -perm -o+x \) \) \
+                -print | wc -l)
+    if [ "$fixed" -gt 0 ]; then
+        echo "permissions: opening up $fixed paths (group $group, $perms)"
+        find "$clone" "$env" -user "$(id -u)" ! -type l ! -group "$group" \
+            -exec chgrp "$group" {} + || true
+        find "$clone" "$env" -user "$(id -u)" ! -type l \
+            -exec chmod "$perms" {} + || true
+        find "$clone" "$env" -user "$(id -u)" -type d ! -perm -g+s \
+            -exec chmod g+s {} + || true
+    fi
+
     local bad
     bad=$(find "$clone" "$env" ! -type l \
               \( ! -perm -o+r -o \( -type d ! -perm -o+x \) -o ! -group "$group" \) \
@@ -151,9 +173,22 @@ print(m.version("lume-ace3p"), lume_ace3p.__file__)')
         echo "deploy_release: installed $new_version, but these paths are not" \
              "world-readable or not group $group:" >&2
         echo "$bad" >&2
-        echo "Fix with: chgrp -R $group <path>; chmod -R g+rX,o+rX <path>" >&2
+        echo "These are owned by someone else; their owner must run:" \
+             "chgrp -R $group <path>; chmod -R $perms <path>" >&2
         exit 1
     fi
+
+    # Users also need to traverse every directory above the clone and env.
+    local top dir
+    for top in "$clone" "$env"; do
+        dir=$(dirname "$top")
+        while [ "$dir" != / ]; do
+            [ -n "$(find "$dir" -maxdepth 0 -perm -o+x)" ] \
+                || echo "WARNING    : $dir is not world-searchable ($(stat -c '%A %U:%G' "$dir"));" \
+                        "other users cannot reach $top" >&2
+            dir=$(dirname "$dir")
+        done
+    done
 
     echo "Deployed lume-ace3p $new_version from $ref."
 }

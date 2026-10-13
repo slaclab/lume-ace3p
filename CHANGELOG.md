@@ -15,6 +15,11 @@ coarser grain than the entries above them.
   present: under `set -o pipefail`, `grep -q` exiting at the first match made
   `git show` fail with SIGPIPE. The release scripts no longer end a pipeline
   early.
+- `scripts/deploy_release.sh` left a deploy readable by its group only when
+  files predated the deploy or came from a stricter umask, as on Perlmutter.
+  It now sets the clone and environment to `2755` directories and `644`/`755`
+  files (`2775`/`664` when the clone is group-writable), and warns if a parent
+  directory blocks other users.
 
 ## [0.7.1] — 2026-10-12
 
