@@ -27,7 +27,7 @@ version=$(git show "$target:pyproject.toml" | sed -n 's/^version *= *"\(.*\)"/\1
 [ -n "$version" ] || die "no version in origin/main:pyproject.toml"
 tag="v$version"
 
-git show "$target:CHANGELOG.md" | grep -q "^## \[$version\]" \
+git show "$target:CHANGELOG.md" | grep "^## \[$version\]" >/dev/null \
     || die "CHANGELOG.md on origin/main has no '## [$version]' section"
 if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
     die "$tag already exists (at $(git rev-parse --short "$tag^{commit}")); bump the version"
