@@ -74,7 +74,7 @@ $(git status --short)"
 
     git fetch --quiet --tags origin
     if [ -z "$ref" ]; then
-        ref=$(git tag --list 'v*' --sort=-version:refname | head -n 1)
+        ref=$(git tag --list 'v*' --sort=-version:refname | sed -n 1p)
         ref="${ref:-main}"
     fi
 
@@ -146,7 +146,7 @@ print(m.version("lume-ace3p"), lume_ace3p.__file__)')
     local bad
     bad=$(find "$clone" "$env" ! -type l \
               \( ! -perm -o+r -o \( -type d ! -perm -o+x \) -o ! -group "$group" \) \
-              -printf '%M %u:%g %p\n' | head -n 20)
+              -printf '%M %u:%g %p\n' | awk 'NR <= 20')
     if [ -n "$bad" ]; then
         echo "deploy_release: installed $new_version, but these paths are not" \
              "world-readable or not group $group:" >&2

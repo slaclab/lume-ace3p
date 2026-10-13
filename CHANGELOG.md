@@ -9,6 +9,13 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Fixed
+
+- `scripts/tag_release.sh` could report a missing changelog section that was
+  present: under `set -o pipefail`, `grep -q` exiting at the first match made
+  `git show` fail with SIGPIPE. The release scripts no longer end a pipeline
+  early.
+
 ## [0.7.1] — 2026-10-12
 
 ### Added
