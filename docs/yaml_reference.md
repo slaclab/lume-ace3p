@@ -3,7 +3,8 @@
 `lume-ace3p` is driven by a YAML configuration file. A top-level **`workflow:`**
 list declares the module chain and a **`mode:`** block drives it.
 `input_parameters` and `output_parameters` declare the swept inputs and the
-extracted scalars. An optimization adds `vocs_parameters` and `xopt_parameters`.
+extracted scalars, and `derived_parameters` computes new quantities from those
+outputs. An optimization adds `vocs_parameters` and `xopt_parameters`.
 `workflow_parameters` holds directory and path settings; solver and file settings
 live on the `workflow:` module entries.
 
@@ -12,8 +13,11 @@ live on the `workflow:` module entries.
 A list of module entries, each a mapping with a `module` key naming the module
 type plus that module's own keys. List order is only a tiebreaker: run order
 comes from resolving each module's artifact dependencies into a DAG (mesh before
-solver, solver before acdtool, particle source before Geant4, …). Two producers
-of the same artifact, or a requirement nothing provides, is a validation error.
+solver, solver before acdtool, particle source before Geant4, …). A requirement
+nothing provides is a validation error. A workflow may hold two producers of one
+artifact (two `omega3p` instances, `omega3p` and `s3p`); a module that requires
+that artifact then names the one it reads with `from:` (see
+[](#several-instances-of-one-module)).
 
 | Module type       | Provides            | Requires           | Key config keys |
 |-------------------|---------------------|--------------------|-----------------|
@@ -22,9 +26,9 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 | `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Eigensolver; see [](#omega3p-module). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
-| `acdtool`         | rf_post             | *depends on `command:`* | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
+| `acdtool`         | rf_post             | *depends on `command:`* (em_solution or td_solution) | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
 | `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
-| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline; a workflow lists one or the other. |
+| `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline. |
 | `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#field-emission-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
 | `geant4`          | dose_grid, edep_grid| particle_source    | `geant4_input:`, `geant4_seed:` and related keys. Voxel dose/edep grids, plus per-detector output when the application scores detectors; see [](#geant4-module-keys). |
@@ -32,7 +36,58 @@ of the same artifact, or a requirement nothing provides, is a validation error.
 An optional `name:` labels the instance (default: the module type). It names
 the step's log file (`<workdir>/<name>.log`) and its run-manifest entry, which is
 how a resume identifies the step. Two modules with the same `name:` is a
-validation error.
+validation error, so two entries of one type need distinct `name:` keys.
+
+Every module entry also accepts `from:`, which names the producer of an artifact
+it requires. It is needed only when several modules provide that artifact.
+
+(several-instances-of-one-module)=
+### Several instances of one module
+
+```yaml
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    name : coarse
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'coarse_results'
+  - module : omega3p
+    name : fine
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'fine_results'
+  - module : track3p
+    input : 'pillbox.track3p'
+    from : fine                       # one required artifact: the name alone
+  - module : acdtool
+    name : rf_coarse
+    input : 'pillbox-rtop.rfpost'
+    from : { em_solution : coarse }   # the general form: {artifact: name}
+
+output_parameters :
+  'f_coarse' : {module: coarse, quantity: Frequency, at: {mode: 0}}
+  'f_fine'   : {module: fine,   quantity: Frequency, at: {mode: 0}}
+```
+
+- **Binding.** For each artifact a module requires, `from:` names the module it
+  reads. Without `from:`, the one module that provides the artifact is used.
+  When several do, the error lists them. `from:` must name a module that exists
+  and provides the artifact, and the name-only form is accepted only on a
+  module with exactly one requirement. Two producers with no consumer are fine
+  (two eigensolves tabulated side by side).
+- **Outputs.** `module:` in an `output_parameters` spec names an instance first
+  and a type second, so `module: omega3p` still works when there is one
+  `omega3p`. When a type matches several instances, the error lists their names.
+- **Results directories.** Two solvers of one type must write to different
+  directories: set `results_dir:` on one. For `t3p`, whose `results_dir:` only
+  says where to read, use a `JobName` leaf in its input file instead.
+- **Input files.** Two solvers may share an input file. Each writes its merged
+  copy to the workdir as `<stem>_<name><ext>` (`pillbox-rtop_fine.omega3p`), so
+  each can carry its own [scoped overrides](#module-scoped-inputs).
+- **Meshes.** Two `cubit` modules must export different mesh filenames.
+
+`examples/omega3p_p_refinement` runs two `omega3p` instances on one mesh and one
+input file, at element orders 1 and 2.
 
 To skip a step, omit its module. To supply a prebuilt artifact, use a source
 module (`mesh`, `track3p_source`, `particle_source`). The old `skip_cubit` /
@@ -213,7 +268,8 @@ is always written (there is no YAML key); `resume` and `--status` read it back.
 It is updated after each module, so a half-finished run's file says how far it
 got. Modules are listed in the order they ran; one that never started is absent,
 which is distinct from `"failed"`. `config_hash` covers the module entries, the
-materialized input point, and the `output_parameters` spec. It does not cover
+materialized input point, the `output_parameters` spec and, when declared, the
+[`derived_parameters`](#derived_parameters) block. It does not cover
 `paths`, `dry_run`, `workdir`, or comments, so a workdir stays recognizable on a
 different machine and reformatting a config does not invalidate a campaign.
 
@@ -390,7 +446,8 @@ workflow is `cubit → omega3p`.
 
 A run writes `<results_dir>/omega3p.out`, whose top-level `Mode` sections carry
 one eigenmode each. These are parsed directly, so a mode frequency or Q needs no
-`acdtool` step; `examples/omega3p_dispersion_sweep` is `cubit → omega3p` alone.
+`acdtool` step; `examples/omega3p_dispersion_sweep` and
+`examples/omega3p_frequency_target` are `cubit → omega3p` alone.
 An `acdtool` `RoverQ` block returns the same frequency; the shipped examples use
 acdtool only for what it alone produces, such as R/Q and peak surface fields.
 
@@ -493,8 +550,10 @@ It provides `td_solution`, not `em_solution`, so listing `acdtool`'s
 `postprocess rf` (which requires `em_solution`) after a T3P solver is a validation
 error. acdtool's time-domain commands (`postprocess transwake` / `coaxsignal` /
 `volmontomode`) require `td_solution` and chain after T3P; see
-[](#acdtool-module). A workflow may list both `s3p` and `t3p`; two `t3p` entries
-is a duplicate-producer error.
+[](#acdtool-module). A workflow may list both `s3p` and `t3p`. Two `t3p` entries
+need distinct `name:` keys and distinct results directories, which for `t3p`
+means a `JobName` leaf in one input file (see
+[](#several-instances-of-one-module)).
 
 T3P writes under `<results_dir>/OUTPUT` (default `t3p_results`) and names each
 monitor's files after that monitor's `Name`, read from the parsed `.t3p`.
@@ -556,7 +615,7 @@ A wake run reports either a loss factor (longitudinal) or a kick factor
 (transverse), depending on the beam offset and the monitor contour. Asking for the
 wrong one raises an error naming what is available.
 
-#### One index axis per module, `s` before `t`
+#### One index axis, `s` before `t`
 
 T3P exposes a field index, so a sweep over a T3P workflow emits a long-format
 table (one row per `(grid point, index)`) as long as at least one declared output
@@ -573,7 +632,8 @@ The two axes are incompatible (tens of wake samples against thousands of
 timesteps), so a run declaring both keeps `s`, and everything on the `t` axis
 must be narrowed to a scalar with `at:`. Requesting an off-axis array raises an
 error naming both axes. The full arrays remain in the per-run field artifact (see
-[](plotting.md)), together with a `Volume` monitor's filenames.
+[](plotting.md)), together with a `Volume` monitor's filenames. The same rule
+holds across modules: a table has one index axis (see [](#results)).
 
 `at: {s: <position>}` and `at: {t: <seconds>}` both take the nearest sample, since
 both T3P grids follow from `TimeStepping: DT`. Per-run scalars like `loss_factor`
@@ -610,7 +670,8 @@ the secondary-emission-yield table `SEYFileName1: copper.dat`. See
 `examples/track3p_multipacting`.
 
 The module sets the input's `Domain.FieldDir` to `./<upstream results dir>`
-unless the input already names a `FieldDir` that exists in the workdir. When the
+(the module named by `from:` when several provide `em_solution`) unless the input
+already names a `FieldDir` that exists in the workdir. When the
 upstream solver is `s3p` and its `FrequencyScan` has more than one point, the run
 warns: Track3P documents no way to choose a scan frequency, and every CW23
 S3P-driven Track3P case runs S3P at a single frequency.
@@ -706,8 +767,8 @@ The three time-domain commands chain after `t3p`; see
 The other 15 commands are recognized (an unknown command raises listing the known
 ones) but not available as a workflow step; each raises an error naming why:
 `postprocess track3p` needs the KVC `:` input dialect this wrapper does not parse,
-`mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a second mesh
-producer, and `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
+`mesh deform` / `mesh fix` / `meshconvert*` would make acdtool a mesh producer,
+which is not wired yet, and `pic3pstats` / `pic3pconvert` / `project` have no PIC3P or TEM3P
 module to attach to. The dispatchable ones can still be invoked directly through
 `lume_ace3p.acdtool.Acdtool`. [](acdtool_reference.md) has the full 19-command
 table with argument forms and status.
@@ -715,7 +776,9 @@ table with argument forms and status.
 The jobname is injected, not configured. Every positional `postprocess` command's
 first argument is the producing solver's job name (`t3p_results`,
 `omega3p_results`, …), taken from what that solver module resolved, so a `t3p`
-step with `results_dir: custom_results` moves acdtool's argument with it.
+step with `results_dir: custom_results` moves acdtool's argument with it. With
+two producers of the required artifact, `from:` picks the one whose job name is
+injected.
 
 :::{important}
 **`postprocess transwake` overwrites T3P's own wakefield output** at
@@ -821,9 +884,10 @@ mode.
 naming the surfaces the run reported. The input block pins the surface it
 evaluates (`maxFieldsOnSurface { surfaceID = 6 }`).
 
-When another module in the chain owns the table axis (`[cubit, s3p, acdtool]`,
-where S3P's `Frequency` comes first in resolved DAG order), a per-mode array is
-exposed as a field artifact instead of a table column (see [](#results)).
+When another module in the chain owns the table axis (`[cubit, s3p, acdtool]`
+with a whole-scan S3P output), a per-mode array cannot be a column: narrow it
+with `at: {mode: n}`, and the per-mode arrays ride in the field artifact (see
+[](#results)).
 
 :::{note}
 **The positional list form is deprecated.** `['RoverQ', '0', 'RoQ']` still works
@@ -940,6 +1004,47 @@ field-enhancement variables read by the `field_emission` module's `beta_input` /
 `cubit:` keys must exactly match the variable names in the Cubit journal file.
 :::
 
+(module-scoped-inputs)=
+### Module-scoped inputs
+
+By default every `cubit:` value reaches every `cubit` module, every `ace3p:` value
+every ACE3P solver, and every `geant4:` value every `geant4` module. To give one
+module its own value, nest it under that module's `name:`:
+
+```yaml
+workflow :
+  - module : omega3p
+    input : 'cav.omega3p'
+  - module : t3p
+    input : 'cav.t3p'
+
+input_parameters :
+  ace3p :
+    'ModelInfo' :                 # not a module name: shared, reaches both
+      'SurfaceMaterial' : { 'ReferenceNumber' : 6, 'Sigma' : 5.8e7 }
+    omega3p :                     # a module name: reaches omega3p only
+      'EigenSolver' : { 'NumEigenvalues' : 5 }
+```
+
+A key directly under `cubit:`, `ace3p:` or `geant4:` that equals a declared
+module name (the type, unless the entry sets `name:`) and holds a mapping is a
+scope. Every other key is shared. A module reads the shared values with its own
+scope layered over them; where both set the same path, the scoped value wins.
+`particles:` is not scoped, since each `field_emission` module names its own
+variables (`beta_input` / `beta_inputs`).
+
+- A scoped leaf's sweep axis and table column carry the module name:
+  `cubit:fine/mesh_size`, `ace3p:fine/FiniteElement.Order`, `geant4:dose2/nthreads`.
+  Shared labels do not change.
+- Module names may contain only letters, digits, `_` and `-`. A solver named like
+  a top-level container of its own input file (`ModelInfo`) is an error.
+- A scope for a module that does not read that bucket (a `cubit:` block for a
+  solver) warns, since nothing applies it.
+- With two or more ACE3P solvers, a shared top-level container that is missing
+  from one of their input files warns. It is still appended to that file (adding
+  a container is legal), but an `EigenSolver` block meant for Omega3P does not
+  belong in a `.t3p` file, and scoping it is the fix.
+
 A parameter sweep evaluates the full tensor product of the array-valued leaves
 across all sub-blocks. Three swept leaves with lists of lengths 10, 12, and 15,
 in any sub-blocks, run the workflow 10 × 12 × 15 = 1800 times.
@@ -963,9 +1068,11 @@ that can satisfy it.
 (two-spec-syntaxes)=
 ### Two spec syntaxes
 
-- **Mapping form** (preferred): `{module: <type>, quantity: <name>, at: {...}}`,
-  with `section:` and `component:` where the module needs them. The `module` key
-  is stripped and the rest is handed to that module's `extract`. It is required
+- **Mapping form** (preferred): `{module: <type or name>, quantity: <name>, at:
+  {...}}`, with `section:` and `component:` where the module needs them. The
+  `module` key is stripped and the rest is handed to that module's `extract`. It
+  names an instance first and a type second; see
+  [](#several-instances-of-one-module). It is required
   for S3P/T3P scalar objectives, which need a keyed lookup (`quantity` +
   `at: {frequency}` / `at: {s}`), and is the form every acdtool quantity should
   use; see [](#output-specs-for-postprocess-rf).
@@ -1076,6 +1183,80 @@ working directory either way.
 
 More sections and entries will be added in future updates.
 
+(derived_parameters)=
+## `derived_parameters`
+
+Computes quantities from the extracted outputs. `output_parameters` says what
+to extract; `derived_parameters` says what to calculate from it:
+
+```yaml
+output_parameters :
+  'mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  'R/Q'       : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+
+derived_parameters :
+  'f_target' : 1.3e9                              # a constant
+  'f_error'  : 'abs(mode_freq - f_target)'        # an expression over outputs
+  'f_ppm'    : '1e6 * f_error / f_target'         # earlier entries are usable
+  'RoQ_norm' : '`R/Q` / 100'                      # backticks quote a name
+  'balance'  : {python: 'power_balance:balance'}  # module:callable
+```
+
+A derived name works anywhere an `output_parameters` name does: as a table
+column (after the extracted columns, in declaration order), as a VOCS
+objective, constraint or observable, and in the run manifest. Entries are
+evaluated in order after every output has been extracted. Each entry can read
+the outputs and any entry declared above it.
+
+**Values.** An entry is one of:
+
+- a **number**, a constant;
+- a **string**, an expression;
+- **`{python: 'module:callable'}`**, a function of the outputs (see below).
+
+**Expressions** take numeric literals, names, `+ - * / ** %`, unary `-`,
+comparisons (`<`, `<=`, `==`, `!=`, `>=`, `>`, chained like `1 < x < 3`),
+`and` / `or` / `not`, and calls to this fixed set of functions:
+
+| Function | Meaning |
+|---|---|
+| `abs(x)`, `sqrt(x)`, `exp(x)`, `log(x)`, `log10(x)` | elementwise |
+| `min(x)`, `max(x)` | reduce an array to its smallest / largest value |
+| `min(a, b)`, `max(a, b)` | elementwise minimum / maximum |
+| `sum(x)`, `mean(x)` | reduce an array |
+| `where(cond, a, b)` | `a` where `cond` holds, else `b` |
+| `clip(x, lo, hi)` | `x` limited to `[lo, hi]` |
+
+`nan` is also a name. Arithmetic is numpy's, so a whole-axis output (every mode,
+a spectrum) works elementwise and reduces with `min` / `max` / `mean`. A comparison
+evaluates to `1.0` / `0.0`. A dry run's `NaN` outputs propagate, so a dry-run
+derived column is `NaN` too. Nothing else is accepted: attribute access,
+subscripts, lambdas, keyword arguments and any other call are rejected when the
+workflow is built, with a message naming the construct.
+
+**Names.** A name an expression reads must be an `output_parameters` name or a
+`derived_parameters` entry declared above it. Wrap a name that is not a Python
+identifier in backticks: `` `R/Q` ``, `` `S(0,0)` ``. Without them, `R/Q` reads as
+`R` divided by `Q`. All names are checked before anything runs, so a misspelling
+or a forward reference fails at startup. A derived name may not repeat an
+`output_parameters` name.
+
+**`{python: 'module:callable'}`** is for what an expression cannot express. The
+callable takes exactly one argument, a dict of the outputs and the earlier
+derived values, and returns the value. It gets nothing else (no workdir, no input
+values), so it is a pure function of the outputs. The module is looked up beside
+the config file first, then on `sys.path`. It is imported the first time a point
+is evaluated, not when the workflow is built, so `--status` never runs it. Its
+names cannot be checked ahead of time, and a `KeyError` inside it surfaces at
+the end of the first point.
+
+**Hashing.** The block is part of the [`config_hash`](#run-manifest)
+and the optimization campaign hash: its constants, its expression texts, and the
+source text of each `python:` callable. Retargeting `f_target`, or editing the
+function, makes a different campaign, and `resume` re-runs it instead of
+continuing. A config without the block (or with an empty one) hashes exactly as
+it did before the block existed.
+
 (ace3p_input_parameters)=
 ## `input_parameters.ace3p`
 
@@ -1105,6 +1286,9 @@ input_parameters :
 The same applies to repeated `SurfaceMaterial`, `BoundaryCondition`, etc.
 entries. Use a `ReferenceNumber:` (or other discriminating leaf) inside each block
 to keep the YAML readable.
+
+To send a container to one solver only, nest it under that module's name; see
+[](#module-scoped-inputs).
 
 Fast path: when the solver module's `input:` names a separate ACE3P input file and
 the `ace3p:` block does not override or sweep any values inside it, the file is
@@ -1187,19 +1371,21 @@ file, not the Geant4 source.
 Declares the Xopt VOCS for the `scalar_optimize` and `gp_parameter_sweep` modes:
 a `variables` mapping of name → `[low, high]` bounds, plus `objectives` (name →
 `MINIMIZE`/`MAXIMIZE`/`explore`) and optional `constraints`. Objective names are
-`output_parameters` names.
+`output_parameters` or [`derived_parameters`](#derived_parameters) names.
 
 **Variable routing.** Each Xopt variable is written into the
 [`input_parameters`](#input_parameters) bucket where it is declared (cubit /
 ace3p / geant4 / particles), so one optimization can drive several codes.
 
 - A bare variable name (`cornercut`) routes to its declaring bucket when that
-  name is unique across all buckets.
+  name is unique across all buckets and [module scopes](#module-scoped-inputs).
 - If the same bare name is declared in more than one bucket (a `cubit:` knob and
   an `ace3p:` leaf both named `start`), a bare reference is a hard error. Qualify
   it with its bucket label: `cubit:start`, `ace3p:FrequencyScan.Start`,
   `geant4:nthreads`, or `particles:beta0`. The ACE3P label is the dotted section
-  path, matching the sweep-table column label.
+  path, matching the sweep-table column label. A scoped leaf is qualified with
+  its module name, as its column is: `ace3p:fine/FiniteElement.Order`,
+  `cubit:fine/mesh_size`.
 - A variable not declared in any `input_parameters` bucket falls back to the
   cubit bucket, so a config that only lists `vocs_parameters.variables` works.
 
@@ -1400,6 +1586,11 @@ Array-valued leaves in any bucket become sweep axes; scalar leaves are written
 through to the matching input file unchanged. During optimization, each VOCS
 variable is routed to the bucket where it is declared (see [](#vocs_parameters)).
 
+A fifth attribute, `scoped`, holds the [module-scoped blocks](#module-scoped-inputs)
+as `{module name: {cubit, ace3p, macro}}`. `for_module(name)` returns the view one
+module reads, which is the shared buckets with that module's scope layered over
+them. Without scopes it returns the object itself.
+
 (results)=
 ### Results
 
@@ -1412,8 +1603,23 @@ by at least one declared output or no outputs are declared at all. When
 Structured field outputs of a wide row (an Omega3P run with all outputs narrowed
 to one mode, a Geant4 dose grid) are persisted separately as `.npz` and
 referenced by a `field_artifact` column; load one with
-{py:func}`~lume_ace3p.results.load_field`. The Xopt modes return the
+{py:func}`~lume_ace3p.results.load_field`. When one module in the chain produces
+a field, the artifact is that field. When several do (`omega3p` and `acdtool`,
+two `s3p` instances), it is keyed by module name:
+`load_field(h)['fine']['Frequency']`. The Xopt modes return the
 {py:class}`xopt.Xopt` object and log its `X.data` table through the same writer.
+
+**A table has one index axis.** It belongs to the module the whole-array outputs
+come from. When those come from several modules, it goes to the highest-ranked
+of them: Geant4 detectors, then Track3P field levels, then the first in DAG
+order. With no array output it goes to the highest-ranked module that has an
+axis. An array from any other module must be on the *same* axis: same label and
+same values, as acdtool's `RoverQ` is over the modes of the Omega3P solve it
+postprocessed. Otherwise the run raises an error naming both modules and both
+axes. Narrow the stray output with `at:`. Two instances of one solver are
+compared by their values, so two `s3p` scans over different frequencies cannot
+both be whole-scan columns. A derived array follows the outputs it reads, and
+every array must have one value per axis position.
 
 For full class- and method-level documentation, see the
 [API reference](api/index).

@@ -227,8 +227,10 @@ energy columns, on first use, cached after. Lixin Ge's cryomodule dumps are
 
 ## Running it in-pipeline, or not
 
-A workflow has **either** `track3p` **or** `track3p_source` — both provide
-`track3p_particles`, and one producer per artifact is a structural rule.
+A workflow usually has **either** `track3p` **or** `track3p_source`, since both
+provide `track3p_particles`. A workflow may list both. A `field_emission` step
+reading one of them then names it with `from:` (see the YAML reference,
+"Several instances of one module").
 
 | | `track3p` (in-pipeline) | `track3p_source` (pre-run dump) |
 |---|---|---|

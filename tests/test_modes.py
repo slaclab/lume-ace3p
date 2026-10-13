@@ -301,5 +301,73 @@ def test_run_mode_rejects_unknown_mode(tmp_path):
         os.chdir(cwd)
 
 
+# --------------------------------------------------------------------------- #
+# One index axis per table (plans/multi_instance_workflow_plan.md §3.5)
+# --------------------------------------------------------------------------- #
+
+
+def _omega3p_t3p_point(tmp_path, spec):
+    """``(wf, ctx, outputs)`` for one ``omega3p + t3p`` point over the synthetic
+    two-mode Omega3P and three-sample T3P results of ``test_modules``."""
+    from test_modules import _make_omega3p_solver, _make_t3p_solver
+
+    (tmp_path / 'x.ncdf').write_text('')
+    os.chdir(tmp_path)
+    wf = Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
+                   {'module': 'omega3p', 'input': 'x.omega3p'},
+                   {'module': 't3p', 'input': 'x.t3p'}],
+                  workflow_params={'workdir': str(tmp_path / 'wd'),
+                                   'dry_run': True},
+                  output_spec=spec)
+    _outputs, ctx = wf.evaluate()
+    modules = {m.type: m for m in ctx.modules}
+    modules['omega3p']._solver = _make_omega3p_solver(ctx.workdir)
+    modules['t3p']._solver = _make_t3p_solver(ctx.workdir)
+    outputs = {}
+    for name, entry in spec.items():
+        module, cleaned = wf._route_output(name, entry, ctx.modules)
+        outputs[name] = module.extract(ctx, cleaned)
+    return wf, ctx, outputs
+
+
+def test_a_t3p_array_off_the_mode_axis_is_an_error(tmp_path):
+    """An array extracted from a module that does not own the table axis raises
+    rather than being sampled on someone else's: T3P's three-sample ``W`` used
+    to be read at ``ModeID`` positions 0 and 1, its third sample dropped."""
+    from lume_ace3p.modes import _table_index
+    cwd = os.getcwd()
+    try:
+        wf, ctx, outputs = _omega3p_t3p_point(
+            tmp_path, {'f': {'module': 'omega3p', 'quantity': 'Frequency'},
+                       'W': {'module': 't3p', 'quantity': 'W'}})
+        with pytest.raises(ValueError,
+                           match=r"'W' is a whole array from 't3p' \(its own "
+                                 r"'s' axis\).*'ModeID' from 'omega3p'.*'at:'"):
+            _table_index(wf, ctx, outputs)
+    finally:
+        os.chdir(cwd)
+
+
+def test_the_axis_belongs_to_the_module_its_arrays_come_from(tmp_path):
+    """With every Omega3P output narrowed, the T3P array owns the table: the
+    axis is ``s`` even though Omega3P comes first in DAG order, and the Omega3P
+    scalar repeats down the rows."""
+    from lume_ace3p.modes import _rows_for_point, _table_index
+    cwd = os.getcwd()
+    try:
+        wf, ctx, outputs = _omega3p_t3p_point(
+            tmp_path, {'f0': {'module': 'omega3p', 'quantity': 'Frequency',
+                              'at': {'mode': 0}},
+                       'W': {'module': 't3p', 'quantity': 'W'}})
+        assert wf.field_index(ctx)[0] == 'ModeID'
+        index = _table_index(wf, ctx, outputs)
+        rows = _rows_for_point(wf, index, [], [], outputs)
+    finally:
+        os.chdir(cwd)
+    assert index[0] == 's' and len(rows) == 3
+    assert [r['f0'] for r in rows] == pytest.approx([1.1e9] * 3)
+    assert [r['W'] for r in rows] == pytest.approx([-1e-7, -2e-7, -3e-7])
+
+
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

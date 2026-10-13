@@ -85,8 +85,9 @@ grid point.
 **Required:** `workflow:`, `mode:`, and an `input_parameters` block containing at
 least one array-valued leaf (a list or a `min/max/num` mapping).
 **Optional:** `output_parameters`, `mode.output_file`, `mode.resume`. Array leaves
-across different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`) all
-multiply into the same tensor grid.
+across different sub-blocks (`cubit:`, `ace3p:`, `geant4:`, `particles:`), and
+in [module-scoped](#module-scoped-inputs) blocks within them, all multiply into
+the same tensor grid.
 
 `mode.resume: True` (with `workflow_parameters: {workdir_mode: indexed}`) re-runs
 only the points and steps a previous run did not finish; see

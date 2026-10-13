@@ -384,6 +384,76 @@ def test_config_hash_ignores_the_key_order_of_a_module_entry():
     assert reordered != swapped
 
 
+# Literal hashes of shipped examples, computed on dev at 0.6.0 (e4d9f2b). They
+# guard plans/multi_instance_workflow_plan.md §3.7: scoped inputs, `from:` and
+# derived_parameters must leave the hash of a config that uses none of them
+# where it was, or every resumable campaign on disk reads `stale` on upgrade. A
+# change here is a break for users mid-campaign, not a value to re-pin.
+_PINNED_POINT_HASHES = {
+    'omega3p_ace3p_param_sweep':
+        'sha256:0704bc038efce24de15ef804c1c4c52fd208ccf06094a81fbb7c9ae8be392b2c',
+    's3p_sweep':
+        'sha256:ef2fb3522fdb25172379d5f31c9c22118048155bda11fbb06d359cad29a54d06',
+    't3p_power_balance':
+        'sha256:19b8f1269c8f019cb24aa1192f13871879c4a9d755bc851cbead0a5080ce6122',
+}
+
+_PINNED_CAMPAIGN_HASH = (
+    'sha256:49ec2b23953725f315668688446453abc336ac314f44acfd9b21699403d71602')
+
+
+# Blocks a pinned example has gained since 0.6.0. Each is a deliberate change of
+# campaign, so the pin is checked on the config with them removed (which is the
+# 0.6.0 config), and the shipped config must hash differently.
+_ADDED_SINCE_PIN = {
+    't3p_power_balance': ('derived_parameters',),   # P_balance, plan Phase 4
+}
+
+
+def _staged_example_workflow(example, monkeypatch, drop=()):
+    """``(yaml_data, Workflow)`` for a shipped example, staged and built from
+    inside its staged directory, as ``run-lume-ace3p`` would, without the
+    top-level blocks named in ``drop``."""
+    monkeypatch.chdir(bu._stage_example(example))
+    data = load_yaml(f'{example}.yaml')
+    for key in drop:
+        data.pop(key)
+    return data, Workflow.from_config(data)
+
+
+def _point_zero_hash(wf):
+    from lume_ace3p.modes import _input_tensor
+
+    point = _input_tensor(wf.sweep_axes())[0].tolist()
+    return wf.point_config_hash(point)
+
+
+@pytest.mark.parametrize('example', sorted(_PINNED_POINT_HASHES))
+def test_config_hash_of_a_shipped_sweep_is_pinned(example, monkeypatch):
+    """Point 0 of each sweep — the hash a resumed point's manifest is matched
+    against — is byte-for-byte what 0.6.0 wrote."""
+    _data, wf = _staged_example_workflow(
+        example, monkeypatch, drop=_ADDED_SINCE_PIN.get(example, ()))
+    assert _point_zero_hash(wf) == _PINNED_POINT_HASHES[example]
+
+
+@pytest.mark.parametrize('example', sorted(_ADDED_SINCE_PIN))
+def test_a_block_added_since_the_pin_moves_the_hash(example, monkeypatch):
+    """The shipped config, with its new block, is a different campaign from the
+    0.6.0 one: a 0.6.0 workdir reads ``stale`` rather than resuming into a table
+    without the new column."""
+    _data, wf = _staged_example_workflow(example, monkeypatch)
+    assert _point_zero_hash(wf) != _PINNED_POINT_HASHES[example]
+
+
+def test_campaign_config_hash_of_a_shipped_optimization_is_pinned(monkeypatch):
+    """The Xopt counterpart: ``s3p_optimization``'s campaign hash, over its own
+    VOCS variables, is what 0.6.0 recorded in ``xopt_state.yml``."""
+    data, wf = _staged_example_workflow('s3p_optimization', monkeypatch)
+    variables = list(data['vocs_parameters']['variables'])
+    assert wf.campaign_config_hash(variables) == _PINNED_CAMPAIGN_HASH
+
+
 # --------------------------------------------------------------------------- #
 # 4. verify answers "is the output still there"
 # --------------------------------------------------------------------------- #

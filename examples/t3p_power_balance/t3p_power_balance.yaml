@@ -23,8 +23,8 @@
 #      mode iterates it exactly like a geometry axis.
 #
 # The balance itself (P_in - P_out - P_wall, which should settle to ~0 once the
-# pulse has cleared) is computed by 'power_balance.py' from the result table:
-# output_parameters names quantities, it does not evaluate expressions.
+# pulse has cleared) is a derived_parameters entry, so it is a column of the
+# result table. 'power_balance.py' plots it.
 
 workflow_parameters :
   'workdir' : 'lume-ace3p_power_balance_workdir'
@@ -87,3 +87,8 @@ output_parameters :
     quantity : 'P'
     at :
       t : 5.0e-9
+
+derived_parameters :
+  # Arithmetic over the extracted columns, row by row along 't'. It rides the
+  # same axis as the three powers it reads.
+  'P_balance' : 'P_in - P_out - P_wall'

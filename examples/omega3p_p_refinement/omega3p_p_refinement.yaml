@@ -1,0 +1,65 @@
+# Omega3P p-refinement study: two eigensolves of one mesh, at element orders 1
+# and 2, side by side in one table.
+#   workflow:  cubit -> omega3p (coarse) + omega3p (fine)
+#   mode:      parameter_sweep  (wide table, one row per cav_radius)
+#
+# Both solvers read the same pillbox-rtop.omega3p. What keeps them apart is the
+# scoped block under input_parameters.ace3p: a key there that names a workflow
+# module ('coarse', 'fine') reaches that module only, layered over the shared
+# values. Without it a FiniteElement.Order override would reach both solvers.
+#
+# Two instances of one module type need distinct 'name:' keys (the name is the
+# scope key, the log file, the manifest entry and the output 'module:') and
+# distinct results directories.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_p_refinement_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : 'pillbox-rtop.jou'
+  - module : omega3p
+    name : coarse
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'coarse_results'
+    tasks : 12
+    cores : 8
+    opts : '--cpu-bind=cores'
+  - module : omega3p
+    name : fine
+    input : 'pillbox-rtop.omega3p'
+    results_dir : 'fine_results'
+    tasks : 12
+    cores : 8
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 'p_refinement_output.txt'
+
+input_parameters :
+  cubit :
+    'cav_radius' :
+      'min' : 95.0
+      'max' : 105.0
+      'num' : 3
+  ace3p :
+    # Each block reaches one solver. Every other key under ace3p: (none here)
+    # would reach both.
+    coarse :
+      'FiniteElement' : { 'Order' : 1 }
+    fine :
+      'FiniteElement' : { 'Order' : 2 }
+
+output_parameters :
+  # 'module:' names the instance. The fundamental of each solve, narrowed to mode
+  # 0 so the table stays one row per radius.
+  'f_coarse' : {module: coarse, quantity: Frequency, at: {mode: 0}}
+  'f_fine'   : {module: fine,   quantity: Frequency, at: {mode: 0}}
+  'Q_coarse' : {module: coarse, quantity: QualityFactor, at: {mode: 0}}
+  'Q_fine'   : {module: fine,   quantity: QualityFactor, at: {mode: 0}}
+
+derived_parameters :
+  # How far the order-1 frequency sits from the order-2 one, in ppm.
+  'f_shift_ppm' : '1e6 * (f_coarse - f_fine) / f_fine'

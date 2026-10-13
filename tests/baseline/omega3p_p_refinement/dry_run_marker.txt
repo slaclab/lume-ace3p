@@ -1,0 +1,9 @@
+Dry run mode: Cubit step skipped.
+Cubit journal: pillbox-rtop.jou
+Cubit inputs: {'cav_radius': 95.0}
+Dry run mode: Omega3P step skipped.
+Cubit: {'cav_radius': 95.0}
+ACE3P: [((('FiniteElement', 0), ('Order', 0)), '1')]
+Dry run mode: Omega3P step skipped.
+Cubit: {'cav_radius': 95.0}
+ACE3P: [((('FiniteElement', 0), ('Order', 0)), '2')]

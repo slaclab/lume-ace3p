@@ -109,9 +109,10 @@ T3P writes **six** kinds of monitor output and all of them are read, so
 wake commands add only what no monitor can do: a transverse wake computed from
 an on-contour longitudinal one.
 
-**Why the mesh commands are not wired.** Producing a mesh would make acdtool a
-second producer of the `mesh` artifact, which the one-producer-per-artifact rule
-forbids, and `meshconvert` already lives in `lume_ace3p.cubit`. `mesh deform`
+**Why the mesh commands are not wired.** A workflow may now hold two `mesh`
+producers, with consumers choosing between them via `from:`. Wiring acdtool as
+one of them is still a follow-on, and `meshconvert` already lives in
+`lume_ace3p.cubit`. `mesh deform`
 also duplicates TEM3P's own `MeshDump: {MeshDeformScale, EMMeshInputDir}`, which
 writes the deformed vacuum mesh straight into the EM mesh input directory and is
 the better route if the TEM3P chain is ever attempted. The acdtool reference

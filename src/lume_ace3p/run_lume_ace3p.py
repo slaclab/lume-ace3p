@@ -1,3 +1,4 @@
+import os
 import sys
 
 from lume_ace3p import __version__
@@ -19,7 +20,7 @@ XOPT_STATUS_MODES = ('scalar_optimize', 'gp_parameter_sweep')
 STATUS_MODES = TABLE_STATUS_MODES + XOPT_STATUS_MODES
 
 
-def _run_declarative(lume_ace3p_data):
+def _run_declarative(lume_ace3p_data, config_dir=None):
     """Build a :class:`Workflow` from the ``workflow:`` list and drive it through
     the workflow-agnostic mode layer.
 
@@ -51,7 +52,8 @@ def _run_declarative(lume_ace3p_data):
             "train_surrogate | invert_optimize | invert_bayesian | "
             "scalar_optimize | gp_parameter_sweep).")
     workflow = (None if is_store_consuming(mode_cfg)
-                else Workflow.from_config(lume_ace3p_data))
+                else Workflow.from_config(lume_ace3p_data,
+                                          config_dir=config_dir))
     return run_mode(mode_cfg, workflow,
                     output_spec=lume_ace3p_data.get('output_parameters'),
                     vocs=lume_ace3p_data.get('vocs_parameters'),
@@ -59,7 +61,7 @@ def _run_declarative(lume_ace3p_data):
                     sweep=lume_ace3p_data.get('sweep_parameters'))
 
 
-def _report_status(lume_ace3p_data):
+def _report_status(lume_ace3p_data, config_dir=None):
     """Print what a config's campaign has already recorded about itself.
 
     Reads only what earlier runs wrote — the per-point run manifests
@@ -84,7 +86,7 @@ def _report_status(lume_ace3p_data):
             "(train_surrogate, invert_optimize, invert_bayesian) run no points at "
             "all, and collect_training_data records its progress as the samples "
             "already in its store.")
-    return status(Workflow.from_config(lume_ace3p_data))
+    return status(Workflow.from_config(lume_ace3p_data, config_dir=config_dir))
 
 
 def _is_legacy_format(lume_ace3p_data):
@@ -141,6 +143,8 @@ def main():
             sys.exit(1)
 
     input_file = args[0]
+    # Where a derived_parameters 'python:' module is looked for besides sys.path.
+    config_dir = os.path.dirname(os.path.abspath(input_file))
     print(f"lume-ace3p {__version__}", file=sys.stderr)
 
     try:
@@ -180,14 +184,14 @@ def main():
 
     if report_status:
         try:
-            _report_status(lume_ace3p_data)
+            _report_status(lume_ace3p_data, config_dir)
         except ValueError as exc:
             print(f'Error: {exc}')
             sys.exit(1)
         return
 
     try:
-        _run_declarative(lume_ace3p_data)
+        _run_declarative(lume_ace3p_data, config_dir)
     except ValueError as exc:
         # A configuration error — an unsupported generator, no termination criterion,
         # a missing 'bin_edges' for an MC-noisy objective, an unvalidatable workflow

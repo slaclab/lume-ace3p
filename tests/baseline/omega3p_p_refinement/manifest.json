@@ -1,0 +1,17 @@
+{
+  "checkable": "NUMERIC: the swept cav_radius grid and, in the marker, the scoped FiniteElement.Order each omega3p instance received (1 then 2). The four outputs and f_shift_ppm are NaN without a solver -> reachability-only. Structurally this pins that two named omega3p instances on one input file validate, that output module: routes by instance name, and that the dry-run table stays wide.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_p_refinement_workdir_95.0/DRY_RUN.txt"
+    },
+    "p_refinement_output.txt": {
+      "compare": "table",
+      "pattern": "p_refinement_output.txt"
+    }
+  },
+  "frozen": "Phase 4 of plans/multi_instance_workflow_plan.md (2026-10-12). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "sweep",
+  "yaml": "omega3p_p_refinement.yaml"
+}

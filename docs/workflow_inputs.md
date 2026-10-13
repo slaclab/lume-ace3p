@@ -127,6 +127,12 @@ copied to each working directory verbatim, with no parse / rewrite round-trip.
 Parsing happens only when overrides are present, or when no `input:` file is
 provided and the entire input is assembled from the YAML.
 
+In a chain with more than one solver, every `ace3p:` override reaches every
+solver's input file, and a container a file lacks is appended to it. To aim an
+override at one solver, nest it under the module's name
+(`ace3p: {omega3p: {EigenSolver: …}}`); see
+[module-scoped inputs](yaml_reference.md#module-scoped-inputs).
+
 ### `ace3p:` leaves on a Track3P input
 
 A `.track3p` file takes `ace3p:` overrides like any other, and two of its blocks

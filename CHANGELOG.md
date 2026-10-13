@@ -9,7 +9,93 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
-Nothing yet.
+## [0.7.1] — 2026-10-12
+
+### Added
+
+- `scripts/tag_release.sh` tags `origin/main` as `v<version>`, and
+  `scripts/deploy_release.sh` installs a tag into the shared S3DF or
+  Perlmutter environment and checks the version and file permissions. See
+  `docs/releasing.md`.
+
+## [0.7.0] — 2026-10-12
+
+**A workflow can hold several instances of one solver, each with its own
+inputs, and compute quantities from its outputs.** Inputs scoped by module name
+reach one module only, artifacts are identified per producing instance with a
+`from:` binding to choose between them, and a `derived_parameters` block turns
+extracted outputs into new columns and objectives. A config that uses none of
+this hashes exactly as in 0.6.0, so resumable campaigns stay `fresh` on upgrade.
+The design and its verified facts are in
+[`plans/multi_instance_workflow_plan.md`](plans/multi_instance_workflow_plan.md).
+
+### Added
+
+- **`derived_parameters`**, a top-level block of quantities computed from the
+  extracted outputs: constants, expressions (`'abs(mode_freq - f_target)'`) and a
+  `{python: 'module:callable'}` hatch whose callable receives only the outputs.
+  A derived name is an output like any other: a table column after the extracted
+  ones, a VOCS objective or constraint, a manifest entry. Expressions are parsed
+  with `ast` and interpreted over a closed grammar (arithmetic, comparisons,
+  `and`/`or`/`not`, and `abs sqrt exp log log10 min max sum mean where clip`),
+  never `eval`; backticks quote non-identifier names (`` `R/Q` ``). Every name
+  is checked when the workflow is built. The block is covered by `config_hash`
+  and the campaign hash (a `python:` callable by its source text); a config
+  without it hashes exactly as before. See `docs/yaml_reference.md`
+  "`derived_parameters`".
+- **Module-scoped inputs.** A key under `input_parameters.cubit` / `.ace3p` /
+  `.geant4` that names a workflow module (`ace3p: {omega3p: {EigenSolver: …}}`)
+  reaches that module only, layered over the shared values. Scoped axes are
+  labelled `ace3p:<name>/Sec.Leaf` / `cubit:<name>/x` / `geant4:<name>/x`, in the
+  sweep table, `--status` and VOCS alike; shared labels are unchanged, and a
+  config without scopes hashes exactly as before. See `docs/yaml_reference.md`
+  "Module-scoped inputs".
+- **Several instances of one module type in a workflow.** Artifacts are
+  identified by the kind and the producing module's name, so two `omega3p`
+  steps (or `omega3p` + `s3p`, or two `acdtool` steps) can coexist. A module
+  that requires an artifact several modules provide names its producer with
+  `from:` (`from: fine`, or `from: {em_solution: fine}`). `output_parameters`
+  `module:` accepts an instance name. Two solvers sharing an input file each
+  write their merged copy as `<stem>_<name><ext>`. See `docs/yaml_reference.md`
+  "Several instances of one module".
+- Examples `omega3p_p_refinement` (two `omega3p` instances at element orders 1
+  and 2, kept apart by scoped `FiniteElement.Order` blocks) and
+  `omega3p_frequency_target` (Nelder-Mead on `cav_radius` minimizing a derived
+  `f_error = abs(mode_freq - 1.3e9)`). Both validated on S3DF.
+
+### Changed
+
+- Module names may contain only letters, digits, `_` and `-`, and a solver may
+  not be named like a top-level container of its own input file.
+- A workflow with two or more ACE3P solvers warns when a shared `ace3p:`
+  container is missing from one of their input files, since it is appended there
+  as a new block (an `EigenSolver` override used to land in the `.t3p` file
+  silently).
+- Two producers of one artifact are no longer a validation error. Instead, a
+  consumer of that artifact with no `from:` is one, and the error lists the
+  producers. Two entries of one type with no `name:` now fail on the duplicate
+  name. Two solvers of one type that would write to the same results directory,
+  and two `cubit` journals exporting the same mesh filename, fail at build time.
+- `output_parameters` `module: <type>` is an error when several instances
+  have that type. It used to take the last one silently.
+- A result table has one index axis. A whole-array output from a module
+  whose axis is not the table's raises, naming both modules and axes. It used
+  to be sampled at the other axis's positions, and the surplus values were
+  dropped silently (a T3P `W` in an `omega3p + t3p` table). The axis goes to the
+  module the array outputs come from, so narrowing every Omega3P output in that
+  chain puts the table on T3P's `s`.
+- When several modules produce a field (`omega3p` + `acdtool`, two `s3p`
+  instances), the per-row field artifact is keyed by module name:
+  `load_field(h)['omega3p']`. It used to hold the first producer's field
+  alone. A chain with one field producer is unchanged.
+- `examples/t3p_power_balance` computes `P_balance` in `derived_parameters`,
+  so the result table gains that column; `power_balance.py` reads it instead of
+  writing a `_balanced.txt` copy of the table. The example's config hash moves
+  with the new block, so a 0.6.0 campaign of it reads `stale`.
+- `RunContext.artifacts` / `job_names` / `reparse` / `field_levels` are
+  `ByProducer` tables. Reading a kind with a single producer works as on a
+  dict. A module records with `ctx.provide(module, kind, path)` and the
+  `set_job_name` / `set_reparse` / `set_field_level` methods.
 
 ## [0.6.0] — 2026-10-07
 

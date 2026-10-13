@@ -20,7 +20,8 @@ surface 6, and `Mode_freq` from **Omega3P's own eigenmode output**, which needs
 no acdtool block. Because every output is narrowed to one mode, the table stays
 one row per grid point; the run's full per-mode arrays (both eigenfrequencies,
 Q, stored energy) are kept in a per-row `field_artifact` `.npz`, loadable with
-`lume_ace3p.results.load_field`.
+`lume_ace3p.results.load_field` and keyed by module (`['omega3p']`,
+`['acdtool']`).
 
 This is the baseline of the trio. [`../omega3p_ace3p_param_sweep`](../omega3p_ace3p_param_sweep)
 adds an ACE3P `Sigma` axis on top of the same two Cubit axes (32 runs), and

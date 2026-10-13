@@ -220,11 +220,10 @@ def test_time_domain_acdtool_commands_need_t3p_not_omega3p(command):
     assert _types(wf.modules) == ['cubit', 't3p', 'acdtool']
 
 
-def test_two_acdtool_steps_are_rejected():
-    """Both provide ``rf_post``, so a chain wanting both an rf postprocess and a
-    transwake is a duplicate producer today. Recorded rather than worked around:
-    lifting it needs per-instance artifact identity, which design decision 3 puts
-    out of scope for this plan."""
+def test_two_acdtool_steps_are_accepted():
+    """Both provide ``rf_post``; with per-instance artifact identity that is two
+    producers of one kind, which is legal while nothing consumes ``rf_post``.
+    Each binds its own ``td_solution`` from the one T3P."""
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 't3p', 'input': 'x.t3p'},
                {'module': 'acdtool', 'name': 'transwake',
@@ -232,9 +231,9 @@ def test_two_acdtool_steps_are_rejected():
                 'args': [0.0, 0.0, 0.0, 0.0125]},
                {'module': 'acdtool', 'name': 'coaxsignal',
                 'command': 'postprocess coaxsignal'}]
-    with pytest.raises(WorkflowValidationError,
-                       match=f"'{RF_POST}'.*more than one"):
-        Workflow(entries, workflow_params={'dry_run': True})
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert _types(wf.modules) == ['cubit', 't3p', 'acdtool', 'acdtool']
+    assert [m.sources for m in wf.modules[2:]] == [{TD_SOLUTION: 't3p'}] * 2
 
 
 def test_t3p_and_s3p_together_is_allowed():
@@ -247,21 +246,30 @@ def test_t3p_and_s3p_together_is_allowed():
     assert set(_types(wf.modules)) == {'cubit', 's3p', 't3p'}
 
 
-def test_two_t3p_solvers_rejected():
+def test_two_t3p_solvers_need_names():
+    """Two entries of one type both default to the type's name, so the name rule
+    is what rejects them now — and its message says what to add."""
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
                {'module': 't3p', 'input': 'a.t3p'},
                {'module': 't3p', 'input': 'b.t3p'}]
     with pytest.raises(WorkflowValidationError,
-                       match=f"'{TD_SOLUTION}'.*more than one"):
+                       match="two 't3p' entries need distinct 'name:' keys"):
         Workflow(entries, workflow_params={'dry_run': True})
 
 
-def test_two_mesh_sources():
-    # cubit journal XOR mesh file — declaring both is a duplicate producer.
+def test_two_mesh_sources_need_from_on_the_consumer():
+    # cubit journal + mesh file: two producers of mesh, legal on their own, but
+    # the solver reading one has to say which.
     entries = [{'module': 'cubit', 'journal': 'x.jou'},
-               {'module': 'mesh', 'file': 'prebuilt.ncdf'}]
-    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+               {'module': 'mesh', 'file': 'prebuilt.ncdf'},
+               {'module': 'omega3p', 'input': 'x.omega3p'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=rf"(?s)'{MESH}', which 2 modules provide "
+                             r"\(\['cubit', 'mesh'\]\).*from: cubit"):
         Workflow(entries, workflow_params={'dry_run': True})
+    entries[2] = {**entries[2], 'from': 'mesh'}
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert wf.modules[-1].sources == {MESH: 'mesh'}
 
 
 def test_two_modules_sharing_a_name_are_rejected():
@@ -279,13 +287,14 @@ def test_two_modules_sharing_a_name_are_rejected():
         Workflow(entries, workflow_params={'dry_run': True})
 
 
-def test_the_duplicate_producer_diagnosis_wins_over_the_duplicate_name():
-    """Two modules of one type collide both ways, and "you have two mesh
-    producers" is the more useful of the two things to be told — so the name check
-    is asked last and this message is unchanged from before it existed."""
+def test_the_name_diagnosis_comes_first():
+    """Two modules of one type used to collide on their artifact first; that is
+    legal now, so the name check is asked first and is what they hit."""
     entries = [{'module': 'cubit', 'journal': 'a.jou'},
                {'module': 'cubit', 'journal': 'b.jou'}]
-    with pytest.raises(WorkflowValidationError, match=f"'{MESH}'.*more than one"):
+    with pytest.raises(WorkflowValidationError,
+                       match="two modules are named 'cubit'; two 'cubit' "
+                             "entries need distinct 'name:' keys"):
         Workflow(entries, workflow_params={'dry_run': True})
 
 
@@ -298,6 +307,70 @@ def test_output_targets_absent_module(tmp_path):
                   output_spec={'R/Q': ['RoverQ', '0', 'RoQ']})  # needs acdtool
     with pytest.raises(WorkflowValidationError, match='acdtool'):
         wf.evaluate()
+
+
+# --------------------------------------------------------------------------- #
+# Which chains validate, now that artifacts are keyed by producer
+#
+# The truth table of §1.B of plans/multi_instance_workflow_plan.md, rewritten by
+# Phase 2: the three Phase-0 rejections are acceptances, a name error, or an
+# ambiguity error that a ``from:`` resolves.
+# --------------------------------------------------------------------------- #
+
+
+_CUBIT = {'module': 'cubit', 'journal': 'x.jou'}
+_OMEGA3P = {'module': 'omega3p', 'input': 'x.omega3p'}
+_T3P = {'module': 't3p', 'input': 'x.t3p'}
+_FINE = {'module': 'omega3p', 'name': 'fine', 'input': 'x.omega3p',
+         'results_dir': 'fine_results'}
+
+_CHAIN_TABLE = [
+    pytest.param([_CUBIT, _OMEGA3P, {'module': 's3p', 'input': 'x.s3p'}],
+                 ['cubit', 'omega3p', 's3p'], id='omega3p+s3p'),
+    pytest.param([_CUBIT, _OMEGA3P, {'module': 'omega3p', 'input': 'y.omega3p'}],
+                 "two 'omega3p' entries need distinct 'name:' keys",
+                 id='two-omega3p-unnamed'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE],
+                 ['cubit', 'omega3p', 'omega3p'], id='two-omega3p-named'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE,
+                  {'module': 'track3p', 'input': 'x.track3p'}],
+                 r"'em_solution', which 2 modules provide "
+                 r"\(\['omega3p', 'fine'\]\)",
+                 id='two-omega3p+track3p-no-from'),
+    pytest.param([_CUBIT, _OMEGA3P, _FINE,
+                  {'module': 'track3p', 'input': 'x.track3p', 'from': 'fine'}],
+                 ['cubit', 'omega3p', 'omega3p', 'track3p'],
+                 id='two-omega3p+track3p-from'),
+    pytest.param([_CUBIT, _OMEGA3P, _T3P,
+                  {'module': 'acdtool', 'input': 'x.rfpost'},
+                  {'module': 'acdtool', 'name': 'transwake',
+                   'command': 'postprocess transwake',
+                   'args': [0.0, 0.0, 0.0, 0.0125]}],
+                 ['cubit', 'omega3p', 't3p', 'acdtool', 'acdtool'],
+                 id='acdtool-rf+transwake'),
+    pytest.param([_CUBIT, _OMEGA3P, _T3P,
+                  {'module': 'track3p', 'input': 'x.track3p'},
+                  {'module': 'acdtool', 'input': 'x.rfpost'}],
+                 ['cubit', 'omega3p', 't3p', 'track3p', 'acdtool'],
+                 id='one-of-each-kind'),
+    pytest.param([_CUBIT, {'module': 's3p', 'input': 'x.s3p'},
+                  {'module': 'track3p_source', 'file': 'p.txt'},
+                  {'module': 'field_emission'}],
+                 ['cubit', 's3p', 'track3p_source', 'field_emission'],
+                 id='two-disjoint-subchains'),
+]
+
+
+@pytest.mark.parametrize('entries, verdict', _CHAIN_TABLE)
+def test_which_chains_validate(entries, verdict):
+    """A ``str`` verdict is the pattern of the WorkflowValidationError; a
+    ``list`` is the resolved module order of an accepted chain."""
+    if isinstance(verdict, str):
+        with pytest.raises(WorkflowValidationError, match=verdict):
+            Workflow(entries, workflow_params={'dry_run': True})
+    else:
+        wf = Workflow(entries, workflow_params={'dry_run': True})
+        assert _types(wf.modules) == verdict
 
 
 # --------------------------------------------------------------------------- #
@@ -901,15 +974,21 @@ def test_track3p_without_a_field_solver_is_rejected(tmp_path):
                  workflow_params={'dry_run': True})
 
 
-def test_track3p_and_track3p_source_together_are_rejected(tmp_path):
-    """Two producers of track3p_particles: the workflow has one or the other."""
+def test_track3p_and_track3p_source_together_need_a_binding(tmp_path):
+    """Two producers of track3p_particles are legal; a field_emission step
+    reading one of them has to say which."""
+    entries = [{'module': 'mesh', 'file': 'x.ncdf'},
+               {'module': 'omega3p', 'input': 'x.omega3p'},
+               {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)},
+               {'module': 'track3p_source', 'file': 'dump.txt'}]
+    Workflow(entries, workflow_params={'dry_run': True})
+    entries.append({'module': 'field_emission'})
     with pytest.raises(WorkflowValidationError,
-                       match=f"'{TRACK3P_PARTICLES}'"):
-        Workflow([{'module': 'mesh', 'file': 'x.ncdf'},
-                  {'module': 'omega3p', 'input': 'x.omega3p'},
-                  {'module': 'track3p', 'input': _pillbox_track3p(tmp_path)},
-                  {'module': 'track3p_source', 'file': 'dump.txt'}],
-                 workflow_params={'dry_run': True})
+                       match=f"'{TRACK3P_PARTICLES}', which 2 modules provide"):
+        Workflow(entries, workflow_params={'dry_run': True})
+    entries[-1] = {'module': 'field_emission', 'from': 'track3p_source'}
+    wf = Workflow(entries, workflow_params={'dry_run': True})
+    assert wf.modules[-1].sources == {TRACK3P_PARTICLES: 'track3p_source'}
 
 
 def test_track3p_chain_evaluate_dry_run_table_shape(tmp_path):
@@ -1093,3 +1172,123 @@ def test_track3p_axis_beats_omega3p_modes(tmp_path):
     tracker.run(ctx, skip_execution=True)
     label, levels = wf.field_index(ctx)
     assert label == 'FieldLevel' and len(levels) == 3
+
+
+# --------------------------------------------------------------------------- #
+# Module-scoped inputs (plans/multi_instance_workflow_plan.md Phase 1)
+# --------------------------------------------------------------------------- #
+
+
+_SCOPED_SWEEP_YAML = """\
+workflow_parameters :
+  workdir : wd
+  workdir_mode : indexed
+  dry_run : True
+workflow :
+  - module : cubit
+    journal : 'cav.jou'
+  - module : omega3p
+    name : coarse
+    input : 'cav.omega3p'
+input_parameters :
+  cubit :
+    'radius' : 1.0
+  ace3p :
+    coarse :
+      'FiniteElement' :
+        'Order' : [1, 2]
+"""
+
+
+def _scoped_sweep(tmp_path, monkeypatch, text=_SCOPED_SWEEP_YAML):
+    from lume_ace3p.inputs import load_yaml
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'cav.omega3p').write_text(
+        'ModelInfo: {\n  File: cav.ncdf\n}\n'
+        'FiniteElement: {\n  Order: 1\n}\n')
+    (tmp_path / 'sweep.yaml').write_text(text)
+    return Workflow.from_config(load_yaml(str(tmp_path / 'sweep.yaml')))
+
+
+def test_a_scoped_sweep_axis_is_a_table_column(tmp_path, monkeypatch):
+    """A scoped ACE3P leaf is a sweep axis like any other, labelled with its
+    module (``ace3p:coarse/FiniteElement.Order``); the sweep table carries it as
+    a column and the dry-run marker shows the per-module view."""
+    from lume_ace3p.modes import parameter_sweep
+
+    wf = _scoped_sweep(tmp_path, monkeypatch)
+    df = parameter_sweep(wf)
+    assert df['ace3p:coarse/FiniteElement.Order'].tolist() == [1, 2]
+    assert "('Order', 0)), '2')" in (tmp_path / 'wd_1' / 'DRY_RUN.txt').read_text()
+
+
+def test_status_names_a_scoped_axis_column(tmp_path, monkeypatch, capsys):
+    """``--status`` labels a scoped axis the way the sweep table does."""
+    from lume_ace3p.modes import status
+
+    df = status(_scoped_sweep(tmp_path, monkeypatch))
+    assert 'ace3p:coarse/FiniteElement.Order' in df.columns
+    assert df['status'].tolist() == ['absent', 'absent']
+
+
+@pytest.mark.parametrize('name', ['fine/1', 'a b', 'x:y', 'p.q'])
+def test_a_module_name_outside_the_label_alphabet_is_rejected(name):
+    """A name is a scope key and a label segment, so ``/``, ``:``, spaces and
+    dots are refused at build time."""
+    with pytest.raises(WorkflowValidationError, match='may contain only'):
+        Workflow([{'module': 'mesh', 'file': 'a.ncdf', 'name': name}],
+                 workflow_params={'dry_run': True})
+
+
+def test_a_module_named_like_its_own_input_container_is_rejected(
+        tmp_path, monkeypatch):
+    """Under ``ace3p:`` a ``ModelInfo:`` key would be read as the module's scope
+    if a module were called that; module names win, so the name is refused."""
+    text = _SCOPED_SWEEP_YAML.replace('name : coarse', 'name : ModelInfo') \
+                             .replace('    coarse :', '    ModelInfo :')
+    with pytest.raises(WorkflowValidationError, match='top-level container'):
+        _scoped_sweep(tmp_path, monkeypatch, text)
+
+
+def test_a_scope_for_a_module_that_does_not_read_it_warns(
+        tmp_path, monkeypatch, capsys):
+    """A ``cubit:`` block scoped to a solver is never applied, so it warns."""
+    text = _SCOPED_SWEEP_YAML.replace(
+        "    'radius' : 1.0\n",
+        "    'radius' : 1.0\n    coarse :\n      'mesh_size' : 0.1\n")
+    _scoped_sweep(tmp_path, monkeypatch, text)
+    out = capsys.readouterr().out
+    assert "'input_parameters: cubit:' has a block for module 'coarse'" in out
+    assert 'never applied' in out
+
+
+def test_a_scoped_cubit_value_names_the_auto_workdir_and_the_point(
+        tmp_path, monkeypatch):
+    """Under ``workdir_mode: auto`` a single run is named from its cubit and
+    particles values, and the scoped cubit values count too; the manifest's
+    ``point`` records them under their scoped labels."""
+    from lume_ace3p.inputs import load_yaml
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'c.yaml').write_text("""\
+workflow_parameters :
+  workdir : wd
+  workdir_mode : auto
+  dry_run : True
+workflow :
+  - module : cubit
+    name : fine
+    journal : 'cav.jou'
+input_parameters :
+  cubit :
+    'radius' : 1.0
+    fine :
+      'mesh_size' : 0.2
+""")
+    wf = Workflow.from_config(load_yaml(str(tmp_path / 'c.yaml')))
+    assert wf.resolved_workdir() == 'wd_1.0_0.2'
+    record = wf._point_record(wf.inputs, None)
+    assert record['axes']['cubit:fine/mesh_size'] == 0.2
