@@ -843,6 +843,12 @@ class Workflow:
             if reusing:
                 reusing = self._reusable(previous, module, ctx)
             try:
+                if not reusing and not ctx.dry_run:
+                    # A fresh run removes what this module's tool writes, so a
+                    # crash that writes nothing cannot leave an earlier run's
+                    # output to be read as this one's. Not under dry-run: that
+                    # path writes markers, and must not delete real results.
+                    module.clean(ctx)
                 # The keyword is passed only when it is True, so the ordinary path
                 # is the call it has always been — including for a caller or test
                 # double whose run() takes ctx alone.

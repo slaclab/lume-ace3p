@@ -22,8 +22,24 @@ coarser grain than the entries above them.
 - A point whose modules all completed but whose outputs could not be extracted
   records a top-level `error` on its manifest, and `--status` reports it
   `failed`.
+- ⚠️ **A module removes its own previous output before it runs.** Before a
+  step runs its tool (not resumed, not a dry run), it deletes what that tool
+  writes: Cubit's exported mesh and its `.ncdf`, a solver's results directory,
+  an acdtool command's output file, the field-emission particle file, and
+  Geant4's scoring files. Nothing else is touched, including logs, the
+  manifest, inputs, other modules' files, and anything outside the workdir. A
+  step that crashes or writes nothing no longer leaves an earlier run's output
+  to be read as this one's. `postprocess transwake` and the other commands that
+  rewrite their producer's file remove nothing.
 
 ### Fixed
+
+- A re-run over an existing workdir read stale copies of its inputs. The cases
+  were a `files:` entry, a `mesh:` / `track3p_source:` / `particle_source:`
+  file and Geant4 geometry files under `stage_mode: copy`, plus an acdtool
+  `.rfpost` and a Geant4 input file in every mode. Edits to the source were
+  ignored. A fresh run now re-stages them. A resumed step keeps the copy its
+  outputs were made from.
 
 - `scripts/tag_release.sh` could report a missing changelog section that was
   present: under `set -o pipefail`, `grep -q` exiting at the first match made

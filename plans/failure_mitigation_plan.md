@@ -1,7 +1,7 @@
 # Failure Mitigation — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). Phase 1 done 2026-10-15.
+(0.7.1). Phases 1 and 2 done 2026-10-15.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -296,6 +296,7 @@ use `workdir_mode: manual` in one directory), and a warning is the same shape
 - **D2 (Phase 2).** Should a fresh run also truncate `<name>.log`? Today it
   appends with a `$ <command>` header per invocation, which keeps the history
   of a point that was retried. **Recommendation:** keep appending.
+  **Resolved (Phase 2): appending kept;** `clean` never touches a log.
 - **D3 (Phase 3).** Should `files:` contents be hashed even at 137 MB?
   **Recommendation:** yes, with the per-process cache.
 - **D4 (Phase 4).** Exit code under `on_error: continue` with failures: 1
@@ -402,19 +403,50 @@ a dry-run over a real workdir must not delete real results.
 `_stage_file(ctx, src, fresh=False)`: when `fresh`, remove an existing
 destination before linking/copying. Callers pass `fresh=not skip_execution`.
 
+**As built.** `clean` is on every module, as in the §2.2 table. Every removal
+goes through `modules._remove_output(ctx, name)`. It joins `name` onto the
+workdir, refuses anything that resolves outside it or to the workdir itself
+(including a path through a symlinked directory), and removes a symlink as a
+link, never its target. Specifics:
+
+- The meshconvert name was checked on a September validation run:
+  `pillbox-rtop4.gen` → `pillbox-rtop4.ncdf` beside it. Cubit removes the
+  `.ncdf` only under `meshconvert: true`.
+- T3P's clean removes the whole job directory (`t3p_results`), not only
+  `OUTPUT/`, since the monitor files beside it are T3P's too.
+- `Geant4Module.clean` runs before the wrapper exists, so it resolves names
+  from the source input file with the point's `geant4:` inputs laid over it
+  (`_output_files` was split into `_output_names(values)` for this).
+
+`_stage_file(..., fresh=)` takes `modules._fresh(ctx, skip_execution)` (not
+resumed, not dry-run). Under `fresh` it removes the destination unless it
+already *is* the source (same file, or a link that follows it), so symlink and
+hardlink mode see no churn.
+
+**Beyond the plan:** the same staleness hit the two wrappers that copy their
+own input into the workdir only when no copy is there, and then read that
+copy — `Acdtool` (the `.rfpost`) and `Geant4` (the `.geant4`). On a fresh run
+their old copy is the *previous run's merged input*, so an edited source file
+was ignored. The modules now `_unstage` it first. Cubit and the ACE3P solvers
+read the source and were not affected.
+
+Tests: `tests/test_clean.py`. Full suite on milano (job
+40905686, sdfmilan, EL 8.10, 2026-10-15): 1010 passed, 2 skipped, baseline
+self-check green.
+
 ### Verification (Phase 2 done when)
 
-- [ ] The §1.1 stale-mesh probe (Cubit crashes, old mesh present) now records
+- [x] The §1.1 stale-mesh probe (Cubit crashes, old mesh present) now records
   `cubit: failed` **and** the old mesh is gone — the table row cannot hold
   the old answer.
-- [ ] A fresh run over a complete workdir removes the results directory
+- [x] A fresh run over a complete workdir removes the results directory
   before the solver writes; `<name>.log` has two `$` headers; the manifest
   and the staged journal copy survive.
-- [ ] A resumed (skipped) module's output is **not** removed.
-- [ ] Editing a `files:` SEY table in the config directory and re-running
+- [x] A resumed (skipped) module's output is **not** removed.
+- [x] Editing a `files:` SEY table in the config directory and re-running
   (no resume, `copy` mode) → the workdir copy matches the new source.
-- [ ] A `transwake` acdtool re-run removes nothing (mutating command).
-- [ ] Every frozen baseline byte-identical.
+- [x] A `transwake` acdtool re-run removes nothing (mutating command).
+- [x] Every frozen baseline byte-identical.
 
 # Phase 3 — Per-module hashes
 
