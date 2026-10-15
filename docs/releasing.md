@@ -55,16 +55,16 @@ To roll back, deploy the previous tag.
 
 ## Permissions
 
-After installing, the script gives every path you own in the clone and
-environment the clone's group and opens it to all users: directories `2755`,
-files `644`, executables `755`. If the clone is group-writable (`2775`, for
-several maintainers) it adds group write: directories `2775`, files `664`.
-It does this even if your umask is stricter, as on Perlmutter, and it also
-fixes files left from earlier installs. A `chmod` after deploying is not
-needed.
+After installing, the script sets every path you own in the clone and
+environment to the clone's group and to exact modes: directories `2755`,
+executables `755`, other files `644`. Write access for the group or for others
+is removed. If the clone is group-writable (`2775`, for several maintainers),
+the group keeps write: directories `2775`, executables `775`, files `664`. It
+does this even if your umask is stricter, as on Perlmutter, and it also fixes
+files left from earlier installs. A `chmod` after deploying is not needed.
 
 Files owned by another user cannot be changed. The script lists them, and
-their owner must run `chgrp -R <group> <path>` and `chmod -R g+rX,o+rX <path>`.
+their owner must run `chgrp -R <group> <path>` and `chmod -R u+rwX,go=rX <path>`.
 
 `LUME_DEPLOY_CLONE` and `LUME_DEPLOY_ENV` override the site paths, for trying
 the script against a scratch clone and virtual environment.

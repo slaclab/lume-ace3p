@@ -7,6 +7,15 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
+## [Unreleased]
+
+### Changed
+
+- `scripts/deploy_release.sh` sets exact modes, not just added read access:
+  directories `2755`, executables `755`, other files `644` (`2775` / `775` /
+  `664` for a group-writable clone). A file left group-writable by an earlier
+  checkout is now reset.
+
 ## [0.8.0] — 2026-10-15
 
 ### Added
