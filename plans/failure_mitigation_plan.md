@@ -360,7 +360,10 @@ on, no hatch.** Script and log in
 `ToolExitError` and is what Cubit, `meshconvert`, Geant4 and acdtool call;
 `ACE3P.run` raises it itself with `exit_status_note()` as the message, before
 `output_parser`. The missing-mesh check raises `RuntimeError`. Extraction moved
-into `Workflow._extract_outputs`. Tests: `tests/test_tool_failures.py`.
+into `Workflow._extract_outputs`. Tests: `tests/test_tool_failures.py`. Full suite on
+milano (job 40902677, 2026-10-15): 980 passed, 2 skipped, baseline self-check
+green; its one failure was a test stub of `subprocess.run` returning `None`,
+fixed in the follow-up commit.
 
 ### Verification (Phase 1 done when)
 
@@ -375,7 +378,7 @@ into `Workflow._extract_outputs`. Tests: `tests/test_tool_failures.py`.
 - [x] `test_resume.py` test 2–3 (`transwake`) still injects its failure by
   monkeypatch; its docstring paragraph about "a fake binary exiting 1 would
   be recorded complete" is rewritten to say the opposite.
-- [ ] Every frozen baseline byte-identical (dry-run baselines launch nothing;
+- [x] Every frozen baseline byte-identical (dry-run baselines launch nothing;
   this phase cannot move them, but the self-check is the proof).
 - [x] S3DF check recorded above; D1 resolved.
 
