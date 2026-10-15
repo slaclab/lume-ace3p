@@ -280,6 +280,8 @@ def single(workflow, resume=False, on_error='skip'):
     each of its points the same way."""
     _require_resumable(workflow, resume)
     _check_files(workflow)
+    if not resume:
+        _note_existing_runs(workflow, np.empty((1, 0)), False)
     scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
@@ -331,6 +333,8 @@ def parameter_sweep(workflow, resume=False, on_error='skip'):
     tensor = _input_tensor(axes)
     _require_own_workdirs(workflow, tensor.shape[0])
     _check_files(workflow)
+    if not resume:
+        _note_existing_runs(workflow, tensor, bool(axes))
 
     points = []
     for i in range(tensor.shape[0]):
@@ -341,6 +345,30 @@ def parameter_sweep(workflow, resume=False, on_error='skip'):
     _report_failures([p.point_index for p in points if p.status == FAILED],
                      len(points), 'points')
     return _assemble(workflow, input_names, points)
+
+
+def _note_existing_runs(workflow, tensor, swept):
+    """Print one line when a fresh run is about to run over workdirs that hold
+    a previous run's manifest, saying that ``resume: true`` would reuse them.
+
+    A notice rather than a refusal: re-running over the same directories is
+    legitimate (every shipped example does it), and a fresh run replaces each
+    module's previous output before it runs. Skipped under ``manual`` — one
+    shared directory, which :func:`_require_own_workdirs` already speaks
+    about — and for a workflow double without the seam."""
+    if getattr(workflow, 'workdir_mode', None) in (None, 'manual'):
+        return
+    if not hasattr(workflow, 'resolved_workdir'):
+        return
+    total = tensor.shape[0]
+    found = sum(
+        1 for i in range(total)
+        if read_state(workflow.resolved_workdir(
+            tensor[i].tolist() if swept else None, i)) is not None)
+    if found:
+        print(f"Note: {found} of {total} workdir(s) hold a previous run's "
+              "manifest. This run starts them over; mode: {resume: true} would "
+              "reuse what is still valid.")
 
 
 def _check_files(workflow):

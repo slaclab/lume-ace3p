@@ -1,7 +1,8 @@
 # Failure Mitigation — Implementation Plan
 
-**Status: IN PROGRESS** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). Phases 1, 2, 3 and 4 done 2026-10-15.
+**Status: COMPLETE (release pending)** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
+(0.7.1). Phases 1–5 done 2026-10-15; the 0.8.0 tag and deploy are pending
+the merge to `main`.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -312,6 +313,7 @@ use `workdir_mode: manual` in one directory), and a warning is the same shape
   configuration errors (including missing input files) are raised before the
   first point.
 - **D5 (Phase 5).** Warn (recommended) vs. refuse on an existing manifest.
+  **Resolved (Phase 5): a one-line notice**, as recommended.
 - **D6 (deferred).** Expose `xopt: {strict: false}`. Needs a probe of each
   shipped generator (`NelderMead`, `ExpectedImprovement`, `UCB`, the
   multi-fidelity one) with a NaN objective row before it is offered.
@@ -631,14 +633,41 @@ campaign" paragraph under `(resume)` for the Cubit-first workflow.
 workaround (superseded by `on_error: continue` + `resume`), and a new FAQ
 "a step exited nonzero". `CHANGELOG.md` `[0.8.0]`; `pyproject.toml` version.
 
+**As built.** `modes._note_existing_runs` runs in `single` and
+`parameter_sweep` when `resume` is off and `workdir_mode` is not `manual`. It
+prints `Note: <n> of <N> workdir(s) hold a previous run's manifest. This run
+starts them over; mode: {resume: true} would reuse what is still valid.` The
+docs went as planned. The troubleshooting FAQ's `:::{important}` workaround
+was replaced by a short paragraph, since a failed point no longer loses the
+table, and the new FAQ is "A step exited nonzero". Version 0.8.0, changelog
+`[0.8.0] — 2026-10-15`. Tests: three in `tests/test_on_error.py`. Full suite
+on milano (job 40914602, sdfmilan181, EL 8.10): 1048 passed, 2 skipped.
+
+**S3DF validation (job 40914294, sdfmilan133, EL 8.10, 4:01).** In
+`lume-ace3p-tests/phase5_staging/`, `omega3p_sweep` under `indexed` was run
+Cubit-only (`workflow:` cut to `cubit`, no `output_parameters`), then in full
+with `resume: true`. All 16 points printed "re-runs from 'omega3p'".
+`cubit.log` holds one Cubit invocation per point (two `$` lines: the mesher
+and `acdtool meshconvert`), the manifests record `cubit` as `resumed`,
+`omega3p` ran once per point, and the table is complete.
+
+**Found, not fixed:** `acdtool.log` has no `$` header after the run. ACDTool
+writes its own `acdtool.log` in its working directory, truncating the log the
+module tees into. This predates the plan (the September validation logs show
+the same). The tool's own messages survive, but the `$` command line
+lume-ace3p wrote is lost. Cubit's `meshconvert` tees into `cubit.log` and is
+not affected. The fix is a module-log name that cannot collide,
+such as `acdtool.lume.log`, which renames a file users may look for. Deferred.
+
 ### Verification (Phase 5 done when)
 
-- [ ] Docs build clean (`docs/Makefile`), no refactor history in prose.
-- [ ] Full pytest on milano (never iana), `--constraint=OS_VER:8.10`.
-- [ ] S3DF validation: `omega3p_sweep` run Cubit-only (a copy of the YAML
+- [x] Docs build clean (`docs/Makefile`), no refactor history in prose.
+- [x] Full pytest on milano (never iana), `--constraint=OS_VER:8.10`.
+- [x] S3DF validation: `omega3p_sweep` run Cubit-only (a copy of the YAML
   with the solver entry removed), then full with `resume: true`; Cubit logs
-  show one invocation per point. Record the job id here.
-- [ ] `scripts/tag_release.sh` / `deploy_release.sh` per `docs/releasing.md`.
+  show one invocation per point. Job 40914294, above.
+- [ ] `scripts/tag_release.sh` / `deploy_release.sh` per `docs/releasing.md`
+  (needs `dev` merged into `main` on GitHub first).
 
 ---
 

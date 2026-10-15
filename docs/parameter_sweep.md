@@ -188,9 +188,18 @@ $ run-lume-ace3p --status omega3p_sweep.yaml
 
 Two requirements: `workdir_mode` must not be `manual`, since each point needs
 its own directory to have its own state (`resume: true` with `manual` is
-refused, naming `indexed`), and `resume` is opt-in. Each point's manifest also
-carries a hash of the resolved configuration, so a point whose module settings
-or input values have changed is re-run, and says so.
+refused, naming `indexed`), and `resume` is opt-in.
+
+Resume decides per step, not per point. Each step's manifest entry carries a
+hash of its settings, the inputs it reads, its input file's contents and the
+steps before it. A changed step re-runs along with everything after it, and the
+steps before it are reused. Editing the solver input re-runs the solver but not
+Cubit. A sweep run first with only its Cubit step reuses those meshes when the
+full config is resumed.
+
+A point that fails does not stop the sweep (`on_error: skip`, the default): its
+row is NaN, the table gets a `status` column, and a resume re-runs only the
+failed points. See [](#on-error).
 
 The full per-point rules, including what happens when a completed point's
 output files have been deleted, are in [](#resume).

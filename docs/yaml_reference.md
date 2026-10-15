@@ -332,8 +332,17 @@ Per point:
 
 So a change re-runs only the modules that depend on it. Changing `tasks:` on a
 solver re-runs nothing, editing the solver input re-runs the solver and not
-Cubit, and changing only `output_parameters` launches nothing. A Cubit-only
-workflow followed by the full one under `resume: true` reuses every mesh.
+Cubit, and changing only `output_parameters` launches nothing.
+
+**Staging a campaign.** A campaign can be built up in steps on one set of
+workdirs. Run a copy of the config whose `workflow:` lists only the `cubit`
+step, inspect the meshes, then run the full config with `resume: true`. Each
+mesh is reused and only the solvers run. The same works for adding a
+post-processing step to a finished sweep.
+
+A run without `resume` over workdirs that already hold manifests prints a
+line saying how many there are. It then runs every point from the start,
+replacing each module's previous output.
 
 Two consequences:
 

@@ -7,7 +7,7 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
-## [Unreleased]
+## [0.8.0] — 2026-10-15
 
 ### Added
 
@@ -15,6 +15,8 @@ coarser grain than the entries above them.
   `collect_training_data`. Before the first point, the run checks that every
   journal, solver input, `.rfpost`, Geant4 input and `files:` entry exists, and
   a missing one is an error.
+- A run without `resume` over per-point workdirs that already hold manifests
+  prints how many there are and that `resume: true` would reuse them.
 
 ### Changed
 

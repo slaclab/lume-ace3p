@@ -332,3 +332,36 @@ def test_raise_ends_a_collection_at_the_failed_sample(tmp_path):
     cfg = _collect_cfg(tmp_path, num_samples=3, on_error='raise')
     with pytest.raises(RuntimeError, match='status 1'):
         modes.collect_training_data(cfg, _FailingSample())
+
+
+# --------------------------------------------------------------------------- #
+# A fresh run over earlier workdirs says so (Phase 5)
+# --------------------------------------------------------------------------- #
+
+
+_NOTE = "hold a previous run's manifest"
+
+
+@posix_only
+def test_a_fresh_run_over_earlier_workdirs_notes_resume(staged, capsys):
+    modes.parameter_sweep(_workflow(staged, _RADII[:2]))
+    assert _NOTE not in capsys.readouterr().out
+
+    modes.parameter_sweep(_workflow(staged, _RADII))
+    assert "Note: 2 of 3 workdir(s) hold a previous run's manifest" in (
+        capsys.readouterr().out)
+
+
+@posix_only
+def test_a_resumed_run_does_not_note_earlier_workdirs(staged, capsys):
+    modes.parameter_sweep(_workflow(staged, _RADII))
+    capsys.readouterr()
+    modes.parameter_sweep(_workflow(staged, _RADII), resume=True)
+    assert _NOTE not in capsys.readouterr().out
+
+
+def test_manual_workdirs_are_not_noted(tmp_path, capsys):
+    from test_resume import _dry_workflow
+    modes.parameter_sweep(_dry_workflow(tmp_path, [1.0]))
+    modes.parameter_sweep(_dry_workflow(tmp_path, [1.0]))
+    assert _NOTE not in capsys.readouterr().out
