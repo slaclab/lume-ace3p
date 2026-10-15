@@ -1118,6 +1118,25 @@ class Workflow:
             record['job_names'] = job_names
         return record
 
+    def check_files(self):
+        """Raise :class:`WorkflowValidationError` naming every input file of the workflow
+        (:meth:`Module.required_files`) that does not exist.
+
+        The table modes call this before the first point, so a mistyped path
+        stops the run before it starts — under ``on_error: skip`` it would
+        otherwise fail every point. Not under dry-run, which launches nothing.
+        Paths resolve from the working directory, as the modules resolve them."""
+        if self.dry_run:
+            return
+        missing = [(module.name, path) for module in self.modules
+                   for path in module.required_files()
+                   if not os.path.isfile(path)]
+        if missing:
+            listing = '\n'.join(f'    {name}: {path}' for name, path in missing)
+            raise WorkflowValidationError(
+                f"{len(missing)} file(s) named in the workflow do not exist "
+                f"(paths resolve from {os.getcwd()}):\n{listing}")
+
     def sweep_axes(self):
         """Delegate to the input model — the swept axes a mode iterates over."""
         return self.inputs.sweep_axes()

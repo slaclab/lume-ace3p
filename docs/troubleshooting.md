@@ -116,6 +116,11 @@ Verify that the journal works at the extremal values of every parameter, e.g.
 at both `input_1 = 20` *and* `input_1 = 80` when sweeping `input_1` from 20 to
 80 (assuming the deformation is smooth and continuous between them).
 
+A point that fails does not stop the sweep: its row is NaN, the table's
+`status` column says `failed`, and stderr names the point, its workdir and the
+error. The step's `<module>.log` in that workdir has the tool's own output. See
+[](#on-error).
+
 ### Can I restart a parameter sweep if the job failed mid-sweep?
 
 Yes. Add `resume: True` to the `mode:` block, set
@@ -128,7 +133,8 @@ normally. The result table is identical to an uninterrupted run. See
 
 :::{important}
 The result table (`mode.output_file`) is written once, when the sweep completes,
-so a job that failed mid-sweep leaves no table for the rows it finished. Resume
+so a job killed mid-sweep (by the wall clock, or by a failed point under
+`on_error: raise`) leaves no table for the rows it finished. Resume
 rather than combining partial tables: the resumed run rebuilds the *whole* table,
 earlier rows included, from the results already in the per-point workdirs.
 

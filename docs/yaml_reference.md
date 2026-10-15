@@ -125,6 +125,7 @@ Additional `mode:` keys:
 | `sweep_output_file` | `gp_parameter_sweep`                | `'sweep_output.txt'` | Path for the GP posterior-mean sweep table. |
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
 | `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
+| `on_error`          | `single`, `parameter_sweep`, `collect_training_data` | `'skip'` | What a point that fails does to the run: `skip` records it and goes on, `raise` ends the run. See [](#on-error). |
 
 The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
 can be swept or optimized, since the objective is an `output_parameters` name.
@@ -360,6 +361,46 @@ Requirements and limits:
 - A nonzero exit status from any tool (Cubit, `meshconvert`, a solver,
   `acdtool`, Geant4) records that module `failed`, with the status and command
   line in `error`. So does a Cubit run that exits cleanly but writes no mesh.
+
+(on-error)=
+### `on_error` — what a failed point does to the run
+
+```yaml
+mode :
+  type : parameter_sweep
+  on_error : skip                 # the default; 'raise' ends the run instead
+```
+
+Under `skip`, a point that fails does not stop the run. Its outputs are NaN, an
+`Error:` line on stderr names the point, its swept values, its workdir and the
+error, and the next point runs. A parameter value that makes a bad mesh costs
+that row, not the job. When the run ends, a summary line lists the failed
+points, and the table is written with an extra `status` column:
+
+```text
+radius    f0        status
+100.0     1.30e9    complete
+101.0     nan       failed
+102.0     1.28e9    complete
+```
+
+A run in which nothing failed has no `status` column. Each failed point's
+manifest records the module that failed, so fixing the cause and re-running
+with `resume: true` runs only those points (with `workdir_mode: indexed`).
+`run-lume-ace3p` exits 0 when at least one point completed and 1 when every
+point failed, since that usually means the configuration, not a parameter value,
+is wrong.
+
+Under `raise`, the first failed point ends the run and no table is written.
+
+Errors in the configuration itself are raised before the first point whatever
+`on_error` says: an unknown key value, an invalid workflow, and an input file
+that does not exist (a journal, a solver `input:`, a `files:` entry, an
+`.rfpost`, a Geant4 input). The check does not run under dry-run.
+
+In `collect_training_data`, a failed sample is a row with no `field_artifact`
+and `status: failed`. Training leaves it out, and the next collection run
+retries it.
 
 (status)=
 ### `run-lume-ace3p --status` — reading a campaign without running it

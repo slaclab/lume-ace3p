@@ -60,19 +60,20 @@ writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 import itertools
 import os
 import sys
+import traceback
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
 
 from lume_ace3p.results import (
-    write_table, save_field, FIELD_ARTIFACT_COLUMN,
+    write_table, save_field, FIELD_ARTIFACT_COLUMN, STATUS_COLUMN,
 )
 from lume_ace3p import surrogate_data
 from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.modules import FieldEmissionModule
 from lume_ace3p.workflow_graph import _is_array
-from lume_ace3p.state import point_status, read_state
+from lume_ace3p.state import COMPLETE, FAILED, point_status, read_state
 from lume_ace3p.xopt_state import (
     best_point, evaluation_count, read_xopt_state, restore_xopt, set_aside,
     write_xopt_state, xopt_state_path,
@@ -96,13 +97,15 @@ _COMMON_MODE_KEYS = frozenset({'type', 'mode'})
 # only a per-mode set can say so. Kept beside the dispatcher that consumes the block
 # — extend it when a mode learns a key, or the mode's own new key will warn.
 MODE_KEYS = {
-    'single': frozenset({'output_file', 'sweep_output_file', 'resume'}),
-    'parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
+    'single': frozenset({'output_file', 'sweep_output_file', 'resume',
+                         'on_error'}),
+    'parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume',
+                                  'on_error'}),
     'scalar_optimize': frozenset({'output_file', 'resume'}),
     'gp_parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
     'collect_training_data': frozenset({
         'store', 'output_dir', 'num_samples', 'sampler', 'seed', 'fidelity',
-        'variables', 'resume'}),
+        'variables', 'resume', 'on_error'}),
     'train_surrogate': frozenset({
         'store', 'output_dir', 'variance', 'num_components', 'seed', 'model_dir',
         'holdout', 'dose_transform', 'floor', 'n_jobs'}),
@@ -127,6 +130,27 @@ XOPT_KEYS = frozenset({
 # Every key ``_make_vocs`` and the GP sweep read out of ``vocs_parameters``.
 VOCS_KEYS = frozenset({'variables', 'objectives', 'constraints', 'observables',
                        'constants'})
+
+
+# What a table mode does with a point that fails once the run is under way.
+# ``skip`` gives the point a NaN row, puts its error on stderr and goes on to the
+# next; ``raise`` ends the run there and writes no table. A configuration error is
+# raised before the first point either way.
+ON_ERROR_VALUES = ('skip', 'raise')
+
+# Exception types that mean "this point is bad" (a tool exited nonzero, a mesh or
+# output is missing, a quantity is not in the output). Their message is enough;
+# anything else may be a bug and also gets its traceback.
+_POINT_ERRORS = (RuntimeError, ValueError, OSError)
+
+
+def on_error_of(mode_cfg):
+    """The validated ``on_error`` of a mode config (default ``'skip'``)."""
+    value = (mode_cfg or {}).get('on_error', 'skip')
+    if str(value).lower() not in ON_ERROR_VALUES:
+        raise ValueError(
+            f"mode: on_error must be 'skip' or 'raise', not {value!r}.")
+    return str(value).lower()
 
 
 def mode_type_of(mode_cfg):
@@ -180,7 +204,10 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
 
     ``output_spec`` is accepted for API symmetry but is informational only — the
     workflow already carries its ``output_parameters`` (``workflow.output_spec``)
-    and does the extraction inside :meth:`Workflow.evaluate`."""
+    and does the extraction inside :meth:`Workflow.evaluate`.
+
+    ``on_error`` (``single`` / ``parameter_sweep`` / ``collect_training_data``) is
+    validated here, before anything runs; see :func:`parameter_sweep`."""
     if mode_cfg.get('type') is None and mode_cfg.get('mode') is not None:
         _deprecation_warning(
             "the 'mode:' key inside the mode block is a legacy alias for 'type:'. "
@@ -191,10 +218,12 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
         warn_unrecognized(f"mode '{mode_type}'", mode_cfg,
                           MODE_KEYS[mode_type] | _COMMON_MODE_KEYS)
     resume = bool(mode_cfg.get('resume', False))
+    on_error = (on_error_of(mode_cfg)
+                if 'on_error' in MODE_KEYS.get(mode_type, ()) else None)
     if mode_type == 'single':
-        df = single(workflow, resume=resume)
+        df = single(workflow, resume=resume, on_error=on_error)
     elif mode_type == 'parameter_sweep':
-        df = parameter_sweep(workflow, resume=resume)
+        df = parameter_sweep(workflow, resume=resume, on_error=on_error)
     elif mode_type == 'collect_training_data':
         return collect_training_data(mode_cfg, workflow)
     elif mode_type == 'train_surrogate':
@@ -236,7 +265,7 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     return df
 
 
-def single(workflow, resume=False):
+def single(workflow, resume=False, on_error='skip'):
     """Run the workflow once and return a one-row (or, for a field-indexed
     solver, one-row-per-index) result DataFrame.
 
@@ -246,20 +275,21 @@ def single(workflow, resume=False):
     field (Geant4 voxel grids, an S3P spectrum in the wide case), it is
     persisted and referenced by a field-artifact column.
 
-    ``resume`` picks the run up from its completion manifest — see
-    :func:`parameter_sweep`, which resumes the same way per point."""
+    ``resume`` picks the run up from its completion manifest and ``on_error``
+    decides what a failed run leaves — see :func:`parameter_sweep`, which treats
+    each of its points the same way."""
     _require_resumable(workflow, resume)
+    _check_files(workflow)
     scalar_inputs = {**workflow.inputs.cubit, **workflow.inputs.particles}
     input_names = list(scalar_inputs.keys())
     scalars = [scalar_inputs[name] for name in input_names]
-    outputs, ctx = _evaluate_point(workflow, None, 0, resume=resume)
-    index = _table_index(workflow, ctx, outputs)
-    point = _PointResult(0, scalars, outputs, index,
-                         _persist_field(workflow, ctx, 0, index))
+    point = _run_point(workflow, 0, scalars, None, input_names, resume,
+                       on_error)
+    _report_failures([0] if point.status == FAILED else [], 1, 'points')
     return _assemble(workflow, input_names, [point])
 
 
-def parameter_sweep(workflow, resume=False):
+def parameter_sweep(workflow, resume=False, on_error='skip'):
     """Run the workflow over the tensor product of its swept axes, one row per
     grid point (or per ``(grid-point, field-index)`` for a field-indexed
     solver). Returns the result DataFrame.
@@ -284,25 +314,98 @@ def parameter_sweep(workflow, resume=False):
     recoverable instead of thrown away. It is off by default (a sweep that silently
     adopted a stale workdir would be worse than no resume) and refused under
     ``workdir_mode: manual``, where every point shares one directory and so cannot
-    carry per-point state."""
+    carry per-point state.
+
+    **``on_error``** (``mode: {on_error: …}``) is what one failed point does to
+    the run. Under ``skip``, the default, the point's error goes to stderr, its
+    row holds NaN outputs, and the sweep goes on: a parameter value that makes a
+    bad mesh costs that row, not the job. The point's manifest records the module
+    that failed, so ``resume: true`` re-runs only the failed points. When any
+    point failed the table gains a :data:`~lume_ace3p.results.STATUS_COLUMN`
+    (``complete`` / ``failed``); a run with no failure has the same columns as
+    always. Under ``raise`` the first failure ends the sweep and no table is
+    written."""
     _require_resumable(workflow, resume)
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
     _require_own_workdirs(workflow, tensor.shape[0])
+    _check_files(workflow)
 
     points = []
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
-        outputs, ctx = _evaluate_point(workflow, scalars if axes else None, i,
-                                       resume=resume)
-        # Everything the rows need is read out here, so the per-point ``ctx`` —
-        # and the whole parsed solver output hanging off it — is not held for the
-        # length of the sweep.
-        index = _table_index(workflow, ctx, outputs)
-        points.append(_PointResult(i, scalars, outputs, index,
-                                   _persist_field(workflow, ctx, i, index)))
+        points.append(_run_point(workflow, i, scalars,
+                                 scalars if axes else None, input_names,
+                                 resume, on_error))
+    _report_failures([p.point_index for p in points if p.status == FAILED],
+                     len(points), 'points')
     return _assemble(workflow, input_names, points)
+
+
+def _check_files(workflow):
+    """Fail before the first point on a file the workflow names but that is not
+    there (:meth:`Workflow.check_files`) — whatever ``on_error`` says, since it
+    would fail every point. A workflow double without the seam is not checked."""
+    check = getattr(workflow, 'check_files', None)
+    if check is not None:
+        check()
+
+
+def _run_point(workflow, i, scalars, input_scalars, input_names, resume,
+               on_error):
+    """Evaluate point ``i`` and return its :class:`_PointResult` — a failed one,
+    with NaN outputs, under ``on_error: skip`` (see :func:`parameter_sweep`).
+
+    Everything the rows need is read out here, so the per-point ``ctx`` — and the
+    whole parsed solver output hanging off it — is not held for the length of the
+    sweep."""
+    try:
+        outputs, ctx = _evaluate_point(workflow, input_scalars, i,
+                                       resume=resume)
+        index = _table_index(workflow, ctx, outputs)
+        handle = _persist_field(workflow, ctx, i, index)
+    except Exception as exc:
+        # Not KeyboardInterrupt: an interrupted run is not a failed point.
+        if on_error == 'raise':
+            raise
+        _report_failed_point(f'point {i}', dict(zip(input_names, scalars)),
+                             _failed_workdir(workflow, input_scalars, i), exc)
+        return _PointResult(i, scalars,
+                            {name: np.nan for name in _output_names(workflow)},
+                            None, None, status=FAILED)
+    return _PointResult(i, scalars, outputs, index, handle)
+
+
+def _failed_workdir(workflow, input_scalars, i):
+    """The workdir point ``i`` ran in, for the failure message, or ``None``."""
+    try:
+        return workflow.resolved_workdir(input_scalars, point_index=i)
+    except Exception:
+        return None
+
+
+def _report_failed_point(label, values, workdir, exc):
+    """Print one failed point's error to stderr, under a line naming it."""
+    at = ', '.join(f'{name}={_number(value)}' for name, value in values.items())
+    print(f"Error: {label}{f' ({at})' if at else ''} failed"
+          f"{f' in {workdir}' if workdir else ''}; its row is NaN and the run "
+          "goes on (on_error: skip).", file=sys.stderr)
+    if isinstance(exc, _POINT_ERRORS):
+        print(f'  {type(exc).__name__}: {exc}', file=sys.stderr)
+    else:
+        traceback.print_exception(type(exc), exc, exc.__traceback__,
+                                  file=sys.stderr)
+
+
+def _report_failures(failed, total, what):
+    """The closing stderr line of a run in which something failed."""
+    if not failed:
+        return
+    print(f"Error: {len(failed)} of {total} {what} failed "
+          f"({', '.join(str(i) for i in failed)}); their rows are NaN. Fix the "
+          "cause and re-run with mode: {resume: true} to run only those.",
+          file=sys.stderr)
 
 
 def _require_resumable(workflow, resume):
@@ -752,11 +855,20 @@ def collect_training_data(mode_cfg, workflow):
       non-complete module rather than at the mesh. Off by default, like everywhere
       else.
 
+    Under ``on_error: skip`` (the default) a sample that fails gets a row with no
+    field and :data:`~lume_ace3p.results.STATUS_COLUMN` ``failed``, and the
+    campaign goes on; :func:`surrogate_data.load_training_store` leaves such rows
+    out, and the next run retries them, since they have no ``field.npz``. A
+    scoring mesh that changed mid-campaign is not a sample failure and still ends
+    the run.
+
     Returns the training-store result :class:`pandas.DataFrame`."""
     beta_names, num_bins = _require_fixed_bin_edges(workflow)
     mesh_fingerprint = _require_fixed_mesh(workflow)
     bounds = _doe_bounds(mode_cfg, beta_names)
     resume = bool(mode_cfg.get('resume', False))
+    on_error = on_error_of(mode_cfg)
+    _check_files(workflow)
 
     store = mode_cfg.get('store') or mode_cfg.get('output_dir') or 'training_store'
     num_samples = int(mode_cfg.get('num_samples', 8))
@@ -774,6 +886,7 @@ def collect_training_data(mode_cfg, workflow):
     # baseworkdir and restoring them in a finally; the explicit argument means the
     # collector never writes to shared workflow state at all.
     rows = []
+    failed = []
     mesh_shape = None
     for i in range(num_samples):
         beta_vec = design[i]
@@ -802,9 +915,16 @@ def collect_training_data(mode_cfg, workflow):
                         f"(was {mesh_fingerprint}, now {current}); the mesh "
                         "must stay fixed for the whole campaign "
                         "(constraint #3).")
-            _outputs, ctx = _evaluate(workflow, overrides, workdir=sample_dir,
-                                      resume=resume)
-            handle = save_field(workflow.field(ctx), field_path)
+            try:
+                _outputs, ctx = _evaluate(workflow, overrides,
+                                          workdir=sample_dir, resume=resume)
+                handle = save_field(workflow.field(ctx), field_path)
+            except Exception as exc:
+                if on_error == 'raise':
+                    raise
+                _report_failed_point(f'sample {i}', overrides, sample_dir, exc)
+                failed.append(i)
+                handle = None
 
         if handle is not None and mesh_shape is None:
             mesh_shape = _mesh_shape(handle)
@@ -814,11 +934,15 @@ def collect_training_data(mode_cfg, workflow):
             float(fidelity) if fidelity is not None else np.nan)
         if handle is not None:
             row[FIELD_ARTIFACT_COLUMN] = handle
+        row[STATUS_COLUMN] = FAILED if i in failed else COMPLETE
         rows.append(row)
+    _report_failures(failed, num_samples, 'samples')
 
     columns = list(beta_names) + [surrogate_data.FIDELITY_COLUMN]
     if any(FIELD_ARTIFACT_COLUMN in r for r in rows):
         columns.append(FIELD_ARTIFACT_COLUMN)
+    if failed:
+        columns.append(STATUS_COLUMN)
     df = pd.DataFrame(rows, columns=columns)
     write_table(df, os.path.join(store, surrogate_data.TABLE_FILENAME))
 
@@ -1436,6 +1560,7 @@ class _PointResult(NamedTuple):
     outputs: dict                     # extracted output_parameters
     index: object                     # this point's (label, values), or None
     handle: object                    # persisted field artifact, or None
+    status: str = COMPLETE            # FAILED for a point skipped by on_error
 
 
 def _assemble(workflow, input_names, points):
@@ -1446,16 +1571,24 @@ def _assemble(workflow, input_names, points):
     property that lets a later phase resume or parallelize the loop without
     quietly making every baseline nondeterministic."""
     rows = []
+    statuses = []
     index = None
     for point in sorted(points, key=lambda p: p.point_index):
         # The frame's index label comes from the last point in index order, which
         # is what the in-loop version resolved to when points ran in order. It is
         # the same label for every point of a run; only its presence varies (a
-        # solver that produced nothing reports None).
-        index = point.index
-        rows.extend(_rows_for_point(workflow, point.index, input_names,
-                                    point.scalars, point.outputs, point.handle))
-    return _frame(workflow, input_names, rows, index)
+        # solver that produced nothing reports None). A failed point has none and
+        # does not drop the label: its single row leaves the index cell NaN.
+        if point.status != FAILED:
+            index = point.index
+        point_rows = _rows_for_point(workflow, point.index, input_names,
+                                     point.scalars, point.outputs, point.handle)
+        rows.extend(point_rows)
+        statuses.extend([point.status] * len(point_rows))
+    df = _frame(workflow, input_names, rows, index)
+    if FAILED in statuses:
+        df[STATUS_COLUMN] = statuses
+    return df
 
 
 def _rows_for_point(workflow, index, input_names, scalars, outputs,

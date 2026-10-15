@@ -9,7 +9,24 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Added
+
+- `mode: {on_error: skip | raise}` for `single`, `parameter_sweep` and
+  `collect_training_data`. Before the first point, the run checks that every
+  journal, solver input, `.rfpost`, Geant4 input and `files:` entry exists, and
+  a missing one is an error.
+
 ### Changed
+
+- ⚠️ **A failed point no longer ends the run.** With the default
+  `on_error: skip`, a point that fails gets a row of NaN outputs, its error
+  and workdir go to stderr, and the run goes on to the next point. If any point
+  failed, the table gains a `status` column (`complete` / `failed`); a run with
+  no failures keeps its columns. `resume: true` re-runs only the failed points.
+  `run-lume-ace3p` exits 1 only when every point failed. `on_error: raise`
+  restores the old behavior: the first failure ends the run and no table is
+  written. In `collect_training_data` a failed sample has no field, and
+  `load_training_store` leaves it out.
 
 - ⚠️ **A nonzero exit status is a failure.** Cubit, `acdtool meshconvert`, the
   ACE3P solvers, `acdtool` and the Geant4 application raise `ToolExitError`

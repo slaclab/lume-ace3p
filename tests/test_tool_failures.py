@@ -56,7 +56,7 @@ def test_a_crashed_cubit_is_recorded_failed(staged):
     wf = _workflow(staged, [100.0])
     _replace_binary(staged, 'cubit', _CUBIT_CRASH)
     with pytest.raises(ToolExitError, match='cubit exited with status 3'):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = _recorded(workdir)
@@ -78,7 +78,7 @@ def test_a_crashed_cubit_does_not_reuse_an_earlier_mesh(staged):
     wf = _workflow(staged, [250.0])
     _replace_binary(staged, 'cubit', _CUBIT_CRASH)
     with pytest.raises(ToolExitError):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
     assert _recorded(workdir)['cubit']['status'] == 'failed'
     assert _invocations(workdir, 'omega3p') == 1     # the first run's only
 
@@ -88,7 +88,7 @@ def test_a_cubit_that_writes_no_mesh_is_recorded_failed(staged):
     wf = _workflow(staged, [100.0])
     _replace_binary(staged, 'cubit', _CUBIT_NO_MESH)
     with pytest.raises(RuntimeError, match='wrote no mesh'):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = _recorded(workdir)
@@ -103,7 +103,7 @@ def test_a_solver_exit_wins_over_the_output_it_wrote(staged):
     wf = _workflow(staged, [100.0])
     _replace_binary(staged, 'omega3p', _OMEGA3P_LATE_CRASH)
     with pytest.raises(ToolExitError, match='omega3p exited with status 9'):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = _recorded(workdir)
@@ -121,7 +121,7 @@ def test_an_extraction_failure_is_a_point_level_error(staged, capsys):
     wf = _workflow(staged, [100.0])
     _replace_binary(staged, 'omega3p', _OMEGA3P_SILENT)
     with pytest.raises(ValueError, match='no Omega3P eigenmode results'):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = state.read_state(workdir)
@@ -143,7 +143,8 @@ def test_a_failing_acdtool_binary_is_recorded_failed(staged, monkeypatch):
     monkeypatch.setenv('FAKE_ACDTOOL_FAIL', '1')
     with pytest.raises(ToolExitError,
                        match='acdtool postprocess transwake exited with status 1'):
-        modes.parameter_sweep(_transwake_workflow(staged, [100.0]))
+        modes.parameter_sweep(_transwake_workflow(staged, [100.0]),
+                              on_error='raise')
     recorded = _recorded(str(staged / 'wd') + '_0')
     assert {name: e['status'] for name, e in recorded.items()} == {
         'cubit': 'complete', 't3p': 'complete', 'transwake': 'failed'}

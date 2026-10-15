@@ -1,7 +1,7 @@
 # Failure Mitigation — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). Phases 1, 2 and 3 done 2026-10-15.
+(0.7.1). Phases 1, 2, 3 and 4 done 2026-10-15.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -305,6 +305,12 @@ use `workdir_mode: manual` in one directory), and a warning is the same shape
   mapping.
 - **D4 (Phase 4).** Exit code under `on_error: continue` with failures: 1
   (recommended) or 0 with the `status` column as the only signal.
+  **Resolved (Phase 4): the user chose the default `skip` and exit 1 only when
+  every point failed.** A single bad parameter value must not fail the batch
+  job; a run with no successes is almost always a configuration problem.
+  Decision 7 is reversed by the user: `on_error` defaults to `skip`, and
+  configuration errors (including missing input files) are raised before the
+  first point.
 - **D5 (Phase 5).** Warn (recommended) vs. refuse on an existing manifest.
 - **D6 (deferred).** Expose `xopt: {strict: false}`. Needs a probe of each
   shipped generator (`NelderMead`, `ExpectedImprovement`, `UCB`, the
@@ -551,17 +557,61 @@ occur, so a `continue` run's columns are stable whether or not anything
 failed). `run_mode` returns the frame and a `failed` count;
 `run_lume_ace3p` exits 1 when it is nonzero.
 
+**As built** (the user changed the design: `on_error: skip | raise`, default
+`skip`; see D4). `modes.on_error_of` validates the value in `run_mode` and
+`collect_training_data`, before anything runs. `modes._run_point` wraps one
+point of `single` / `parameter_sweep`. Under `skip`, it prints `Error: point i
+(axis=value) failed in <workdir>` and the error to stderr, adding a traceback
+only for an exception that is not `RuntimeError` / `ValueError` / `OSError`.
+It then returns a `_PointResult` with NaN outputs and `status='failed'`.
+`KeyboardInterrupt` is not caught. After the loop, a summary line lists the
+failed indices. `_assemble` adds `results.STATUS_COLUMN` (`'status'`) **only
+when a point failed**, so a clean run's columns, and every baseline, are
+unchanged. A failed long-format point is one row with a NaN index cell.
+`run_lume_ace3p.main` exits 1 when the returned frame's `status` is `failed`
+on every row.
+
+Before the first point, `Workflow.check_files()` (called through
+`modes._check_files`; skipped under dry-run) raises `WorkflowValidationError`
+listing every missing `Module.required_files()`: `input_files()` plus a
+solver's `files:`. A mistyped path would otherwise fail every point under
+`skip`. A source module's `file:` and Geant4 geometry are not checked, because
+the run falls back to the copy already in the workdir, or skips them.
+
+`collect_training_data`: under `skip` a failed sample gets no `field.npz` and
+`status: failed`. The status column is written only when a sample failed.
+`surrogate_data.load_training_store` drops `failed` rows. The next run retries
+them, since the `field.npz` check already decides what is done. The
+mid-campaign scoring-mesh check still raises.
+
+Eight Phase 1–3 tests that expect the exception to reach the caller now pass
+`on_error='raise'`. Tests: `tests/test_on_error.py`. Full suite on milano (job
+40913554, sdfmilan181, EL 8.10, 2026-10-15): 1045 passed, 2 skipped, baseline
+self-check green.
+
+**Beyond the plan:** `baseline_utils._stage_example` never removed its temp
+copies (~0.5 GB each). About 500 of them had filled iana's 300 GB `/lscratch`.
+It now records each root, and a session fixture in `tests/conftest.py` removes
+them.
+
 ### Verification (Phase 4 done when)
 
-- [ ] Default path: no `status` column, exception propagates, no table —
-  byte-identical to today; every frozen baseline unchanged.
-- [ ] `continue`, fake `omega3p` failing at point 1 of 3 → table written
-  with three rows, row 1 NaN + `failed`, exit code 1, one printed line.
-- [ ] `continue` then `resume: true` → only point 1 re-runs; table has no
-  NaN; exit 0.
-- [ ] Long-format (S3P) `continue`: the failed point is one row with NaN
-  index label and outputs.
-- [ ] `on_error: skip` (typo) → `ValueError` naming the two values.
+- [x] Default path with no failure: no `status` column; every frozen baseline
+  unchanged.
+- [x] `skip`, fake `cubit` failing at point 1 of 3 → three rows, row 1 NaN +
+  `failed`, exit 0, `Error:` line naming the point and workdir; every point
+  failing → exit 1, table still written.
+- [x] `skip` then `resume: true` → only point 1 re-runs; no NaN, no `status`
+  column.
+- [x] Long-format (S3P): the failed point is one row with NaN index and
+  outputs.
+- [x] `on_error: raise` → exception propagates, no table, later points not
+  started.
+- [x] `on_error: continue` (typo) → `ValueError` naming the two values.
+- [x] A missing solver input or `files:` entry → `WorkflowValidationError`
+  before any workdir is created.
+- [x] `collect_training_data`: a failed sample is marked, excluded from the
+  store, and retried on the next run.
 
 # Phase 5 — Existing-workdir notice, docs, changelog, release
 

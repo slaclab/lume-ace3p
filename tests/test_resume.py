@@ -420,7 +420,8 @@ def test_a_fixed_step_is_the_only_one_re_run(staged, monkeypatch):
 
     monkeypatch.setattr(AcdtoolModule, 'run', boom)
     with pytest.raises(RuntimeError, match='aborted'):
-        modes.parameter_sweep(_transwake_workflow(staged, [100.0]))
+        modes.parameter_sweep(_transwake_workflow(staged, [100.0]),
+                              on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = {e['name']: e['status']

@@ -536,6 +536,15 @@ class Module:
         paths are in the module's config, which the hash covers anyway."""
         return []
 
+    def required_files(self):
+        """The files whose absence fails every point: :meth:`input_files`, and
+        a solver's ``files:``. Checked once, before the first point, by
+        :meth:`Workflow.check_files`, so a mistyped path stops the run rather
+        than failing each point of it under ``on_error: skip``. A source
+        module's ``file:`` and Geant4 geometry are not listed: a missing one
+        falls back to the copy already in the workdir, or is skipped."""
+        return [path for path in self.input_files() if path]
+
     def module_hash(self, inputs, hashes):
         """This module's ``'sha256:...'`` for the input point ``inputs`` (a
         materialized :class:`WorkflowInputs`), given ``hashes`` — ``{module
@@ -904,6 +913,9 @@ class _SolverModule(Module):
 
     def input_files(self):
         return [self.input_file]
+
+    def required_files(self):
+        return super().required_files() + self.files
 
     def run(self, ctx, skip_execution=False):
         if self.upstream(ctx, self._input_artifact)[1] is None:

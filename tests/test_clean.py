@@ -52,7 +52,7 @@ def test_a_crashed_cubit_leaves_no_earlier_mesh_behind(staged):
     wf = _workflow(staged, [250.0])        # rewrites the fakes, so first
     _replace_binary(staged, 'cubit', _CUBIT_CRASH)
     with pytest.raises(ToolExitError):
-        modes.parameter_sweep(wf)
+        modes.parameter_sweep(wf, on_error='raise')
     assert _recorded(workdir)['cubit']['status'] == 'failed'
     assert not os.path.exists(mesh)
 
