@@ -114,6 +114,18 @@ _TIMING_COLUMNS = {'xopt_runtime', 'xopt_error'}
 _FLOAT_RE = re.compile(r'[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?')
 
 
+# Every temp root _stage_example has created in this process. Each holds a copy of
+# examples/assets/ (~0.5 GB with the run's outputs), so tests/conftest.py removes
+# them at the end of the session rather than leaving them in $TMPDIR.
+STAGED_ROOTS = []
+
+
+def remove_staged():
+    """Remove every temp root :func:`_stage_example` created in this process."""
+    while STAGED_ROOTS:
+        shutil.rmtree(STAGED_ROOTS.pop(), ignore_errors=True)
+
+
 def _stage_example(example_dir):
     """Copy an example's input files into a fresh temp dir and return its path.
 
@@ -124,6 +136,7 @@ def _stage_example(example_dir):
     rely on. Only regular files are copied (examples have no other subdirs)."""
     src = os.path.join(EXAMPLES_DIR, example_dir)
     root = tempfile.mkdtemp(prefix='baseline_')
+    STAGED_ROOTS.append(root)
     tmp = os.path.join(root, os.path.basename(example_dir))
     os.mkdir(tmp)
     for name in os.listdir(src):

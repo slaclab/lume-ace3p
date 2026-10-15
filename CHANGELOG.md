@@ -7,14 +7,87 @@ All notable changes to `lume-ace3p` are recorded here. The format follows
 Releases before 0.4.0 are reconstructed from git history and are summarized at a
 coarser grain than the entries above them.
 
-## [Unreleased]
+## [0.8.0] — 2026-10-15
+
+### Added
+
+- `mode: {on_error: skip | raise}` for `single`, `parameter_sweep` and
+  `collect_training_data`. Before the first point, the run checks that every
+  journal, solver input, `.rfpost`, Geant4 input and `files:` entry exists, and
+  a missing one is an error.
+- A run without `resume` over per-point workdirs that already hold manifests
+  prints how many there are and that `resume: true` would reuse them.
+
+### Changed
+
+- ⚠️ **A failed point no longer ends the run.** With the default
+  `on_error: skip`, a point that fails gets a row of NaN outputs, its error
+  and workdir go to stderr, and the run goes on to the next point. If any point
+  failed, the table gains a `status` column (`complete` / `failed`); a run with
+  no failures keeps its columns. `resume: true` re-runs only the failed points.
+  `run-lume-ace3p` exits 1 only when every point failed. `on_error: raise`
+  restores the old behavior: the first failure ends the run and no table is
+  written. In `collect_training_data` a failed sample has no field, and
+  `load_training_store` leaves it out.
+
+- ⚠️ **A nonzero exit status is a failure.** Cubit, `acdtool meshconvert`, the
+  ACE3P solvers, `acdtool` and the Geant4 application raise `ToolExitError`
+  (from `lume_ace3p.logs`) naming the status, the command and the log, and the
+  manifest records that module `failed`. Before, the status was ignored, and a
+  crashed Cubit could leave an earlier run's mesh for the solver to read.
+  On S3DF, every tool was checked to exit 0 after a successful run.
+- A Cubit run that exits cleanly but writes no mesh fails, naming the path the
+  journal exports.
+- A point whose modules all completed but whose outputs could not be extracted
+  records a top-level `error` on its manifest, and `--status` reports it
+  `failed`.
+- ⚠️ **A module removes its own previous output before it runs.** Before a
+  step runs its tool (not resumed, not a dry run), it deletes what that tool
+  writes: Cubit's exported mesh and its `.ncdf`, a solver's results directory,
+  an acdtool command's output file, the field-emission particle file, and
+  Geant4's scoring files. Nothing else is touched, including logs, the
+  manifest, inputs, other modules' files, and anything outside the workdir. A
+  step that crashes or writes nothing no longer leaves an earlier run's output
+  to be read as this one's. `postprocess transwake` and the other commands that
+  rewrite their producer's file remove nothing.
+
+- ⚠️ **`resume` decides per module, not per point.** Each manifest module entry
+  records a `hash`. It covers the module's entry (except `tasks`, `cores`,
+  `opts` and their `ace3p_` / `geant4_` spellings), the inputs it reads, the
+  contents of its input file (journal, solver input, `.rfpost`, Geant4 input)
+  and its upstream modules' hashes. A resume reuses a module while its hash
+  matches, so a change re-runs only what depends on it. Resizing a solver
+  re-runs nothing, editing a solver input re-runs the solver but not Cubit,
+  and changing `output_parameters` launches nothing. A Cubit-only sweep
+  followed by the full workflow reuses every mesh. Before, any YAML change
+  re-ran the whole point. `config_hash` is unchanged, and a manifest written
+  by 0.7.x still resumes by it.
+- `--status` reports a point whose early modules are reusable as `partial`,
+  with `next` naming the first module that would re-run, and `stale` only when
+  that is the first module.
 
 ### Fixed
+
+- Editing an input file's contents (a journal, a solver input) with the YAML
+  unchanged was invisible to `resume`, which returned the old results. Data
+  files (`files:`, a supplied mesh or dump, Geant4 geometry) are still
+  compared by path only.
+- A re-run over an existing workdir read stale copies of its inputs. The cases
+  were a `files:` entry, a `mesh:` / `track3p_source:` / `particle_source:`
+  file and Geant4 geometry files under `stage_mode: copy`, plus an acdtool
+  `.rfpost` and a Geant4 input file in every mode. Edits to the source were
+  ignored. A fresh run now re-stages them. A resumed step keeps the copy its
+  outputs were made from.
 
 - `scripts/tag_release.sh` could report a missing changelog section that was
   present: under `set -o pipefail`, `grep -q` exiting at the first match made
   `git show` fail with SIGPIPE. The release scripts no longer end a pipeline
   early.
+- `scripts/deploy_release.sh` left a deploy readable by its group only when
+  files predated the deploy or came from a stricter umask, as on Perlmutter.
+  It now sets the clone and environment to `2755` directories and `644`/`755`
+  files (`2775`/`664` when the clone is group-writable), and warns if a parent
+  directory blocks other users.
 
 ## [0.7.1] — 2026-10-12
 

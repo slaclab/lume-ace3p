@@ -38,6 +38,11 @@ import numpy as np
 # (e.g. Geant4 voxel grids); absent for the S3P long-format table.
 FIELD_ARTIFACT_COLUMN = 'field_artifact'
 
+# Column a table mode adds when at least one of its points failed under
+# ``mode: {on_error: skip}``: ``complete`` or ``failed`` per row. Absent when
+# every point completed, so a clean run's table keeps its columns.
+STATUS_COLUMN = 'status'
+
 
 # --------------------------------------------------------------------------- #
 # The single shared result-table writer.

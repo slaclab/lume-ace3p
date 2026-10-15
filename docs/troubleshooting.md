@@ -116,6 +116,11 @@ Verify that the journal works at the extremal values of every parameter, e.g.
 at both `input_1 = 20` *and* `input_1 = 80` when sweeping `input_1` from 20 to
 80 (assuming the deformation is smooth and continuous between them).
 
+A point that fails does not stop the sweep: its row is NaN, the table's
+`status` column says `failed`, and stderr names the point, its workdir and the
+error. The step's `<module>.log` in that workdir has the tool's own output. See
+[](#on-error).
+
 ### Can I restart a parameter sweep if the job failed mid-sweep?
 
 Yes. Add `resume: True` to the `mode:` block, set
@@ -126,16 +131,27 @@ normally. The result table is identical to an uninterrupted run. See
 [](#resuming-a-sweep) for the per-point rules; `run-lume-ace3p --status
 <config.yaml>` shows what is already done before re-running.
 
-:::{important}
-The result table (`mode.output_file`) is written once, when the sweep completes,
-so a job that failed mid-sweep leaves no table for the rows it finished. Resume
-rather than combining partial tables: the resumed run rebuilds the *whole* table,
-earlier rows included, from the results already in the per-point workdirs.
+A sweep in which some points failed still writes its table, with NaN rows
+for the failed points; resuming re-runs only those. A job killed by the wall
+clock writes no table, so resume it rather than combining partial tables: the
+resumed run rebuilds the whole table from the per-point workdirs. `resume`
+cannot be used with `workdir_mode: manual`.
 
-`resume` must be opted into and cannot be used with `workdir_mode: manual`, where
-every point shares one directory and so has no state of its own. Without it, the
-workaround is to adjust the swept range in `input_parameters`: sweeping `input_1`
-from 20 to 80 in steps of 10, if the job fails at `input_1 = 50`, edit that
-leaf's range to start at 50 and give the restart a different `output_file` to
-combine afterward.
-:::
+### A step exited nonzero
+
+The error names the tool, its exit status, the command line and the log, e.g.
+
+```text
+ToolExitError: omega3p exited with status 255 (command: srun -n 16 -c 4 omega3p
+cavity.omega3p); either the launcher refused the step or the solver crashed —
+check lume-ace3p_workdir_3/omega3p.log (...)
+```
+
+The log in that workdir holds the tool's own output, and the cause is there. A
+step that `srun` refused (for example "More processors requested than
+permitted") shows only `srun`'s message. An
+exit status of 127 means the binary or a library it links was not found (on
+S3DF, an ACE3P binary on an EL9 node; request `--constraint=OS_VER:8.10`).
+Any nonzero status is a failure, even if the tool wrote output first, and the
+step's previous output is removed before it runs, so a crashed step never
+leaves an earlier run's results to be read as its own.

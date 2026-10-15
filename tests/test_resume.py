@@ -406,12 +406,11 @@ def test_a_fixed_step_is_the_only_one_re_run(staged, monkeypatch):
     ``plans/acdtool_rework_plan.md``, reintroduced by resume. It reports twice the
     value instead, which only the acdtool step produces.
 
-    The failure is *injected* rather than driven by a nonzero exit status because
-    the ACE3P wrappers deliberately do not raise on one (see
-    ``lume_ace3p.logs.run_logged``): a fake binary exiting 1 would be recorded
-    ``complete``, which is a pre-existing property of the wrappers and not
-    something resume changes. What is simulated here is a step that aborts — a
-    mangled command line, an OSError launching it, a parser that finds nothing."""
+    The failure is *injected* by monkeypatch, so it stands for any step that
+    aborts — a mangled command line, an OSError launching it, a parser that finds
+    nothing. A fake binary exiting 1 would serve as well: every wrapper raises
+    :class:`lume_ace3p.logs.ToolExitError` on a nonzero exit, so the step would be
+    recorded ``failed`` the same way (``tests/test_tool_failures.py`` pins that)."""
     from lume_ace3p.modules import AcdtoolModule
 
     real_run = AcdtoolModule.run
@@ -421,7 +420,8 @@ def test_a_fixed_step_is_the_only_one_re_run(staged, monkeypatch):
 
     monkeypatch.setattr(AcdtoolModule, 'run', boom)
     with pytest.raises(RuntimeError, match='aborted'):
-        modes.parameter_sweep(_transwake_workflow(staged, [100.0]))
+        modes.parameter_sweep(_transwake_workflow(staged, [100.0]),
+                              on_error='raise')
 
     workdir = str(staged / 'wd') + '_0'
     recorded = {e['name']: e['status']
@@ -589,11 +589,11 @@ def test_run_mode_passes_resume_through(tmp_path):
 
 
 @posix_only
-def test_a_changed_configuration_re_runs_the_point_and_says_so(staged, capsys):
-    """A workdir written for a different resolved configuration is not this point's
-    work, however much its name matches. ``config_hash`` catches it, the point runs
-    from the start, and the reason is printed — the user asked to resume and is
-    entitled to know why nothing was reused."""
+def test_a_changed_module_config_re_runs_that_module_and_says_so(staged, capsys):
+    """A module whose entry changed is not this point's work, however much its
+    workdir name matches. Its module hash catches it, it re-runs, and the reason
+    is printed — the user asked to resume and is entitled to know why it was not
+    reused. The mesh did not depend on the change, so Cubit is reused."""
     modes.parameter_sweep(_workflow(staged, [100.0]))
     workdir = str(staged / 'wd') + '_0'
     assert _invocations(workdir, 'omega3p') == 1
@@ -608,8 +608,9 @@ def test_a_changed_configuration_re_runs_the_point_and_says_so(staged, capsys):
     df = modes.parameter_sweep(changed, resume=True)
 
     printed = capsys.readouterr().out
-    assert 'different configuration' in printed and 'config_hash' in printed
+    assert "'omega3p' re-runs" in printed and 'changed' in printed
     assert _invocations(workdir, 'omega3p') == 2
+    assert _invocations(workdir, 'cubit') == 1
     assert df['f0'].tolist() == [100.0]
     assert os.path.isfile(os.path.join(workdir, 'elsewhere', 'omega3p.out'))
 
@@ -728,8 +729,11 @@ def test_status_reports_the_per_point_counts(staged, capsys):
     modes.parameter_sweep(_workflow(staged, radii[:3]))
     workdirs = [str(staged / 'wd') + f'_{i}' for i in range(5)]
 
-    # Point 1: recorded for another configuration. Point 2: its solve failed.
-    _tamper(workdirs[1], config_hash='sha256:something-else')
+    # Point 1: its first module recorded for another configuration. Point 2: its
+    # solve failed.
+    stale = state.read_state(workdirs[1])['modules']
+    stale[0]['hash'] = 'sha256:something-else'
+    _tamper(workdirs[1], modules=stale)
     _tamper(workdirs[2], modules=[
         {'name': 'cubit', 'type': 'cubit', 'status': 'complete'},
         {'name': 'omega3p', 'type': 'omega3p', 'status': 'failed',

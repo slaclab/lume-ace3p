@@ -125,6 +125,7 @@ Additional `mode:` keys:
 | `sweep_output_file` | `gp_parameter_sweep`                | `'sweep_output.txt'` | Path for the GP posterior-mean sweep table. |
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
 | `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
+| `on_error`          | `single`, `parameter_sweep`, `collect_training_data` | `'skip'` | What a point that fails does to the run: `skip` records it and goes on, `raise` ends the run. See [](#on-error). |
 
 The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
 can be swept or optimized, since the objective is an `output_parameters` name.
@@ -255,10 +256,11 @@ is always written (there is no YAML key); `resume` and `--status` read it back.
   "updated": "2026-08-24T14:07:56",
   "modules": [
     {"name": "cubit",   "type": "cubit",   "status": "complete",
-     "artifacts": {"mesh": "pillbox-rtop4.gen"}},
+     "hash": "sha256:9c04…", "artifacts": {"mesh": "pillbox-rtop4.gen"}},
     {"name": "omega3p", "type": "omega3p", "status": "complete",
-     "job_name": "omega3p_results"},
+     "hash": "sha256:5be2…", "job_name": "omega3p_results"},
     {"name": "acdtool", "type": "acdtool", "status": "failed",
+     "hash": "sha256:e71d…",
      "error": "ValueError: acdtool reported no 'RoverQ' section."}
   ],
   "outputs": {"R/Q": 108.4, "Mode_freq": 1313756106.86}
@@ -267,11 +269,31 @@ is always written (there is no YAML key); `resume` and `--status` read it back.
 
 It is updated after each module, so a half-finished run's file says how far it
 got. Modules are listed in the order they ran; one that never started is absent,
-which is distinct from `"failed"`. `config_hash` covers the module entries, the
-materialized input point, the `output_parameters` spec and, when declared, the
-[`derived_parameters`](#derived_parameters) block. It does not cover
-`paths`, `dry_run`, `workdir`, or comments, so a workdir stays recognizable on a
-different machine and reformatting a config does not invalidate a campaign.
+which is distinct from `"failed"`. A top-level `"error"` means every module
+completed but the outputs could not be extracted (a solver that exited cleanly
+and wrote no results); `--status` reports such a point `failed` with nothing
+left to run. `config_hash` identifies the point: it covers the module entries,
+the materialized input point, the `output_parameters` spec and, when declared,
+the [`derived_parameters`](#derived_parameters) block.
+
+Each module's `hash` is what [`resume`](#resume) checks. It covers:
+
+- the module's entry, except `tasks`, `cores` and `opts` (and their `ace3p_` /
+  `geant4_threads` / `geant4_opts` spellings),
+- the inputs it reads: `cubit:` for Cubit, `ace3p:` for a solver, `geant4:`
+  and `particles:` for Geant4, `particles:` (and legacy β under `cubit:`) for
+  `field_emission`, each with the module's own scoped block,
+- the contents of its input file: the journal, the solver input, the
+  `.rfpost`, the Geant4 input,
+- the hash of each upstream module it reads from.
+
+Data files (a `mesh:` / `track3p_source:` / `particle_source:` file, a
+solver's `files:`, Geant4 geometry) are covered by path, not contents. Edit one
+in place and resume does not notice.
+
+Neither hash covers `paths`, `dry_run`, `workdir`, or comments, so a workdir
+stays recognizable on a different machine and reformatting a config does not
+invalidate a campaign.
 
 Artifact paths are relative to the workdir. A solver's `job_name` is the results
 directory it resolved (see [](#omega3p-module)). A module whose external tool was
@@ -302,10 +324,25 @@ Per point:
 | Manifest state | What happens |
 |---|---|
 | absent | The point runs normally. |
-| `config_hash` differs | The point runs from the start and the mismatch is printed: that workdir was written for a different configuration. |
-| every module `complete`, outputs present | No external tool runs. Every module re-reads its existing output and the row is rebuilt. |
+| every module `complete` under its current `hash`, outputs present | No external tool runs. Every module re-reads its existing output and the row is rebuilt. |
 | partial, or some module `failed` | Execution restarts at the first module that is not `complete`; the ones before it re-read their output. |
+| a module's `hash` differs | A line names the module, then execution restarts there: its entry, its inputs, its input file or an upstream module changed. |
 | `complete` but an output is missing | A warning names the module and what is gone, then execution restarts there. |
+| no module hashes (written by 0.7.x) | Reused only if `config_hash` matches; otherwise the point runs from the start and the mismatch is printed. |
+
+So a change re-runs only the modules that depend on it. Changing `tasks:` on a
+solver re-runs nothing, editing the solver input re-runs the solver and not
+Cubit, and changing only `output_parameters` launches nothing.
+
+**Staging a campaign.** A campaign can be built up in steps on one set of
+workdirs. Run a copy of the config whose `workflow:` lists only the `cubit`
+step, inspect the meshes, then run the full config with `resume: true`. Each
+mesh is reused and only the solvers run. The same works for adding a
+post-processing step to a finished sweep.
+
+A run without `resume` over workdirs that already hold manifests prints a
+line saying how many there are. It then runs every point from the start,
+replacing each module's previous output.
 
 Two consequences:
 
@@ -322,18 +359,57 @@ Requirements and limits:
 - **`workdir_mode` must not be `manual`.** One shared directory has one manifest,
   describing whichever point ran last. `resume: true` with `manual` is refused,
   naming `indexed` as the fix.
-- **It is opt-in.** `config_hash` guards against adopting a stale workdir from a
-  different study.
+- **It is opt-in.** The module hashes guard against adopting a stale workdir
+  from a different study.
 - **The Xopt modes resume by a different mechanism.** Their points are chosen by the
   generator as the run proceeds, so there is no per-point manifest to key on.
   `resume: true` there restores the optimizer's state instead; see [](#xopt-resume).
 - **`collect_training_data`** skips a sample whose `field.npz` is already stored
   whether or not `resume` is set. `resume: true` additionally lets a sample that
   stopped midway through the chain restart at its first non-complete module.
-- A nonzero exit status from a solver is not by itself recorded as a failure; no
-  ACE3P wrapper raises on one (see [](#capture-output)). Such a run is caught by
-  the missing-output check above, which covers every module that can name its own
-  output.
+- A nonzero exit status from any tool (Cubit, `meshconvert`, a solver,
+  `acdtool`, Geant4) records that module `failed`, with the status and command
+  line in `error`. So does a Cubit run that exits cleanly but writes no mesh.
+
+(on-error)=
+### `on_error` — what a failed point does to the run
+
+```yaml
+mode :
+  type : parameter_sweep
+  on_error : skip                 # the default; 'raise' ends the run instead
+```
+
+Under `skip`, a point that fails does not stop the run. Its outputs are NaN, an
+`Error:` line on stderr names the point, its swept values, its workdir and the
+error, and the next point runs. A parameter value that makes a bad mesh costs
+that row, not the job. When the run ends, a summary line lists the failed
+points, and the table is written with an extra `status` column:
+
+```text
+radius    f0        status
+100.0     1.30e9    complete
+101.0     nan       failed
+102.0     1.28e9    complete
+```
+
+A run in which nothing failed has no `status` column. Each failed point's
+manifest records the module that failed, so fixing the cause and re-running
+with `resume: true` runs only those points (with `workdir_mode: indexed`).
+`run-lume-ace3p` exits 0 when at least one point completed and 1 when every
+point failed, since that usually means the configuration, not a parameter value,
+is wrong.
+
+Under `raise`, the first failed point ends the run and no table is written.
+
+Errors in the configuration itself are raised before the first point whatever
+`on_error` says: an unknown key value, an invalid workflow, and an input file
+that does not exist (a journal, a solver `input:`, a `files:` entry, an
+`.rfpost`, a Geant4 input). The check does not run under dry-run.
+
+In `collect_training_data`, a failed sample is a row with no `field_artifact`
+and `status: failed`. Training leaves it out, and the next collection run
+retries it.
 
 (status)=
 ### `run-lume-ace3p --status` — reading a campaign without running it
@@ -354,9 +430,10 @@ complete, the module a resume would start from, and the workdir. Nothing is
 executed and no manifest is written, so it is safe to run against a campaign that
 is still going.
 
-The verdicts are `complete`, `partial`, `failed`, `stale` (a manifest for a
-different resolved configuration; that point will re-run from the start) and
-`absent`.
+The verdicts are `complete`, `partial`, `failed`, `stale` (the first module
+was recorded for a different configuration, so that point will re-run from the
+start) and `absent`. A point whose mesh is reusable but whose solver is not is
+`partial`, with `next` naming the solver.
 
 `--status` covers every mode `resume` applies to. The table above is for `single`
 and `parameter_sweep`. An optimization has no fixed set of points, so it reports
@@ -1253,8 +1330,9 @@ the end of the first point.
 **Hashing.** The block is part of the [`config_hash`](#run-manifest)
 and the optimization campaign hash: its constants, its expression texts, and the
 source text of each `python:` callable. Retargeting `f_target`, or editing the
-function, makes a different campaign, and `resume` re-runs it instead of
-continuing. A config without the block (or with an empty one) hashes exactly as
+function, makes a different optimization campaign, and `resume` starts it over
+instead of continuing. In a sweep, no module hash covers it, so a resumed point
+re-computes the derived values and launches nothing. A config without the block (or with an empty one) hashes exactly as
 it did before the block existed.
 
 (ace3p_input_parameters)=

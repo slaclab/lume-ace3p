@@ -4,7 +4,7 @@ import numpy as np
 
 from lume.base import CommandWrapper
 
-from lume_ace3p.logs import run_logged
+from lume_ace3p.logs import check_exit, run_logged
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +195,8 @@ class Geant4(CommandWrapper):
         cmd = (self.MPI_CALLER + ' -n 1 -c ' + str(self.geant4_threads) + ' '
                + self.geant4_opts + ' '
                + exe + ' ' + self.input_file)
-        run_logged(cmd, cwd=self.workdir, log_file=self.log_file)
+        check_exit('geant4', run_logged(cmd, cwd=self.workdir,
+                                        log_file=self.log_file), self.log_file)
 
     def configure(self):
         return 'Not implemented.'

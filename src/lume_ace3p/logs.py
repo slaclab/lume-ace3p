@@ -62,9 +62,10 @@ def run_logged(command, cwd=None, log_file=None, tee=True):
     ``$ <command>`` header line so a multi-invocation log stays readable.
 
     Returns the :class:`subprocess.CompletedProcess`. The exit status is
-    deliberately **not** checked, matching the wrappers' long-standing behavior:
-    an ACE3P failure surfaces when the output parser finds no results, and the
-    tool's own message is by then in the log *and* on the terminal.
+    reported, **not** checked: this function only runs and records. Judging the
+    status is the caller's job, since the caller knows what it ran — each wrapper
+    raises :class:`ToolExitError` on a nonzero status (see
+    :func:`check_exit`).
     """
     if not log_file:
         return subprocess.run(command, shell=True, cwd=cwd)
@@ -92,6 +93,39 @@ def run_logged(command, cwd=None, log_file=None, tee=True):
         for pump in pumps:
             pump.join()
     return subprocess.CompletedProcess(command, returncode)
+
+
+class ToolExitError(RuntimeError):
+    """An external tool exited with a nonzero status.
+
+    Raised by the wrappers rather than by :func:`run_logged`, so the message can
+    say what the step was. ``command``, ``returncode`` and ``log_file`` are kept
+    as attributes for a caller that wants more than the message."""
+
+    def __init__(self, message, command=None, returncode=None, log_file=None):
+        super().__init__(message)
+        self.command = command
+        self.returncode = returncode
+        self.log_file = log_file
+
+
+def exit_message(tool, completed, log_file=None):
+    """The one-line description of a nonzero exit that :class:`ToolExitError`
+    carries: the tool, its status, its command line, and where to look."""
+    return (f"{tool} exited with status {completed.returncode} (command: "
+            f"{str(completed.args).strip()}) — check "
+            f"{log_file or 'its output above'}.")
+
+
+def check_exit(tool, completed, log_file=None):
+    """Raise :class:`ToolExitError` when ``completed`` (what :func:`run_logged`
+    returned) exited nonzero; return it otherwise."""
+    if completed.returncode:
+        raise ToolExitError(exit_message(tool, completed, log_file),
+                            command=completed.args,
+                            returncode=completed.returncode,
+                            log_file=log_file)
+    return completed
 
 
 def _pump(stream, log, lock, sink):

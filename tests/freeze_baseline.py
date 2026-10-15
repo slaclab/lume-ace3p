@@ -60,6 +60,7 @@ def main():
         freeze_one(name, meta)
     # Record the intentionally-unfrozen examples alongside the fixtures.
     bu.dump_json(os.path.join(bu.BASELINE_DIR, 'not_frozen.json'), bu.NOT_FROZEN)
+    bu.remove_staged()
     print('Done. Also wrote not_frozen.json (coverage gaps, with reasons).')
 
 

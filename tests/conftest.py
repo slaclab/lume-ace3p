@@ -28,3 +28,13 @@ def _single_threaded_blas():
     """
     with threadpool_limits(limits=1):
         yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _remove_staged_examples():
+    """Remove the example copies ``baseline_utils._stage_example`` makes in
+    ``$TMPDIR`` (each ~0.5 GB), which pytest's own ``tmp_path`` cleanup does not
+    know about. Left behind, a few dozen suite runs filled a 300 GB ``/lscratch``."""
+    yield
+    import baseline_utils
+    baseline_utils.remove_staged()

@@ -1,12 +1,12 @@
 import glob
-import os, re, shutil, sys
+import os, re, shutil
 import warnings
 
 import numpy as np
 
 from lume.base import CommandWrapper
 
-from lume_ace3p.logs import run_logged
+from lume_ace3p.logs import ToolExitError, run_logged
 
 
 class Section:
@@ -375,18 +375,21 @@ class ACE3P(CommandWrapper):
                                log_file=self.log_file)
         self.returncode = completed.returncode
         if self.returncode:
-            # Not raised, matching the wrappers' long-standing behavior (see
-            # :func:`lume_ace3p.logs.run_logged`), but said out loud: when the
-            # launcher itself refuses the step (e.g. srun's "More processors
-            # requested than permitted"), the solver never ran and the "no
-            # results" error that follows would otherwise blame the input file.
-            print(self.exit_status_note(), file=sys.stderr)
+            # Raised before the parser runs: a solver that crashed after writing
+            # some output must not have that output accepted, and one that
+            # never ran (srun's "More processors requested than permitted")
+            # must not be reported as an input file lacking results.
+            raise ToolExitError(self.exit_status_note(),
+                                command=completed.args,
+                                returncode=self.returncode,
+                                log_file=self.log_file)
         self.output_parser()
 
     def exit_status_note(self):
         """One line describing a nonzero solver exit status, or ``''`` when
-        the last :meth:`run` exited cleanly (or has not run). Appended to the
-        "no results" errors so a launch failure is named as the cause."""
+        the last :meth:`run` exited cleanly (or has not run). The message of
+        the :class:`~lume_ace3p.logs.ToolExitError` :meth:`run` raises, and
+        appended to the "no results" errors."""
         code = getattr(self, 'returncode', 0)
         if not code:
             return ''

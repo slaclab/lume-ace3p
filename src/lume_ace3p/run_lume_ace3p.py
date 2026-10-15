@@ -1,9 +1,13 @@
 import os
 import sys
 
+import pandas as pd
+
 from lume_ace3p import __version__
 from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.inputs import TOP_LEVEL_KEYS, load_yaml
+from lume_ace3p.results import STATUS_COLUMN
+from lume_ace3p.state import FAILED
 from lume_ace3p.workflow_graph import Workflow
 from lume_ace3p.modes import (
     is_store_consuming, mode_type_of, run_mode, status, xopt_status,
@@ -87,6 +91,16 @@ def _report_status(lume_ace3p_data, config_dir=None):
             "all, and collect_training_data records its progress as the samples "
             "already in its store.")
     return status(Workflow.from_config(lume_ace3p_data, config_dir=config_dir))
+
+
+def _all_failed(result):
+    """Whether a table mode's result has rows and every one of them failed.
+
+    That is the run whose exit status is 1 under ``on_error: skip``: some points
+    failing is what the option is for, but none succeeding usually means the
+    configuration, not a parameter value, is wrong."""
+    return (isinstance(result, pd.DataFrame) and STATUS_COLUMN in result.columns
+            and len(result) > 0 and bool((result[STATUS_COLUMN] == FAILED).all()))
 
 
 def _is_legacy_format(lume_ace3p_data):
@@ -191,7 +205,7 @@ def main():
         return
 
     try:
-        _run_declarative(lume_ace3p_data, config_dir)
+        result = _run_declarative(lume_ace3p_data, config_dir)
     except ValueError as exc:
         # A configuration error — an unsupported generator, no termination criterion,
         # a missing 'bin_edges' for an MC-noisy objective, an unvalidatable workflow
@@ -203,6 +217,8 @@ def main():
         # bug should still produce a traceback. Flattening those into one line would
         # trade the diagnosis for tidiness.
         print(f'Error: {exc}')
+        sys.exit(1)
+    if _all_failed(result):
         sys.exit(1)
 
 

@@ -41,7 +41,30 @@ structural rather than a filter that can rot:
 * YAML comments and key order: the hash is taken over parsed values, so
   reformatting a config does not invalidate a campaign.
 
-A changed hash means the point must be re-run, and a resume says so by name.
+``config_hash`` identifies the point. What a resume reuses is decided per module
+by the module ``hash`` beside each entry.
+
+Per-module hashes
+-----------------
+Each module entry records ``hash`` (:func:`module_hash`), over:
+
+1. the module's entry (type + config mapping) without its launch keys —
+   ``tasks`` / ``cores`` / ``opts`` and the like, which size the run but do not
+   change its answer,
+2. the input buckets the module reads (``cubit`` for Cubit, ``ace3p`` for a
+   solver, ...), with its own scoped block laid over them,
+3. the contents of its input files — the journal, a solver's input deck, the
+   ``.rfpost``, the Geant4 input. Data files (a supplied mesh or Track3P dump, a
+   solver's ``files:``, Geant4 geometry) count by path only: they can be
+   hundreds of MB, and are not hashed,
+4. the hash of each upstream module it reads from.
+
+(4) makes it a chain: a changed journal changes the Cubit hash and with it every
+hash downstream. ``output_parameters`` and ``derived_parameters`` are in no
+module hash, so changing what is extracted re-runs only the parsers.
+
+A manifest without module hashes (written by 0.7.x) resumes by the older rule:
+the whole point is reused only when its ``config_hash`` matches.
 
 The manifest is **not a baseline artifact** — it carries timestamps and absolute
 paths, so ``tests/baseline_utils.py`` excludes it explicitly.
@@ -109,8 +132,9 @@ def record_module(state, module, status, **extra):
     """Record one module's outcome in ``state``.
 
     ``extra`` carries whatever the module produced that is worth writing down —
-    ``artifacts={kind: path}``, ``job_name='omega3p_results'``, ``error=...`` —
-    and empty values are dropped rather than written as nulls.
+    ``artifacts={kind: path}``, ``job_name='omega3p_results'``, ``error=...``,
+    the module ``hash=`` (:func:`module_hash`) — and empty values are dropped
+    rather than written as nulls.
 
     An entry for a module of the same **name** is *replaced*, not appended, so a
     resumed run that re-runs a previously failed step leaves one record of it
@@ -187,34 +211,75 @@ def recorded_output(entry):
     return ', '.join(paths)
 
 
-def point_status(state, config_hash=None, module_names=()):
+def has_module_hashes(state):
+    """Whether ``state`` records per-module hashes — every manifest this version
+    writes does; one written by 0.7.x does not, and resumes by ``config_hash``."""
+    return any('hash' in entry for entry in (state or {}).get('modules') or [])
+
+
+def hash_matches(state, name, current):
+    """Whether the module called ``name`` was recorded with hash ``current``.
+
+    ``True`` when there is nothing to compare — no current hash was given, or
+    the entry predates module hashes (its point was already matched on
+    ``config_hash``)."""
+    recorded = (module_entry(state, name) or {}).get('hash')
+    return current is None or recorded is None or recorded == current
+
+
+def point_status(state, config_hash=None, module_names=(), module_hashes=None):
     """Summarize one point's manifest as ``(verdict, complete, pending)``.
 
-    ``verdict`` is :data:`ABSENT` (nothing recorded), :data:`STALE` (recorded for
-    a different ``config_hash``), :data:`FAILED` (some module recorded a failure),
-    :data:`COMPLETE` (every module of ``module_names`` is complete), or
-    :data:`PARTIAL`. ``complete`` counts the modules of ``module_names`` recorded
-    complete, and ``pending`` names the first that is not — the module a resume
-    would run — or ``None`` when there is none.
+    ``pending`` is the first module of ``module_names`` a resume would run: the
+    first not recorded complete, or recorded under a different module hash than
+    ``module_hashes`` (``{name: hash}`` for the current configuration). ``None``
+    when there is none. ``complete`` counts the modules before it — the ones a
+    resume reuses.
 
-    ``config_hash`` is the hash the *current* configuration produces for this
-    point; pass ``None`` to skip that comparison. This is what
+    ``verdict`` is :data:`ABSENT` (nothing recorded); :data:`STALE` (the first
+    module is recorded complete for a different configuration, so nothing is
+    reused); :data:`FAILED` (some module recorded a failure, or the point
+    recorded an ``error`` and no module would re-run — its modules completed but
+    extracting its outputs did not, and what needs fixing is the configuration or
+    the files); :data:`COMPLETE`; or :data:`PARTIAL`.
+
+    A manifest without module hashes is judged by ``config_hash`` alone, as
+    before module hashes existed: a mismatch is :data:`STALE`. ``config_hash`` is
+    the hash the *current* configuration produces for this point; pass ``None``
+    (and no ``module_hashes``) to skip the comparisons. This is what
     ``run-lume-ace3p --status`` reports and what makes a half-finished campaign
     legible without running anything."""
     names = list(module_names)
     if state is None:
         return ABSENT, 0, (names[0] if names else None)
-    if config_hash is not None and state.get('config_hash') != config_hash:
+    hashed = has_module_hashes(state)
+    if (not hashed and config_hash is not None
+            and state.get('config_hash') != config_hash):
         return STALE, 0, (names[0] if names else None)
-    complete = [name for name in names if is_complete(state, name)]
-    pending = next((name for name in names if not is_complete(state, name)), None)
+    hashes = (module_hashes or {}) if hashed else {}
+
+    def reusable(name):
+        return (is_complete(state, name)
+                and hash_matches(state, name, hashes.get(name)))
+
+    pending = next((name for name in names if not reusable(name)), None)
+    complete = names.index(pending) if pending is not None else len(names)
+    if pending is not None and pending == names[0] and is_complete(state, pending):
+        return STALE, 0, pending
     failed = any(entry.get('status') == FAILED
                  for entry in state.get('modules') or [])
     if failed:
-        return FAILED, len(complete), pending
+        return FAILED, complete, pending
+    if state.get('error') and pending is None:
+        # Extraction failed. Under the same configuration it will again; under
+        # another (an edited output_parameters) a resume re-extracts and
+        # launches nothing.
+        if config_hash is None or state.get('config_hash') == config_hash:
+            return FAILED, complete, None
+        return PARTIAL, complete, None
     if pending is None and names:
-        return COMPLETE, len(complete), None
-    return PARTIAL, len(complete), pending
+        return COMPLETE, complete, None
+    return PARTIAL, complete, pending
 
 
 # --------------------------------------------------------------------------- #
@@ -313,6 +378,51 @@ def campaign_hash(entries, inputs, output_spec, derived=None):
     variable's nominal starting value does not invalidate a campaign, while editing a
     fixed input that the physics depends on does."""
     return config_hash(entries, inputs, output_spec, derived)
+
+
+def module_hash(entry, inputs, files, upstream):
+    """``'sha256:<hex>'`` for one module of a chain — see "Per-module hashes" in
+    the module docstring.
+
+    ``entry`` is the module's type and config mapping with its launch keys
+    already removed, ``inputs`` ``{bucket: value}`` for the buckets it reads,
+    ``files`` ``{path: digest}`` for its input files (:func:`file_digest`), and
+    ``upstream`` ``{kind: hash}`` for the producers it is bound to."""
+    payload = {'entry': _canonical(entry),
+               'inputs': _canonical(inputs),
+               'files': _canonical(files),
+               'upstream': _canonical(upstream)}
+    text = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    return 'sha256:' + hashlib.sha256(text.encode()).hexdigest()
+
+
+# (absolute path, size, mtime_ns) -> digest, so a sweep reads each input file
+# once per process rather than once per point.
+_DIGESTS = {}
+
+
+def file_digest(path):
+    """``'sha256:<hex>'`` of the file's bytes, or ``None`` when it cannot be
+    read (a missing input is run time's error to report, not the hash's).
+
+    Cached on ``(path, size, mtime)``: an edit moves the mtime and is re-read,
+    while the digest itself is over contents, so a ``touch`` or a copy that
+    preserves the bytes does not change it."""
+    try:
+        info = os.stat(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    key = (os.path.abspath(path), info.st_size, info.st_mtime_ns)
+    if key not in _DIGESTS:
+        digest = hashlib.sha256()
+        try:
+            with open(path, 'rb') as file:
+                for block in iter(lambda: file.read(1 << 20), b''):
+                    digest.update(block)
+        except OSError:
+            return None
+        _DIGESTS[key] = 'sha256:' + digest.hexdigest()
+    return _DIGESTS[key]
 
 
 def _canonical(value):

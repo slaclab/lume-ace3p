@@ -54,6 +54,7 @@ from lume_ace3p.acdtool import (
 from lume_ace3p.geant4 import Geant4, read_detector_dose, read_gamma_spectrum
 from lume_ace3p.logs import log_path
 from lume_ace3p.particles import Particles, default_output_name
+from lume_ace3p.state import file_digest, module_hash as _hash_module, relative
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
 
 
@@ -321,7 +322,73 @@ def _link_or_copy(mode, src, dest):
         shutil.copy(src, dest)
 
 
-def _stage_file(ctx, src):
+def _same_file(a, b):
+    """Whether ``a`` and ``b`` are one file (a symlink or hardlink of the other
+    counts); ``False`` when either cannot be stat'ed, a dangling link included."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _unstage(ctx, src):
+    """Remove the workdir copy of input ``src`` (``workdir/basename``) unless it
+    *is* ``src`` — the same file, or a link that already follows it — and return
+    its path.
+
+    What a fresh run does before staging an input, so it reads the current
+    source rather than a copy an earlier run left. Also used by the modules
+    whose wrapper copies its own input file into the workdir only when none is
+    there and then reads that copy (``acdtool``, ``geant4``): the copy is the
+    previous run's *merged* input, not the source."""
+    dest = os.path.join(ctx.workdir, os.path.basename(src))
+    if (os.path.lexists(dest) and os.path.isfile(src)
+            and os.path.abspath(src) != os.path.abspath(dest)
+            and not _same_file(src, dest)):
+        os.remove(dest)
+    return dest
+
+
+def _remove_output(ctx, name):
+    """Remove ``workdir/name`` — a file, a directory tree, or a link (never its
+    target) — if it is there and lies inside the workdir.
+
+    The one place :meth:`Module.clean` deletes anything, so the guard is stated
+    once: ``name`` is joined onto ``ctx.workdir`` here rather than taken as a
+    path, and a name that resolves outside the workdir (``..``, an absolute
+    path, a path through a symlinked directory) or *to* the workdir itself is
+    left alone. A symlink inside the workdir is removed as a link; what it
+    points at is never touched."""
+    if not name or not ctx.workdir:
+        return
+    path = os.path.join(ctx.workdir, name)
+    if not os.path.lexists(path):
+        return
+    root = os.path.realpath(ctx.workdir)
+    parent = os.path.realpath(os.path.dirname(path))
+    if os.path.islink(path):
+        inside = parent == root or relative(parent, root) != parent
+    else:
+        real = os.path.realpath(path)
+        inside = real != root and relative(real, root) != real
+    if not inside:
+        return
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+
+
+def _fresh(ctx, skip_execution):
+    """Whether a module's ``run`` is a fresh one — not resumed and not a dry
+    run — and so should re-stage its inputs (``_stage_file(..., fresh=)``).
+    Dry runs are excluded for the reason :meth:`Module.clean` is not called
+    under one: a dry run over a real workdir changes nothing in it but the
+    marker."""
+    return not skip_execution and not ctx.dry_run
+
+
+def _stage_file(ctx, src, fresh=False):
     """Stage a source file into the workdir (unless already there) and return
     the in-workdir path. Used by the source modules and by any module that
     consumes an externally-supplied file.
@@ -330,6 +397,12 @@ def _stage_file(ctx, src):
     land the file at ``workdir/basename`` so the co-location contract — every
     referenced file resolves as a bare basename under the run's ``cwd`` — is
     identical regardless of mode.
+
+    ``fresh`` is what a module running its tool (not resuming) passes: an
+    existing copy is replaced unless it already follows the source
+    (:func:`_unstage`), so an edited ``files:`` entry or source dump is what the
+    run reads. Without it an existing destination is kept as it is, which is
+    the resumed path — the run that produced the outputs read that copy.
 
     INVARIANT: staged files are treated as read-only. Symlink and hardlink modes
     share bytes with the source, so any in-place write to a staged file would
@@ -341,6 +414,8 @@ def _stage_file(ctx, src):
     dest = os.path.join(ctx.workdir, base)
     if not os.path.isfile(src) or os.path.abspath(src) == os.path.abspath(dest):
         return dest
+    if fresh:
+        _unstage(ctx, src)
     if os.path.lexists(dest):          # real file or a pre-existing/stale symlink
         return dest
     _link_or_copy(ctx.stage_mode, src, dest)
@@ -365,6 +440,14 @@ class Module:
     type = None
     requires = frozenset()
     provides = frozenset()
+    # The WorkflowInputs buckets this module reads, which its module hash covers
+    # (with its own scoped block laid over them). A bucket not listed here can
+    # change without invalidating this module's output.
+    input_buckets = ()
+    # Config keys that size the run without changing its answer (ranks, cores,
+    # launcher options). Left out of the module hash, so a resumed campaign can
+    # be given a different allocation.
+    _launch_keys = frozenset()
 
     def __init__(self, config=None, name=None):
         self.config = dict(config) if config else {}
@@ -427,6 +510,61 @@ class Module:
         again *is* the cheap path and is what re-records its artifact.
         """
         raise NotImplementedError
+
+    def clean(self, ctx):
+        """Remove what this module's tool writes in ``ctx.workdir``, before a
+        run that will write it again — so a tool that crashes, or exits cleanly
+        having written nothing, leaves nothing behind for this point to read as
+        its own.
+
+        :meth:`Workflow.evaluate` calls it before every ``run`` that is neither
+        resumed (``skip_execution``) nor a dry run. It removes this module's
+        outputs and nothing else: not the workdir, not ``<name>.log`` (which
+        appends a ``$`` header per invocation by design), not the manifest, not
+        staged inputs, not another module's files. Every removal goes through
+        :func:`_remove_output`, which builds the path inside the workdir and
+        refuses one that resolves outside it.
+
+        The default removes nothing, which is right for the source modules: they
+        stage inputs and write no output."""
+
+    def input_files(self):
+        """The input files whose *contents* this module's hash covers: the
+        files a user edits to change what the tool computes (a journal, an input
+        deck). Data files — a supplied mesh or dump, a solver's ``files:``,
+        Geant4 geometry — are not listed: they can be hundreds of MB, and their
+        paths are in the module's config, which the hash covers anyway."""
+        return []
+
+    def required_files(self):
+        """The files whose absence fails every point: :meth:`input_files`, and
+        a solver's ``files:``. Checked once, before the first point, by
+        :meth:`Workflow.check_files`, so a mistyped path stops the run rather
+        than failing each point of it under ``on_error: skip``. A source
+        module's ``file:`` and Geant4 geometry are not listed: a missing one
+        falls back to the copy already in the workdir, or is skipped."""
+        return [path for path in self.input_files() if path]
+
+    def module_hash(self, inputs, hashes):
+        """This module's ``'sha256:...'`` for the input point ``inputs`` (a
+        materialized :class:`WorkflowInputs`), given ``hashes`` — ``{module
+        name: hash}`` of the modules before it in the chain.
+
+        Covers the config without :attr:`_launch_keys`, the
+        :attr:`input_buckets` it reads, the contents of :meth:`input_files`, and
+        the hash of each producer it is bound to (:attr:`sources`) — see
+        :func:`lume_ace3p.state.module_hash`. Reads nothing but the input files
+        and launches nothing, so ``--status`` can ask it."""
+        view = inputs.for_module(self.name)
+        entry = {'module': self.type,
+                 **{key: value for key, value in self.config.items()
+                    if key not in self._launch_keys}}
+        buckets = {bucket: getattr(view, bucket) for bucket in self.input_buckets}
+        files = {str(path): file_digest(path) for path in self.input_files()
+                 if path}
+        upstream = {kind: hashes.get(name)
+                    for kind, name in sorted(self.sources.items())}
+        return _hash_module(entry, buckets, files, upstream)
 
     def log_file(self, ctx):
         """Where this module's subprocesses tee their output for the evaluation
@@ -534,7 +672,8 @@ class MeshSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("mesh source module requires a 'file'.")
-        ctx.provide(self, MESH, _stage_file(ctx, src))
+        ctx.provide(self, MESH, _stage_file(ctx, src,
+                                            fresh=_fresh(ctx, skip_execution)))
 
 
 class Track3PSourceModule(_SourceModule):
@@ -554,7 +693,8 @@ class Track3PSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("track3p source module requires a 'file'.")
-        ctx.provide(self, TRACK3P_PARTICLES, _stage_file(ctx, src))
+        ctx.provide(self, TRACK3P_PARTICLES,
+                    _stage_file(ctx, src, fresh=_fresh(ctx, skip_execution)))
 
 
 class ParticleSourceModule(_SourceModule):
@@ -569,7 +709,8 @@ class ParticleSourceModule(_SourceModule):
         src = self.config.get('file')
         if src is None:
             raise ValueError("particle source module requires a 'file'.")
-        ctx.provide(self, PARTICLE_SOURCE, _stage_file(ctx, src))
+        ctx.provide(self, PARTICLE_SOURCE,
+                    _stage_file(ctx, src, fresh=_fresh(ctx, skip_execution)))
 
 
 # --------------------------------------------------------------------------- #
@@ -606,11 +747,15 @@ class CubitModule(Module):
 
     type = 'cubit'
     provides = frozenset({MESH})
+    input_buckets = ('cubit',)
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
         self.journal = self.config.get('journal') or self.config.get('cubit_input')
         self.meshconvert = self.config.get('meshconvert', True)
+
+    def input_files(self):
+        return [self.journal]
 
     def run(self, ctx, skip_execution=False):
         if self.journal is None:
@@ -649,8 +794,33 @@ class CubitModule(Module):
         if mesh is None:
             cubit.get_export()
             mesh = getattr(cubit, 'exportfile', None)
+        if mesh and not os.path.isfile(os.path.join(ctx.workdir, mesh)):
+            # A clean exit does not prove a mesh: a journal whose export line
+            # is wrong (or a geometry command that failed) writes nothing and
+            # still exits 0, and the solver downstream would read whatever
+            # mesh of that name an earlier run left — or none at all.
+            raise RuntimeError(
+                f"cubit exited cleanly but wrote no mesh: the journal exports "
+                f"'{mesh}', and {os.path.join(ctx.workdir, mesh)} does not "
+                f"exist — check {self.log_file(ctx) or 'its output above'}.")
         ctx.provide(self, MESH, (os.path.join(ctx.workdir, mesh) if mesh
                                  else ctx.workdir))
+
+    def clean(self, ctx):
+        """Remove the mesh the journal exports and, when this step converts,
+        the ``<stem>.ncdf`` ``acdtool meshconvert`` writes beside it.
+
+        Both names come from the journal's ``export`` statement — the same read
+        :meth:`verify` makes — so a crashed Cubit cannot leave an earlier run's
+        mesh to be solved as this point's. A journal that names no export has
+        nothing to remove. The ``.ncdf`` is removed only under ``meshconvert``:
+        with it off, a ``.ncdf`` of that stem is not this step's to delete."""
+        mesh = _journal_export(self.journal)
+        if not mesh:
+            return
+        _remove_output(ctx, mesh)
+        if self.meshconvert:
+            _remove_output(ctx, os.path.splitext(mesh)[0] + '.ncdf')
 
     def _mesh_path(self, ctx):
         """The mesh this step exported, named without running Cubit.
@@ -707,6 +877,9 @@ class _SolverModule(Module):
     _wrapper = None
     _label = ''
     _artifact = EM_SOLUTION
+    input_buckets = ('ace3p',)
+    _launch_keys = frozenset({'tasks', 'cores', 'opts',
+                              'ace3p_tasks', 'ace3p_cores', 'ace3p_opts'})
     # The one upstream artifact :meth:`run` insists on. A mesh for the field
     # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
     # its mesh out of the upstream solver's results directory.
@@ -738,6 +911,12 @@ class _SolverModule(Module):
         self.files = [files] if isinstance(files, str) else list(files)
         self._solver = None
 
+    def input_files(self):
+        return [self.input_file]
+
+    def required_files(self):
+        return super().required_files() + self.files
+
     def run(self, ctx, skip_execution=False):
         if self.upstream(ctx, self._input_artifact)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
@@ -748,7 +927,7 @@ class _SolverModule(Module):
                     f"module '{self.type}' lists '{path}' under 'files:' but "
                     "there is no such file (paths resolve from the directory "
                     "run-lume-ace3p was started in).")
-            _stage_file(ctx, path)
+            _stage_file(ctx, path, fresh=_fresh(ctx, skip_execution))
         # The shared ``ace3p:`` tree with this module's own scope over it.
         inputs = ctx.inputs.for_module(self.name)
         if ctx.dry_run:
@@ -853,6 +1032,21 @@ class _SolverModule(Module):
         override = (self.results_dir if self._wrapper.accepts_results_dir_arg
                     else None)
         return self._resolve_results_dir(override)
+
+    def clean(self, ctx):
+        """Remove the results directory this solver writes
+        (:meth:`_written_results_dir`) — for T3P the whole job directory, not
+        only its ``OUTPUT`` subdirectory, since the monitor files beside it are
+        T3P's too.
+
+        The *written* directory rather than :meth:`_results_dir`: for T3P,
+        which takes no results-directory argument, a ``results_dir:`` override
+        says only where to read — a directory T3P will not rewrite, and that
+        may hold results this run did not produce."""
+        written = self._written_results_dir()
+        if self._wrapper.results_subdir:
+            written = os.path.dirname(written)
+        _remove_output(ctx, written)
 
     def _resolve_results_dir(self, job):
         if not job:
@@ -2013,6 +2207,7 @@ class AcdtoolModule(Module):
     # Class-level default for the common case; __init__ narrows it per command.
     requires = frozenset({EM_SOLUTION})
     provides = frozenset({RF_POST})
+    _launch_keys = frozenset({'tasks', 'cores', 'opts'})
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2029,6 +2224,9 @@ class AcdtoolModule(Module):
         # Deprecated positional output specs already warned about, so a sweep of
         # N points warns once per spec rather than N times.
         self._warned = set()
+
+    def input_files(self):
+        return [self.input_file]
 
     def _resolve_command(self):
         """Return ``(command, spec)`` for the declared command, or the one
@@ -2091,6 +2289,11 @@ class AcdtoolModule(Module):
             ctx.provide(self, RF_POST, ctx.workdir)
             return
         ctx.ensure_workdir()
+        if self.input_file and _fresh(ctx, skip_execution):
+            # The wrapper copies its input into the workdir only when no copy is
+            # there, and then reads the copy — so without this an edited
+            # .rfpost would be ignored for the previous run's.
+            _unstage(ctx, self.input_file)
         acdtool = Acdtool(self.input_file, workdir=ctx.workdir,
                           acdtool_command=self.command,
                           acdtool_args=self.args,
@@ -2126,6 +2329,16 @@ class AcdtoolModule(Module):
                    if self.spec.mutates else None)
         if reparse is not None:
             reparse()
+
+    def clean(self, ctx):
+        """Remove this command's output file — **unless the command overwrites
+        its producer's file** (``spec.mutates``), for the reason :meth:`verify`
+        gives: that file is the producer's output, which the command rewrites
+        anyway, and removing it would delete the very input it reads. A command
+        that writes no file this wrapper knows about removes nothing."""
+        if self.spec.mutates is not None:
+            return
+        _remove_output(ctx, self.spec.resolve_output(self._resolve_jobname(ctx)))
 
     def verify(self, ctx):
         """Whether this command's output file is still there — **unless the
@@ -2413,6 +2626,8 @@ class FieldEmissionModule(Module):
     type = 'field_emission'
     requires = frozenset({TRACK3P_PARTICLES})
     provides = frozenset({PARTICLE_SOURCE})
+    # 'cubit' for the legacy configs that declared beta there (_resolve_beta).
+    input_buckets = ('particles', 'cubit')
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2473,7 +2688,8 @@ class FieldEmissionModule(Module):
         if self.upstream(ctx, TRACK3P_PARTICLES)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
                              f"track3p_particles artifact.")
-        dump = self._resolve_dump(ctx, stage=True)
+        dump = self._resolve_dump(ctx, stage=True,
+                                  fresh=_fresh(ctx, skip_execution))
         params = dict(self._resolve_beta(ctx.inputs))
         params.setdefault('output_format', 'geant4')
         particles = Particles(dump, params, output_file=self.output_file,
@@ -2482,7 +2698,7 @@ class FieldEmissionModule(Module):
         ctx.provide(self, PARTICLE_SOURCE,
                     os.path.join(ctx.workdir, particles.output_file))
 
-    def _resolve_dump(self, ctx, stage=False):
+    def _resolve_dump(self, ctx, stage=False, fresh=False):
         """The Track3P dump to reweight, as a path relative to the workdir.
 
         The ``track3p_particles`` artifact has two shapes and always has had
@@ -2523,7 +2739,7 @@ class FieldEmissionModule(Module):
             raise KeyError(TRACK3P_PARTICLES)
         if not self._producer_is_solver(ctx, src):
             if stage:
-                _stage_file(ctx, src)
+                _stage_file(ctx, src, fresh=fresh)
             return os.path.basename(src)
 
         results = self.bound(ctx.job_names, TRACK3P_PARTICLES)
@@ -2601,21 +2817,35 @@ class FieldEmissionModule(Module):
         the name :class:`~lume_ace3p.particles.Particles` derives from the Track3P
         dump — which is why this can only answer once the upstream source module
         has recorded that artifact. Before then, ``None``."""
-        name = self.output_file
+        name = self._output_name(ctx)
         if not name:
-            if self.upstream(ctx, TRACK3P_PARTICLES)[1] is None:
-                return None
-            try:
-                dump = self._resolve_dump(ctx)
-            except ValueError:
-                # Nothing to resolve a name from yet (or an ambiguous scan):
-                # run() will raise and say why. Not this method's answer to give.
-                return None
-            # Mirrors Particles.__init__'s default naming. Resolved from the
-            # same subpath run() hands over, so a dump inside the solver's
-            # results directory is looked for beside it, where it was written.
-            name = default_output_name(dump)
+            return None
         return os.path.isfile(os.path.join(ctx.workdir or '', name))
+
+    def clean(self, ctx):
+        """Remove the weighted particle file, named as :meth:`verify` names it.
+        Asked after the upstream step has run, so the default name — derived
+        from the dump — is known."""
+        _remove_output(ctx, self._output_name(ctx))
+
+    def _output_name(self, ctx):
+        """The particle file this step writes, relative to the workdir: an
+        explicit ``output:``, else the name derived from the dump, else ``None``
+        when there is no dump to derive it from yet."""
+        if self.output_file:
+            return self.output_file
+        if self.upstream(ctx, TRACK3P_PARTICLES)[1] is None:
+            return None
+        try:
+            dump = self._resolve_dump(ctx)
+        except ValueError:
+            # Nothing to resolve a name from yet (or an ambiguous scan): run()
+            # will raise and say why. Not this method's answer to give.
+            return None
+        # Mirrors Particles.__init__'s default naming. Resolved from the same
+        # subpath run() hands over, so a dump inside the solver's results
+        # directory is looked for beside it, where it was written.
+        return default_output_name(dump)
 
     def extract(self, ctx, spec):
         """Expose simple scalars off the weighted/filtered particle set.
@@ -2672,6 +2902,8 @@ class Geant4Module(Module):
     type = 'geant4'
     requires = frozenset({PARTICLE_SOURCE})
     provides = frozenset({DOSE_GRID, EDEP_GRID})
+    input_buckets = ('macro', 'particles')
+    _launch_keys = frozenset({'geant4_threads', 'geant4_opts'})
 
     # A detector-scored Geant4 run is tabulated over its detectors, not over the
     # Track3P field levels upstream (``Track3PModule.index_precedence`` is 1):
@@ -2703,6 +2935,9 @@ class Geant4Module(Module):
         # they would otherwise re-read the same file several times per
         # evaluation.
         self._detector_cache = {}
+
+    def input_files(self):
+        return [self.geant4_input]
 
     @staticmethod
     def _parse_seed(value):
@@ -2765,6 +3000,12 @@ class Geant4Module(Module):
         # Build the Geant4 object first so we can read the input file's own
         # settings (STL geometry names, output filenames) before copying files.
         self.geant4_obj = None
+        fresh = _fresh(ctx, skip_execution)
+        if self.geant4_input is not None and fresh:
+            # The wrapper reads the workdir copy of its input when there is one,
+            # and that copy is the previous run's *merged* input; a fresh run
+            # starts from the source.
+            _unstage(ctx, self.geant4_input)
         if self.geant4_input is not None:
             self.geant4_obj = Geant4(self.geant4_input,
                                      geant4_threads=self.geant4_threads or 1,
@@ -2819,7 +3060,7 @@ class Geant4Module(Module):
         # and the explicit geant4_geometry_files list, de-duplicated by basename.
         geom_files = self._geometry_files()
         for geom in geom_files:
-            _stage_file(ctx, geom)
+            _stage_file(ctx, geom, fresh=fresh)
 
         if ctx.dry_run:
             # The seed line is written only when a seed is set: a dry-run marker
@@ -2854,6 +3095,31 @@ class Geant4Module(Module):
 
         self.geant4_obj.run()
         self._record_grid_artifacts(ctx)
+
+    def clean(self, ctx):
+        """Remove every output :meth:`_output_files` names — the two grids, and
+        the detector CSVs when the run scores detectors.
+
+        Called before :meth:`run` builds its wrapper, so the names are resolved
+        from the *source* input file with this point's ``geant4:`` inputs laid
+        over it — what the wrapper will write once it has merged them. An input
+        file that cannot be read leaves only the YAML overrides to name."""
+        values = {}
+        read_input = False
+        if self.geant4_input is not None:
+            try:
+                with open(self.geant4_input) as file:
+                    lines = file.readlines()
+            except OSError:
+                lines = None
+            if lines is not None:
+                read_input = True
+                values = dict(parsed[1:] for parsed in map(Geant4._split_kv, lines)
+                              if parsed)
+                macro = ctx.inputs.for_module(self.name).macro or {}
+                values.update({key: str(value) for key, value in macro.items()})
+        for name in self._output_names(values, read_input).values():
+            _remove_output(ctx, name)
 
     def verify(self, ctx):
         """Whether the scoring files this step writes are still in the workdir.
@@ -2943,6 +3209,12 @@ class Geant4Module(Module):
         than reporting the application's defaults missing."""
         read_input = self.geant4_obj is not None
         values = self.geant4_obj.get_values() if read_input else {}
+        return self._output_names(values, read_input)
+
+    def _output_names(self, values, read_input=True):
+        """:meth:`_output_files` over the input file's ``key = value`` pairs
+        ``values`` — the resolution itself, separate so :meth:`clean` can apply
+        it before this module has built its wrapper."""
         prefix = (values.get('output_prefix') or values.get('output') or '').strip()
 
         def named(override, key, suffix, bare):

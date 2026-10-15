@@ -1910,7 +1910,8 @@ def test_coaxsignal_does_not_reparse_the_producer(tmp_path, monkeypatch):
     calls = []
     wd = str(tmp_path / 'wd')
     os.makedirs(wd, exist_ok=True)
-    monkeypatch.setattr('subprocess.run', lambda cmd, **kw: None)
+    monkeypatch.setattr('subprocess.run',
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0))
     ctx = RunContext(wd, artifacts={TD_SOLUTION: wd},
                      paths={'ace3p': '/ace3p/', 'mpi': 'srun'})
     ctx.reparse[TD_SOLUTION] = lambda: calls.append('reparsed')

@@ -47,16 +47,24 @@ To roll back, deploy the previous tag.
   dependency.
 - Checks the installed version, that `lume_ace3p` imports from the
   environment, and that `run-lume-ace3p` exists.
-- Checks that every file in the clone and environment is world-readable and
-  has the clone's group. It exits non-zero and lists offenders otherwise.
+- Sets the permissions of every file you own in the clone and environment
+  (see below), then checks that all of them are world-readable and have the
+  clone's group. It exits non-zero and lists any that are not, which can only
+  be files owned by someone else. It warns if a parent directory is not
+  world-searchable.
 
 ## Permissions
 
-The directories are setgid (`drwxr-sr-x`), so new files take the site group
-whatever your primary group is. The script sets `umask 022`, or `umask 002`
-if the clone is group-writable (`2775`, for several maintainers), so a
-`chmod` after deploying is not needed. If the permission check fails, fix the
-listed paths with `chgrp -R <group> <path>` and `chmod -R g+rX,o+rX <path>`.
+After installing, the script gives every path you own in the clone and
+environment the clone's group and opens it to all users: directories `2755`,
+files `644`, executables `755`. If the clone is group-writable (`2775`, for
+several maintainers) it adds group write: directories `2775`, files `664`.
+It does this even if your umask is stricter, as on Perlmutter, and it also
+fixes files left from earlier installs. A `chmod` after deploying is not
+needed.
+
+Files owned by another user cannot be changed. The script lists them, and
+their owner must run `chgrp -R <group> <path>` and `chmod -R g+rX,o+rX <path>`.
 
 `LUME_DEPLOY_CLONE` and `LUME_DEPLOY_ENV` override the site paths, for trying
 the script against a scratch clone and virtual environment.

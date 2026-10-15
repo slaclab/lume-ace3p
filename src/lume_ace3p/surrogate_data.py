@@ -399,18 +399,22 @@ def load_training_store(store_path):
     into ``(N, M)`` tensors aligned with the ``(N, D)`` β matrix. Rows with no
     stored field (dry-run) contribute to ``beta`` but leave the dose tensor
     ``None`` (there is nothing to stack) — the Phase-3 trainer is what requires
-    real grids.
+    real grids. Rows whose ``status`` is ``failed`` (a sample that failed under
+    ``on_error: skip``) are left out.
 
     Raises ``FileNotFoundError`` if the store table is missing and
     ``ValueError`` if the stored grids have inconsistent voxel layouts (which
     would mean the fixed-``bin_edges`` invariant was violated mid-campaign)."""
-    from lume_ace3p.results import load_field, FIELD_ARTIFACT_COLUMN
+    from lume_ace3p.results import (
+        load_field, FIELD_ARTIFACT_COLUMN, STATUS_COLUMN)
 
     table_path = os.path.join(store_path, TABLE_FILENAME)
     if not os.path.isfile(table_path):
         raise FileNotFoundError(
             f"no training table at {table_path}; run collect_training_data first.")
     table = pd.read_csv(table_path, sep='\t')
+    if STATUS_COLUMN in table.columns:
+        table = table[table[STATUS_COLUMN] != 'failed'].reset_index(drop=True)
 
     manifest = {}
     manifest_path = os.path.join(store_path, MANIFEST_FILENAME)
