@@ -57,16 +57,19 @@ main() {
     local py="$env/bin/python"
     [ -x "$py" ] || die "$py not found"
 
-    # Files inherit the clone's sharing: a group-writable clone (2775) means
-    # several maintainers, so keep new files group-writable too.
-    local group perms
+    # Everything is set to exact modes: directories and executables 755, other
+    # files 644 (rwX: execute only where the owner has it). A group-writable
+    # clone (2775) means several maintainers, so its group keeps write: 775 / 664.
+    local group perms gw
     group=$(stat -c %G "$clone")
     if [ -n "$(find "$clone" -maxdepth 0 -perm -g+w)" ]; then
         umask 002
-        perms=g+rwX,o+rX
+        perms=u+rwX,g=rwX,o=rX
+        gw=0
     else
         umask 022
-        perms=g+rX,o+rX
+        perms=u+rwX,go=rX
+        gw=1
     fi
 
     cd "$clone"
@@ -145,18 +148,21 @@ print(m.version("lume-ace3p"), lume_ace3p.__file__)')
     [ -x "$env/bin/run-lume-ace3p" ] || die "$env/bin/run-lume-ace3p missing"
 
     # The umask only covers files created now. Files from before (an env built
-    # under a stricter umask) or under a default ACL keep their modes,
-    # so open up every path we own: directories 2755 (2775 when shared), files
-    # 644, owner-executables 755. Paths owned by others are left to the check.
-    # Symlink modes and groups are ignored by the kernel, so skip them.
-    local fixed
+    # under a stricter umask, or checked out by an earlier deploy) or under a
+    # default ACL keep their modes, so set every path we own: directories 2755
+    # (2775 when shared), files 644 (664), owner-executables 755 (775). Paths
+    # owned by others are left to the check. Symlink modes and groups are
+    # ignored by the kernel, so skip them.
+    local fixed write_test=()
+    [ "$gw" = 1 ] && write_test=(-o -perm /g+w)
     fixed=$(find "$clone" "$env" -user "$(id -u)" ! -type l \
                 \( ! -group "$group" -o ! -perm -o+r -o ! -perm -g+r \
+                   -o -perm /o+w "${write_test[@]}" \
                    -o \( -type d \( ! -perm -o+x -o ! -perm -g+s \) \) \
                    -o \( -perm -u+x ! -perm -o+x \) \) \
                 -print | wc -l)
     if [ "$fixed" -gt 0 ]; then
-        echo "permissions: opening up $fixed paths (group $group, $perms)"
+        echo "permissions: setting $fixed paths (group $group, $perms)"
         find "$clone" "$env" -user "$(id -u)" ! -type l ! -group "$group" \
             -exec chgrp "$group" {} + || true
         find "$clone" "$env" -user "$(id -u)" ! -type l \
