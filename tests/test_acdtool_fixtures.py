@@ -150,10 +150,15 @@ def _acdtool(tmp_path, input_fixture, output_fixture=None):
 
 def _capture_run(monkeypatch):
     """Replace ``subprocess.run`` so ``Acdtool.run`` builds its command line
-    without invoking acdtool. Returns the list commands land in."""
+    without invoking acdtool. Returns the list commands land in.
+
+    The stand-in reports a clean exit, since ``Acdtool.run`` checks it."""
     commands = []
-    monkeypatch.setattr(subprocess, 'run',
-                        lambda cmd, **kwargs: commands.append(cmd))
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+    monkeypatch.setattr(subprocess, 'run', fake_run)
     return commands
 
 

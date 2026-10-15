@@ -191,11 +191,14 @@ def point_status(state, config_hash=None, module_names=()):
     """Summarize one point's manifest as ``(verdict, complete, pending)``.
 
     ``verdict`` is :data:`ABSENT` (nothing recorded), :data:`STALE` (recorded for
-    a different ``config_hash``), :data:`FAILED` (some module recorded a failure),
-    :data:`COMPLETE` (every module of ``module_names`` is complete), or
-    :data:`PARTIAL`. ``complete`` counts the modules of ``module_names`` recorded
-    complete, and ``pending`` names the first that is not — the module a resume
-    would run — or ``None`` when there is none.
+    a different ``config_hash``), :data:`FAILED` (some module recorded a failure,
+    or the point recorded an ``error`` — its modules completed but extracting
+    its outputs did not), :data:`COMPLETE` (every module of ``module_names`` is
+    complete), or :data:`PARTIAL`. ``complete`` counts the modules of
+    ``module_names`` recorded complete, and ``pending`` names the first that is
+    not — the module a resume would run — or ``None`` when there is none, which
+    is also the case for a point-level ``error``: no module is left to run, and
+    what needs fixing is the configuration or the files.
 
     ``config_hash`` is the hash the *current* configuration produces for this
     point; pass ``None`` to skip that comparison. This is what
@@ -208,6 +211,8 @@ def point_status(state, config_hash=None, module_names=()):
         return STALE, 0, (names[0] if names else None)
     complete = [name for name in names if is_complete(state, name)]
     pending = next((name for name in names if not is_complete(state, name)), None)
+    if state.get('error'):
+        return FAILED, len(complete), None
     failed = any(entry.get('status') == FAILED
                  for entry in state.get('modules') or [])
     if failed:

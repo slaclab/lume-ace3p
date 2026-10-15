@@ -52,7 +52,7 @@ import baseline_utils as bu
 from test_modules import _make_s3p_solver
 from lume_ace3p import modes
 from lume_ace3p.inputs import WorkflowInputs
-from lume_ace3p.logs import run_logged
+from lume_ace3p.logs import ToolExitError, run_logged
 from lume_ace3p.modules import AcdtoolModule, MESH, RunContext
 from lume_ace3p.workflow_graph import Workflow
 
@@ -434,12 +434,17 @@ def test_a_failing_step_leaves_its_error_in_the_module_log(tmp_path, monkeypatch
     Both halves matter. The log is what a wall-clock-killed sweep point leaves
     behind; the terminal half is why this is a tee rather than the redirect the
     plan first considered — a redirected solver failure would become invisible
-    exactly when it matters most."""
+    exactly when it matters most. The nonzero exit itself is raised, naming the
+    log."""
     monkeypatch.chdir(tmp_path)
     wf = _cubit_workflow(tmp_path)
-    _out, ctx = wf.evaluate()
+    with pytest.raises(ToolExitError, match='cubit exited with status 1') as exc:
+        wf.evaluate()
+    assert exc.value.returncode == 1
+    assert exc.value.log_file == os.path.join(wf.workdir, 'cubit.log')
+    assert 'cubit.log' in str(exc.value)
 
-    with open(os.path.join(ctx.workdir, 'cubit.log')) as f:
+    with open(os.path.join(wf.workdir, 'cubit.log')) as f:
         logged = f.read()
     assert 'ERROR: could not open the display' in logged
     assert 'meshing -nographics -nojournal -noecho cavity.jou' in logged
@@ -461,9 +466,10 @@ def test_capture_output_false_writes_no_log(tmp_path, monkeypatch, capfd):
     Python-level streams."""
     monkeypatch.chdir(tmp_path)
     wf = _cubit_workflow(tmp_path, capture_output=False)
-    _out, ctx = wf.evaluate()
+    with pytest.raises(ToolExitError, match='its output above'):
+        wf.evaluate()
 
-    assert not os.path.exists(os.path.join(ctx.workdir, 'cubit.log'))
+    assert not os.path.exists(os.path.join(wf.workdir, 'cubit.log'))
     captured = capfd.readouterr()
     assert 'ERROR: could not open the display' in captured.err
 
@@ -491,10 +497,9 @@ def test_each_module_instance_gets_its_own_log(tmp_path):
 
 @posix_only
 def test_run_logged_reports_the_exit_status(tmp_path):
-    """The seam that *can* report a failure does: ``run_logged`` returns the
-    child's status. Nothing above it raises on a nonzero exit — that is the
-    wrappers' long-standing behavior, and an ACE3P failure surfaces when the
-    parser finds no results — but the status is not swallowed here."""
+    """``run_logged`` reports the child's status and does not judge it: the
+    wrappers above it raise :class:`ToolExitError`, since they know what they
+    ran."""
     log = tmp_path / 'step.log'
     result = run_logged('echo out; echo err 1>&2; exit 3', cwd=str(tmp_path),
                         log_file=str(log))
@@ -531,13 +536,13 @@ def test_run_logged_appends_each_invocation(tmp_path):
 
 
 @posix_only
-def test_a_refused_solver_launch_is_named_in_the_no_results_error(tmp_path,
-                                                                  capsys):
+def test_a_refused_solver_launch_raises_and_names_both_causes(tmp_path):
     """When the MPI launcher itself refuses the step (srun's "More processors
-    requested than permitted" is the real case), the solver never runs and the
-    parser finds nothing. The resulting "no results" error must say the launch
-    failed rather than blame the input file for lacking a WakeField monitor —
-    which is exactly what it did before the exit status was recorded."""
+    requested than permitted" is the real case), the solver never runs. The
+    nonzero exit is raised before the parser looks for results, naming both
+    possible causes — and the "no results" error a later extraction would give
+    still says the launch failed rather than blame the input file for lacking a
+    WakeField monitor."""
     from lume_ace3p.ace3p import T3P
     from lume_ace3p.modules import T3PModule, RunContext
     bin_dir = tmp_path / 'bin'
@@ -553,10 +558,11 @@ def test_a_refused_solver_launch_is_named_in_the_no_results_error(tmp_path,
     workdir.mkdir()
     t3p = T3P(str(source), workdir=str(workdir), ace3p_tasks=16,
               ace3p_cores=16, mpi_caller=str(fake_srun), ace3p_path='')
-    t3p.run()
-    assert t3p.returncode == 1
-    assert 'exited with status 1' in capsys.readouterr().err
-    assert 'exited with status 1' in t3p.exit_status_note()
+    with pytest.raises(ToolExitError) as excinfo:
+        t3p.run()
+    assert excinfo.value.returncode == 1
+    assert str(excinfo.value) == t3p.exit_status_note()
+    assert 'refused the step or the solver crashed' in str(excinfo.value)
 
     module = T3PModule({'module': 't3p', 'input': str(source)})
     module._solver = t3p

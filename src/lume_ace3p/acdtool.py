@@ -68,7 +68,7 @@ from lume.base import CommandWrapper
 # (postprocessor -> solver). Imported here so ``acdtool.parse_column_file``
 # keeps resolving.
 from lume_ace3p.ace3p import parse_column_file
-from lume_ace3p.logs import run_logged
+from lume_ace3p.logs import check_exit, run_logged
 
 
 # --------------------------------------------------------------------------- #
@@ -1043,8 +1043,10 @@ class Acdtool(CommandWrapper):
 
         self._spec = spec
         self.output_file = spec.resolve_output(jobname)
-        run_logged(self._command_line(name, operands, spec),
-                   cwd=self.workdir, log_file=self.log_file)
+        check_exit('acdtool ' + name,
+                   run_logged(self._command_line(name, operands, spec),
+                              cwd=self.workdir, log_file=self.log_file),
+                   self.log_file)
         if spec.parses:
             self.load_output()
         return self.output_data

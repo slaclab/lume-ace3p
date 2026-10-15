@@ -9,6 +9,20 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Changed
+
+- ⚠️ **A nonzero exit status is a failure.** Cubit, `acdtool meshconvert`, the
+  ACE3P solvers, `acdtool` and the Geant4 application raise `ToolExitError`
+  (from `lume_ace3p.logs`) naming the status, the command and the log, and the
+  manifest records that module `failed`. Before, the status was ignored, and a
+  crashed Cubit could leave an earlier run's mesh for the solver to read.
+  On S3DF, every tool was checked to exit 0 after a successful run.
+- A Cubit run that exits cleanly but writes no mesh fails, naming the path the
+  journal exports.
+- A point whose modules all completed but whose outputs could not be extracted
+  records a top-level `error` on its manifest, and `--status` reports it
+  `failed`.
+
 ### Fixed
 
 - `scripts/tag_release.sh` could report a missing changelog section that was

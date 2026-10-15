@@ -267,7 +267,10 @@ is always written (there is no YAML key); `resume` and `--status` read it back.
 
 It is updated after each module, so a half-finished run's file says how far it
 got. Modules are listed in the order they ran; one that never started is absent,
-which is distinct from `"failed"`. `config_hash` covers the module entries, the
+which is distinct from `"failed"`. A top-level `"error"` means every module
+completed but the outputs could not be extracted (a solver that exited cleanly
+and wrote no results); `--status` reports such a point `failed` with nothing
+left to run. `config_hash` covers the module entries, the
 materialized input point, the `output_parameters` spec and, when declared, the
 [`derived_parameters`](#derived_parameters) block. It does not cover
 `paths`, `dry_run`, `workdir`, or comments, so a workdir stays recognizable on a
@@ -330,10 +333,9 @@ Requirements and limits:
 - **`collect_training_data`** skips a sample whose `field.npz` is already stored
   whether or not `resume` is set. `resume: true` additionally lets a sample that
   stopped midway through the chain restart at its first non-complete module.
-- A nonzero exit status from a solver is not by itself recorded as a failure; no
-  ACE3P wrapper raises on one (see [](#capture-output)). Such a run is caught by
-  the missing-output check above, which covers every module that can name its own
-  output.
+- A nonzero exit status from any tool (Cubit, `meshconvert`, a solver,
+  `acdtool`, Geant4) records that module `failed`, with the status and command
+  line in `error`. So does a Cubit run that exits cleanly but writes no mesh.
 
 (status)=
 ### `run-lume-ace3p --status` — reading a campaign without running it

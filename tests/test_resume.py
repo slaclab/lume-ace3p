@@ -406,12 +406,11 @@ def test_a_fixed_step_is_the_only_one_re_run(staged, monkeypatch):
     ``plans/acdtool_rework_plan.md``, reintroduced by resume. It reports twice the
     value instead, which only the acdtool step produces.
 
-    The failure is *injected* rather than driven by a nonzero exit status because
-    the ACE3P wrappers deliberately do not raise on one (see
-    ``lume_ace3p.logs.run_logged``): a fake binary exiting 1 would be recorded
-    ``complete``, which is a pre-existing property of the wrappers and not
-    something resume changes. What is simulated here is a step that aborts — a
-    mangled command line, an OSError launching it, a parser that finds nothing."""
+    The failure is *injected* by monkeypatch, so it stands for any step that
+    aborts — a mangled command line, an OSError launching it, a parser that finds
+    nothing. A fake binary exiting 1 would serve as well: every wrapper raises
+    :class:`lume_ace3p.logs.ToolExitError` on a nonzero exit, so the step would be
+    recorded ``failed`` the same way (``tests/test_tool_failures.py`` pins that)."""
     from lume_ace3p.modules import AcdtoolModule
 
     real_run = AcdtoolModule.run

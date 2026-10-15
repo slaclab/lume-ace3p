@@ -2,7 +2,7 @@ import os, shutil
 
 from lume.base import CommandWrapper
 
-from lume_ace3p.logs import run_logged
+from lume_ace3p.logs import check_exit, run_logged
 
 class Cubit(CommandWrapper):
 
@@ -111,8 +111,9 @@ class Cubit(CommandWrapper):
                 
     def run(self, mcflag=True):
         self.write_input()
-        run_logged(self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
-                   cwd=self.workdir, log_file=self.log_file)
+        check_exit('cubit', run_logged(
+            self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file,
+            cwd=self.workdir, log_file=self.log_file), self.log_file)
         if mcflag:
             self.meshconvert()
                         
@@ -122,8 +123,9 @@ class Cubit(CommandWrapper):
         else:
             self.get_export()
         if self.exportfile is not None:
-            run_logged(self.MPI_CALLER + ' --nodes=1 --ntasks=1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + self.exportfile,
-                       cwd=self.workdir, log_file=self.log_file)
+            check_exit('acdtool meshconvert', run_logged(
+                self.MPI_CALLER + ' --nodes=1 --ntasks=1 ' + self.ACE3P_PATH + 'acdtool meshconvert ' + self.exportfile,
+                cwd=self.workdir, log_file=self.log_file), self.log_file)
         
     def configure(self):
         return 'Not implemented.'

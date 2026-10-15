@@ -1,7 +1,7 @@
 # Failure Mitigation — Implementation Plan
 
-**Status: PLANNED** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). No phase started.
+**Status: IN PROGRESS** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
+(0.7.1). Phase 1 done 2026-10-15.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -347,22 +347,37 @@ the Geant4 app on a shipped example and prints `$?` after each. Record the
 result here. If anything exits nonzero on success, D1's hatch is added in
 this phase.
 
+**Result (job 40901886, sdfmilan146, EL 8.10, 2026-10-15):** every tool exits
+**0** on success — `cubit`, `acdtool meshconvert`, `omega3p`, `acdtool
+postprocess rf`, `s3p`, `t3p`, `acdtool postprocess transwake`, `track3p`, and
+the Geant4 `dose-npass/sim` app, each re-run in a copy of a September
+validation workdir and each leaving its output. A control (`omega3p` on a
+missing input) exited 255, so `srun` passes a failure through. **D1 resolved:
+on, no hatch.** Script and log in
+`/sdf/scratch/users/d/dbizzoze/failure_probe/exit_check/`.
+
+**As built.** `logs.check_exit(tool, completed, log_file)` raises
+`ToolExitError` and is what Cubit, `meshconvert`, Geant4 and acdtool call;
+`ACE3P.run` raises it itself with `exit_status_note()` as the message, before
+`output_parser`. The missing-mesh check raises `RuntimeError`. Extraction moved
+into `Workflow._extract_outputs`. Tests: `tests/test_tool_failures.py`.
+
 ### Verification (Phase 1 done when)
 
-- [ ] Fake `cubit` exiting 3 → point recorded `cubit: failed` with the exit
+- [x] Fake `cubit` exiting 3 → point recorded `cubit: failed` with the exit
   status in `error`; `omega3p` absent; `ToolExitError` raised.
-- [ ] Fake `cubit` exiting 0 but writing no mesh → `cubit: failed`, error
+- [x] Fake `cubit` exiting 0 but writing no mesh → `cubit: failed`, error
   names the missing mesh path.
-- [ ] Fake `omega3p` exiting nonzero after writing output → `omega3p:
+- [x] Fake `omega3p` exiting nonzero after writing output → `omega3p:
   failed` (the exit wins over the file).
-- [ ] Fake `omega3p` exiting 0 writing nothing → `omega3p: complete`,
+- [x] Fake `omega3p` exiting 0 writing nothing → `omega3p: complete`,
   manifest `error` set, `--status` says `failed`, `next` empty.
-- [ ] `test_resume.py` test 2–3 (`transwake`) still injects its failure by
+- [x] `test_resume.py` test 2–3 (`transwake`) still injects its failure by
   monkeypatch; its docstring paragraph about "a fake binary exiting 1 would
   be recorded complete" is rewritten to say the opposite.
 - [ ] Every frozen baseline byte-identical (dry-run baselines launch nothing;
   this phase cannot move them, but the self-check is the proof).
-- [ ] S3DF check recorded above; D1 resolved.
+- [x] S3DF check recorded above; D1 resolved.
 
 # Phase 2 — Clean before a fresh run; re-stage inputs
 

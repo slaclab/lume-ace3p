@@ -862,6 +862,27 @@ class Workflow:
                           **({'resumed': True} if reusing else {}))
             write_state(self.workdir, state)
 
+        try:
+            outputs = self._extract_outputs(ctx)
+        except Exception as exc:
+            # Every module completed, so none is marked failed — a resume must
+            # not re-run a solve whose results are fine. What failed is the
+            # point (a solver that exited 0 and wrote nothing, a quantity its
+            # output does not have), and the manifest says so at the top level.
+            state['error'] = f'{type(exc).__name__}: {exc}'
+            write_state(self.workdir, state)
+            raise
+        ctx.outputs = outputs
+        if previous is not None:
+            self._compare_recorded_outputs(previous, outputs)
+        record_outputs(state, outputs)
+        write_state(self.workdir, state)
+        self.last_context = ctx
+        return outputs, ctx
+
+    def _extract_outputs(self, ctx):
+        """``{output_name: value}`` for ``output_parameters``, then
+        ``derived_parameters``, read from the modules of ``ctx``."""
         outputs = {}
         for name, spec in self.output_spec.items():
             # ctx.modules, never self.modules: a prototype's extract returns the
@@ -872,15 +893,9 @@ class Workflow:
         if self.derived_spec is not None:
             # After extraction and before recording, so a derived value is an
             # output like any other: manifest, table column, VOCS lookup, and
-            # the resume comparison below.
+            # the resume comparison.
             outputs.update(self.derived_spec.compute(outputs))
-        ctx.outputs = outputs
-        if previous is not None:
-            self._compare_recorded_outputs(previous, outputs)
-        record_outputs(state, outputs)
-        write_state(self.workdir, state)
-        self.last_context = ctx
-        return outputs, ctx
+        return outputs
 
     # ---- resume (Phase 4) -------------------------------------------------- #
 

@@ -649,6 +649,15 @@ class CubitModule(Module):
         if mesh is None:
             cubit.get_export()
             mesh = getattr(cubit, 'exportfile', None)
+        if mesh and not os.path.isfile(os.path.join(ctx.workdir, mesh)):
+            # A clean exit does not prove a mesh: a journal whose export line
+            # is wrong (or a geometry command that failed) writes nothing and
+            # still exits 0, and the solver downstream would read whatever
+            # mesh of that name an earlier run left — or none at all.
+            raise RuntimeError(
+                f"cubit exited cleanly but wrote no mesh: the journal exports "
+                f"'{mesh}', and {os.path.join(ctx.workdir, mesh)} does not "
+                f"exist — check {self.log_file(ctx) or 'its output above'}.")
         ctx.provide(self, MESH, (os.path.join(ctx.workdir, mesh) if mesh
                                  else ctx.workdir))
 
