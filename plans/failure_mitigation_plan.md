@@ -1,7 +1,7 @@
 # Failure Mitigation — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). Phases 1 and 2 done 2026-10-15.
+(0.7.1). Phases 1, 2 and 3 done 2026-10-15.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -299,6 +299,10 @@ use `workdir_mode: manual` in one directory), and a warning is the same shape
   **Resolved (Phase 2): appending kept;** `clean` never touches a log.
 - **D3 (Phase 3).** Should `files:` contents be hashed even at 137 MB?
   **Recommendation:** yes, with the per-process cache.
+  **Resolved (Phase 3): no — only input files are hashed** (the journal, the
+  solver input, the `.rfpost`, the Geant4 input). Data files (`files:`, Geant4
+  geometry, a source module's `file`) count by path only, through the config
+  mapping.
 - **D4 (Phase 4).** Exit code under `on_error: continue` with failures: 1
   (recommended) or 0 with the `status` column as the only signal.
 - **D5 (Phase 5).** Warn (recommended) vs. refuse on an existing manifest.
@@ -314,6 +318,7 @@ use `workdir_mode: manual` in one directory), and a warning is the same shape
   the kind of edit a resumed campaign makes. `config_hash` keeps them (it must
   not move). **Recommendation:** exclude, declared per class as
   `_launch_keys` beside `input_buckets`.
+  **Resolved (Phase 3): excluded** — also acdtool's `tasks` / `cores` / `opts`.
 
 ---
 
@@ -471,25 +476,65 @@ its configuration or an input it depends on changed".
 `src/lume_ace3p/modes.py` `status`: builds the hashes without running (the
 same ordering, no subprocess) and reports per §2.3.
 
+**As built.** `state.module_hash(entry, inputs, files, upstream)` and
+`state.file_digest(path)` (cached on `(abspath, size, mtime_ns)`).
+`Module.module_hash(inputs, hashes)` assembles (1)–(4) from the class's
+`input_buckets`, `_launch_keys` and `input_files()`; `hashes` is `{name: hash}`
+of the modules before it, and `upstream` is keyed by kind through
+`self.sources`. Per D3, `input_files()` lists only the journal, the solver
+input, the `.rfpost` and the Geant4 input; source modules list none. Per D8,
+`_launch_keys` is `tasks`/`cores`/`opts` + `ace3p_*` on the solvers,
+`tasks`/`cores`/`opts` on acdtool, `geant4_threads`/`geant4_opts` on Geant4.
+
+`evaluate` computes each live module's hash just before its reuse decision and
+records it with the entry. `_resume_state` returns a manifest with module
+hashes whatever its `config_hash`; one without them keeps the old gate and
+message. `_reusable` adds the hash check between "recorded complete" and
+`verify`. The recorded-vs-re-extracted drift warning runs only when
+`config_hash` matches, since a changed `output_parameters` may reuse a name for
+another quantity.
+
+`point_status(state, config_hash, names, module_hashes)`: `pending` is the
+first module not complete-under-its-hash, `complete` the count before it.
+`stale` = the first module is complete but its hash moved (or, without module
+hashes, `config_hash` differs). A point-level extraction `error` is `failed`
+under the same `config_hash`, `partial` (nothing to launch) under another.
+`Workflow.point_module_hashes(point)` computes the hashes from the prototypes
+for `--status`.
+
+The `--status` table's `modules` column now counts the modules a resume would
+*reuse*, not the ones merely recorded complete.
+
+Tests: `tests/test_module_hashes.py`; two tests in `test_resume.py` changed
+meaning (a changed `results_dir:` now re-runs only the solver; the `stale`
+row of the status test is made by moving Cubit's hash, not `config_hash`). Full suite on milano (job 40910788,
+sdfmilan146, EL 8.10, 2026-10-15): 1029 passed, 2 skipped, baseline self-check
+green.
+
 ### Verification (Phase 3 done when)
 
-- [ ] `tests/test_state.py` pinned `config_hash` values unchanged.
-- [ ] **1.4:** Cubit-only sweep, then full workflow with `resume: true` →
+- [x] `tests/test_state.py` pinned `config_hash` values unchanged.
+- [x] **1.4:** Cubit-only sweep, then full workflow with `resume: true` →
   Cubit launched once per point, solvers run, table correct.
-- [ ] Solver-only YAML change (`tasks:`) → Cubit skipped, solver re-run.
-- [ ] Journal **contents** change, YAML untouched → Cubit and solver re-run.
-- [ ] Solver input **contents** change → Cubit skipped, solver re-run.
-- [ ] `files:` SEY table contents change → that solver re-runs.
-- [ ] `output_parameters` change only → nothing launched, table rebuilt.
-- [ ] A `particles` value change → Cubit skipped, `field_emission` /
-  `geant4` re-run.
-- [ ] A 0.7.1-style manifest (no `hash` fields; write one by hand in the
+- [x] Solver-only YAML change (`tasks:`) → Cubit skipped, solver re-run.
+  **Changed by D8:** a `tasks:` change re-runs *nothing*; the solver-only YAML
+  change tested is `results_dir:`.
+- [x] Journal **contents** change, YAML untouched → Cubit and solver re-run.
+- [x] Solver input **contents** change → Cubit skipped, solver re-run.
+- [x] `files:` SEY table contents change → that solver re-runs.
+  **Changed by D3:** contents are not hashed, so an in-place edit is reused;
+  naming a different file re-runs the solver.
+- [x] `output_parameters` change only → nothing launched, table rebuilt.
+- [x] A `particles` value change → Cubit skipped, `field_emission` /
+  `geant4` re-run (hash-level test; no fake Geant4 binary).
+- [x] A 0.7.1-style manifest (no `hash` fields; write one by hand in the
   test) resumes by whole-point `config_hash` exactly as before.
-- [ ] `transwake`: T3P output deleted → T3P and acdtool both re-run though
-  acdtool's hash is unchanged.
-- [ ] `--status` on a mesh-reusable / solver-stale point reports `partial`,
+- [x] `transwake`: T3P output deleted → T3P and acdtool both re-run though
+  acdtool's hash is unchanged (`test_a_re_run_solver_drags_its_consumers_with_it`,
+  unchanged).
+- [x] `--status` on a mesh-reusable / solver-stale point reports `partial`,
   `next = omega3p`.
-- [ ] Every frozen baseline byte-identical (manifests are excluded).
+- [x] Every frozen baseline byte-identical (manifests are excluded).
 
 # Phase 4 — `on_error: continue`
 

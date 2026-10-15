@@ -54,7 +54,7 @@ from lume_ace3p.acdtool import (
 from lume_ace3p.geant4 import Geant4, read_detector_dose, read_gamma_spectrum
 from lume_ace3p.logs import log_path
 from lume_ace3p.particles import Particles, default_output_name
-from lume_ace3p.state import relative
+from lume_ace3p.state import file_digest, module_hash as _hash_module, relative
 from lume_ace3p.inputs import WorkflowInputs, _walk_ace3p
 
 
@@ -440,6 +440,14 @@ class Module:
     type = None
     requires = frozenset()
     provides = frozenset()
+    # The WorkflowInputs buckets this module reads, which its module hash covers
+    # (with its own scoped block laid over them). A bucket not listed here can
+    # change without invalidating this module's output.
+    input_buckets = ()
+    # Config keys that size the run without changing its answer (ranks, cores,
+    # launcher options). Left out of the module hash, so a resumed campaign can
+    # be given a different allocation.
+    _launch_keys = frozenset()
 
     def __init__(self, config=None, name=None):
         self.config = dict(config) if config else {}
@@ -519,6 +527,35 @@ class Module:
 
         The default removes nothing, which is right for the source modules: they
         stage inputs and write no output."""
+
+    def input_files(self):
+        """The input files whose *contents* this module's hash covers: the
+        files a user edits to change what the tool computes (a journal, an input
+        deck). Data files — a supplied mesh or dump, a solver's ``files:``,
+        Geant4 geometry — are not listed: they can be hundreds of MB, and their
+        paths are in the module's config, which the hash covers anyway."""
+        return []
+
+    def module_hash(self, inputs, hashes):
+        """This module's ``'sha256:...'`` for the input point ``inputs`` (a
+        materialized :class:`WorkflowInputs`), given ``hashes`` — ``{module
+        name: hash}`` of the modules before it in the chain.
+
+        Covers the config without :attr:`_launch_keys`, the
+        :attr:`input_buckets` it reads, the contents of :meth:`input_files`, and
+        the hash of each producer it is bound to (:attr:`sources`) — see
+        :func:`lume_ace3p.state.module_hash`. Reads nothing but the input files
+        and launches nothing, so ``--status`` can ask it."""
+        view = inputs.for_module(self.name)
+        entry = {'module': self.type,
+                 **{key: value for key, value in self.config.items()
+                    if key not in self._launch_keys}}
+        buckets = {bucket: getattr(view, bucket) for bucket in self.input_buckets}
+        files = {str(path): file_digest(path) for path in self.input_files()
+                 if path}
+        upstream = {kind: hashes.get(name)
+                    for kind, name in sorted(self.sources.items())}
+        return _hash_module(entry, buckets, files, upstream)
 
     def log_file(self, ctx):
         """Where this module's subprocesses tee their output for the evaluation
@@ -701,11 +738,15 @@ class CubitModule(Module):
 
     type = 'cubit'
     provides = frozenset({MESH})
+    input_buckets = ('cubit',)
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
         self.journal = self.config.get('journal') or self.config.get('cubit_input')
         self.meshconvert = self.config.get('meshconvert', True)
+
+    def input_files(self):
+        return [self.journal]
 
     def run(self, ctx, skip_execution=False):
         if self.journal is None:
@@ -827,6 +868,9 @@ class _SolverModule(Module):
     _wrapper = None
     _label = ''
     _artifact = EM_SOLUTION
+    input_buckets = ('ace3p',)
+    _launch_keys = frozenset({'tasks', 'cores', 'opts',
+                              'ace3p_tasks', 'ace3p_cores', 'ace3p_opts'})
     # The one upstream artifact :meth:`run` insists on. A mesh for the field
     # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
     # its mesh out of the upstream solver's results directory.
@@ -857,6 +901,9 @@ class _SolverModule(Module):
         files = self.config.get('files') or []
         self.files = [files] if isinstance(files, str) else list(files)
         self._solver = None
+
+    def input_files(self):
+        return [self.input_file]
 
     def run(self, ctx, skip_execution=False):
         if self.upstream(ctx, self._input_artifact)[1] is None:
@@ -2148,6 +2195,7 @@ class AcdtoolModule(Module):
     # Class-level default for the common case; __init__ narrows it per command.
     requires = frozenset({EM_SOLUTION})
     provides = frozenset({RF_POST})
+    _launch_keys = frozenset({'tasks', 'cores', 'opts'})
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2164,6 +2212,9 @@ class AcdtoolModule(Module):
         # Deprecated positional output specs already warned about, so a sweep of
         # N points warns once per spec rather than N times.
         self._warned = set()
+
+    def input_files(self):
+        return [self.input_file]
 
     def _resolve_command(self):
         """Return ``(command, spec)`` for the declared command, or the one
@@ -2563,6 +2614,8 @@ class FieldEmissionModule(Module):
     type = 'field_emission'
     requires = frozenset({TRACK3P_PARTICLES})
     provides = frozenset({PARTICLE_SOURCE})
+    # 'cubit' for the legacy configs that declared beta there (_resolve_beta).
+    input_buckets = ('particles', 'cubit')
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2837,6 +2890,8 @@ class Geant4Module(Module):
     type = 'geant4'
     requires = frozenset({PARTICLE_SOURCE})
     provides = frozenset({DOSE_GRID, EDEP_GRID})
+    input_buckets = ('macro', 'particles')
+    _launch_keys = frozenset({'geant4_threads', 'geant4_opts'})
 
     # A detector-scored Geant4 run is tabulated over its detectors, not over the
     # Track3P field levels upstream (``Track3PModule.index_precedence`` is 1):
@@ -2868,6 +2923,9 @@ class Geant4Module(Module):
         # they would otherwise re-read the same file several times per
         # evaluation.
         self._detector_cache = {}
+
+    def input_files(self):
+        return [self.geant4_input]
 
     @staticmethod
     def _parse_seed(value):

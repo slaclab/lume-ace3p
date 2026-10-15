@@ -32,8 +32,27 @@ coarser grain than the entries above them.
   to be read as this one's. `postprocess transwake` and the other commands that
   rewrite their producer's file remove nothing.
 
+- ⚠️ **`resume` decides per module, not per point.** Each manifest module entry
+  records a `hash`. It covers the module's entry (except `tasks`, `cores`,
+  `opts` and their `ace3p_` / `geant4_` spellings), the inputs it reads, the
+  contents of its input file (journal, solver input, `.rfpost`, Geant4 input)
+  and its upstream modules' hashes. A resume reuses a module while its hash
+  matches, so a change re-runs only what depends on it. Resizing a solver
+  re-runs nothing, editing a solver input re-runs the solver but not Cubit,
+  and changing `output_parameters` launches nothing. A Cubit-only sweep
+  followed by the full workflow reuses every mesh. Before, any YAML change
+  re-ran the whole point. `config_hash` is unchanged, and a manifest written
+  by 0.7.x still resumes by it.
+- `--status` reports a point whose early modules are reusable as `partial`,
+  with `next` naming the first module that would re-run, and `stale` only when
+  that is the first module.
+
 ### Fixed
 
+- Editing an input file's contents (a journal, a solver input) with the YAML
+  unchanged was invisible to `resume`, which returned the old results. Data
+  files (`files:`, a supplied mesh or dump, Geant4 geometry) are still
+  compared by path only.
 - A re-run over an existing workdir read stale copies of its inputs. The cases
   were a `files:` entry, a `mesh:` / `track3p_source:` / `particle_source:`
   file and Geant4 geometry files under `stage_mode: copy`, plus an acdtool

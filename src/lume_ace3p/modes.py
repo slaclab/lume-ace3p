@@ -485,13 +485,15 @@ def status(workflow):
     axes), each carrying the point's verdict from
     :func:`lume_ace3p.state.point_status` — ``complete`` / ``failed`` /
     ``partial`` / ``absent`` / ``stale`` — how many of its modules are recorded
-    complete, and the first module a resume would run.
+    reusable, and the first module a resume would run.
 
     Nothing is executed and no manifest is written: this is the inspection half of
     the resume feature, and it is what makes a campaign that half-finished
     overnight legible. ``stale`` is the verdict worth reading closely — it means a
-    manifest is there but was written for a different resolved configuration, so
-    resume will re-run that point from the start."""
+    manifest is there but its first module was recorded for a different
+    configuration, so resume will re-run that point from the start. A point whose
+    early modules are still reusable and a later one is not is ``partial``, with
+    ``next`` naming the first that re-runs."""
     axes = workflow.sweep_axes()
     labels = [label for label, _values, _setter in axes]
     tensor = _input_tensor(axes)
@@ -503,7 +505,8 @@ def status(workflow):
         point = scalars if axes else None
         workdir = workflow.resolved_workdir(point, i)
         verdict, complete, pending = point_status(
-            read_state(workdir), workflow.point_config_hash(point), names)
+            read_state(workdir), workflow.point_config_hash(point), names,
+            workflow.point_module_hashes(point))
         row = dict(zip(labels, scalars))
         row.update(point=i, status=verdict, modules=f'{complete}/{len(names)}',
                    next=pending or '', workdir=workdir)

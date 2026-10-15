@@ -46,9 +46,10 @@ Design notes
   reads that manifest and skips the *subprocess* of every module it records as
   complete, re-running their parsers so the row is rebuilt exactly as an
   uninterrupted run would have (design decision 1 of
-  ``plans/evaluation_isolation_resume_plan.md``). It is opt-in, per point, and
-  keyed on a ``config_hash`` of the resolved configuration, so a workdir left by a
-  different study is re-run rather than mistaken for this one's.
+  ``plans/evaluation_isolation_resume_plan.md``). It is opt-in, and decided per
+  module by a hash of what that module depends on (:func:`lume_ace3p.state.module_hash`),
+  so a workdir left by a different study is re-run rather than mistaken for this
+  one's, while a module whose own inputs did not change is reused.
 """
 
 import os
@@ -67,9 +68,9 @@ from lume_ace3p.inputs import WorkflowInputs
 from lume_ace3p.paths import resolve_paths
 from lume_ace3p.config import warn_unrecognized
 from lume_ace3p.state import (
-    COMPLETE, FAILED, campaign_hash, config_hash, is_complete, module_entry,
-    new_state, read_state, record_module, record_outputs, recorded_output,
-    relative, write_state,
+    COMPLETE, FAILED, campaign_hash, config_hash, has_module_hashes,
+    hash_matches, is_complete, module_entry, new_state, read_state,
+    record_module, record_outputs, recorded_output, relative, write_state,
 )
 
 
@@ -786,11 +787,12 @@ class Workflow:
         **skips the external tool of every module it records as complete**,
         re-running only their parsers (:meth:`Module.run`'s ``skip_execution``);
         execution restarts at the first module the manifest does not record as
-        complete, or at the first whose :meth:`Module.verify` says its output is
-        gone. It is off by default and the mode layer is what turns it on
-        (``mode: {resume: true}``): a sweep that silently picked up a stale
-        workdir from a different study would be worse than no resume at all, which
-        is what ``config_hash`` and this default together prevent.
+        complete under the module hash it has now (:meth:`Module.module_hash`),
+        or at the first whose :meth:`Module.verify` says its output is gone. It
+        is off by default and the mode layer is what turns it on (``mode:
+        {resume: true}``): a sweep that silently picked up a stale workdir from a
+        different study would be worse than no resume at all, which is what the
+        module hashes and this default together prevent.
 
         Returns ``(outputs, ctx)``: ``{output_name: extracted_value}`` for the
         ``output_parameters`` spec, and the populated :class:`RunContext` that
@@ -835,13 +837,18 @@ class Workflow:
         # still leaves its identity and config hash behind.
         write_state(self.workdir, state)
 
-        # Stays True only while every module so far was recorded complete and
-        # still verifies; once one has to run, so does everything downstream of
-        # it — its inputs have just changed.
+        # Stays True only while every module so far was recorded complete under
+        # its current hash and still verifies; once one has to run, so does
+        # everything downstream of it — its inputs have just changed. The hash
+        # chain alone would not say so when a module re-runs because its output
+        # went missing (its hash, and so its consumers', is unchanged).
         reusing = previous is not None
+        hashes = {}
         for module in ctx.modules:
+            hashes[module.name] = module.module_hash(inputs, hashes)
             if reusing:
-                reusing = self._reusable(previous, module, ctx)
+                reusing = self._reusable(previous, module, ctx,
+                                         hashes[module.name])
             try:
                 if not reusing and not ctx.dry_run:
                     # A fresh run removes what this module's tool writes, so a
@@ -864,6 +871,7 @@ class Workflow:
                 write_state(self.workdir, state)
                 raise
             record_module(state, module, COMPLETE,
+                          hash=hashes[module.name],
                           **self._module_record(ctx, module),
                           **({'resumed': True} if reusing else {}))
             write_state(self.workdir, state)
@@ -879,7 +887,9 @@ class Workflow:
             write_state(self.workdir, state)
             raise
         ctx.outputs = outputs
-        if previous is not None:
+        # Only for the same configuration: with another output_parameters spec a
+        # recorded value of the same name may be a different quantity.
+        if previous is not None and previous.get('config_hash') == current_hash:
             self._compare_recorded_outputs(previous, outputs)
         record_outputs(state, outputs)
         write_state(self.workdir, state)
@@ -908,15 +918,19 @@ class Workflow:
     def _resume_state(self, current_hash):
         """The manifest a resume may reuse in this workdir, or ``None``.
 
-        ``None`` covers every reason not to trust one: there is no manifest, it is
-        unreadable or of another schema (:func:`~lume_ace3p.state.read_state`
-        already degrades those to ``None``), or it was written for a *different*
-        resolved configuration. The last is the case worth saying out loud, since
-        the user asked to resume and is about to watch the point run from the
-        start anyway."""
+        ``None`` covers every reason not to trust one: there is no manifest, or
+        it is unreadable or of another schema
+        (:func:`~lume_ace3p.state.read_state` already degrades those to
+        ``None``). A manifest with module hashes is returned whatever its
+        ``config_hash``: :meth:`_reusable` decides per module. One without them
+        (written by 0.7.x) is trusted only for the *same* resolved configuration,
+        and a mismatch is worth saying out loud, since the user asked to resume
+        and is about to watch the point run from the start anyway."""
         previous = read_state(self.workdir)
         if previous is None:
             return None
+        if has_module_hashes(previous):
+            return previous
         if previous.get('config_hash') != current_hash:
             print(f" - resume: '{self.workdir}' was written for a different "
                   "configuration (its config_hash does not match this one), so "
@@ -927,13 +941,14 @@ class Workflow:
             return None
         return previous
 
-    def _reusable(self, previous, module, ctx):
+    def _reusable(self, previous, module, ctx, current_hash=None):
         """Whether ``module``'s external tool may be skipped on this resume.
 
-        Two questions, in the order design decision 2 sets: the **manifest** is
-        authoritative for "did it run" and the **module** for "is its output still
-        there". Either answering no re-runs this module — and, because the caller
-        stops asking once this returns ``False``, everything after it.
+        Three questions: the **manifest** is authoritative for "did it run" and
+        "for what" (its recorded module hash against ``current_hash``), and the
+        **module** for "is its output still there" (design decision 2). Any
+        answering no re-runs this module — and, because the caller stops asking
+        once this returns ``False``, everything after it.
 
         Asked lazily, one module at a time, rather than planned up front: by the
         time this is asked about module *k*, modules 0..*k*-1 have re-recorded
@@ -951,6 +966,12 @@ class Workflow:
                     why += ': ' + str(entry['error'])
             print(f" - resume: '{self.workdir}' re-runs from '{module.name}' "
                   f"({why}).")
+            return False
+        if not hash_matches(previous, module.name, current_hash):
+            print(f" - resume: '{module.name}' re-runs in '{self.workdir}': its "
+                  "configuration or an input it depends on changed (its module "
+                  "entry other than tasks/cores/opts, the inputs it reads, the "
+                  "contents of its input file, or an upstream module).")
             return False
         if module.verify(ctx) is False:
             where = recorded_output(entry) or 'its output'
@@ -990,6 +1011,16 @@ class Workflow:
         inputs, _sweep_scalars = self._materialize(input_scalars)
         return config_hash(self.entries, inputs, self.output_spec,
                            self._derived_payload())
+
+    def point_module_hashes(self, input_scalars=None):
+        """``{module name: hash}`` this configuration gives each module at one
+        input point — what each manifest entry must match to be reused. Computed
+        from the prototypes without running anything, for ``--status``."""
+        inputs, _sweep_scalars = self._materialize(input_scalars)
+        hashes = {}
+        for module in self.modules:
+            hashes[module.name] = module.module_hash(inputs, hashes)
+        return hashes
 
     def campaign_config_hash(self, variables=()):
         """The hash an *optimization* over ``variables`` must match to be resumable
