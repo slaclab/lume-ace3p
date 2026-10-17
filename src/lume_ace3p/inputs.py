@@ -523,15 +523,27 @@ def _build_section(pairs):
     Leaves are stringified to match the .ace3p text representation."""
     section = Section()
     for key, value in pairs:
+        if _is_pairs(value) and {k for k, _ in value} == {'min', 'max', 'num'}:
+            r = dict(value)
+            try:
+                n = int(r['num'])
+            except Exception:
+                raise ValueError(f"ace3p range 'num' must be an integer for key '{key}': {r['num']!r}")
+            if n > 1:
+                section.append(str(key), list(np.linspace(r['min'], r['max'], n)))
+            else:
+                section.append(str(key), str(r['min']))
+            continue
         if _is_pairs(value):
             section.append(str(key), _build_section(value))
-        elif isinstance(value, list):
-            # YAML list: either a sweep (>1 element of scalars) or a literal
-            # comma-joined value (e.g. two ports: `Waveguide: 7,8`).
-            if len(value) > 1 and all(np.isscalar(v) for v in value):
-                section.append(str(key), value)  # array — sweep axis
+        elif isinstance(value, (list, tuple, np.ndarray)):
+            # YAML sequence: either a sweep (>1 scalar) or a literal comma list.
+            vals = list(value)
+            if len(vals) > 1 and all(np.isscalar(v) for v in vals):
+                section.append(str(key), vals)  # array — sweep axis
             else:
-                section.append(str(key), ', '.join(str(v) for v in value))
+                # Use a tight comma (no space) to match ACE3P's literal form '7,8'.
+                section.append(str(key), ','.join(str(v) for v in vals))
         else:
             section.append(str(key), str(value))
     return section
