@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0 and 1 done (2026-10-19); Phase 2 next. Supersedes Phase 5 of
+**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 (repo) next. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -394,10 +394,70 @@ low-β bins flat). If the held-out error is far above the floor, the per-bin
 shapes are β-dependent in a way step 1 missed; refine the interpolant before
 touching the repo.
 
-- [ ] Per-bin shape variation quantified.
-- [ ] Held-out relative L2 on the 16 samples reported with the MC floor.
-- [ ] Identifiability figure produced.
-- [ ] Inversion rehearsal table produced.
+- [x] Per-bin shape variation quantified. `analysis/perbin_model.py` (campaign
+  repo), 17 s on iana; numbers in `runs/phase2/phase2_results.json`, model in
+  `stores/perbin_2026-10-19/additive_model.npz`.
+- [x] Held-out relative L2 on the 16 samples reported with the MC floor.
+- [x] Identifiability figure produced (`runs/phase2/identifiability.png`).
+- [x] Inversion rehearsal table produced (printed by the script, in the JSON,
+  and `runs/phase2/inversion.png`).
+
+**Phase 2 results (2026-10-19).** Gate met; Phase 3 may start.
+
+- *Model as built.* `a_b`: monotone PCHIP in log10(total dose) over the 11
+  points. Leave-one-out error is 0.1 to 2.5% in amplitude, except at β 42 in
+  bins 3 and 6 (13 to 15%, the steep onset). `S_b`: mean of five independent
+  realizations (β 44, 46, 48, 50, and 52 to 60 averaged as one), weighted by a
+  scalar inverse total variance. Per-voxel inverse-variance weights were not
+  used: with `val^2` estimates they bias low-dose voxels down. Residual shape
+  noise 3.3 to 4.9% relative L2 per bin.
+- *Step 1, shape vs β.* Each run's shape against `S_b` sits at its MC-expected
+  value (0.06 to 0.13 against 0.06 to 0.15) from β 42 up. Exceptions are β 40
+  in bins 3 and 6 (0.48, 0.42 vs 0.06 to 0.07, the correlated-history case from
+  the Phase 1 review) and, more mildly, β 40 in bins 0, 2, 4, 5 and 7 (0.13 to
+  0.22). β 40 is outside the shape fit and costs nothing: at β 40 a bin carries
+  under 1e-4 of any sample's dose. Within the saturated runs (a single random
+  sequence, so noise-free in comparison), 52 vs 60 differs by 3 to 5.5%: that
+  is the true β-dependence of the shape from re-weighting, and it sits below the
+  noise of every target.
+- *Step 3, held-out.* Mean relative L2 **0.353** against a mean MC floor of 0.359
+  (floor = the target's `val^2` plus model variance). Ratio to floor is 0.92 to
+  1.07 per sample, so no sample is off the floor. Total dose is within 0.91 to
+  1.07. Log-space relative L2 is 0.29 (log10 with a floor at the smallest
+  positive voxel). That is the same as F1 vs F10 in log space (0.24), so it is
+  also noise. Against F10, 0.158 vs a 0.153 floor. PCA-GP: 2.10.
+- *Noise model for the target.* Per-bin relative variance per event, scaled by
+  primaries × hpm, predicts the September `val^2` totals within 0.35 to 3.2×
+  (median 1.1). This needs a per-voxel sigma floor (1e-3 of the largest voxel
+  sigma). Without it, voxels expected to see under one event get a near-zero
+  `val^2` sigma, one stray hit lands thousands of σ off, and χ² per voxel
+  becomes 2e6. With the floor it is 0.5 to 2.6.
+- *Step 4, identifiability* (Cramér-Rao σ(β_b) from the whitened Jacobian, hpm 1
+  target). At **uniform β** every bin is constrained (σ 0.05 to 0.33, end bins
+  0 and 7 the weakest because they have the fewest primaries), because equal β
+  means comparable dose per bin. At **sample 0's β** 4 of 8 are: bins 1 and 5
+  (σ 0.05, 0.10), 0 (0.30) and 6 (0.76). Bins 2, 3 and 4 have σ 5 to 39 and bin
+  7 has 1.9. At hpm 10 that becomes 5 of 8, bin 7 crossing to 0.65. With **bin 3
+  dominant** (58 vs 48 elsewhere, 97% of the dose), bin 3 has σ 0.03, bins 0 to 2
+  are 1.8 to 4.4, and bins 4 to 7 sit at 0.5 to 0.9: the far-side neighbours stay
+  barely visible, the same-side ones vanish. This is the "dominant emitter plus
+  upper limits" physics. The PCA-GP's "8 of 8" at sample 0 was wrong, as §1
+  argued.
+- *Step 5, inversion rehearsal* (weighted NNLS on amplitudes, IRLS, bounded
+  least-squares polish in β). Across 16 × 8 = 128 bin estimates, **64 are
+  constrained** (σ < 1). Their median |error| is 0.20 and the max 2.6. Only 61%
+  are within 2σ, so the Cramér-Rao σ is about 2× optimistic for the visible bins:
+  correlated-voxel noise is not in a diagonal `val^2` model. Unconstrained bins:
+  median |error| 4.2, max 14.9, many at the lower bound 40. That is correct
+  behaviour, since a dark bin is only bounded from above. On F10 (hpm 10):
+  bins 0, 1, 5 and 6 come back within 0.2 to 1.3, bin 7 within 2.4 (σ 0.65), and
+  bins 2 to 4 are off by 1.2 to 4.5 (σ 1.8 to 14). Not comparable: the PCA-GP's
+  near-exact sample-0 recovery, because sample 0 was in its own training set.
+- *For Phase 3.* Three things carry over to `AdditiveSurrogate`: the σ floor,
+  scalar realization weights, and the "independent unless particle file or event
+  count differ" rule. The Cramér-Rao σ needs an inflation of about 2× (or a
+  voxel-correlation model) before it is reported as an error bar. Constraint #8
+  (single-pass regime) still applies to the write-up.
 
 ### Phase 3: promote to the repo
 
