@@ -101,6 +101,32 @@ input_parameters :
     assert 'ace3p:ModelInfo.SurfaceMaterial.Sigma' in labels
 
 
+def test_nested_ace3p_range_leaf_is_a_sweep_axis(tmp_path):
+    """A ``{min, max, num}`` range under ``ace3p:`` expands like one under
+    ``cubit:`` rather than becoming a nested section (issue in PR #62)."""
+    text = """
+input_parameters :
+  ace3p :
+    ModelInfo :
+      SurfaceMaterial :
+        ReferenceNumber : 6
+        Sigma : {min: 5.0e+6, max: 5.0e+8, num: 5}
+    FiniteElement :
+      Order : {min: 2, max: 2, num: 1}
+"""
+    inp = build_inputs(load_yaml(_write(tmp_path, text)))
+    axes = {label: values for label, values, _ in inp.sweep_axes()}
+    assert list(axes) == ['ace3p:ModelInfo.SurfaceMaterial.Sigma']
+    np.testing.assert_allclose(axes['ace3p:ModelInfo.SurfaceMaterial.Sigma'],
+                               np.linspace(5.0e6, 5.0e8, 5))
+    # num: 1 is a plain scalar, written through as typed.
+    fe = inp.ace3p.children('FiniteElement')[0]
+    assert fe.entries == [('Order', '2')]
+    point = inp.materialize([2.525e8])
+    sigma = point.ace3p.children('ModelInfo')[0].children('SurfaceMaterial')[0]
+    assert sigma.get_leaf('Sigma') == '252500000.0'
+
+
 # --------------------------------------------------------------------------- #
 # Back-compat with the deprecated flat keys
 # --------------------------------------------------------------------------- #
