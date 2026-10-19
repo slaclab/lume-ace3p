@@ -9,6 +9,8 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-19
+
 ### Fixed
 
 - A `{min, max, num}` range under `input_parameters.ace3p` (or a module-scoped
