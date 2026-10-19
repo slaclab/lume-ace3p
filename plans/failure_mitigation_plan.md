@@ -1,8 +1,8 @@
 # Failure Mitigation — Implementation Plan
 
-**Status: COMPLETE (release pending)** — written 2026-10-13 on S3DF against `dev` at `1ce2cea`
-(0.7.1). Phases 1–5 done 2026-10-15; the 0.8.0 tag and deploy are pending
-the merge to `main`.
+**Status: COMPLETE — Phases 1–5 done 2026-10-15, released as 0.8.0** (tag
+`v0.8.0`, deployed on S3DF and Perlmutter). Written 2026-10-13 on S3DF against
+`dev` at `1ce2cea` (0.7.1).
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md` (the completion
 manifest and `resume`) and `plans/multi_instance_workflow_plan.md` (the
@@ -666,8 +666,8 @@ such as `acdtool.lume.log`, which renames a file users may look for. Deferred.
 - [x] S3DF validation: `omega3p_sweep` run Cubit-only (a copy of the YAML
   with the solver entry removed), then full with `resume: true`; Cubit logs
   show one invocation per point. Job 40914294, above.
-- [ ] `scripts/tag_release.sh` / `deploy_release.sh` per `docs/releasing.md`
-  (needs `dev` merged into `main` on GitHub first).
+- [x] `scripts/tag_release.sh` / `deploy_release.sh` per `docs/releasing.md`:
+  tag `v0.8.0` on `main` at `a3e0a60`, deployed on S3DF and Perlmutter.
 
 ---
 

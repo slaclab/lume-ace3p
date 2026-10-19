@@ -30,9 +30,9 @@ mode :
 
 input_parameters :
   ace3p :
-    # Phase advance per period, in degrees. The ACE3P sub-block takes an explicit
-    # list (min/max/num is a cubit/geant4/particles convenience); the tutorial
-    # runs the single point Theta = -150.
+    # Phase advance per period, in degrees. An explicit list here; a
+    # {min, max, num} range works as well. The tutorial runs the single point
+    # Theta = -150.
     'ModelInfo' :
       'BoundaryCondition' :
         'Theta' : [-180, -150, -120, -90, -60, -30]

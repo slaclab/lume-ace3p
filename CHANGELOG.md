@@ -9,6 +9,16 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-19
+
+### Fixed
+
+- A `{min, max, num}` range under `input_parameters.ace3p` (or a module-scoped
+  block inside it) is now expanded to a sweep axis, as the docs state and as the
+  `cubit:` / `geant4:` / `particles:` sub-blocks already did. It used to be
+  written into the solver input as a literal `{ min : … max : … num : … }`
+  sub-section (#62).
+
 ### Changed
 
 - `scripts/deploy_release.sh` sets exact modes, not just added read access:

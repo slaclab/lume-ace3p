@@ -49,6 +49,20 @@ empirical findings became hard defaults — `num_chains=4` and `dense_mass=True`
 (one chain / diagonal mass silently *under-report* the flat directions, which
 reads as a false constraint). **Phases 2–4 are now complete; only Phase 5
 (multi-fidelity) and the real-Geant4 validation remain.**
+**Revisited 2026-10-19 — CLOSED as delivered; real-data work continues in
+`plans/geant4_dose_campaign_plan.md`.** The last open bar ("both modes read a
+real Geant4 dose file end-to-end") was met by the 2026-09-10 S3DF validation
+(job 37733843: 16 Sobol samples, all four stages exit 0), but the science result
+was poor: linear PCA-GP held-out relative L2 2.10, `invert_bayesian` `r_hat` 5.5,
+and an "8 of 8 identifiable" verdict that is a small-N artifact. The review
+found the forward map is **additive over bins** (dose is linear in per-particle
+weights, each depending on one bin's β), so eight 1-D curves, not an 8-D GP, is
+the right model; the recorded `fidelity: 10000` is a typed label (real runs used
+82k–134k primaries at `histories_per_macro = 1`); and the `particles` module is
+now `field_emission` with a new default FN model (this example stays on
+`wang-loew`; re-deriving its β bounds belongs to the new plan). Phase 5 below is
+superseded by that plan. File:line citations in this document are as of
+2026-08-10 and have since moved.
 **Owner:** dbizzoze
 **Created:** 2026-07-08
 
