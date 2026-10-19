@@ -1,8 +1,8 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phase 0 running (2026-10-19). Supersedes Phase 5 of
+**Status:** Phases 0 and 1 done (2026-10-19); Phase 2 next. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
-plan left open. Nothing here is started.
+plan left open.
 **Owner:** dbizzoze
 **Where the work lives:** a campaign directory outside the repo (§3). The repo
 changes only in Phase 3, after the approach has been shown to work on real data.
@@ -295,14 +295,67 @@ builds one `(β, primaries, histories, events, field)` table per bin from the
 workdirs rather than from eight sweep tables, since each run is its own sweep
 of one point. Copy the finished tables and fields to `stores/perbin_<date>/`.
 
-- [ ] Generator script written; 88 YAMLs and 4 batch scripts committed in the
+- [x] Generator script written; 88 YAMLs and 4 batch scripts committed in the
   campaign repo; row counts in the design table reproduced by a dry run of one
   low-β and one saturated YAML per end bin.
-- [ ] Four jobs submitted together; job IDs logged in the campaign README.
-- [ ] 88 runs complete (all `field_0.npz` present, exit 0); failures listed and
-  re-run.
-- [ ] Per-run fidelity (constraint #4) and bin isolation (constraint #5, by
-  `Initial_z`) tabulated by `analysis/phase1_inventory.py`.
+  `configs/phase1/make_configs.py` (campaign commit eea9d20). Dry run: bin 0
+  β 40/60 → 593 / 3,423 rows, bin 7 β 40/60 → 565 / 3,423, `histories_per_macro`
+  reaches the written Geant4 input. Indexed mode puts each run in
+  `runs/phase1/bin<b>/beta<β>_0/`.
+- [x] Four jobs submitted together; job IDs logged in the campaign README.
+  2026-10-19: 41324455 (bins 0,1), 41324456 (2,3), 41324457 (4,5), 41324458
+  (6,7). 41324457 hit a Slurm launch failure on sdfmilan134 and was held;
+  released with that node excluded, started 2 min after the others. Measured
+  about 5 min per run (275 s Geant4 at 4e5 events), so about 1.8 h per job.
+- [x] 88 runs complete (all `field_0.npz` present, exit 0); failures listed and
+  re-run. All four jobs COMPLETED in 1:35 to 1:55; 88/88 exit 0, empty error
+  files, nothing to re-run. Copied to `stores/perbin_2026-10-19/bin<b>/beta<β>/`
+  (211 MB, with `inventory.json`).
+- [x] Per-run fidelity (constraint #4) and bin isolation (constraint #5, by
+  `Initial_z`) tabulated by `analysis/phase1_inventory.py`. 88/88 ok:
+  primaries and `histories_per_macro` read from each workdir equal the design
+  table, and every `particles.data` is exactly the uniform-β full run's bin-b
+  rows. The sweep table has no `status` column; the script checks that
+  `field_artifact` names the run's field instead. Events 400,020 to 423,468.
+  Relative error in each run's 90%-dose voxels: median 5 to 14%, p90 7 to 28%,
+  worst in the end bins 0 and 7 (fewest primaries, largest hpm, so the most
+  correlated histories). Total dose rises about 6.5e5× from β 40 to 60 in bin 0,
+  and bins 1 to 6 reach 2 to 4 Gy at β 60.
+
+**Phase 1 review (2026-10-19, from the 88 grids before Phase 2 started).**
+
+- *Amplitude.* Total dose per bin rises smoothly and log-linearly in β with no
+  saturation (successive log10 ratios fall from 0.85 to 0.41 across 40 to 60,
+  the same for every bin): the particle *set* saturates at β 52 but the weights
+  keep growing exponentially. A log-space interpolant on the 11 points is enough.
+- *Shape is constant in β within noise.* Normalized shape `S_b(β)` vs `S_b(60)`
+  differs by relative L2 0.12 to 0.18 across β 42 to 50, against 0.10 to 0.15
+  expected from the variance column; only β 40 in bins 3, 4, 6 and 7 stands
+  out (0.28 to 0.53), where 565 to 1,229 primaries repeated 300 to 700 times
+  make the `val^2` estimate optimistic (correlated histories). So Phase 2
+  step 1's question is answered: `S_b` is a constant grid per bin, and the model
+  is eight amplitude curves times eight fixed shapes. The eight shapes are well
+  separated from each other (cross-bin relative L2 0.5 to 1.7).
+- *Saturated-regime runs share one random sequence.* For β 52 to 60 in a bin,
+  the particle file has identical rows and identical `histories_per_macro`,
+  and the dose-npass binary has no seed, so the `entry` column is bit-identical
+  across the five runs: they are one Monte Carlo realization with five
+  weightings, not five independent samples. Averaging them does not reduce
+  shape noise. Runs with different particle sets (β ≤ 50) are independent of
+  each other (49% of entries equal between 50 and 60). Amend constraint #6:
+  two runs are independent only if their particle file or event count differs.
+- *Held-out test, Phase 2 step 3, done early.* The simplest additive model
+  (constant shape from the saturated runs, log-linear amplitude) predicts the 16
+  September samples with mean relative L2 **0.358**, and per sample the error is
+  0.93 to 1.11 times that sample's own Monte Carlo floor from its `val^2`
+  column (the September targets are `histories_per_macro = 1`). Against the
+  lower-noise Phase 0 F10 run the model gives 0.159, where the direct sum of the
+  eight Phase 0 bin runs gave 0.176. **The model is at the noise floor of the
+  targets; the PCA-GP was at 2.10.** The Phase 2 gate is met in substance; the
+  phase is now about writing it down properly, the identifiability picture, and
+  the inversion rehearsal.
+- *Visibility.* In every September sample one or two bins carry over 60% of the
+  dose (shares from the amplitude curves), as Phase 0 showed for sample 0.
 
 ### Phase 2: additive forward model and analysis (off-repo scripts)
 
@@ -316,6 +369,9 @@ of one point. Copy the finished tables and fields to `stores/perbin_<date>/`.
    coefficients). Report how much the shape actually changes with β per bin; if
    it does not, `S_b` is a constant and the model is eight scalars times eight
    fixed grids.
+   *(Answered by the Phase 1 review: constant within noise. Build `S_b` as the
+   variance-weighted mean of the independent runs β 44 to 60, treating the five
+   saturated runs as one realization, and report the residual shape noise.)*
 2. **Forward model.** `D(β) = Σ_b D_b(β_b)` plus a variance `Σ_b Var_b(β_b)` from
    the `val^2` columns and the interpolation error.
 3. **Validation against the 16 September samples.** They are full-chain real
@@ -401,7 +457,8 @@ Taken:
 
 Open, to decide at the phase that needs them:
 
-- Whether `S_b` needs a β-dependent model at all (Phase 2 step 1 answers it).
+- ~~Whether `S_b` needs a β-dependent model at all.~~ Resolved 2026-10-19: no,
+  constant per bin within the data's noise (Phase 1 review).
 - `wang-loew` vs `fn` for the shipped example (Phase 3 step 4). The campaign
   itself stays on `wang-loew` so the 16 held-out samples remain comparable.
 - Whether a thread count below 120 is worth it for the 3,423-primary end-bin
