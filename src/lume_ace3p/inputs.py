@@ -211,14 +211,18 @@ class WorkflowInputs:
         buckets and scopes) or a fully-qualified label (``cubit:…`` /
         ``ace3p:…`` / ``geant4:…`` / ``particles:…``, with a ``<module>/``
         segment for a scoped leaf). A bare name declared more than once raises
-        a `ValueError`. A name not declared in any bucket falls
-        back to the cubit bucket (back-compat with configs that declare VOCS
-        variables but no `input_parameters`)."""
+        a `ValueError`. An undeclared name qualified with a shared bucket
+        (``geant4:histories_per_macro``) goes to that bucket. Any other name not
+        declared in any bucket falls back to the cubit bucket (back-compat with
+        configs that declare VOCS variables but no `input_parameters`)."""
         copy = self._copy()
         routes, ambiguous = self._route_registry()
         for name, value in overrides.items():
             if name in routes:
                 routes[name](copy, value)
+            elif _undeclared_bucket(name) is not None:
+                bucket, bare = _undeclared_bucket(name)
+                getattr(copy, bucket)[bare] = value
             elif name in ambiguous:
                 raise ValueError(
                     f"variable '{name}' is declared in more than one input "
@@ -601,6 +605,21 @@ def _make_cubit_setter(name):
     def setter(inputs, value):
         inputs.cubit[name] = value
     return setter
+
+
+# The shared buckets an undeclared qualified override may name, and the
+# WorkflowInputs attribute each one is.
+_QUALIFIED_BUCKETS = {'cubit': 'cubit', 'geant4': 'macro', 'particles': 'particles'}
+
+
+def _undeclared_bucket(name):
+    """``(attribute, bare name)`` for a ``bucket:name`` override of a shared
+    dict bucket, or ``None``. A scoped (``bucket:scope/name``) or ``ace3p:``
+    label is not handled here: it names a leaf that must be declared."""
+    prefix, sep, bare = str(name).partition(':')
+    if not sep or not bare or '/' in bare or prefix not in _QUALIFIED_BUCKETS:
+        return None
+    return _QUALIFIED_BUCKETS[prefix], bare
 
 
 def _make_macro_setter(name):

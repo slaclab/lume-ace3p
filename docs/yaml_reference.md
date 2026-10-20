@@ -1515,6 +1515,25 @@ Requires a `workflow:` list.
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
 | `resume`      | `bool` | `False` | Restart a sample that stopped midway through the chain at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless; see [](#resume). |
 
+With `design: per_bin` the mode collects one 1-D sweep per bin instead of a DOE,
+the training data of the [additive surrogate](#additive-surrogate). Each run sets
+one bin's beta to a `grid` value and the others to `off_beta`. Before anything
+runs, the Track3P dump is reweighted for every run. That gives each run's
+primaries, so its `histories_per_macro` can be set for about `events_per_run`
+events, and it checks that the switched-off bins emit nothing. Runs go to
+`<store>/bin<b>/beta<value>/`, and the table records `bin`, the betas,
+`primaries`, `histories_per_macro` and `events` per run. `variables`,
+`num_samples`, `sampler` and `fidelity` do not apply.
+
+| Keyword       | Type   | Default | Description |
+|---------------|--------|---------|-------------|
+| `design`      | `str`  | `'doe'` | `'per_bin'` for this layout. |
+| `grid`        | `list` / `dict` | *required* | Beta values each bin is swept over: a list, or `{min, max, num}`. Size it against the dump: every bin must emit at the lowest value. |
+| `off_beta`    | `float`| `1.0`   | Beta of the switched-off bins. `1.0` zeroes every weight. |
+| `events_per_run` | `float` | — | Target events (primaries × `histories_per_macro`) per run. Give this or `histories_per_macro`. |
+| `min_histories_per_macro` | `int` | `1` | Floor on the computed `histories_per_macro`. |
+| `histories_per_macro` | `int` | — | One fixed value for every run instead of `events_per_run`. |
+
 Two constraints are enforced and hard-fail otherwise: the `field_emission` module
 must fix `bin_edges` explicitly (length `num_bins + 1`) and declare per-bin
 `beta_inputs`, and the `geant4` input file's scoring mesh must be readable and
@@ -1538,6 +1557,11 @@ coefficient, each with a fitted noise term. No `workflow:` needed.
 | `dose_transform` | `str`   | `'linear'` | `'linear'` or `'log10'`. Dose spans ~9 orders of magnitude, so a linear fit is dominated by the peak voxels; `'log10'` fits the shape far better, and accuracy is then reported in log space. |
 | `floor`          | `float` | smallest positive training dose | Positive offset for `'log10'`, keeping zero voxels finite. |
 | `n_jobs`         | `int`   | `1`     | Parallelize the per-coefficient GP fits over cores (`-1` = all). Result-invariant. |
+| `model`          | `str`   | `'pca_gp'` | `'additive'` fits the [additive surrogate](#additive-surrogate) from a `design: per_bin` store; the keys below apply to it and the PCA-GP keys above do not. |
+| `shape_beta_min` | `float` | `None`  | Additive: runs below this beta enter the amplitude curve but not the shape average (onset runs repeat few primaries many times, so their variance column understates their noise). |
+| `sigma_floor`    | `float` | `1e-3`  | Additive: per-voxel noise floor, as a fraction of the largest voxel sigma. |
+| `noise_scale`    | `float` | `2.0`   | Additive: inflation of every reported error and of the posterior noise. |
+| `beta_resolution`| `float` | `1.0`   | Additive: Cramér-Rao sigma below which a beta counts as constrained. |
 
 ### `invert_optimize`
 
@@ -1628,8 +1652,8 @@ model. With the additive model:
 - In `invert_bayesian`, `dose_sigma` multiplies the predicted noise (default 2,
   the same inflation) instead of setting an absolute scale.
 
-There is no mode that trains it yet; build it in Python with
-`AdditiveSurrogate.fit` and `save`.
+Train it with `collect_training_data` `design: per_bin`, then `train_surrogate`
+`model: additive`.
 
 ```{warning}
 **Always check `r_hat`** in `posterior_summary.txt`; values above ~1.05 mean the

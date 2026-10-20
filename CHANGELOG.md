@@ -17,6 +17,14 @@ coarser grain than the entries above them.
   `model_dir` like the PCA-GP model, and take a new
   `target_histories_per_macro` key that sets the target's predicted noise.
   `identifiability.txt` reports a Cramér-Rao `sigma` per beta for this model.
+- `collect_training_data` `design: per_bin` collects the additive model's
+  training data, one 1-D sweep per bin, with `histories_per_macro` set per run
+  for a target event count. Primaries and `histories_per_macro` are recorded
+  per run. `train_surrogate` `model: additive` fits the model from that store.
+- `read_dose_file` returns the dose file's `total(val^2)` column as `val2` when
+  present, and the Geant4 field artifact carries it.
+- An override qualified with a shared bucket (`geant4:histories_per_macro`)
+  now reaches that bucket even when the input is not declared.
 
 ## [0.8.1] — 2026-10-19
 

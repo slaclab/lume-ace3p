@@ -250,6 +250,14 @@ class Particles:
             weight = current_density * areas * self.emission_time / Q_E
         self.filtered['ParticleWeight'] = weight
 
+    def geant4_rows(self):
+        """The weighted rows a ``'geant4'`` source file holds, one per primary.
+
+        A macroparticle standing for less than one electron emits no primary,
+        but would still count as a row for /run/beamOn: drop it. (For the
+        rounded legacy weights this is the old 'weight != 0' rule.)"""
+        return self.filtered[self.filtered['ParticleWeight'] >= 1.0]
+
     def write_output(self):
         if self.output_format == 'geant4':
             self._write_output_geant4()
@@ -284,10 +292,7 @@ class Particles:
         columns = ['Impact_x', 'Impact_y', 'Impact_z', 'ImpactPhaseinRFcycle',
                    'ImpactEnergy', 'ParticleWeight', 'momentum_x', 'momentum_y',
                    'momentum_z', 'ImpactFaceID']
-        # A macroparticle standing for less than one electron emits no primary,
-        # but would still count as a row for /run/beamOn: drop it. (For the
-        # rounded legacy weights this is the old 'weight != 0' rule.)
-        kept = self.filtered[self.filtered['ParticleWeight'] >= 1.0]
+        kept = self.geant4_rows()
         values = kept[columns].values.astype(float)
         momentum = values[:, 6:9]
         norm = np.maximum(np.linalg.norm(momentum, axis=1), 1e-300)

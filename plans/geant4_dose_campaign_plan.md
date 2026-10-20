@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 item 1 (`AdditiveSurrogate`) done 2026-10-20, item 2 (training mode) next. Supersedes Phase 5 of
+**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 items 1 (`AdditiveSurrogate`) and 2 (per-bin training mode) done 2026-10-20; item 3 rest and item 4 next. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -493,7 +493,7 @@ repo's existing patterns.
   fixture and on the Phase 1 store. 2026-10-20: `src/lume_ace3p/surrogate_additive.py`,
   `tests/test_surrogate_additive.py` (22 tests), checked on the real store by
   the campaign's `analysis/phase3_repo_check.py` (milano job 41405657).
-  No training mode yet (item 2): the model is built with `AdditiveSurrogate.fit`.
+  Training mode added in item 2 below.
 
 **Phase 3 item 1 results (2026-10-20).**
 
@@ -523,7 +523,37 @@ repo's existing patterns.
   (1.11, a dark bin pinned against the lower bound). Visible bins: std 0.06 to
   0.8; dark bins: std 1.7 to 4.3, bounded from above. Truth lies in the 90% CI
   for 10 of 14 visible bins and 16 of 18 dark ones.
-- [ ] Fidelity recorded from the run; old manifests still load.
+- [x] Training mode (item 2), 2026-10-20, as `collect_training_data`
+  `design: per_bin` plus `train_surrogate` `model: additive` (the user's choice
+  over a trainer reading eight sweep tables, which record neither primaries nor
+  per-run hpm). `tests/test_per_bin_collection.py` (13 tests, real
+  `field_emission` on a synthetic dump).
+
+**Phase 3 item 2 results (2026-10-20).**
+
+- *Collection.* Before any run, `plan_per_bin_primaries` reweights the dump for
+  every `(bin, β)`. That gives each run's primaries, so hpm is
+  `max(min_histories_per_macro, ceil(events_per_run / primaries))`, and it
+  fails if a switched-off bin still emits (constraint #5) or a grid point emits
+  nothing (#7). After each run the written particle source is counted against
+  the plan. Per run, β and hpm go in as qualified overrides
+  (`particles:beta<b>`, `geant4:histories_per_macro`); `apply_overrides` now
+  routes an undeclared qualified name to its bucket rather than to cubit. The
+  table records `bin`, the eight β, `primaries`, `histories_per_macro` and
+  `events`.
+- *Item 3 partly landed here.* `read_dose_file` returns `val2`, and the Geant4
+  field artifact carries it (a new key, so no format change). Primaries and hpm
+  are recorded per run in per-bin stores. Still open: the DOE collector's typed
+  `fidelity`.
+- *Checked on the real example.* A dry run of `grid: [40, 50, 60]`,
+  `events_per_run: 4e5`, `min_histories_per_macro: 13` reproduces Phase 1's
+  design (bin 0: 593 × 675, 3,373 × 119, 3,423 × 117), and hpm reaches the
+  written Geant4 input. The plan takes 46 s for 24 runs on iana. The Phase 1
+  runs were rewritten as a repo store by the campaign's
+  `analysis/import_phase1_store.py` (`stores/perbin_repo_2026-10-20`, no Geant4).
+  `train_surrogate model: additive` on it reproduces the item 1 model to 3e-15.
+- [ ] Fidelity recorded from the run in the DOE collector; old manifests still
+  load.
 - [ ] Docs and example updated; changelog entry.
 
 ### Phase 4 (optional): the research question

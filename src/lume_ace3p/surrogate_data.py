@@ -200,9 +200,11 @@ def read_dose_file(path):
     Reads the whitespace-or-comma ``ix iy iz value [...]`` voxel format, skipping
     blank lines, ``#`` comments and short rows — so it handles both the plain
     scoring dump and the comma-separated
-    ``iX, iY, iZ, total(value), total(val^2), entry`` variant (extra columns are
-    ignored). Returns ``{'indices': (M,3) int array, 'values': (M,) float array}``,
-    or ``None`` if the file is missing or holds no data rows.
+    ``iX, iY, iZ, total(value), total(val^2), entry`` variant. Returns
+    ``{'indices': (M,3) int array, 'values': (M,) float array}``, plus ``'val2'``
+    (the ``total(val^2)`` column, the sum over events of each voxel's squared
+    per-event dose) when every row has one, or ``None`` if the file is missing or
+    holds no data rows. :func:`voxel_variance` turns ``val2`` into a variance.
 
     This is the canonical parser for training and inversion: the returned shape is
     exactly what ``save_field`` persists, so a target parsed here lines up with the
@@ -211,6 +213,7 @@ def read_dose_file(path):
         return None
     indices = []
     values = []
+    val2 = []
     with open(path) as f:
         for line in f:
             text = line.strip()
@@ -226,10 +229,30 @@ def read_dose_file(path):
                 continue
             indices.append((ix, iy, iz))
             values.append(value)
+            try:
+                val2.append(float(parts[4]))
+            except (IndexError, ValueError):
+                val2.append(None)
     if not values:
         return None
-    return {'indices': np.asarray(indices, dtype=int),
+    grid = {'indices': np.asarray(indices, dtype=int),
             'values': np.asarray(values, dtype=float)}
+    if all(v is not None for v in val2):
+        grid['val2'] = np.asarray(val2, dtype=float)
+    return grid
+
+
+def voxel_variance(values, val2, events):
+    """Per-voxel Monte Carlo variance of a dose total over ``events`` events.
+
+    ``val2`` is the dose file's ``total(val^2)`` column, so the variance of the
+    voxel total is ``val2 − values² / events``, clipped at zero. ``events`` is
+    the number of histories the run launched (primaries × histories_per_macro),
+    not the ``entry`` column: an event that deposits nothing in a voxel is still
+    a sample of it."""
+    values = np.asarray(values, dtype=float)
+    return np.maximum(np.asarray(val2, dtype=float) - values ** 2 / float(events),
+                      0.0)
 
 
 def load_target_dose(target):
@@ -533,3 +556,168 @@ def _stack_rows(rows):
     (width,) = lengths
     filled = [r if r is not None else np.full(width, np.nan) for r in rows]
     return np.vstack(filled)
+
+
+# --------------------------------------------------------------------------- #
+# Per-bin store: one 1-D β sweep per bin, the other bins switched off. This is
+# what an additive surrogate (lume_ace3p.surrogate_additive) trains on; see
+# plans/geant4_dose_campaign_plan.md.
+# --------------------------------------------------------------------------- #
+
+PER_BIN_DESIGN = 'per_bin'
+BIN_COLUMN = 'bin'
+PRIMARIES_COLUMN = 'primaries'
+HPM_COLUMN = 'histories_per_macro'
+EVENTS_COLUMN = 'events'
+
+
+def per_bin_beta(beta_value, b, num_bins, off_beta):
+    """The β vector of the run that sets bin ``b`` to ``beta_value`` and every
+    other bin to ``off_beta``."""
+    beta = [float(off_beta)] * int(num_bins)
+    beta[b] = float(beta_value)
+    return beta
+
+
+def plan_per_bin_primaries(dump_path, particle_params, grid, off_beta):
+    """Primaries each per-bin run will launch, from the Track3P dump alone.
+
+    Reweights the dump once per ``(bin, β)`` without running anything and
+    counts the rows the Geant4 source file would hold. Returns ``(B, n)``
+    primaries by emitting bin. Raises when a run would not isolate its bin (a
+    switched-off bin still emits: ``off_beta`` too high) or would launch nothing
+    (the grid starts below the bin's emission onset; size the grid against the
+    dump)."""
+    from lume_ace3p.particles import Particles
+
+    params = dict(particle_params)
+    num_bins = int(params['num_bins'])
+    params['beta'] = [float(off_beta)] * num_bins
+    params['output_format'] = 'geant4'
+    particles = Particles(os.path.abspath(dump_path), params,
+                          output_file='planned_primaries.unused',
+                          workdir=os.path.dirname(os.path.abspath(dump_path)))
+    particles.load()
+    particles.filter_particles()
+    particles.assign_bins()
+
+    primaries = np.zeros((num_bins, len(grid)), dtype=int)
+    for b in range(num_bins):
+        for i, value in enumerate(grid):
+            particles.beta = np.asarray(
+                per_bin_beta(value, b, num_bins, off_beta), dtype=float)
+            particles.calculate_particle_weight()
+            counts = np.bincount(particles.geant4_rows()['Bin'],
+                                 minlength=num_bins)
+            leaked = [k for k in range(num_bins) if k != b and counts[k]]
+            if leaked:
+                raise ValueError(
+                    f"off_beta={off_beta} does not switch bins off: the run for "
+                    f"bin {b} at beta {value} still emits from bins {leaked}. "
+                    "Lower off_beta (1.0 zeroes every weight under the "
+                    "Fowler-Nordheim models).")
+            primaries[b, i] = counts[b]
+    dark = [(int(b), float(grid[i])) for b, i in zip(*np.where(primaries == 0))]
+    if dark:
+        raise ValueError(
+            f"{len(dark)} per-bin run(s) would launch no primaries, e.g. (bin, "
+            f"beta) {dark[:4]}: the grid starts below where those bins emit. "
+            "Start the grid higher; a beta range is sized against its dump.")
+    return primaries
+
+
+class PerBinStore:
+    """A per-bin training store as the arrays
+    :meth:`~lume_ace3p.surrogate_additive.AdditiveSurrogate.fit` takes.
+
+    ``grid`` ``(n,)``; ``dose`` and ``variance`` ``(B, n, M)``; ``primaries`` and
+    ``histories_per_macro`` ``(B, n)``; ``indices`` ``(M, 3)``; plus
+    ``beta_names``, ``manifest`` and the raw ``table``."""
+
+    def __init__(self, grid, dose, variance, primaries, histories_per_macro,
+                 indices, beta_names, manifest, table):
+        self.grid = grid
+        self.dose = dose
+        self.variance = variance
+        self.primaries = primaries
+        self.histories_per_macro = histories_per_macro
+        self.indices = indices
+        self.beta_names = beta_names
+        self.manifest = manifest
+        self.table = table
+
+
+def load_per_bin_store(store_path):
+    """Load a per-bin store written by ``collect_training_data`` with
+    ``design: per_bin``.
+
+    Every ``(bin, grid point)`` must have a stored field with a ``val2``
+    column, and all grids must share one voxel order; a gap names the runs to
+    collect again (``on_error: skip`` leaves failed runs out, and a re-run
+    retries them)."""
+    from lume_ace3p.results import (
+        load_field, FIELD_ARTIFACT_COLUMN, STATUS_COLUMN)
+
+    table_path = os.path.join(store_path, TABLE_FILENAME)
+    manifest_path = os.path.join(store_path, MANIFEST_FILENAME)
+    if not os.path.isfile(table_path) or not os.path.isfile(manifest_path):
+        raise FileNotFoundError(
+            f"no per-bin store at {store_path} (needs {TABLE_FILENAME} and "
+            f"{MANIFEST_FILENAME}); run collect_training_data with "
+            "'design: per_bin' first.")
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+    if manifest.get('design') != PER_BIN_DESIGN:
+        raise ValueError(
+            f"store '{store_path}' was collected with design "
+            f"'{manifest.get('design', 'doe')}', not '{PER_BIN_DESIGN}'; an "
+            "additive surrogate trains on one 1-D sweep per bin.")
+    table = pd.read_csv(table_path, sep='\t')
+    grid = np.asarray(manifest['grid'], dtype=float)
+    beta_names = list(manifest['beta_names'])
+    num_bins, num_points = len(beta_names), grid.size
+
+    cells = {}
+    for _, row in table.iterrows():
+        if STATUS_COLUMN in table.columns and row[STATUS_COLUMN] == 'failed':
+            continue
+        handle = row.get(FIELD_ARTIFACT_COLUMN)
+        if not _is_handle(handle):
+            continue
+        b = int(row[BIN_COLUMN])
+        i = int(np.argmin(np.abs(grid - float(row[beta_names[b]]))))
+        cells[b, i] = row
+
+    missing = [(b, float(grid[i])) for b in range(num_bins)
+               for i in range(num_points) if (b, i) not in cells]
+    if missing:
+        raise ValueError(
+            f"per-bin store '{store_path}' is missing {len(missing)} run(s), "
+            f"e.g. (bin, beta) {missing[:4]}. Run collect_training_data again "
+            "to fill them in.")
+
+    dose = variance = None
+    indices = None
+    primaries = np.zeros((num_bins, num_points))
+    hpm = np.zeros((num_bins, num_points))
+    for (b, i), row in sorted(cells.items()):
+        field = load_field(row[FIELD_ARTIFACT_COLUMN])
+        section = (field or {}).get('dose')
+        if section is None or 'val2' not in section:
+            raise ValueError(
+                f"run (bin {b}, beta {grid[i]:g}) has no dose grid with a "
+                "total(val^2) column; the additive model needs each run's "
+                "Monte Carlo variance.")
+        if indices is None:
+            indices = np.asarray(section['indices'], dtype=int)
+            dose = np.empty((num_bins, num_points, indices.shape[0]))
+            variance = np.empty_like(dose)
+        values = align_to_indices(section['values'], section['indices'], indices)
+        val2 = align_to_indices(section['val2'], section['indices'], indices)
+        primaries[b, i] = float(row[PRIMARIES_COLUMN])
+        hpm[b, i] = float(row[HPM_COLUMN])
+        dose[b, i] = values
+        variance[b, i] = voxel_variance(values, val2, primaries[b, i] * hpm[b, i])
+    _check_indices_against_manifest(indices, manifest)
+    return PerBinStore(grid, dose, variance, primaries, hpm, indices,
+                       beta_names, manifest, table)

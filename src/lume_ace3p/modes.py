@@ -105,10 +105,12 @@ MODE_KEYS = {
     'gp_parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
     'collect_training_data': frozenset({
         'store', 'output_dir', 'num_samples', 'sampler', 'seed', 'fidelity',
-        'variables', 'resume', 'on_error'}),
+        'variables', 'resume', 'on_error', 'design', 'grid', 'off_beta',
+        'events_per_run', 'min_histories_per_macro', 'histories_per_macro'}),
     'train_surrogate': frozenset({
         'store', 'output_dir', 'variance', 'num_components', 'seed', 'model_dir',
-        'holdout', 'dose_transform', 'floor', 'n_jobs'}),
+        'holdout', 'dose_transform', 'floor', 'n_jobs', 'model',
+        'shape_beta_min', 'sigma_floor', 'noise_scale', 'beta_resolution'}),
     'invert_optimize': frozenset({
         'store', 'model_dir', 'target', 'bounds', 'num_starts', 'seed',
         'output_file', 'identifiability', 'identifiability_file',
@@ -891,7 +893,17 @@ def collect_training_data(mode_cfg, workflow):
     scoring mesh that changed mid-campaign is not a sample failure and still ends
     the run.
 
+    ``design: per_bin`` collects a per-bin store instead (one 1-D β sweep per
+    bin, for an additive surrogate); see :func:`_collect_per_bin`.
+
     Returns the training-store result :class:`pandas.DataFrame`."""
+    design = mode_cfg.get('design', 'doe')
+    if design == surrogate_data.PER_BIN_DESIGN:
+        return _collect_per_bin(mode_cfg, workflow)
+    if design != 'doe':
+        raise ValueError(
+            f"collect_training_data: unknown design '{design}'; use 'doe' "
+            f"(the default) or '{surrogate_data.PER_BIN_DESIGN}'.")
     beta_names, num_bins = _require_fixed_bin_edges(workflow)
     mesh_fingerprint = _require_fixed_mesh(workflow)
     bounds = _doe_bounds(mode_cfg, beta_names)
@@ -991,6 +1003,198 @@ def collect_training_data(mode_cfg, workflow):
     return df
 
 
+def _per_bin_grid(mode_cfg):
+    """The β grid of a per-bin collection: a list, or ``{min, max, num}``."""
+    spec = mode_cfg.get('grid')
+    if spec is None:
+        raise ValueError(
+            "collect_training_data with 'design: per_bin' needs a 'grid' of "
+            "beta values every bin is swept over: a list, or {min, max, num}.")
+    if isinstance(spec, dict):
+        grid = np.linspace(float(spec['min']), float(spec['max']),
+                           int(spec['num']))
+    else:
+        grid = np.asarray(spec, dtype=float).ravel()
+    if grid.size < 2 or np.any(np.diff(grid) <= 0):
+        raise ValueError(
+            f"per-bin 'grid' must hold at least 2 strictly increasing values; "
+            f"got {grid.tolist()}.")
+    return grid
+
+
+def _per_bin_histories(mode_cfg, primaries):
+    """``histories_per_macro`` per run, ``(B, n)``.
+
+    A fixed ``histories_per_macro`` applies to every run. Otherwise
+    ``events_per_run`` gives every run about that many events,
+    ``ceil(events_per_run / primaries)``, floored at
+    ``min_histories_per_macro`` (default 1). Equal events matter because the
+    shape information sits just above each bin's emission onset, where it
+    launches the fewest primaries."""
+    fixed = mode_cfg.get('histories_per_macro')
+    target = mode_cfg.get('events_per_run')
+    if (fixed is None) == (target is None):
+        raise ValueError(
+            "collect_training_data with 'design: per_bin' needs exactly one of "
+            "'events_per_run' (about that many events per run; recommended) "
+            "or a fixed 'histories_per_macro'.")
+    if fixed is not None:
+        return np.full(primaries.shape, max(1, int(fixed)), dtype=int)
+    floor = max(1, int(mode_cfg.get('min_histories_per_macro', 1)))
+    return np.maximum(floor, np.ceil(float(target) / primaries)).astype(int)
+
+
+def _dump_path(workflow):
+    """The Track3P dump a per-bin plan reweights: the ``track3p_source``
+    module's ``file``."""
+    sources = [m for m in workflow.modules if m.type == 'track3p_source']
+    if len(sources) != 1 or not sources[0].config.get('file'):
+        raise ValueError(
+            "collect_training_data with 'design: per_bin' needs one "
+            "'track3p_source' module with a 'file': the primaries of every "
+            "run are planned from that dump before anything runs.")
+    return sources[0].config['file']
+
+
+def _count_rows(path):
+    with open(path) as f:
+        return sum(1 for line in f if line.strip() and not line.startswith('#'))
+
+
+def _collect_per_bin(mode_cfg, workflow):
+    """Collect a per-bin store: for each bin ``b`` and each β on ``grid``, one
+    chain run with bin ``b`` at β and the others at ``off_beta`` (default 1.0,
+    which zeroes their weights).
+
+    Before anything runs, the Track3P dump is reweighted for every run
+    (:func:`surrogate_data.plan_per_bin_primaries`): that gives each run's
+    primaries, so its ``histories_per_macro`` can be set for about
+    ``events_per_run`` events (constraint #4 of the dose campaign plan), and it
+    proves each run isolates its bin (constraint #5). After each run the
+    particle source it wrote is counted against the plan.
+
+    Each run's ``geant4: histories_per_macro`` and ``particles: beta*`` are set
+    per run. Runs go to ``<store>/bin<b>/beta<value>``; one whose ``field.npz``
+    exists is skipped, so a cut-off campaign is finished by running it again.
+    The table records ``bin``, the β vector, ``primaries``,
+    ``histories_per_macro`` and ``events`` per run, and the manifest the grid,
+    ``bin_edges`` and scoring mesh. Train on it with ``train_surrogate``
+    ``model: additive``."""
+    beta_names, num_bins = _require_fixed_bin_edges(workflow)
+    mesh_fingerprint = _require_fixed_mesh(workflow)
+    resume = bool(mode_cfg.get('resume', False))
+    on_error = on_error_of(mode_cfg)
+    _check_files(workflow)
+    grid = _per_bin_grid(mode_cfg)
+    off_beta = float(mode_cfg.get('off_beta', 1.0))
+    store = mode_cfg.get('store') or mode_cfg.get('output_dir') or 'training_store'
+    os.makedirs(store, exist_ok=True)
+
+    params = _particles_params(workflow)
+    primaries = surrogate_data.plan_per_bin_primaries(
+        _dump_path(workflow), params, grid, off_beta)
+    hpm = _per_bin_histories(mode_cfg, primaries)
+    print(f" - per-bin plan: {num_bins} bins x {grid.size} beta values, "
+          f"{int(np.sum(primaries * hpm))} events in all "
+          f"({int(np.min(primaries * hpm))} to {int(np.max(primaries * hpm))} "
+          "per run)")
+
+    rows, failed = [], []
+    mesh_shape = None
+    for b in range(num_bins):
+        for i, value in enumerate(grid):
+            beta = surrogate_data.per_bin_beta(value, b, num_bins, off_beta)
+            label = f'bin {b} beta {value:g}'
+            run_dir = os.path.join(store, f'bin{b}', f'beta{value:g}')
+            field_path = os.path.join(run_dir, 'field.npz')
+            overrides = {f'particles:{name}': v
+                         for name, v in zip(beta_names, beta)}
+            overrides['geant4:histories_per_macro'] = int(hpm[b, i])
+            if os.path.isfile(field_path):
+                handle = field_path
+            else:
+                try:
+                    _check_mesh_unchanged(workflow, mesh_fingerprint, label)
+                    _outputs, ctx = _evaluate(workflow, overrides,
+                                              workdir=run_dir, resume=resume)
+                    _check_planned_primaries(ctx, primaries[b, i], label)
+                    handle = save_field(workflow.field(ctx), field_path)
+                except _MeshChanged:
+                    raise
+                except Exception as exc:
+                    if on_error == 'raise':
+                        raise
+                    _report_failed_point(label, overrides, run_dir, exc)
+                    failed.append((b, i))
+                    handle = None
+            if handle is not None and mesh_shape is None:
+                mesh_shape = _mesh_shape(handle)
+            row = {surrogate_data.BIN_COLUMN: b,
+                   **dict(zip(beta_names, beta)),
+                   surrogate_data.PRIMARIES_COLUMN: int(primaries[b, i]),
+                   surrogate_data.HPM_COLUMN: int(hpm[b, i]),
+                   surrogate_data.EVENTS_COLUMN: int(primaries[b, i] * hpm[b, i])}
+            if handle is not None:
+                row[FIELD_ARTIFACT_COLUMN] = handle
+            row[STATUS_COLUMN] = FAILED if (b, i) in failed else COMPLETE
+            rows.append(row)
+    _report_failures(failed, num_bins * grid.size, 'runs')
+
+    columns = ([surrogate_data.BIN_COLUMN] + list(beta_names)
+               + [surrogate_data.PRIMARIES_COLUMN, surrogate_data.HPM_COLUMN,
+                  surrogate_data.EVENTS_COLUMN])
+    if any(FIELD_ARTIFACT_COLUMN in r for r in rows):
+        columns.append(FIELD_ARTIFACT_COLUMN)
+    columns.append(STATUS_COLUMN)
+    df = pd.DataFrame(rows, columns=columns)
+    write_table(df, os.path.join(store, surrogate_data.TABLE_FILENAME))
+    surrogate_data.write_manifest(store, {
+        'design': surrogate_data.PER_BIN_DESIGN,
+        'beta_names': beta_names,
+        'num_bins': num_bins,
+        'bin_edges': list(params['bin_edges']),
+        'fn_model': params.get('fn_model', 'fn'),
+        'grid': grid.tolist(),
+        'off_beta': off_beta,
+        'events_per_run': mode_cfg.get('events_per_run'),
+        'mesh_shape': mesh_shape,
+        'mesh': mesh_fingerprint,
+        'dry_run': bool(workflow.dry_run),
+    })
+    return df
+
+
+class _MeshChanged(ValueError):
+    """The scoring mesh moved mid-campaign: not a run failure, ends the run."""
+
+
+def _check_mesh_unchanged(workflow, mesh_fingerprint, label):
+    if mesh_fingerprint is None:
+        return
+    current = surrogate_data.read_mesh_fingerprint(_geant4_input_path(workflow))
+    if not surrogate_data.mesh_fingerprints_match(current, mesh_fingerprint):
+        raise _MeshChanged(
+            f"dose scoring mesh changed at {label} (was {mesh_fingerprint}, "
+            f"now {current}); the mesh must stay fixed for the whole campaign "
+            "(constraint #3).")
+
+
+def _check_planned_primaries(ctx, planned, label):
+    """The particle source a run wrote must hold the planned rows, or its
+    recorded fidelity and bin isolation are wrong."""
+    from lume_ace3p.modules import PARTICLE_SOURCE
+
+    path = ctx.artifacts.lookup(PARTICLE_SOURCE, default=None) if ctx else None
+    if path is None or not os.path.isfile(path):
+        return
+    written = _count_rows(path)
+    if written != int(planned):
+        raise ValueError(
+            f"{label}: the particle source holds {written} primaries but the "
+            f"plan from the dump said {int(planned)}; the run did not weight "
+            "the dump the way the plan did.")
+
+
 def _particles_params(workflow):
     return [m for m in workflow.modules if m.type == FieldEmissionModule.type][0].params
 
@@ -1049,6 +1253,10 @@ def train_surrogate(mode_cfg, workflow=None):
       cores via joblib (``1`` = serial, ``-1`` = all cores). Result-invariant: the
       saved model is identical regardless of ``n_jobs``.
 
+    ``model: additive`` fits an
+    :class:`~lume_ace3p.surrogate_additive.AdditiveSurrogate` from a per-bin
+    store instead; see :func:`_train_additive`.
+
     Returns the fitted :class:`DoseSurrogate` (the saved model)."""
     from lume_ace3p.surrogate import DoseSurrogate
 
@@ -1057,6 +1265,13 @@ def train_surrogate(mode_cfg, workflow=None):
         raise ValueError(
             "train_surrogate requires a 'store' (the collect_training_data "
             "training store to fit the surrogate from).")
+    model = mode_cfg.get('model', 'pca_gp')
+    if model == 'additive':
+        return _train_additive(mode_cfg, store)
+    if model != 'pca_gp':
+        raise ValueError(
+            f"train_surrogate: unknown model '{model}'; use 'pca_gp' (the "
+            "default) or 'additive'.")
 
     ts = surrogate_data.load_training_store(store)
     if ts.dose is None:
@@ -1090,6 +1305,33 @@ def train_surrogate(mode_cfg, workflow=None):
     print(f" - trained PCA-GP surrogate: {surrogate.num_components} modes "
           f"({surrogate.kept_energy:.4f} energy, dose_transform="
           f"{surrogate.dose_transform}) saved to {model_dir}")
+    return surrogate
+
+
+def _train_additive(mode_cfg, store):
+    """Fit and save an additive per-bin surrogate from a per-bin store.
+
+    Keys: ``shape_beta_min`` (runs below it stay out of the shape average;
+    onset runs repeat few primaries many times, so their variance column
+    understates their noise), ``sigma_floor`` (default 1e-3), ``noise_scale``
+    (default 2), ``beta_resolution`` (default 1), ``model_dir`` (default
+    ``<store>/surrogate``). See
+    :meth:`~lume_ace3p.surrogate_additive.AdditiveSurrogate.fit`."""
+    from lume_ace3p.surrogate_additive import AdditiveSurrogate
+
+    ps = surrogate_data.load_per_bin_store(store)
+    options = {key: float(mode_cfg[key]) for key in
+               ('shape_beta_min', 'sigma_floor', 'noise_scale', 'beta_resolution')
+               if mode_cfg.get(key) is not None}
+    surrogate = AdditiveSurrogate.fit(
+        ps.grid, ps.dose, ps.variance, ps.primaries, ps.histories_per_macro,
+        beta_names=ps.beta_names, voxel_indices=ps.indices, **options)
+    model_dir = mode_cfg.get('model_dir') or os.path.join(store, 'surrogate')
+    surrogate.save(model_dir)
+    rho = ', '.join(f'{r:.3f}' for r in surrogate.rho)
+    print(f" - trained additive surrogate: {surrogate.num_bins} bins x "
+          f"{ps.grid.size} beta values (relative amplitude error per bin: "
+          f"{rho}) saved to {model_dir}")
     return surrogate
 
 

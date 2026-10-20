@@ -3476,9 +3476,11 @@ class Geant4Module(Module):
             grid = self._read_scoring_output(ctx, files[section])
             if grid is not None:
                 # 'indices' is already a 2-D (M,3) array, so the field artifact
-                # round-trips without pickling.
-                grids[section] = {'indices': grid['indices'],
-                                  'values': grid['values']}
+                # round-trips without pickling. 'val2' rides along when the file
+                # has the column: it is the run's Monte Carlo noise.
+                grids[section] = {key: grid[key]
+                                  for key in ('indices', 'values', 'val2')
+                                  if key in grid}
         if files['spectrum']:
             spectrum = read_gamma_spectrum(
                 os.path.join(ctx.workdir or '', files['spectrum']))
