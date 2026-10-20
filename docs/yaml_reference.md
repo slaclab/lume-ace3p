@@ -1557,6 +1557,7 @@ Runs against the surrogate, not Geant4. No `workflow:` needed.
 | `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains; writes `identifiability.txt`. Costs `2·D` GP evaluations. |
 | `identifiability_file` | `str`   | `identifiability.txt` beside the result table | Override that path. |
 | `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2`, then the betas. |
+| `target_histories_per_macro` | `int` | `1` | Additive model only (see [](#additive-surrogate)): the target run's `histories_per_macro`, which sets its predicted noise. |
 
 **On non-uniqueness.** The surrogate reaches beta only through its `k` retained
 POD coefficients, so the dose can constrain at most `k` combinations of beta. When
@@ -1591,6 +1592,7 @@ re-expression of the fitted GP's prediction; fitting stays scikit-learn. No
 | `identifiability` | `bool`  | `True`  | Compute the constrained/flat split; the summary then reports posterior width per direction. |
 | `output_file`     | `str`   | `<store>/posterior_samples.txt` | Raw draws, one row per sample. |
 | `summary_file`    | `str`   | `posterior_summary.txt` beside it | Per-beta mean/median/credible interval + `r_hat`/`n_eff`, plus the per-direction width table. |
+| `target_histories_per_macro` | `int` | `1` | As for `invert_optimize`. |
 
 **How to read the result.** The posterior is tight along the beta combinations
 the dose constrains and as wide as the prior along the flat ones (measured
@@ -1598,6 +1600,36 @@ the dose constrains and as wide as the prior along the flat ones (measured
 flat direction is the correct result, not a sampling failure: the data says
 nothing about that combination, so its value comes from `bounds`. The summary
 reports the ratio per direction.
+
+(additive-surrogate)=
+### Additive per-bin surrogate
+
+Dose is additive over beta bins: each particle's weight depends on its own
+emission bin's beta, and Geant4 transports primaries independently. So
+`D(beta) = Σ_b a_b(beta_b) · S_b`, with `a_b` a bin's total dose and `S_b` its
+normalized shape. `lume_ace3p.surrogate_additive.AdditiveSurrogate` fits that
+model from one 1-D sweep per bin (that bin's beta on a grid, the others at 1,
+which switches them off). On the 7-cell example it predicts held-out full-chain
+runs at their Monte Carlo noise floor; the PCA-GP did not.
+
+`invert_optimize` and `invert_bayesian` accept a `model_dir` holding either
+model. With the additive model:
+
+- The coefficients are the eight per-bin amplitudes, fitted to the target by
+  noise-weighted least squares. The noise is predicted from the training runs
+  and the target's `histories_per_macro`, so set `target_histories_per_macro`.
+- `invert_optimize` has a single minimum (the misfit is convex in the
+  amplitudes), so `num_starts` is unused.
+- `identifiability.txt` gains a `sigma` column, the Cramér-Rao error of each
+  beta. A direction counts as constrained when its sigma is below 1 in beta.
+  Every bin moves the dose, but a bin far below the dominant one moves it by
+  less than the noise. Errors are inflated 2× because voxel noise is correlated
+  and the noise model is diagonal (measured on the real chain).
+- In `invert_bayesian`, `dose_sigma` multiplies the predicted noise (default 2,
+  the same inflation) instead of setting an absolute scale.
+
+There is no mode that trains it yet; build it in Python with
+`AdditiveSurrogate.fit` and `save`.
 
 ```{warning}
 **Always check `r_hat`** in `posterior_summary.txt`; values above ~1.05 mean the

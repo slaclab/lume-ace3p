@@ -9,6 +9,15 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Added
+
+- `AdditiveSurrogate` (`lume_ace3p.surrogate_additive`): a forward dose model
+  that sums one amplitude curve times one fixed shape per beta bin, trained from
+  one 1-D sweep per bin. `invert_optimize` and `invert_bayesian` load it from a
+  `model_dir` like the PCA-GP model, and take a new
+  `target_histories_per_macro` key that sets the target's predicted noise.
+  `identifiability.txt` reports a Cramér-Rao `sigma` per beta for this model.
+
 ## [0.8.1] — 2026-10-19
 
 ### Fixed

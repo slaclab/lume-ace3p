@@ -675,6 +675,18 @@ class DoseSurrogate:
                    voxel_indices=voxel_indices)
 
 
+def load_surrogate(model_dir):
+    """Load whichever surrogate ``model_dir`` holds: an
+    :class:`~lume_ace3p.surrogate_additive.AdditiveSurrogate` if it has
+    ``additive.npz``, a :class:`DoseSurrogate` otherwise."""
+    from lume_ace3p import surrogate_additive
+
+    if os.path.isfile(os.path.join(model_dir,
+                                   surrogate_additive.ADDITIVE_FILENAME)):
+        return surrogate_additive.AdditiveSurrogate.load(model_dir)
+    return DoseSurrogate.load(model_dir)
+
+
 class Identifiability:
     """Which β directions a dose constrains, from :meth:`DoseSurrogate.identifiability`.
 
@@ -697,10 +709,15 @@ class Identifiability:
     * ``sensitivity`` — ``(D,)`` per-β Jacobian column norm: how much the
       predicted coefficients move per unit-box move of that β.
     * ``beta_names`` / ``num_components`` — labels + the cause of a rank cap.
+    * ``beta_sigma`` — ``(D,)`` Cramér-Rao sigma per β, or ``None``. Set by a
+      model with a noise model (:class:`lume_ace3p.surrogate_additive.AdditiveSurrogate`),
+      where the singular values are in noise units and ``rank`` counts the
+      directions with sigma below ``resolution`` (in β units).
     """
 
     def __init__(self, beta, rank, singular_values, identifiable, null_space,
-                 sensitivity, beta_names, num_components):
+                 sensitivity, beta_names, num_components, beta_sigma=None,
+                 resolution=None):
         self.beta = np.asarray(beta, dtype=float)
         self.rank = int(rank)
         self.singular_values = np.asarray(singular_values, dtype=float)
@@ -709,6 +726,9 @@ class Identifiability:
         self.sensitivity = np.asarray(sensitivity, dtype=float)
         self.beta_names = list(beta_names)
         self.num_components = int(num_components)
+        self.beta_sigma = (None if beta_sigma is None
+                           else np.asarray(beta_sigma, dtype=float))
+        self.resolution = None if resolution is None else float(resolution)
 
     @property
     def num_beta(self):
@@ -731,6 +751,9 @@ class Identifiability:
             text += (f". The rank is capped by the surrogate's "
                      f"{self.num_components} retained POD mode(s) — the dose "
                      f"reaches β only through those coefficients")
+        if self.resolution is not None:
+            text += (f", at a resolution of {self.resolution:g} in β "
+                     f"(Cramér-Rao sigma below it)")
         return text + '.'
 
     def describe_direction(self, row, threshold=0.25):

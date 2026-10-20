@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 (repo) next. Supersedes Phase 5 of
+**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 item 1 (`AdditiveSurrogate`) done 2026-10-20, item 2 (training mode) next. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -489,8 +489,40 @@ repo's existing patterns.
    modes" and documents only two of the four surrogate modes. Update the
    `geant4_surrogate_inversion_plan.md` status to point here.
 
-- [ ] `AdditiveSurrogate` + both inversion modes green on a synthetic additive
-  fixture and on the Phase 1 store.
+- [x] `AdditiveSurrogate` + both inversion modes green on a synthetic additive
+  fixture and on the Phase 1 store. 2026-10-20: `src/lume_ace3p/surrogate_additive.py`,
+  `tests/test_surrogate_additive.py` (22 tests), checked on the real store by
+  the campaign's `analysis/phase3_repo_check.py` (milano job 41405657).
+  No training mode yet (item 2): the model is built with `AdditiveSurrogate.fit`.
+
+**Phase 3 item 1 results (2026-10-20).**
+
+- *Design.* The coefficient space is the eight amplitudes, and `project()`
+  returns them packed with the upper Cholesky factor `R` of their precision
+  (`B + B²` numbers). `‖R(a − â)‖²` is the voxel χ² up to a constant, so
+  `coeff_misfit`, `invert` and the NUTS likelihood score in eight dimensions
+  what the voxels say. `invert` is exact: the misfit is convex in amplitudes and
+  a β box maps to an amplitude box, so it is one bounded linear least squares
+  (BVLS), with no multi-start. `load_surrogate(model_dir)` picks the model kind
+  from the files present, and the two inversion modes call it. JAX side: the
+  PCHIP curves are evaluated from scipy's stored cubic coefficients
+  (`amplitudes_fn`), and the existing NUTS runner is shared.
+- *Noise model choice, measured on the 16 September samples.* Weighting by
+  the target's own `val^2` gave visible-bin median |error| 0.90, against 0.20
+  for Phase 2's model-predicted noise. A full Gaussian likelihood with σ(β)
+  inside the optimizer (log-det term) was also worse (0.87). So the weights are
+  the model-predicted noise at the IRLS estimate, frozen; that is a
+  Gauss-Newton likelihood, and the posterior uses the same one.
+- *Reported errors are inflated 2×* (`noise_scale`, from the Phase 2 finding).
+  With it, the visible-bin pull scale is 1.25 and 83% of visible bins are within
+  2σ (59 bins with σ < 1). Without it the Phase 2 numbers were 2.5 and 61%.
+- *Matches Phase 2 exactly.* Predictions and shapes are identical to the
+  analysis class, held-out mean relative L2 0.353, and recovered β agree with
+  Phase 2's to 3e-6 on the visible bins. 16 inversions take 17 s.
+- *NUTS on samples 0 to 3*: 3 s each, `r_hat` 1.002 to 1.016 except sample 0
+  (1.11, a dark bin pinned against the lower bound). Visible bins: std 0.06 to
+  0.8; dark bins: std 1.7 to 4.3, bounded from above. Truth lies in the 90% CI
+  for 10 of 14 visible bins and 16 of 18 dark ones.
 - [ ] Fidelity recorded from the run; old manifests still load.
 - [ ] Docs and example updated; changelog entry.
 

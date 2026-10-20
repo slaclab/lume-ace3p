@@ -1,4 +1,4 @@
-"""Differentiable (JAX) re-expression of the PCA-GP surrogate's prediction.
+"""Differentiable (JAX) re-expression of the surrogates' predictions.
 
 Bayesian inversion (``invert_bayesian``, Phase 4b) samples a posterior over β with
 NUTS, which needs **gradients** of the GP predictive mean/variance w.r.t. β. The
@@ -21,6 +21,10 @@ which is elementwise arithmetic plus one triangular solve — trivially
 differentiable. This is verified against ``sklearn``'s own ``predict`` to ~1e-9 in
 ``tests/test_bayesian.py``; that test is the load-bearing guard on this
 re-expression and will catch a future change in scikit-learn's internals.
+
+The additive per-bin surrogate needs only its amplitude curves, monotone cubic
+(PCHIP) pieces whose polynomial coefficients scipy already stores; see
+:func:`amplitudes_fn`.
 
 All JAX lives in this module so :mod:`lume_ace3p.surrogate` stays numpy +
 scikit-learn only, and the JAX import cost is paid solely by the Bayesian path.
@@ -187,12 +191,9 @@ def sample_posterior_nuts(surrogate, target_coeffs, *, bounds, dose_sigma,
     # Size the device pool for the requested chains before the backend starts, so
     # they run in parallel rather than one after another.
     enable_x64(num_host_devices=num_chains)
-    import jax
     import jax.numpy as jnp
     import numpyro
     import numpyro.distributions as dist
-    from numpyro.diagnostics import summary
-    from numpyro.infer import MCMC, NUTS
 
     coeff_mean_var = coeff_mean_var_fn(surrogate)
     lo = jnp.asarray([b[0] for b in bounds], dtype=float)
@@ -205,6 +206,16 @@ def sample_posterior_nuts(surrogate, target_coeffs, *, bounds, dose_sigma,
         mean, var = coeff_mean_var(beta)
         numpyro.sample('obs', dist.Normal(mean, jnp.sqrt(var + sigma ** 2)),
                        obs=target)
+
+    return _run_nuts(model, num_warmup, num_samples, num_chains, seed)
+
+
+def _run_nuts(model, num_warmup, num_samples, num_chains, seed):
+    """Run NUTS on a numpyro ``model`` with a ``'beta'`` site and return
+    ``(samples, diagnostics)``."""
+    import jax
+    from numpyro.diagnostics import summary
+    from numpyro.infer import MCMC, NUTS
 
     # dense_mass=True is essential, not a tuning nicety. The degenerate set is a
     # curved manifold whose flat directions are *correlated* combinations of β; a
@@ -228,3 +239,65 @@ def sample_posterior_nuts(surrogate, target_coeffs, *, bounds, dose_sigma,
         'n_eff': np.asarray(stats['n_eff'], dtype=float),
     }
     return samples, diagnostics
+
+
+def amplitudes_fn(surrogate):
+    """Build a differentiable ``β (B,) -> a (B,)`` for an
+    :class:`~lume_ace3p.surrogate_additive.AdditiveSurrogate`.
+
+    Evaluates each bin's PCHIP curve of log10(amplitude) from scipy's stored
+    piecewise-cubic coefficients, so it matches
+    :meth:`~lume_ace3p.surrogate_additive.AdditiveSurrogate.amplitudes` to
+    rounding. β is clipped to the grid, as there. The returned callable is
+    jitted."""
+    _require_jax()
+    enable_x64()
+    import jax
+    import jax.numpy as jnp
+
+    knots = jnp.asarray(surrogate.beta_grid)
+    # scipy PPoly: c[k, i] multiplies (x - x_i)**(3 - k) on interval i.
+    coeffs = jnp.asarray(np.stack([f.c for f in surrogate._log_amp_fns]))
+    rows = jnp.arange(coeffs.shape[0])
+    last = knots.shape[0] - 2
+
+    def amplitudes(beta):
+        beta = jnp.clip(beta, knots[0], knots[-1])
+        interval = jnp.clip(jnp.searchsorted(knots, beta, side='right') - 1,
+                            0, last)
+        dx = beta - knots[interval]
+        c = coeffs[rows, :, interval]                       # (B, 4)
+        log_amp = ((c[:, 0] * dx + c[:, 1]) * dx + c[:, 2]) * dx + c[:, 3]
+        return 10.0 ** log_amp
+
+    return jax.jit(amplitudes)
+
+
+def sample_additive_posterior_nuts(surrogate, amp_hat, upper, *, bounds,
+                                   num_warmup, num_samples, num_chains, seed):
+    """NUTS over β for the additive surrogate; returns ``(samples,
+    diagnostics)``.
+
+    Prior uniform on ``bounds``; log-likelihood ``−½‖U (a(β) − â)‖²`` with
+    ``â`` the projected amplitudes and ``U`` the (scaled) upper Cholesky factor
+    of their precision. The precision is fixed at the projection's noise
+    weights rather than recomputed per β, the same Gauss-Newton approximation
+    :meth:`~lume_ace3p.surrogate_additive.AdditiveSurrogate.coeff_misfit` uses."""
+    _require_jax()
+    enable_x64(num_host_devices=num_chains)
+    import jax.numpy as jnp
+    import numpyro
+    import numpyro.distributions as dist
+
+    amplitudes = amplitudes_fn(surrogate)
+    lo = jnp.asarray([b[0] for b in bounds], dtype=float)
+    hi = jnp.asarray([b[1] for b in bounds], dtype=float)
+    target = jnp.asarray(np.asarray(amp_hat, dtype=float))
+    factor = jnp.asarray(np.asarray(upper, dtype=float))
+
+    def model():
+        beta = numpyro.sample('beta', dist.Uniform(lo, hi))
+        residual = factor @ (amplitudes(beta) - target)
+        numpyro.factor('obs', -0.5 * jnp.sum(residual ** 2))
+
+    return _run_nuts(model, num_warmup, num_samples, num_chains, seed)

@@ -111,11 +111,12 @@ MODE_KEYS = {
         'holdout', 'dose_transform', 'floor', 'n_jobs'}),
     'invert_optimize': frozenset({
         'store', 'model_dir', 'target', 'bounds', 'num_starts', 'seed',
-        'output_file', 'identifiability', 'identifiability_file'}),
+        'output_file', 'identifiability', 'identifiability_file',
+        'target_histories_per_macro'}),
     'invert_bayesian': frozenset({
         'store', 'model_dir', 'target', 'bounds', 'seed', 'output_file',
         'summary_file', 'identifiability', 'num_warmup', 'num_samples',
-        'num_chains', 'dose_sigma'}),
+        'num_chains', 'dose_sigma', 'target_histories_per_macro'}),
 }
 
 # Every key the two Xopt modes read out of ``xopt_parameters``. One set for both:
@@ -1187,9 +1188,15 @@ def _load_inversion_target(mode_cfg, mode_name):
     must be identical — the target seam, where a misalignment would silently
     invalidate the projection (constraint #3).
 
+    The model may be a PCA-GP :class:`~lume_ace3p.surrogate.DoseSurrogate` or an
+    :class:`~lume_ace3p.surrogate_additive.AdditiveSurrogate`
+    (:func:`~lume_ace3p.surrogate.load_surrogate` picks). For the additive model,
+    ``target_histories_per_macro`` (default 1) sets the target's predicted noise
+    and must be applied before projecting.
+
     Returns ``(surrogate, aligned_dose, target_coeffs, bounds_or_None,
     model_dir)``."""
-    from lume_ace3p.surrogate import DoseSurrogate
+    from lume_ace3p.surrogate import load_surrogate
 
     store = mode_cfg.get('store')
     model_dir = mode_cfg.get('model_dir') or (
@@ -1201,7 +1208,15 @@ def _load_inversion_target(mode_cfg, mode_name):
     if not os.path.isdir(model_dir):
         raise ValueError(
             f"no saved surrogate at '{model_dir}'; run train_surrogate first.")
-    surrogate = DoseSurrogate.load(model_dir)
+    surrogate = load_surrogate(model_dir)
+    if mode_cfg.get('target_histories_per_macro') is not None:
+        if not hasattr(surrogate, 'target_histories_per_macro'):
+            raise ValueError(
+                f"{mode_name}: 'target_histories_per_macro' applies to an "
+                "additive surrogate only; the PCA-GP model at "
+                f"'{model_dir}' has no target noise model.")
+        surrogate.target_histories_per_macro = int(
+            mode_cfg['target_histories_per_macro'])
 
     values, indices = surrogate_data.load_target_dose(mode_cfg.get('target'))
     reference = _reference_indices(surrogate, mode_cfg, store)
@@ -1340,6 +1355,8 @@ def _write_identifiability(ident, path):
     rows = []
     for j, name in enumerate(ident.beta_names):
         row = {'beta': name, 'sensitivity': float(ident.sensitivity[j])}
+        if ident.beta_sigma is not None:
+            row['sigma'] = float(ident.beta_sigma[j])
         for i in range(ident.identifiable.shape[0]):
             row[f'constrained_{i}'] = float(ident.identifiable[i, j])
         for i in range(ident.null_space.shape[0]):
@@ -1348,18 +1365,37 @@ def _write_identifiability(ident, path):
     df = pd.DataFrame(rows)
 
     singular = ' '.join(f'{s:.6g}' for s in ident.singular_values)
+    if ident.beta_sigma is None:
+        basis = [
+            f'# Jacobian singular values (unit-box coords, descending): {singular}',
+            f'# Retained POD modes (k): {ident.num_components}  '
+            f'-> the dose constrains at most k combinations of beta.',
+        ]
+        sensitivity = [
+            '#   sensitivity     how much the predicted dose coefficients move per',
+            '#                   unit-box move of that beta (bigger = more visible).',
+        ]
+    else:
+        basis = [
+            f'# Whitened Jacobian singular values (per unit beta, descending): '
+            f'{singular}',
+            f'# A direction is constrained when its Cramer-Rao sigma (1 / singular '
+            f'value) is below {ident.resolution:g} in beta.',
+        ]
+        sensitivity = [
+            '#   sensitivity     how far the predicted dose moves, in noise sigmas,',
+            '#                   per unit change of that beta.',
+            '#   sigma           Cramer-Rao sigma of that beta (its error bar).',
+        ]
     preamble = [
         '# Identifiability of the inverted dose (at the reported beta*).',
         '#',
         f'# {ident.summary()}',
         '#',
-        f'# Jacobian singular values (unit-box coords, descending): {singular}',
-        f'# Retained POD modes (k): {ident.num_components}  '
-        f'-> the dose constrains at most k combinations of beta.',
+        *basis,
         '#',
         '# How to read this table:',
-        '#   sensitivity     how much the predicted dose coefficients move per',
-        '#                   unit-box move of that beta (bigger = more visible).',
+        *sensitivity,
         '#   constrained_i   weight of each beta in the i-th direction the dose',
         '#                   DOES constrain (i=0 is the best-constrained).',
         '#   flat_i          weight of each beta in the i-th direction the dose',
