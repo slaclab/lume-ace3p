@@ -460,3 +460,75 @@ def test_load_rejects_manifest_mesh_count_mismatch(tmp_path):
 
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))
+
+
+# --------------------------------------------------------------------------- #
+# Measured fidelity (dose campaign constraint #4): primaries and
+# histories_per_macro come from the run, not a typed 'fidelity:' label.
+# --------------------------------------------------------------------------- #
+
+
+def test_dry_run_records_measured_fidelity(tmp_path, capsys):
+    cwd = os.getcwd()
+    try:
+        wf = _staged_beta_workflow(tmp_path)
+        wf.inputs.macro['histories_per_macro'] = 7
+        os.chdir(tmp_path)
+        cfg = _mode_cfg(tmp_path, num_samples=2)
+        cfg.pop('fidelity')
+        df = collect_training_data(cfg, wf)
+        assert 'DeprecationWarning' not in capsys.readouterr().err
+        for i, row in df.iterrows():
+            source = tmp_path / 'store' / f'sample_{i:05d}' / 'particles.data'
+            rows = sum(1 for line in open(source) if line.strip())
+            assert row['primaries'] == rows > 0
+            assert row['histories_per_macro'] == 7
+            assert row['events'] == 7 * rows
+        assert np.isnan(df[surrogate_data.FIDELITY_COLUMN]).all()
+
+        # A second run skips both samples and reads the same values back from
+        # their workdirs.
+        rerun = tmp_path / 'rerun'
+        rerun.mkdir()
+        again = collect_training_data(cfg, _staged_beta_workflow(rerun))
+        assert again[['primaries', 'histories_per_macro']].equals(
+            df[['primaries', 'histories_per_macro']])
+        loaded = surrogate_data.load_training_store(str(tmp_path / 'store'))
+        assert np.array_equal(loaded.events, df['events'].to_numpy(float))
+    finally:
+        os.chdir(cwd)
+
+
+def test_histories_default_to_one_when_the_input_sets_none(tmp_path):
+    cwd = os.getcwd()
+    try:
+        wf = _staged_beta_workflow(tmp_path)
+        os.chdir(tmp_path)
+        df = collect_training_data(_mode_cfg(tmp_path, num_samples=1), wf)
+        assert df['histories_per_macro'].tolist() == [1]
+        assert df['events'].tolist() == df['primaries'].tolist()
+    finally:
+        os.chdir(cwd)
+
+
+def test_typed_fidelity_is_deprecated_but_still_recorded(tmp_path, capsys):
+    store = str(tmp_path / 'store')
+    df = collect_training_data(_mode_cfg(tmp_path, store=store, num_samples=2),
+                               _FakeWorkflow())
+    assert "'fidelity:' is a typed label" in capsys.readouterr().err
+    assert (df[surrogate_data.FIDELITY_COLUMN] == 1019.0).all()
+    # A workflow with no particle source or Geant4 input measures nothing.
+    assert df['primaries'].isna().all()
+
+
+def test_old_store_without_measured_columns_loads(tmp_path):
+    store = str(tmp_path / 'store')
+    collect_training_data(_mode_cfg(tmp_path, store=store, num_samples=3),
+                          _FakeWorkflow())
+    table_path = os.path.join(store, surrogate_data.TABLE_FILENAME)
+    table = pd.read_csv(table_path, sep='\t')
+    table.drop(columns=list(surrogate_data.MEASURED_FIDELITY_COLUMNS)).to_csv(
+        table_path, sep='\t', index=False)
+    loaded = surrogate_data.load_training_store(store)
+    assert len(loaded) == 3 and np.all(loaded.fidelity == 1019.0)
+    assert np.isnan(loaded.primaries).all() and np.isnan(loaded.events).all()

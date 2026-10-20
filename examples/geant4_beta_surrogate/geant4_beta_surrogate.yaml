@@ -68,7 +68,8 @@ mode :
   num_samples : 16                        # DOE size (power of 2 is ideal for Sobol)
   sampler : 'sobol'                       # 'sobol' (default) or 'lhs'
   seed : 0                                # reproducible design; enables clean resume
-  fidelity : 10000                        # recorded Geant4 primary count (for Phase 5)
+                                          # (each row records the run's measured
+                                          # primaries and histories_per_macro)
 
   # Per-bin beta bounds the DOE samples across (one entry per beta_inputs name).
   # [lo, hi] or {min: .., max: ..} are both accepted.

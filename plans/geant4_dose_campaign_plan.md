@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 items 1 (`AdditiveSurrogate`) and 2 (per-bin training mode) done 2026-10-20; item 3 rest and item 4 next. Supersedes Phase 5 of
+**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 (example and docs) next. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -552,8 +552,17 @@ repo's existing patterns.
   runs were rewritten as a repo store by the campaign's
   `analysis/import_phase1_store.py` (`stores/perbin_repo_2026-10-20`, no Geant4).
   `train_surrogate model: additive` on it reproduces the item 1 model to 3e-15.
-- [ ] Fidelity recorded from the run in the DOE collector; old manifests still
-  load.
+- [x] Fidelity recorded from the run in the DOE collector; old manifests still
+  load. 2026-10-20 (item 3 complete): every sample row gets `primaries` (rows
+  of the particle source the run wrote), `histories_per_macro` (from the merged
+  Geant4 input, 1 when unset) and `events`. A sample skipped because its
+  `field.npz` exists is read back from its workdir, so a re-run records the
+  same values. `TrainingStore` gains the three arrays. The typed `fidelity:`
+  key still works, with a deprecation warning, and stays in its column. The
+  September store (no measured columns) loads with NaN there. Example YAML no
+  longer sets `fidelity`. `docs/configuration_by_mode.md` now lists all four
+  surrogate modes (an item 4 bullet, done here because the old text described
+  the key being deprecated).
 - [ ] Docs and example updated; changelog entry.
 
 ### Phase 4 (optional): the research question

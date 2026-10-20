@@ -1503,7 +1503,10 @@ keys below live in the `mode:` block.
 
 Drives the full `track3p_source -> field_emission -> geant4` chain once per
 design-of-experiments sample, persisting a `(beta, dose_grid)` pair each time.
-Requires a `workflow:` list.
+Requires a `workflow:` list. Each row records the run's fidelity as measured:
+`primaries` (rows of the particle source it wrote), `histories_per_macro` (from
+its Geant4 input, 1 when unset) and `events`, their product. Set
+`histories_per_macro` under `input_parameters: geant4:`.
 
 | Keyword       | Type   | Default | Description |
 |---------------|--------|---------|-------------|
@@ -1511,7 +1514,7 @@ Requires a `workflow:` list.
 | `num_samples` | `int`  | `8`     | DOE size. A power of two is ideal for Sobol. |
 | `sampler`     | `str`  | `'sobol'` | `'sobol'` or `'lhs'`. Not a tensor grid; a full 8-D grid is infeasible. |
 | `seed`        | `int`  | `0`     | Reproducible design; a resumed run reproduces the same points. |
-| `fidelity`    | `float`| `None`  | Recorded Geant4 primary count per sample, for later multi-fidelity work. |
+| `fidelity`    | `float`| `None`  | Deprecated: a typed label copied into every row, not what the run did. Each run's measured `primaries`, `histories_per_macro` and `events` are recorded instead. |
 | `variables`   | `dict` | *required* | Per-beta `[lo, hi]` (or `{min, max}`) DOE bounds, one entry per `beta_inputs` name. |
 | `resume`      | `bool` | `False` | Restart a sample that stopped midway through the chain at its first non-complete module. A sample whose `field.npz` is already stored is skipped regardless; see [](#resume). |
 

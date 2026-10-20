@@ -207,14 +207,23 @@ sweep_parameters :
 
 ## Surrogate-pipeline modes
 
-Two further modes support the offline surrogate workflow. Their keys live
-directly on the `mode:` block rather than in separate top-level sections:
+Four modes support the offline surrogate workflow. Their keys live directly
+on the `mode:` block rather than in separate top-level sections:
 
-- **`collect_training_data`** samples the input space (Sobol/random) and writes
-  a training store. Key `mode:` fields: `variables` (per-variable bounds),
-  `store`/`output_dir`, `num_samples`, `sampler`, `seed`, optional `fidelity`.
-- **`train_surrogate`** fits a PCA-GP surrogate from a training store. Key
+- **`collect_training_data`** runs the Geant4 chain over a Sobol/LHS design and
+  writes a training store, recording each run's primaries and
+  `histories_per_macro`. Key `mode:` fields: `variables` (per-variable bounds),
+  `store`/`output_dir`, `num_samples`, `sampler`, `seed`. `design: per_bin`
+  collects one 1-D sweep per bin instead (`grid`, `events_per_run`).
+- **`train_surrogate`** fits a PCA-GP surrogate from a training store, or with
+  `model: additive` the additive per-bin surrogate from a per-bin store. Key
   `mode:` fields: `store` (required), `variance`, `num_components`, `seed`.
+- **`invert_optimize`** estimates beta from a target dose with a trained
+  surrogate. Key `mode:` fields: `target`, `model_dir`/`store`, `bounds`.
+- **`invert_bayesian`** samples a posterior over beta instead. Key `mode:`
+  fields: as `invert_optimize`, plus `num_samples`, `num_chains`.
+
+The full key tables are in [](yaml_reference.md#surrogate-modes).
 
 See [](optimization.md) and the surrogate examples under `examples/` for full
 usage.

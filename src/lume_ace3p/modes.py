@@ -916,6 +916,13 @@ def collect_training_data(mode_cfg, workflow):
     sampler = mode_cfg.get('sampler', 'sobol')
     seed = int(mode_cfg.get('seed', 0))
     fidelity = mode_cfg.get('fidelity')
+    if fidelity is not None:
+        _deprecation_warning(
+            "collect_training_data 'fidelity:' is a typed label, not what the "
+            "run did. Each sample's primaries and histories_per_macro are now "
+            "read from the run itself (the 'primaries', 'histories_per_macro' "
+            "and 'events' columns); drop the key. It is still recorded in the "
+            "'fidelity' column for now.")
     if not os.path.isdir(store):
         os.makedirs(store, exist_ok=True)
 
@@ -929,6 +936,7 @@ def collect_training_data(mode_cfg, workflow):
     rows = []
     failed = []
     mesh_shape = None
+    measured = {}
     for i in range(num_samples):
         beta_vec = design[i]
         sample_dir = os.path.join(store, f'sample_{i:05d}')
@@ -960,6 +968,7 @@ def collect_training_data(mode_cfg, workflow):
                 _outputs, ctx = _evaluate(workflow, overrides,
                                           workdir=sample_dir, resume=resume)
                 handle = save_field(workflow.field(ctx), field_path)
+                measured[i] = _run_fidelity(ctx)
             except Exception as exc:
                 if on_error == 'raise':
                     raise
@@ -973,13 +982,17 @@ def collect_training_data(mode_cfg, workflow):
         row = dict(overrides)
         row[surrogate_data.FIDELITY_COLUMN] = (
             float(fidelity) if fidelity is not None else np.nan)
+        # A skipped (already stored) sample was measured by the run that
+        # stored it; read the same files back from its workdir.
+        row.update(measured.get(i) or _workdir_fidelity(sample_dir, workflow))
         if handle is not None:
             row[FIELD_ARTIFACT_COLUMN] = handle
         row[STATUS_COLUMN] = FAILED if i in failed else COMPLETE
         rows.append(row)
     _report_failures(failed, num_samples, 'samples')
 
-    columns = list(beta_names) + [surrogate_data.FIDELITY_COLUMN]
+    columns = (list(beta_names) + [surrogate_data.FIDELITY_COLUMN]
+               + list(surrogate_data.MEASURED_FIDELITY_COLUMNS))
     if any(FIELD_ARTIFACT_COLUMN in r for r in rows):
         columns.append(FIELD_ARTIFACT_COLUMN)
     if failed:
@@ -996,6 +1009,7 @@ def collect_training_data(mode_cfg, workflow):
         'seed': seed,
         'bounds': [list(b) for b in bounds],
         'fidelity': fidelity,
+        'fidelity_columns': list(surrogate_data.MEASURED_FIDELITY_COLUMNS),
         'mesh_shape': mesh_shape,
         'mesh': mesh_fingerprint,
         'dry_run': bool(workflow.dry_run),
@@ -1193,6 +1207,63 @@ def _check_planned_primaries(ctx, planned, label):
             f"{label}: the particle source holds {written} primaries but the "
             f"plan from the dump said {int(planned)}; the run did not weight "
             "the dump the way the plan did.")
+
+
+def _run_fidelity(ctx):
+    """``{primaries, histories_per_macro, events}`` of the run ``ctx``
+    describes: rows of the particle source it wrote, and the
+    ``histories_per_macro`` of the Geant4 input it ran (1, the dose-npass
+    default, when the input sets none). NaN for what the run did not write,
+    which is every value under dry-run's skipped Geant4 step except the
+    primaries."""
+    from lume_ace3p.modules import PARTICLE_SOURCE
+
+    path = ctx.artifacts.lookup(PARTICLE_SOURCE, default=None) if ctx else None
+    geant4 = next((m for m in getattr(ctx, 'modules', ())
+                   if m.type == 'geant4'), None)
+    values = (geant4.geant4_obj.get_values()
+              if geant4 is not None and geant4.geant4_obj is not None else None)
+    return _fidelity_record(path, values)
+
+
+def _workdir_fidelity(workdir, workflow):
+    """:func:`_run_fidelity` from the files a finished sample left in
+    ``workdir``: its particle source and its merged Geant4 input. NaN where a
+    file is not there (a store collected before this was recorded)."""
+    from lume_ace3p.geant4 import Geant4
+    from lume_ace3p.particles import default_output_name
+
+    modules = {m.type: m for m in workflow.modules}
+    fe, geant4 = modules.get(FieldEmissionModule.type), modules.get('geant4')
+    source_t3p = modules.get('track3p_source')
+    name = getattr(fe, 'output_file', None)
+    if name is None and source_t3p is not None and source_t3p.config.get('file'):
+        name = default_output_name(os.path.basename(source_t3p.config['file']))
+    source = os.path.join(workdir, name) if name else None
+    values = None
+    input_path = getattr(geant4, 'geant4_input', None)
+    merged = (os.path.join(workdir, os.path.basename(input_path))
+              if input_path else None)
+    if merged and os.path.isfile(merged):
+        with open(merged) as f:
+            values = dict(parsed[1:] for parsed in map(Geant4._split_kv, f)
+                          if parsed)
+    return _fidelity_record(source, values)
+
+
+def _fidelity_record(source_path, geant4_values):
+    primaries = (_count_rows(source_path)
+                 if source_path and os.path.isfile(source_path) else np.nan)
+    hpm = np.nan
+    if geant4_values is not None:
+        hpm = 1
+        for key in surrogate_data.HPM_KEYS:
+            if geant4_values.get(key) not in (None, ''):
+                hpm = int(float(geant4_values[key]))
+                break
+    return {surrogate_data.PRIMARIES_COLUMN: primaries,
+            surrogate_data.HPM_COLUMN: hpm,
+            surrogate_data.EVENTS_COLUMN: primaries * hpm}
 
 
 def _particles_params(workflow):

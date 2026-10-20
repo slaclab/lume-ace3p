@@ -6,8 +6,8 @@ and, later, the ``train_surrogate`` / ``invert_*`` modes. It is deliberately
 *not* a new on-disk format: a training store is just
 
 * a result table written through the shared :func:`lume_ace3p.results.write_table`
-  (one row per DOE sample: the ``beta0..betaN`` columns, a recorded ``fidelity``,
-  and a :data:`~lume_ace3p.results.FIELD_ARTIFACT_COLUMN` handle), plus
+  (one row per DOE sample: the ``beta0..betaN`` columns, the measured
+  ``primaries`` / ``histories_per_macro`` / ``events``, and a :data:`~lume_ace3p.results.FIELD_ARTIFACT_COLUMN` handle), plus
 * the per-sample dose/edep voxel grids persisted with
   :func:`lume_ace3p.results.save_field` (a ``.npz`` under each sample workdir),
   reloaded on demand with :func:`lume_ace3p.results.load_field`, plus
@@ -37,9 +37,21 @@ import pandas as pd
 TABLE_FILENAME = 'training_table.txt'
 MANIFEST_FILENAME = 'manifest.json'
 
-# Column name recording each sample's fidelity (Geant4 primary count). Kept as
-# an explicit column so Phase 5 multi-fidelity training can filter on it.
+# The typed 'fidelity:' label a DOE collection used to record per sample. It
+# is not what the run did (the 2026-09 store wrote 10000 for runs of 82k to
+# 134k primaries), so it is deprecated in favour of the measured columns below,
+# and kept only so old stores and configs load.
 FIDELITY_COLUMN = 'fidelity'
+
+# Measured fidelity per run (dose campaign constraint #4): rows of the particle
+# source, the Geant4 input's histories_per_macro, and their product.
+PRIMARIES_COLUMN = 'primaries'
+HPM_COLUMN = 'histories_per_macro'
+EVENTS_COLUMN = 'events'
+MEASURED_FIDELITY_COLUMNS = (PRIMARIES_COLUMN, HPM_COLUMN, EVENTS_COLUMN)
+# The dose-npass input keys for histories_per_macro, in its own precedence
+# order; absent means 1.
+HPM_KEYS = ('histories_per_macro', 'nhistories', 'passes')
 
 
 # --------------------------------------------------------------------------- #
@@ -394,19 +406,28 @@ class TrainingStore:
     * ``edep`` — ``(N, M)`` energy-deposit values, or ``None``.
     * ``indices`` — ``(M, 3)`` shared voxel ``(ix, iy, iz)`` index array for the
       dose/edep columns, or ``None``.
-    * ``fidelity`` — ``(N,)`` recorded fidelity per sample.
+    * ``fidelity`` — ``(N,)`` the deprecated typed ``fidelity`` label per sample
+      (NaN when none was given).
+    * ``primaries`` / ``histories_per_macro`` / ``events`` — ``(N,)`` measured
+      per run; NaN for a store collected before they were recorded.
     * ``table`` — the raw result :class:`pandas.DataFrame`.
     * ``manifest`` — the parsed manifest dict.
     """
 
     def __init__(self, beta, beta_names, dose, edep, indices, fidelity,
-                 table, manifest):
+                 table, manifest, primaries=None, histories_per_macro=None,
+                 events=None):
         self.beta = beta
         self.beta_names = beta_names
         self.dose = dose
         self.edep = edep
         self.indices = indices
         self.fidelity = fidelity
+        nan = np.full(len(beta), np.nan)
+        self.primaries = nan if primaries is None else primaries
+        self.histories_per_macro = (nan if histories_per_macro is None
+                                    else histories_per_macro)
+        self.events = nan if events is None else events
         self.table = table
         self.manifest = manifest
 
@@ -449,9 +470,11 @@ def load_training_store(store_path):
         c for c in table.columns if c.startswith('beta')]
     beta = table[beta_names].to_numpy(dtype=float)
 
-    fidelity = (table[FIDELITY_COLUMN].to_numpy()
-                if FIDELITY_COLUMN in table.columns
+    def column(name):
+        return (table[name].to_numpy(dtype=float) if name in table.columns
                 else np.full(len(table), np.nan))
+
+    fidelity = column(FIDELITY_COLUMN)
 
     dose_rows, edep_rows = [], []
     indices = None
@@ -472,7 +495,9 @@ def load_training_store(store_path):
     if indices is not None:
         _check_indices_against_manifest(indices, manifest)
     return TrainingStore(beta, list(beta_names), dose, edep, indices, fidelity,
-                         table, manifest)
+                         table, manifest, primaries=column(PRIMARIES_COLUMN),
+                         histories_per_macro=column(HPM_COLUMN),
+                         events=column(EVENTS_COLUMN))
 
 
 def _is_handle(handle):
@@ -566,9 +591,6 @@ def _stack_rows(rows):
 
 PER_BIN_DESIGN = 'per_bin'
 BIN_COLUMN = 'bin'
-PRIMARIES_COLUMN = 'primaries'
-HPM_COLUMN = 'histories_per_macro'
-EVENTS_COLUMN = 'events'
 
 
 def per_bin_beta(beta_value, b, num_bins, off_beta):

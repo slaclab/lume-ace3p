@@ -23,8 +23,19 @@ coarser grain than the entries above them.
   per run. `train_surrogate` `model: additive` fits the model from that store.
 - `read_dose_file` returns the dose file's `total(val^2)` column as `val2` when
   present, and the Geant4 field artifact carries it.
+- `collect_training_data` records each sample's measured `primaries`,
+  `histories_per_macro` and `events` (from the particle source and Geant4 input
+  it ran), and `load_training_store` returns them. A store collected before
+  this loads with NaN there.
 - An override qualified with a shared bucket (`geant4:histories_per_macro`)
   now reaches that bucket even when the input is not declared.
+
+### Deprecated
+
+- `collect_training_data` `fidelity:`: it was a typed label copied into every
+  row (the shipped example wrote 10000 for runs of 82k to 134k primaries). It is
+  still recorded in the `fidelity` column, with a warning; use the measured
+  columns.
 
 ## [0.8.1] — 2026-10-19
 
