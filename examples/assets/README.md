@@ -11,8 +11,7 @@ This folder is **not a runnable example**: it has no YAML and nothing to run.
 - `7cell_solid_whole.stl`, `7cell_cavity_whole.stl` — Geant4 STL geometry for the
   7-cell cavity. Consumed by the `geant4_*` examples
   ([`../geant4_dose_single`](../geant4_dose_single),
-  [`../geant4_track3p_beta`](../geant4_track3p_beta),
-  [`../geant4_beta_surrogate`](../geant4_beta_surrogate)), listed under
+  [`../geant4_track3p_beta`](../geant4_track3p_beta)), listed under
   `geant4_geometry_files` so the module stages them into the workdir.
 - `Pillbox.ncdf` — the CW23 pillbox cavity mesh (63 091 elements), consumed by
   [`../track3p_multipacting`](../track3p_multipacting) through its `mesh` module.

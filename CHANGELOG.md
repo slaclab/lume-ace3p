@@ -30,6 +30,16 @@ coarser grain than the entries above them.
 - An override qualified with a shared bucket (`geant4:histories_per_macro`)
   now reaches that bucket even when the input is not declared.
 
+### Removed
+
+- The `geant4_beta_surrogate` example. Its 8-D Sobol + PCA-GP design is the one
+  the dose campaign showed cannot be trained from a feasible number of Geant4
+  runs, and the workflow has one user. The four surrogate modes, their tests and
+  the reference docs stay; `docs/configuration_by_mode.md` now carries a complete
+  per-bin pipeline (collect, train, invert, posterior) in its place. The example
+  as last shipped, the campaign configs and the stores live in the off-repo
+  campaign directory.
+
 ### Deprecated
 
 - `collect_training_data` `fidelity:`: it was a typed label copied into every

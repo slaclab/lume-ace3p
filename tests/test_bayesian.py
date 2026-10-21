@@ -316,17 +316,5 @@ def test_mode_requires_model_and_target(tmp_path):
                          'target': 'x.npz'})
 
 
-def test_shipped_bayesian_example_is_store_consuming():
-    from lume_ace3p.inputs import load_yaml
-    from lume_ace3p.modes import is_store_consuming
-
-    path = os.path.join(os.path.dirname(__file__), '..', 'examples',
-                        'geant4_beta_surrogate',
-                        'geant4_beta_surrogate_invert_bayesian.yaml')
-    data = load_yaml(path)
-    assert data.get('workflow') is None
-    assert is_store_consuming(data.get('mode'))
-
-
 if __name__ == '__main__':
     raise SystemExit(pytest.main([__file__, '-v']))

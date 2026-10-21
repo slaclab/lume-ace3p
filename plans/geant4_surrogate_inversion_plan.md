@@ -1,6 +1,12 @@
 # Geant4 Dose Surrogate & Inversion — Implementation Plan
 
-**Status:** UNSHELVED (2026-07-10). The workflow modularization refactor is
+**Status:** CLOSED (2026-10-21). The machinery was delivered and validated on
+S3DF (2026-09-10), and the real-data follow-up found that the 8-D PCA-GP design
+cannot be trained from a feasible number of Geant4 runs; the additive per-bin
+model that replaces it is in `plans/geant4_dose_campaign_plan.md` (Phase 3) and
+the research write-up in the campaign directory. The `geant4_beta_surrogate`
+example this plan built was retired on 2026-10-21. Earlier status, kept for the
+record: UNSHELVED (2026-07-10). The workflow modularization refactor is
 complete (see `plans/workflow_module_refactor_plan.md`), so this project resumes
 on the new module/workflow/mode architecture.
 **Phase 0 (xopt 3.0.0 compat) done. Phase 1 (decouple Xopt from S3PWorkflow) is

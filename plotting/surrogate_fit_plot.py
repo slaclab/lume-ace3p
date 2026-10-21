@@ -11,7 +11,7 @@ from matplotlib.widgets import Slider, RadioButtons, RangeSlider
 # Interactive accuracy viewer for the PCA-GP dose surrogate (the model saved by
 # the `train_surrogate` mode). It is launched on a *training-store directory* --
 # the folder holding `training_table.txt`, `manifest.json`, and a `surrogate/`
-# subfolder produced by the geant4_beta_surrogate example. It loads the store's
+# subfolder produced by collect_training_data + train_surrogate. It loads the store's
 # (beta, dose) training pairs and the fitted surrogate, then lets you:
 #
 #   * slide the 8 (D) beta field-enhancement knobs and watch the surrogate's

@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0, 1 and 2 done (2026-10-19); Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 (example and docs) next. Supersedes Phase 5 of
+**Status:** COMPLETE through Phase 3 (2026-10-21). Phases 0 to 2 done 2026-10-19; Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 done 2026-10-21 (example retired, docs, changelog). Release of 0.9.0 and Phase 4 are what remain; the research write-up is `docs/dose_inversion_summary.md` in the campaign directory. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -563,7 +563,23 @@ repo's existing patterns.
   longer sets `fidelity`. `docs/configuration_by_mode.md` now lists all four
   surrogate modes (an item 4 bullet, done here because the old text described
   the key being deprecated).
-- [ ] Docs and example updated; changelog entry.
+- [x] Docs and example updated; changelog entry. 2026-10-21: the
+  `geant4_beta_surrogate` example was **retired, not re-pointed** (the user's
+  call: one user, and the four YAMLs only run usefully on a milano node for
+  hours). The last shipped copy, the September store (copied off scratch) and
+  the per-bin configs live in the campaign directory
+  (`retired_example/`, `stores/september_2026-09-10/`, `configs/phase1/`).
+  `docs/configuration_by_mode.md` carries a complete per-bin pipeline in the
+  example's place; the baseline registry, two gate tests and the cross-references
+  in docs, READMEs and the plot script were updated. The `fn` vs `wang-loew`
+  decision is moot with no shipped example; the campaign stays on `wang-loew`.
+  The inversion plan is marked CLOSED and the β-localization plan notes that its
+  `KernelSurrogate` is `AdditiveSurrogate`.
+
+**Phase 3 close-out.** Still to do, outside this plan's items: bump to 0.9.0
+(two new mode keys and a new model), PR dev to main, deploy. Phase 4 runs in the
+campaign directory and needs no repo work unless the coarse-mesh question asks
+for the lossy resample path.
 
 ### Phase 4 (optional): the research question
 
@@ -590,8 +606,9 @@ Open, to decide at the phase that needs them:
 
 - ~~Whether `S_b` needs a β-dependent model at all.~~ Resolved 2026-10-19: no,
   constant per bin within the data's noise (Phase 1 review).
-- `wang-loew` vs `fn` for the shipped example (Phase 3 step 4). The campaign
-  itself stays on `wang-loew` so the 16 held-out samples remain comparable.
+- ~~`wang-loew` vs `fn` for the shipped example (Phase 3 step 4).~~ Moot
+  2026-10-21: no shipped example. The campaign stays on `wang-loew` so the 16
+  held-out samples remain comparable.
 - Whether a thread count below 120 is worth it for the 3,423-primary end-bin
   runs (not unless queue time becomes the bottleneck; one job at a time anyway).
 

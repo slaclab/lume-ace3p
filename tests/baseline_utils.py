@@ -771,17 +771,6 @@ NOT_FROZEN = {
         'geant4_track3p_beta IS frozen and covers the shared part with real '
         'compute: its Particles pre-step generates particles.data per beta, '
         'frozen as digests.'),
-    'geant4_beta_surrogate': (
-        'RECORDED 2026-08-20 (previously an undocumented gap, not a decision). '
-        'Four YAMLs spanning collect_training_data, surrogate training, and the '
-        'two inversion modes; the campaign needs real Geant4 dose output and a '
-        'populated training store, and the surrogate/inversion modes fit GPs '
-        '(the same cost-and-flake objection that de-registered '
-        's3p_bayesian_sweep). The surrogate and inversion numerics are covered '
-        'directly by tests/test_surrogate.py, test_surrogate_data.py and '
-        'test_inversion.py instead of through an example baseline. Note this '
-        'example belongs to the Geant4 surrogate/inversion project, which is '
-        'shelved — see plans/geant4_surrogate_inversion_plan.md.'),
 }
 
 # Directories under examples/ that hold no example of their own: shared input

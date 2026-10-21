@@ -38,9 +38,10 @@ cryomodule-scale run costs about 50 node-minutes per field level, so studies
 over pre-run dumps start here). Unlike
 `geant4_dose_single`, which uses a fixed per-bin `beta` vector and runs once,
 here the `field_emission` module's `beta_input: beta` broadcasts the single swept
-scalar to all `num_bins` bins (run 1 → `[35]*8`, run 2 → `[41.25]*8`, …). Unlike
-[`../geant4_beta_surrogate`](../geant4_beta_surrogate), which scatters a DOE over
-an 8-D per-bin `beta` vector, this is a one-axis tensor sweep of a single knob.
+scalar to all `num_bins` bins (run 1 → `[35]*8`, run 2 → `[41.25]*8`, …). The
+`collect_training_data` mode (see the surrogate pipeline in the docs) instead
+varies the eight per-bin values independently; this is a one-axis tensor sweep
+of a single knob.
 
 ## Assets
 

@@ -93,9 +93,9 @@ the 3D scatter or 2D slice viewers instead.
 
 `plotting/surrogate_fit_plot.py` shows how well the PCA-GP dose surrogate (the
 model saved by the `train_surrogate` mode) reproduces the collected Geant4 dose.
-Launch it on a **training-store directory**, the folder from the
-`geant4_beta_surrogate` example holding `training_table.txt`, `manifest.json`,
-and a `surrogate/` subfolder:
+Launch it on a **training-store directory**, the folder written by
+`collect_training_data` holding `training_table.txt`, `manifest.json`, and the
+`surrogate/` subfolder written by `train_surrogate`:
 
 ```bash
 python plotting/surrogate_fit_plot.py [store_dir]
@@ -125,8 +125,7 @@ is exponential in beta (Fowler–Nordheim) and spans many orders of magnitude
 across voxels, so a linear fit is dominated by the peak voxels and barely
 captures the dose *shape*. A good fit therefore reads ~0.2 relative-L2 in log
 but a misleading ~2 in linear. To train the surrogate in log space, set
-`dose_transform: 'log10'` under `mode:` in the training YAML (see
-`examples/geant4_beta_surrogate/geant4_beta_surrogate_train.yaml`); the holdout
+`dose_transform: 'log10'` under `mode:` in the training YAML; the holdout
 report's relative-L2 is then measured in log space too. A log-space model is a
 *shape* model: inverting its prediction back to linear dose amplifies the tail
 error, so treat linear-space reconstruction from a log fit with care.

@@ -225,5 +225,90 @@ on the `mode:` block rather than in separate top-level sections:
 
 The full key tables are in [](yaml_reference.md#surrogate-modes).
 
-See [](optimization.md) and the surrogate examples under `examples/` for full
-usage.
+A complete pipeline is four configs sharing one store. Only the first drives
+Geant4; the other three carry a `mode:` block alone. This is the per-bin
+design of the [additive surrogate](yaml_reference.md#additive-per-bin-surrogate), which
+is the one shown to work on real data; the `design: doe` and PCA-GP keys are
+the same modes with the alternative keys from the reference tables.
+
+```yaml
+# 1. collect_perbin.yaml: one 1-D sweep per bin, on a milano node.
+workflow_parameters :
+  'workdir' : 'perbin_store'
+  'stage_mode' : 'symlink'
+  'paths' :
+    'geant4_app_path' : '/sdf/group/rfar/geant4/example/dose-npass'
+    'geant4_app_exe' : 'sim'
+workflow :
+  - module : track3p_source
+    file : '../assets/sample_track3p_particles.txt'
+  - module : field_emission
+    impact_order : 1
+    impact_face_id : 6
+    work_function : 4.5
+    fn_model : 'wang-loew'
+    frequency : 1.0e10
+    num_bins : 8
+    beta_inputs : ['beta0', 'beta1', 'beta2', 'beta3',
+                   'beta4', 'beta5', 'beta6', 'beta7']
+    bin_edges : [-0.1251788, -0.093876, -0.062573, -0.03127, 0.000032,
+                 0.031335, 0.062638, 0.093941, 0.1252434]   # required, fixed
+    output_format : 'geant4'
+    output : 'particles.data'
+  - module : geant4
+    geant4_input : 'input_7cell.geant4'
+    geant4_threads : 120
+    geant4_geometry_files :
+      - '../assets/7cell_solid_whole.stl'
+      - '../assets/7cell_cavity_whole.stl'
+mode :
+  type : collect_training_data
+  design : per_bin
+  store : 'perbin_store'
+  grid : {min: 40.0, max: 60.0, num: 11}   # size it against the dump
+  events_per_run : 4.0e5                   # sets histories_per_macro per run
+  min_histories_per_macro : 13
+input_parameters :
+  particles :
+    'beta0' : 50.0      # placeholders; the mode overrides all eight per run
+    'beta1' : 50.0
+    'beta2' : 50.0
+    'beta3' : 50.0
+    'beta4' : 50.0
+    'beta5' : 50.0
+    'beta6' : 50.0
+    'beta7' : 50.0
+```
+
+```yaml
+# 2. train_additive.yaml: CPU only.
+mode :
+  type : train_surrogate
+  model : additive
+  store : 'perbin_store'
+  model_dir : 'perbin_store/surrogate'
+```
+
+```yaml
+# 3. invert.yaml: point estimate, CPU only.
+mode :
+  type : invert_optimize
+  store : 'perbin_store'
+  target : 'some_run/doseDeposit.txt'       # or a stored field.npz
+  target_histories_per_macro : 1            # what the target run used
+  # bounds : {beta0: [40, 60], ...}         # default: the training range
+```
+
+```yaml
+# 4. invert_bayesian.yaml: posterior over beta, CPU only.
+mode :
+  type : invert_bayesian
+  store : 'perbin_store'
+  target : 'some_run/doseDeposit.txt'
+  target_histories_per_macro : 1
+  num_chains : 4                            # always check r_hat in the summary
+```
+
+Read `identifiability.txt` before the recovered beta: a bin whose `sigma` is
+above the resolution is one the dose cannot see, and its value comes from
+`bounds`, not from the data. See [](optimization.md) for the Xopt-driven modes.

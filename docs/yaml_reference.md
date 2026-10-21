@@ -114,8 +114,9 @@ Selects how the workflow is driven. One `type` is required.
 or saved model and never drive the module chain, so their configs omit
 `workflow:`, `workflow_parameters` and `input_parameters`; the store's
 `manifest.json` carries the pinned `bin_edges` and scoring-mesh invariants. Every
-other mode, including `collect_training_data`, requires a `workflow:` list. See
-`examples/geant4_beta_surrogate/` for both shapes.
+other mode, including `collect_training_data`, requires a `workflow:` list. The
+[surrogate pipeline](configuration_by_mode.md#surrogate-pipeline-modes) page
+shows a config of each shape.
 
 Additional `mode:` keys:
 

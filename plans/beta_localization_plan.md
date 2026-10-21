@@ -392,6 +392,11 @@ viable; rank 1 means the dominant β and nothing else.
 | Point inversion | `modes.invert_optimize` (`modes.py:1024`) | retarget to κ model |
 | Bayesian inversion | `modes.invert_bayesian` (`modes.py:1199`), `surrogate.sample_posterior` (`surrogate.py:527`) | retarget; keep `num_chains=4` and `dense_mass=True` |
 
+*(2026-10-21: delivered as `lume_ace3p.surrogate_additive.AdditiveSurrogate`
+by the dose campaign plan, Phase 3; eight per-bin amplitude curves times fixed
+shapes, behind the `DoseSurrogate` interface, so both inversion modes already
+run against it.)*
+
 **Recommended architecture:** implement a `KernelSurrogate` exposing the same
 public interface as `DoseSurrogate` (`predict_dose`, `project`, `coeff_misfit`,
 `identifiability`, `invert`, `sample_posterior`, `save`/`load`) backed by the κ

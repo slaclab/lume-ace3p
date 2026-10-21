@@ -139,13 +139,9 @@ baseline did **not** move.
   outputs from the `geant4` module (NaN under dry run) and no swept axis, so a
   dry-run freeze captures a one-row table of NaNs. `geant4_track3p_beta` is
   frozen and covers the shared `Particles` pre-step with real compute.
-- **`geant4_beta_surrogate`** — *recorded 2026-08-20.* Needs real Geant4 dose
-  output and a populated training store, and its surrogate/inversion modes fit
-  GPs (the cost-and-flake objection above). Those numerics are covered directly
-  by `test_surrogate.py`, `test_surrogate_data.py` and `test_inversion.py`.
 
-The last three were an undocumented *gap* rather than a decision until
-2026-08-20 — in neither collection, so nothing said which. `test_baseline_selfcheck.py`
+These two, and the since-retired `geant4_beta_surrogate`, were an undocumented
+*gap* rather than a decision until 2026-08-20 — in neither collection, so nothing said which. `test_baseline_selfcheck.py`
 now asserts that the two collections partition `examples/` between them
 (`test_every_example_is_accounted_for`), that they do not overlap, and that
 `not_frozen.json` still matches the `NOT_FROZEN` dict it is generated from.

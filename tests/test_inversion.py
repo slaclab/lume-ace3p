@@ -528,24 +528,18 @@ def test_store_consuming_modes_run_without_a_workflow_block(tmp_path):
         os.chdir(cwd)
 
 
-def test_shipped_example_yamls_carry_no_workflow(tmp_path):
-    """The shipped train/invert examples are store-consuming and must stay free of
-    a 'workflow:' block (that block was previously carried but never executed)."""
-    from lume_ace3p.inputs import load_yaml
+def test_store_consuming_gate_by_mode_type():
+    """train_surrogate and both inversion modes read a store or saved model and
+    never drive the module chain, so a config for them carries no 'workflow:'
+    block. collect_training_data drives the chain and is not store-consuming.
+    (Until 2026-10-21 this was checked on the shipped geant4_beta_surrogate
+    YAMLs; that example was retired, so the gate is checked directly.)"""
     from lume_ace3p.modes import is_store_consuming
 
-    example_dir = os.path.join(os.path.dirname(__file__), '..', 'examples',
-                               'geant4_beta_surrogate')
-    for name in ('geant4_beta_surrogate_train.yaml',
-                 'geant4_beta_surrogate_invert.yaml'):
-        data = load_yaml(os.path.join(example_dir, name))
-        assert data.get('workflow') is None, name
-        assert is_store_consuming(data.get('mode')), name
-
-    # The collection example DOES drive the chain, so it keeps its workflow.
-    collect = load_yaml(os.path.join(example_dir, 'geant4_beta_surrogate.yaml'))
-    assert collect.get('workflow') is not None
-    assert not is_store_consuming(collect.get('mode'))
+    for mode_type in ('train_surrogate', 'invert_optimize', 'invert_bayesian'):
+        assert is_store_consuming({'type': mode_type}), mode_type
+    assert not is_store_consuming({'type': 'collect_training_data'})
+    assert not is_store_consuming(None)
 
 
 def test_non_store_modes_still_require_a_workflow(tmp_path):
