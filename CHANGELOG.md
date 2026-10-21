@@ -9,6 +9,11 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-10-21
+
+A patch release: everything here is in the Geant4 surrogate pipeline, which
+has a single user.
+
 ### Added
 
 - `AdditiveSurrogate` (`lume_ace3p.surrogate_additive`): a forward dose model
