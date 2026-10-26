@@ -1,14 +1,16 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** COMPLETE through Phase 3 (2026-10-21). Phases 0 to 2 done 2026-10-19; Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 done 2026-10-21 (example retired, docs, changelog). Release of 0.9.0 and Phase 4 are what remain; the research write-up is `docs/dose_inversion_summary.md` in the campaign directory. Supersedes Phase 5 of
+**Status:** Phases 0 to 3 COMPLETE (2026-10-21, released as v0.8.2 on S3DF). Phase 4 scoped 2026-10-26, not started: the user fills in the six blind β vectors (§5 Phase 4 table) and runs it in a fresh session. Phases 0 to 2 done 2026-10-19; Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 done 2026-10-21 (example retired, docs, changelog). Phase 4 is what remains; the research write-up is `docs/dose_inversion_summary.md` in the campaign directory. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
 **Where the work lives:** a campaign directory outside the repo (§3). The repo
 changes only in Phase 3, after the approach has been shown to work on real data.
-**How to start in a fresh session:** read §3, §4 and §7, then begin at Phase 0
-(§5). §1 and §2 are background, not steps. The first action is creating the
-campaign directory and writing the Phase 0 configs and batch script into it.
+**How to start in a fresh session (Phase 4):** read §3, §4, §7 and the Phase 4
+section of §5. Do not open anything under the campaign's `configs/phase4/` or
+the run state files until the blind table is committed (the rule is in the
+Phase 4 text). The first action is `configs/phase4/make_configs.py` and the
+batch script, with the β vectors supplied by the user.
 
 ---
 
@@ -576,21 +578,135 @@ repo's existing patterns.
   The inversion plan is marked CLOSED and the β-localization plan notes that its
   `KernelSurrogate` is `AdditiveSurrogate`.
 
-**Phase 3 close-out.** Still to do, outside this plan's items: bump to 0.9.0
-(two new mode keys and a new model), PR dev to main, deploy. Phase 4 runs in the
-campaign directory and needs no repo work unless the coarse-mesh question asks
-for the lossy resample path.
+**Phase 3 close-out (2026-10-21).** Released as **v0.8.2** (a patch, the
+user's call: the surrogate pipeline has one user), PR #65, tagged and deployed
+on S3DF the same day; Perlmutter is the user's. Phase 4 runs in the campaign
+directory and needs no repo work unless case D shows the inversion needs to
+report χ²/voxel (its conditional item).
 
-### Phase 4 (optional): the research question
+### Phase 4: blind inversion and fidelity (the research question)
 
-With a working forward model, the questions the inversion was built for:
+Scoped 2026-10-26. Everything through Phase 3 was scored against targets whose
+β the analysis could see, and 15 of the 16 held-out samples are Sobol points
+with all eight β scattered over one box, which is not what a cavity looks like.
+Phase 4 asks the question the inversion was built for, the way it will be used:
+**given a dose map from a run whose β nobody in the analysis knows, which bins
+does it flag as emitters, with what β, and what upper limits does it put on the
+rest; and how does that degrade with target fidelity.** The coarse-mesh axis
+is deferred (§6): it needs the lossy resample path and belongs to the
+β-localization plan if that goes ahead.
 
-- Given a measured dose file from a run with unknown β, which bins are the
-  emitters and with what upper limits on the rest (posterior from
-  `invert_bayesian`, read through the identifiability table).
-- How the answer degrades with dose noise (lower `histories_per_macro` in the
-  target) and with coarser scoring meshes (a downsampled target, which needs the
-  lossy resample path that constraint #3 deliberately left unbuilt).
+Off-repo, like Phases 0 to 2. One milano job (one at a time: the four-job
+approval was Phase 1's). Model: `stores/perbin_repo_2026-10-20/surrogate`, the
+repo-trained additive model (identical to the Phase 2 one to 3e-15). The
+analysis uses the repo's `invert_optimize` and `invert_bayesian` modes, not
+the Phase 2 script, so the result is about what ships.
+
+**Blindness is procedural.** The user chooses the β vectors and writes them
+into the run YAMLs; the session that runs the analysis must not open
+`configs/phase4/*.yaml`, any `lume_ace3p_state.json`, `particles.data` or
+sweep table under `runs/phase4/` until the blind table (step 4) is written and
+committed. The analysis reads only each workdir's `doseDeposit.txt` and the
+`histories_per_macro` line of its written Geant4 input (a run setting, not a
+secret, and constraint #4 reads it the same way). Unsealing is a separate
+script run afterwards.
+
+**Targets.** Six cases, two fidelities each (`histories_per_macro` 1 and 10,
+as a two-point `parameter_sweep` like Phase 0's `full.yaml`), so 12 runs.
+The user fills in the numbers; the table gives the intent and the constraints
+the numbers must respect.
+
+| case | intent | what the user chooses | constraint |
+|---|---|---|---|
+| A | one bad iris | one bin at 55 to 60, the rest spread over 42 to 48 | the "dominant emitter" case; no two bins within 2 of each other |
+| B | two comparable bad irises, same side | two adjacent or next-adjacent bins within 1.5 of each other at 54 to 58, rest 42 to 48 | Phase 2 says same-side neighbours vanish behind a dominant bin; this is the hard case |
+| C | two comparable bad irises, opposite sides | one bin in 0 to 2 and one in 5 to 7, within 1.5 of each other at 54 to 58, rest 42 to 48 | distinct centroids; expected to separate |
+| D | emitter above the training range | one bin at 63 to 66, rest 42 to 48 | tests out-of-model detection: the model clips β to 60 and refuses bounds past it, so the answer must come out as a bad fit, not a confident 60 |
+| E | clean cavity | all eight in 40 to 45, no two equal | every bin at the onset; checks for false emitters |
+| F | realistic mixed | one at 53 to 56, one at 49 to 51, rest 42 to 48 with one at 40 | the secondary emitter sits at the visibility edge (Phase 2: σ 0.3 to 0.8 there) |
+
+Constraint #7 applies: every β at or above 40 emits in every bin on this dump
+(593 primaries for an end bin at 40), and above 52 the primaries saturate, so
+no case needs a dump check beyond staying at or above 40. Case D is in the
+saturated regime, so its primaries are the bin's full count; the model is
+undefined there only in β, not in the run.
+
+**Jobs.** `configs/phase4/<case>.yaml` for A to F, each a copy of
+`configs/phase0/full.yaml` with `workdir` `runs/phase4/<case>`, `output_file`
+`runs/phase4/<case>_table.txt`, `histories_per_macro: [1, 10]`, and the eight
+β. `configs/phase4/run_phase4.batch`: the Phase 0 header, `--time=0-03:00:00`,
+looping over the six YAMLs. Expected: hpm-1 runs 1 to 2 min, hpm-10 runs
+about 12 min (Phase 0: 714 s for 1.15M events), so about 1.5 h plus overhead.
+Re-run after a timeout with `resume: true` as in Phase 0.
+
+**Analysis.**
+
+1. `analysis/phase4_blind.py` (blind; reads only `doseDeposit.txt` and the
+   hpm line). For each of the 12 targets: `invert_optimize` and
+   `invert_bayesian` (four chains, the Phase 3 settings), through the repo
+   modes with `model_dir` and `target_histories_per_macro` set from the hpm
+   read back. Per target, record the recovered β, the Cramér-Rao σ per bin
+   from `identifiability.txt`, the posterior median, 5th and 95th percentiles
+   per bin, `r_hat`, and the **χ² per voxel** of the point estimate: with
+   `AdditiveSurrogate.predict_dose(β)[0]` and `noise_sigma(β, hpm)`, as
+   `perbin_model.invert` computed it (0.5 to 2.6 on every in-model target so
+   far). The mode's `misfit` is the same quantity up to a constant and is not
+   enough for this; if the repo should report χ²/voxel itself, that is the one
+   conditional repo change of this phase (see the checklist).
+2. **Decision rule, fixed before unsealing.** A bin is *flagged as an emitter*
+   when its σ is below 1 and its posterior 5th percentile is above 42 (clear of
+   the onset floor). Every other bin is reported as a *95% upper limit* (its
+   posterior 95th percentile). A target is *flagged out-of-model* when χ² per
+   voxel exceeds 4 (above anything measured in-model) or when a flagged bin
+   sits at the upper training bound 60 with σ below 0.1. Write the blind table
+   (`runs/phase4/blind_table.md`: case, hpm, flagged bins with β ± σ and 90%
+   interval, upper limits, χ²/voxel, out-of-model flag) and **commit it in the
+   campaign repo before step 3**.
+3. `analysis/phase4_unseal.py`: read the truth from each workdir's
+   `lume_ace3p_state.json`, score the blind table, write
+   `runs/phase4/phase4_results.json` and `runs/phase4/scored_table.md`. Per
+   target: for each flagged bin, truth inside the 90% interval, and |error|/σ;
+   for each unflagged bin, truth below its upper limit; any truth bin within
+   1.5 of the dominant β that was not flagged (a missed emitter); any flagged
+   bin whose truth is more than 3 below the dominant one (a false emitter).
+   For case D, whether the out-of-model flag fired at both fidelities.
+4. **Fidelity.** For each case, flagged count, median σ of flagged bins, and
+   median upper limit of the rest at hpm 1 against hpm 10; compare the
+   flagged-count change with the Cramér-Rao prediction at the truth (Phase 2
+   predicted one more visible bin for 10× histories at sample 0's β). Include
+   Phase 0's F1 and F10 (sample 0's β, already run) as a seventh pair.
+5. Figures to `docs/figures/`: one panel per case with truth, point estimate ±
+   σ, posterior 90% interval and upper limits per bin at both fidelities; and
+   a flagged-count vs hpm plot. Add a "Blind test" section to
+   `docs/dose_inversion_summary.md` and rebuild the report
+   (`bash analysis/make_report.sh`).
+
+**Gate.** This phase reports; it does not pass or fail the model. The result
+that matters: in cases A, C and F the dominant emitter(s) are flagged on the
+right bins with truth inside the 90% interval; in E nothing is flagged; in D
+the out-of-model flag fires. Case B is the one allowed to fail, and how it
+fails (one merged emitter between the two bins, or the nearer one only) is
+the finding. A false emitter in any case, or truth outside its upper limit,
+is a model problem and goes to §6 as a new open item.
+
+- [ ] User writes the six β vectors into `configs/phase4/<case>.yaml`
+  (generated from `full.yaml` by a short `configs/phase4/make_configs.py`
+  that takes the vectors, so only the numbers are typed) and the batch script;
+  job submitted; job ID in the campaign README run log.
+- [ ] 12 runs complete (`field_0.npz`, `field_1.npz` per case, exit 0);
+  hpm read back equals `[1, 10]`.
+- [ ] `phase4_blind.py` written and run **without the session reading any
+  config, state file or sweep table under `configs/phase4/` or
+  `runs/phase4/`**; `blind_table.md` committed.
+- [ ] `phase4_unseal.py` run; `phase4_results.json` and `scored_table.md`
+  committed; the per-case verdicts recorded here.
+- [ ] Fidelity comparison (hpm 1 vs 10, plus F1/F10) tabulated against the
+  Cramér-Rao prediction.
+- [ ] Figures, write-up section, report rebuilt.
+- [ ] Conditional repo change: if χ²/voxel proved necessary to catch case D,
+  add it to `invert_optimize`'s output (`inversion_result.txt` and the
+  `InversionResult`) with a test, on dev, for the next patch release.
+  Otherwise record that the existing outputs sufficed.
 
 ## 6. Decisions taken and open
 
@@ -601,6 +717,13 @@ Taken:
 - Campaign work lives outside the repo (§3); the repo changes only in Phase 3.
 - Fidelity is `histories_per_macro` × primaries, recorded from the run.
 - The 16 September samples are the held-out set; they are not re-run.
+- Phase 4 (scoped 2026-10-26) covers the blind inversion and the fidelity
+  axis only. The coarse-mesh axis is deferred to the β-localization plan,
+  since it needs the lossy resample path (constraint #3) and is only worth
+  building as that plan's bridge from voxels to monitors.
+- Phase 4's blind β vectors are chosen by the user, not the session, so the
+  test is honest; the analysis session reads nothing under `configs/phase4/`
+  or the run state files until the blind table is committed.
 
 Open, to decide at the phase that needs them:
 
