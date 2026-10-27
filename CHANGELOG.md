@@ -9,6 +9,15 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Added
+
+- `invert_optimize` with an additive model writes `chi2_per_voxel` to
+  `inversion_result.txt` and sets `InversionResult.chi2_per_voxel`, through
+  the new `AdditiveSurrogate.chi2_per_voxel`. In-model targets give 0.5 to
+  2.6; far above that the dose is not explained by any beta in the training
+  box. This is what flagged an emitter above the training range in the
+  campaign's blind test, where `misfit` could not.
+
 ## [0.8.2] — 2026-10-21
 
 A patch release: everything here is in the Geant4 surrogate pipeline, which

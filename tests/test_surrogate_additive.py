@@ -332,6 +332,35 @@ def test_invert_optimize_mode_with_additive_model(tmp_path):
     assert os.path.isfile(out)
 
 
+def test_invert_optimize_reports_chi2_per_voxel_and_flags_out_of_model(tmp_path):
+    """In-model targets give chi-square per voxel near 1; a bin above the
+    training range cannot be fitted (beta clips at 60), and only this column
+    says so: the coefficient misfit is the same chi-square up to a constant."""
+    truth = np.full(NB, 44.0)
+    truth[3] = 56.0
+    model_dir, target = _model_and_target(tmp_path, truth, hpm=10)
+    out = str(tmp_path / 'inv.txt')
+    result = invert_optimize({'type': 'invert_optimize', 'model_dir': model_dir,
+                              'target': target, 'output_file': out,
+                              'target_histories_per_macro': 10})
+    assert 0.3 < result.chi2_per_voxel < 2.0
+    header = open(out).readline().split()
+    assert header[:4] == ['rank', 'misfit', 'relative_l2', 'chi2_per_voxel']
+
+    truth[3] = 66.0
+    (tmp_path / 'high').mkdir()
+    model_dir, target = _model_and_target(tmp_path / 'high', truth, hpm=10)
+    high = invert_optimize({'type': 'invert_optimize', 'model_dir': model_dir,
+                            'target': target,
+                            'output_file': str(tmp_path / 'high.txt'),
+                            'target_histories_per_macro': 10})
+    assert high.chi2_per_voxel > 100.0
+    model = load_surrogate(model_dir)
+    model.target_histories_per_macro = 10
+    assert np.isclose(high.chi2_per_voxel, model.chi2_per_voxel(
+        high.beta, noisy_target(truth, 10)))
+
+
 def test_target_hpm_is_rejected_for_a_pca_gp(tmp_path):
     rng = np.random.default_rng(0)
     beta = rng.uniform(40, 60, (12, NB))

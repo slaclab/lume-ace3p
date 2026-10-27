@@ -785,6 +785,9 @@ class InversionResult:
     * ``beta_names`` — ordered β names, for labelling.
     * ``bounds`` — the box the search was confined to (the model's training range
       unless overridden); β\\* is only trustworthy inside it.
+    * ``chi2_per_voxel`` — voxel chi-square per voxel of β\\* against the target,
+      set by ``modes.invert_optimize`` for an additive model (``None``
+      otherwise). Far above ~2 the target is out of the model.
     * ``identifiability`` — an :class:`Identifiability` for β\\*, set by
       ``modes.invert_optimize`` (``None`` if the analysis was skipped).
 
@@ -806,6 +809,7 @@ class InversionResult:
         self.beta_names = list(beta_names)
         self.bounds = list(bounds)
         self.identifiability = identifiability
+        self.chi2_per_voxel = None
 
     def minima_are_distinguishable(self, floor=1e-8):
         """Whether the reported minima differ by enough misfit to be *ranked*.

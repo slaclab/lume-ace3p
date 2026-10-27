@@ -1584,7 +1584,7 @@ Runs against the surrogate, not Geant4. No `workflow:` needed.
 | `bounds`               | `dict`  | model's training range | Optional per-beta `[lo, hi]` search box. Outside the training range the GP extrapolates, so only narrow it. |
 | `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains; writes `identifiability.txt`. Costs `2·D` GP evaluations. |
 | `identifiability_file` | `str`   | `identifiability.txt` beside the result table | Override that path. |
-| `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2`, then the betas. |
+| `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2` (additive model: also `chi2_per_voxel`), then the betas. |
 | `target_histories_per_macro` | `int` | `1` | Additive model only (see [](#additive-surrogate)): the target run's `histories_per_macro`, which sets its predicted noise. |
 
 **On non-uniqueness.** The surrogate reaches beta only through its `k` retained
@@ -1653,6 +1653,13 @@ model. With the additive model:
   Every bin moves the dose, but a bin far below the dominant one moves it by
   less than the noise. Errors are inflated 2× because voxel noise is correlated
   and the noise model is diagonal (measured on the real chain).
+- `inversion_result.txt` gains a `chi2_per_voxel` column: the voxel
+  chi-square of the estimate per voxel, under the predicted noise before the 2×
+  inflation. In-model targets give 0.5 to 2.6. Well above that (the campaign
+  uses 4) the dose is not a sum of the trained shapes at any beta in the box:
+  an emitter above the training range, or a bin pair the model cannot separate.
+  The `misfit` column cannot tell you this, since it is the same chi-square
+  only up to a constant.
 - In `invert_bayesian`, `dose_sigma` multiplies the predicted noise (default 2,
   the same inflation) instead of setting an absolute scale.
 

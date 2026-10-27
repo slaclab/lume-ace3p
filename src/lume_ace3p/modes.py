@@ -1598,13 +1598,23 @@ def invert_optimize(mode_cfg, workflow=None):
 
     # One row per distinct minimum. NOTE 'rank' is a stable ordering by misfit,
     # NOT an evidence ranking — see the non-uniqueness reporting below.
+    # The additive model also reports the voxel chi-square per voxel: the
+    # coefficient misfit is the same quantity only up to a constant, so it
+    # cannot say on its own whether the target is out of the model.
+    has_chi2 = hasattr(surrogate, 'chi2_per_voxel')
     rows = []
     for rank, (misfit, beta_vec) in enumerate(result.minima):
         row = {'rank': rank, 'misfit': misfit,
                'relative_l2': _beta_relative_l2(surrogate, beta_vec, aligned)}
+        if has_chi2:
+            row['chi2_per_voxel'] = surrogate.chi2_per_voxel(beta_vec, aligned)
         row.update(dict(zip(surrogate.beta_names, beta_vec.tolist())))
         rows.append(row)
-    columns = ['rank', 'misfit', 'relative_l2'] + list(surrogate.beta_names)
+    if has_chi2:
+        result.chi2_per_voxel = rows[0]['chi2_per_voxel']
+    columns = (['rank', 'misfit', 'relative_l2']
+               + (['chi2_per_voxel'] if has_chi2 else [])
+               + list(surrogate.beta_names))
     df = pd.DataFrame(rows, columns=columns)
     output_file = mode_cfg.get('output_file') or os.path.join(
         store or '.', 'inversion_result.txt')
@@ -1616,6 +1626,11 @@ def invert_optimize(mode_cfg, workflow=None):
     print(f" - coefficient misfit={result.misfit:.4g}; dose relative-L2 "
           f"({surrogate.dose_transform} space)="
           f"{result.relative_l2(surrogate, aligned):.4f}")
+    if result.chi2_per_voxel is not None:
+        print(f" - voxel chi-square per voxel={result.chi2_per_voxel:.3g}"
+              + (" — well above the ~0.5-2.6 of in-model targets: this dose "
+                 "is not explained by any β in the training box"
+                 if result.chi2_per_voxel > 4.0 else ""))
 
     # Identifiability: how many β directions this dose actually pins down. This
     # is what makes a multi-minimum result interpretable — see _write_identifiability.

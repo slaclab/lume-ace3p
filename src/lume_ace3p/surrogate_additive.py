@@ -284,6 +284,18 @@ class AdditiveSurrogate:
             var += amp[b] ** 2 * self.unit_var[b, k] / (launched * hpm)
         return var
 
+    def chi2_per_voxel(self, beta, dose_grid, histories_per_macro=None):
+        """Voxel chi-square per voxel of ``dose_grid`` against the prediction at
+        ``β``, whitened by :meth:`noise_sigma` (before ``noise_scale``).
+
+        About 0.5 to 2.6 on every in-model target of the campaign; well above
+        that, the dose is not a sum of the trained shapes at any β in the box
+        (an emitter past the training range, or a defect the model lacks)."""
+        dose_grid = np.asarray(dose_grid, dtype=float).ravel()
+        resid = ((self.predict_dose(beta)[0] - dose_grid)
+                 / self.noise_sigma(beta, histories_per_macro))
+        return float(np.sum(resid ** 2) / dose_grid.size)
+
     def noise_sigma(self, beta, histories_per_macro=None):
         """Per-voxel sigma of ``target − model`` at ``β``, before
         ``noise_scale``: target MC noise plus model noise, with the sigma floor.

@@ -1,6 +1,6 @@
 # Geant4 dose campaign: per-bin forward model and inversion on real data
 
-**Status:** Phases 0 to 3 COMPLETE (2026-10-21, released as v0.8.2 on S3DF). Phase 4 scoped 2026-10-26, not started: the user fills in the six blind β vectors (§5 Phase 4 table) and runs it in a fresh session. Phases 0 to 2 done 2026-10-19; Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 done 2026-10-21 (example retired, docs, changelog). Phase 4 is what remains; the research write-up is `docs/dose_inversion_summary.md` in the campaign directory. Supersedes Phase 5 of
+**Status:** Phases 0 to 3 COMPLETE (2026-10-21, released as v0.8.2 on S3DF). Phase 4 COMPLETE 2026-10-27: blind test of six randomly drawn cases; every bad iris found on the right bin and the above-range case flagged, but shape leakage gives false minor emitters (§6 open items). Adds `chi2_per_voxel` to `invert_optimize` on dev, unreleased. Phases 0 to 2 done 2026-10-19; Phase 3 items 1 to 3 done 2026-10-20 (`AdditiveSurrogate`, per-bin training mode, measured fidelity); item 4 done 2026-10-21 (example retired, docs, changelog). The research write-up is `docs/dose_inversion_summary.md` in the campaign directory. Supersedes Phase 5 of
 `plans/geant4_surrogate_inversion_plan.md` and picks up the real-data work that
 plan left open.
 **Owner:** dbizzoze
@@ -586,7 +586,7 @@ report χ²/voxel (its conditional item).
 
 ### Phase 4: blind inversion and fidelity (the research question)
 
-Scoped 2026-10-26. Everything through Phase 3 was scored against targets whose
+Scoped 2026-10-26, COMPLETE 2026-10-27 (verdicts in the checklist below). Everything through Phase 3 was scored against targets whose
 β the analysis could see, and 15 of the 16 held-out samples are Sobol points
 with all eight β scattered over one box, which is not what a cavity looks like.
 Phase 4 asks the question the inversion was built for, the way it will be used:
@@ -689,24 +689,47 @@ fails (one merged emitter between the two bins, or the nearer one only) is
 the finding. A false emitter in any case, or truth outside its upper limit,
 is a model problem and goes to §6 as a new open item.
 
-- [ ] User writes the six β vectors into `configs/phase4/<case>.yaml`
-  (generated from `full.yaml` by a short `configs/phase4/make_configs.py`
-  that takes the vectors, so only the numbers are typed) and the batch script;
-  job submitted; job ID in the campaign README run log.
-- [ ] 12 runs complete (`field_0.npz`, `field_1.npz` per case, exit 0);
-  hpm read back equals `[1, 10]`.
-- [ ] `phase4_blind.py` written and run **without the session reading any
-  config, state file or sweep table under `configs/phase4/` or
-  `runs/phase4/`**; `blind_table.md` committed.
-- [ ] `phase4_unseal.py` run; `phase4_results.json` and `scored_table.md`
-  committed; the per-case verdicts recorded here.
-- [ ] Fidelity comparison (hpm 1 vs 10, plus F1/F10) tabulated against the
-  Cramér-Rao prediction.
-- [ ] Figures, write-up section, report rebuilt.
-- [ ] Conditional repo change: if χ²/voxel proved necessary to catch case D,
-  add it to `invert_optimize`'s output (`inversion_result.txt` and the
-  `InversionResult`) with a test, on dev, for the next patch release.
-  Otherwise record that the existing outputs sufficed.
+- [x] Six β vectors in `configs/phase4/<case>.yaml`. Changed on the user's
+  call (2026-10-26): instead of typing them, `make_configs.py` drew them at
+  random within each case's constraints and never printed them, with the
+  user's thresholds (bad ≥ 55, good 40 to 45; D 63 to 66; F's secondary 49 to
+  52). Job 42033547, in the run log.
+- [x] 12 runs complete, exit 0, 46 min; hpm read back equals `[1, 10]`.
+- [x] `phase4_blind.py` written and run without the session reading any
+  config, state file or sweep table; `blind_table.md` committed (campaign
+  27713dc) before unsealing. The state file turned out not to hold β, so
+  `phase4_unseal.py` reads it from the YAML and checks it against each run's
+  `particles.data`.
+- [x] `phase4_unseal.py` run; results committed (campaign c03365b).
+  Verdicts against the gate:
+  - **A, C, F: dominant emitters flagged on the right bins**, both
+    fidelities, within 0.03 to 0.17 (F's secondary at 50.3 to 0.05 at hpm
+    10). Truth inside the 90% interval for the dominant bin in A, C and F at
+    hpm 10, not F at hpm 1 (pull 1.8).
+  - **B (the allowed failure) did not fail**: both adjacent bins flagged,
+    within 0.17.
+  - **E: not clean.** 3 to 4 good bins flagged at 42.5 to 44, within 0.5 of
+    their truth (42.6 to 44.1), because p5 > 42 sits inside the good range.
+  - **D: out-of-model fired at both fidelities** (χ²/voxel 10.6, 88).
+  - **False emitters in A, B, C, F** (good irises flagged 2 to 8 above
+    truth, 0.5 to 3.4% of the dose; 12% once). This is a model problem by
+    the gate's terms; open item in §6. Cause: shape leakage, which the 16
+    single-bin Phase 1 runs at 56 and 58 reproduce (10 of 16 show a
+    spurious neighbour). No upper limit was broken by a bad iris; one good
+    bin (E b2) was 0.2 above its limit.
+  - **F tripped out-of-model** although in range: three stray-hit voxels
+    carry 75% of its χ².
+- [x] Fidelity tabulated (`scored_table.md`). Flagged count up one from hpm 1
+  to 10 in 5 of 6 cases (P0 too), where the Cramér-Rao σ at the truth
+  predicts no change in A to D and F; the extra bin is a good iris every
+  time. More histories sharpen the emitters (median σ 0.24 to 0.09) and
+  expose the shape leakage further.
+- [x] Figures 9 and 10, write-up §6 "Blind test", report rebuilt.
+- [x] Conditional repo change: needed. At hpm 1 nothing in D was pinned at 60
+  with σ < 0.1, so χ²/voxel alone caught it. Added
+  `AdditiveSurrogate.chi2_per_voxel`, a `chi2_per_voxel` column in
+  `inversion_result.txt` and `InversionResult.chi2_per_voxel`, with a test,
+  on dev for the next patch release.
 
 ## 6. Decisions taken and open
 
@@ -732,6 +755,15 @@ Open, to decide at the phase that needs them:
 - ~~`wang-loew` vs `fn` for the shipped example (Phase 3 step 4).~~ Moot
   2026-10-21: no shipped example. The campaign stays on `wang-loew` so the 16
   held-out samples remain comparable.
+- **Shape leakage (Phase 4, 2026-10-27).** A dominant bin's shape error is
+  absorbed by its neighbours' amplitudes, which come back as false minor
+  emitters with tight intervals. Candidates: a per-bin shape error term in
+  `noise_sigma`, or a dose-share cut (> 5% of the predicted dose). The cut
+  scored clean on A, B, C and F at hpm 10 after unsealing, so it needs a new
+  blind test before it counts.
+- **Robust χ² for the out-of-model test (Phase 4).** Three stray-hit voxels
+  put case F at 12; trimming the worst three separates F (3.0, 1.8) from D
+  (8.2, 50).
 - Whether a thread count below 120 is worth it for the 3,423-primary end-bin
   runs (not unless queue time becomes the bottleneck; one job at a time anyway).
 
