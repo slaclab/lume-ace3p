@@ -68,6 +68,7 @@ from lume.base import CommandWrapper
 # (postprocessor -> solver). Imported here so ``acdtool.parse_column_file``
 # keeps resolving.
 from lume_ace3p.ace3p import parse_column_file
+from lume_ace3p.launch import ACDTOOL, step_command
 from lume_ace3p.logs import check_exit, run_logged
 
 
@@ -918,7 +919,7 @@ class Acdtool(CommandWrapper):
     def __init__(self, *args, ace3p_path=None, mpi_caller=None,
                  acdtool_command=None, acdtool_args=None, jobname=None,
                  acdtool_tasks=None, acdtool_cores=None, acdtool_opts='',
-                 log_file=None, **kwargs):
+                 log_file=None, slice=None, **kwargs):
         super().__init__(*args, **kwargs)
         # Where this step's stdout/stderr is teed (see lume_ace3p.logs); None
         # inherits the parent's streams, which is the legacy behavior. The
@@ -928,6 +929,7 @@ class Acdtool(CommandWrapper):
         self.log_file = log_file
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
+        self.slice = slice  # lume_ace3p.launch.Slice, or None for serial
         self.acdtool_command = acdtool_command
         self.acdtool_args = list(acdtool_args) if acdtool_args else []
         self.jobname = jobname
@@ -1100,16 +1102,10 @@ class Acdtool(CommandWrapper):
         opts = self.acdtool_opts
         if opts.startswith('--cpu-bind') and self.MPI_CALLER != 'srun':
             opts = ''
-        parts = []
-        if self.MPI_CALLER:
-            parts += [self.MPI_CALLER, '-n', str(tasks or 1), '-c',
-                      str(cores or 1)]
-        if opts:
-            parts.append(opts)
-        parts.append(self.ACE3P_PATH + 'acdtool')
-        parts.append(name)
-        parts += [str(o) for o in operands]
-        return ' '.join(parts)
+        argv = ' '.join([self.ACE3P_PATH + 'acdtool', name]
+                        + [str(o) for o in operands])
+        return step_command(self.MPI_CALLER, tasks, cores, opts, argv,
+                            self.slice, form=ACDTOOL)
 
     # ---- input ------------------------------------------------------------ #
 

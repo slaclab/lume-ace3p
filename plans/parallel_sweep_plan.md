@@ -1,7 +1,8 @@
 # Parallel Sweep Evaluation — Implementation Plan
 
-**Status: PLANNED** — written 2026-10-27 on S3DF against `dev` at `10fdfb3`
-(0.8.2 plus the unreleased `chi2_per_voxel`). No code changed yet.
+**Status: IN PROGRESS** — written 2026-10-27 on S3DF against `dev` at
+`10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
+2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phases 2–5 open.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on
@@ -357,6 +358,16 @@ the one failure a pool would otherwise never report.
 ---
 
 ## Phase 1 — One step builder, no behavior change
+
+**Done 2026-10-29.** The serial pins in `tests/test_launch.py` were run against
+the pre-change wrappers first and pass there unchanged. The four historical
+spellings are kept as `form`s of `step_command` (`SOLVER`, `ACDTOOL`,
+`MESHCONVERT`, `BARE`; Geant4 uses `SOLVER`). A slice with no MPI caller falls
+back to the serial spelling. Full suite on milano (job `42405576`): 1091
+passed, 1 failed, and that failure, `test_the_examples_actually_cover_every_mode`,
+also fails at `d9793e1`: no shipped example uses `collect_training_data`,
+`train_surrogate`, `invert_optimize` or `invert_bayesian` since `13deade`
+retired `geant4_beta_surrogate`.
 
 ### Approach
 
