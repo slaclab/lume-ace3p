@@ -1,9 +1,10 @@
 # Parallel Sweep Evaluation — Implementation Plan
 
-**Status: IN PROGRESS** — written 2026-10-27 on S3DF against `dev` at
+**Status: COMPLETE** — written 2026-10-27 on S3DF against `dev` at
 `10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
 2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phase 2 done
-2026-10-29; Phase 3 done 2026-10-29; Phase 4 done 2026-10-29; Phase 5 open.
+2026-10-29; Phase 3 done 2026-10-29; Phase 4 done 2026-10-29; Phase 5 done
+2026-10-29. **COMPLETE**; released as 0.9.0.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on
@@ -539,6 +540,32 @@ manifest, a NaN row under `skip`, and a re-run that succeeds with a longer
 timeout; the per-module `.log` ends with the timeout line.
 
 ## Phase 5 — Docs, examples, release
+
+**Done 2026-10-29.** Validated on milano with four jobs, all under
+`/sdf/scratch/users/d/dbizzoze/lume-ace3p-tests/parallel_sweep_p5/` (the
+user allowed up to four nodes):
+
+| run | job | nodes | wall | result |
+|---|---|---|---|---|
+| serial | 42420480 | 1 | 3m49s | 16 rows, no NaNs |
+| 4 workers (`_4workers.batch`) | 42420481 | 2 | 1m04s | four 60-CPU steps at a time, two per node |
+| 2 two-node workers (`tasks: 60`) | 42420979 | 4 | 2m38s | omega3p on `-N 2` node pairs |
+| `timeout: 3`, then resume with 600 | 42420482 | 1 | 44 s | both solves cancelled at 3 s, NaN rows; resume completes without re-meshing |
+
+Both parallel tables equal the serial one except `Mode_freq` in the last
+printed digit at two points (≤ 1e-13 relative), which is Omega3P's own
+run-to-run noise, not ordering: the serial-shaped timeout resume reproduced
+the parallel digit. Likely cause (the user's read): a randomized step inside
+the MUMPS factorization/preconditioning. Settled while implementing:
+
+- The example's Omega3P went from 12 × 8 to 15 × 4 (60 CPUs, half a node),
+  so one YAML packs two per node. No baseline moves: the frozen
+  `omega3p_sweep` table is a dry-run table, which launch keys do not reach.
+- The 4-worker batch file passes `--workers auto` rather than the YAML
+  carrying `workers: 4`, so the serial batch file and the YAML stay as they
+  were apart from the sizing.
+- The two-node layout in the docs is `tasks: 60` (240 CPUs over two nodes),
+  not the `tasks: 240` this plan's §2.1 first wrote, which is 960 CPUs.
 
 - `docs/parameter_sweep.md`: replace "Each workflow evaluation is run
   serially. Future versions may allow concurrent evaluations." with a

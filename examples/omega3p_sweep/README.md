@@ -52,4 +52,16 @@ On SLAC S3DF, submit the batch script:
 sbatch run_lume-ace3p_omega3p_sweep_s3df.batch
 ```
 
+To run four points at once on two nodes, submit the second script instead:
+
+```bash
+sbatch run_lume-ace3p_omega3p_sweep_s3df_4workers.batch
+```
+
+It asks for `--nodes=2` and runs `run-lume-ace3p --workers auto`. Omega3P's
+`tasks: 15, cores: 4` is half a milano node, so two workers fit on each node
+and the 16 points take about a quarter of the serial wall clock (64 s against
+3 min 49 s on S3DF). The table is the serial run's. See
+[Running points in parallel](../../docs/parameter_sweep.md#running-points-in-parallel).
+
 For NERSC Perlmutter, adapt a `*_perlmutter.batch` script from a sibling example.

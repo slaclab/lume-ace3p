@@ -9,14 +9,42 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-29
+
+Points of a sweep can run concurrently inside one Slurm job, and a hung step
+can be stopped. Both are opt-in: with neither key set, command lines, output
+and tables are unchanged. Also carries the unreleased `chi2_per_voxel`.
+
 ### Added
 
+- `mode: {workers: N|auto}` for `single`, `parameter_sweep` and
+  `collect_training_data`, and `run-lume-ace3p --workers N|auto`: N points
+  run at once, each in its own slice of the allocation (the chain's largest
+  `tasks × cores`, plus that share of the job's memory). Steps launch as
+  `srun -N <nodes> … --exact --mem-per-cpu=…` so they pack. A count that does
+  not tile the allocation is refused before anything runs, listing the counts
+  that fit; `auto` takes the largest. Under `workers > 1` the tools' output
+  goes only to the per-point logs and stdout carries point events and a
+  progress line. See `docs/parameter_sweep.md`, "Running points in parallel".
+- `timeout:` (seconds) on every tool module (`cubit`, the solvers, `acdtool`,
+  `geant4`): a step still running at its limit is stopped, and the module is
+  recorded failed with `timed out after N s`. It is out of the module hash,
+  so a resume with a longer limit re-runs only that step.
+- `examples/omega3p_sweep/run_lume-ace3p_omega3p_sweep_s3df_4workers.batch`:
+  the sweep as four workers on two milano nodes.
 - `invert_optimize` with an additive model writes `chi2_per_voxel` to
   `inversion_result.txt` and sets `InversionResult.chi2_per_voxel`, through
   the new `AdditiveSurrogate.chi2_per_voxel`. In-model targets give 0.5 to
   2.6; far above that the dose is not explained by any beta in the training
   box. This is what flagged an emitter above the training range in the
   campaign's blind test, where `misfit` could not.
+
+### Changed
+
+- `examples/omega3p_sweep` runs Omega3P as `tasks: 15, cores: 4` (was 12 × 8),
+  half a milano node, so its points can pack two per node.
+- Under a sweep worker's slice, Cubit runs under `srun` inside the slice
+  rather than bare on the job's first node. Serial runs still run it bare.
 
 ## [0.8.2] — 2026-10-21
 

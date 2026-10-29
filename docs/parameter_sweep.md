@@ -54,8 +54,8 @@ workflow :
     journal : 'pillbox-rtop.jou'
   - module : omega3p
     input : 'pillbox-rtop.omega3p'
-    tasks : 12
-    cores : 8
+    tasks : 15
+    cores : 4
     opts : '--cpu-bind=cores'
   - module : acdtool
     input : 'pillbox-rtop.rfpost'
@@ -152,8 +152,83 @@ Without `output_parameters` the sweep still runs, but nothing from
 `rfpost.out` is parsed or tabulated. Use this when only the per-combination
 output folders are wanted.
 
-Each workflow evaluation is run serially. Future versions may allow concurrent
-evaluations.
+Points run one at a time unless `workers` is set (see
+[](#running-points-in-parallel)).
+
+(running-points-in-parallel)=
+## Running points in parallel
+
+`mode: {workers: N}` runs N points at once inside one Slurm job. The table,
+the workdirs and the manifests are the same as a serial run's; only the wall
+clock changes.
+
+```yaml
+mode :
+  type : parameter_sweep
+  workers : 4                     # an integer, or 'auto'; default 1
+  output_file : 'omega3p_sweep_output.txt'
+```
+
+`run-lume-ace3p --workers N|auto <yaml>` overrides the key, so one YAML can
+run under different batch files. `workers` applies to `single`,
+`parameter_sweep` and `collect_training_data`.
+
+Each worker owns a **slice** of the allocation for its whole chain: as many
+CPUs as the chain's largest step (`tasks × cores`), and the matching share of
+the job's memory. Every step of that worker, Cubit included, runs inside its
+slice, one step at a time. A slice is either part of one node or whole nodes;
+it never straddles nodes below the node size.
+
+Two layouts on milano (120 CPUs per node), both with the example's
+`tasks: 15, cores: 4` (a 60-CPU footprint):
+
+| Batch file | Layout |
+|---|---|
+| `run_lume-ace3p_omega3p_sweep_s3df_4workers.batch` (`--nodes=2`, `--workers auto`) | 4 workers, two per node, each 60 CPUs and 240 GB |
+| the same with `--nodes=4` and `tasks: 60` in the YAML (240 CPUs) | 2 workers of two whole nodes each, ranks spread 30 per node |
+
+The run prints its plan before the first point:
+
+```text
+ - 4 workers × (60 CPUs, 240 GB) on 2 nodes
+```
+
+A worker count that does not tile the allocation is refused before anything
+runs, with the counts that would fit:
+
+```text
+workers: 3 does not tile this allocation (2 nodes of 120 CPUs) for a 60-CPU
+footprint (the largest step's tasks × cores). Counts that fit: 1, 2, 4.
+```
+
+Slurm would otherwise queue the extra worker's steps silently and the sweep
+would run at a fraction of the expected speed. `auto` picks the largest count
+that fits, or 1 when none does.
+
+Memory is your judgment. Each step gets its slice's share; a mesher or solver
+that needs more than that should run with fewer workers. To give a
+memory-hungry mesher a whole node, run a Cubit-only sweep first, then the full
+chain with `resume: true` and `workers`. When the job sets no memory limit
+(Perlmutter's exclusive nodes), steps run with `--mem=0` and the plan line says
+memory is not isolated between workers.
+
+With `workers > 1` the tools' output goes only to each point's
+`<module>.log`, and the job's stdout carries one line per point event plus a
+progress line:
+
+```text
+ - point 7 started (cav_radius=100, ellipticity=0.75) in lume-ace3p_omega3p_workdir_100.0_0.75 (worker 2)
+ - point 7 complete in 41 s
+ - 8 of 16 done; running: worker 1 point 8 (cav_radius=110, ellipticity=0.5), …
+```
+
+Concurrent points need one workdir each: `workdir_mode: manual` is refused
+under `workers > 1`. `on_error` and `resume` mean what they mean serially.
+Outside a Slurm job (a laptop, the test suite) the workers still run, with the
+serial launch lines.
+
+A step that hangs holds its worker forever. A `timeout:` on the module stops
+it; see [](#step-timeout).
 
 (resuming-a-sweep)=
 ## Resuming a sweep that was cut off

@@ -41,6 +41,25 @@ validation error, so two entries of one type need distinct `name:` keys.
 Every module entry also accepts `from:`, which names the producer of an artifact
 it requires. It is needed only when several modules provide that artifact.
 
+(step-timeout)=
+### `timeout` — a limit on each step
+
+Every module that launches a tool (`cubit`, the solvers, `acdtool`, `geant4`)
+accepts `timeout:`, a limit in seconds on each step it launches (Cubit's
+mesher and `meshconvert` are two steps). A step still running at its limit is
+stopped (SIGTERM, then SIGKILL 10 s later), its log ends with
+`lume-ace3p: timed out after N s; the step was stopped.`, and the module is
+recorded `failed` with `timed out after N s` in its manifest `error`. Under
+`on_error: skip` the point gets a NaN row. `timeout` is left out of the module
+hash, like `tasks` and `cores`, so a resume with a longer limit re-runs only
+the step that timed out. Unset (the default) means no limit.
+
+```yaml
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    timeout : 7200                # seconds
+```
+
 (several-instances-of-one-module)=
 ### Several instances of one module
 
@@ -127,6 +146,7 @@ Additional `mode:` keys:
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
 | `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
 | `on_error`          | `single`, `parameter_sweep`, `collect_training_data` | `'skip'` | What a point that fails does to the run: `skip` records it and goes on, `raise` ends the run. See [](#on-error). |
+| `workers`           | `single`, `parameter_sweep`, `collect_training_data` | `1` | How many points run at once inside the Slurm job: an integer or `'auto'`. A count that does not tile the allocation is refused. `--workers` on the command line overrides it. See [](#running-points-in-parallel). |
 
 The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
 can be swept or optimized, since the objective is an `output_parameters` name.
