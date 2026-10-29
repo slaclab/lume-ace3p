@@ -344,14 +344,19 @@ the one failure a pool would otherwise never report.
 - **Phase 2:** the refusal in check 4 for the multi-node case requires
   `workers == nodes / nodes_per_worker` exactly. Allowing fewer (two
   two-node workers on six nodes) would idle nodes silently; proposed:
-  refuse, same as the sub-node case.
+  refuse, same as the sub-node case. **Settled: refuse** (Phase 2).
 - **Phase 3:** whether `collect_training_data` (an independent-sample loop,
   [`modes.py`](../src/lume_ace3p/modes.py#L856)) takes `workers` in the same
   phase. It is not sequential, so it is eligible; proposed: yes, since its
   loop body already calls `_evaluate` into a per-sample workdir, but the
   Geant4 campaign material stays out of the examples either way.
+  **Settled 2026-10-29: yes**, in Phase 3 (the user's call).
 - **Phase 3:** the point-event lines' exact wording and whether a progress
-  line (`12 of 32 complete`) is printed per completion.
+  line (`12 of 32 complete`) is printed per completion. **Settled
+  2026-10-29:** wording is the implementer's choice; a progress line **is**
+  printed, and it names what each worker is running at that moment (worker
+  number and its input point), e.g.
+  `12 of 32 complete; running: worker 1 point 13 (cav_radius=100.0), worker 2 point 14 (cav_radius=101.0)`.
 - **Phase 4:** whether a timed-out step is distinguishable from a crashed
   one in `--status` (proposed: the manifest error string says `timed out
   after N s`, no new status value).
@@ -444,7 +449,13 @@ still run serially until Phase 3. Settled while implementing:
    the mode layer to `run_logged` through `RunContext` (a `tee` attribute
    beside `capture_output`).
 3. `on_error: raise` cancels pending futures as in §2.5.
-4. `collect_training_data` per §4 if confirmed.
+4. `collect_training_data` takes `workers` too (confirmed): add it to
+   `MODE_KEYS['collect_training_data']`, size it with `worker_plan`, and run
+   its per-sample loop through the same pool and event lines. Its samples are
+   indexed at submission, as sweep points are, so resume finds them.
+5. Progress line (confirmed): after each completion or failure, one line
+   with done/total and the in-flight workers with their input points (§4).
+   Worker numbers are stable slots 1..N, not thread ids.
 
 ### Verification (Phase 3 done when)
 
@@ -458,9 +469,14 @@ still run serially until Phase 3. Settled while implementing:
 - Killing the run mid-sweep and re-running with `resume: true` and
   `workers: 3` completes exactly the unfinished points (count the fake
   solver's invocations).
-- Job stdout under `workers > 1` contains point-event lines and no solver
-  output; the per-workdir logs are complete.
-- The existing 878 tests pass; no baseline change.
+- Job stdout under `workers > 1` contains point-event lines, progress lines
+  naming the in-flight workers and points, and no solver output; the
+  per-workdir logs are complete.
+- `collect_training_data` with `workers: 3` writes the same store as the
+  serial run.
+- The existing tests pass (1131 at Phase 2; the one known failure,
+  `test_the_examples_actually_cover_every_mode`, predates this plan); no
+  baseline change.
 
 ## Phase 4 — Step timeout
 
