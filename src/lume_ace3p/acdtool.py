@@ -919,7 +919,7 @@ class Acdtool(CommandWrapper):
     def __init__(self, *args, ace3p_path=None, mpi_caller=None,
                  acdtool_command=None, acdtool_args=None, jobname=None,
                  acdtool_tasks=None, acdtool_cores=None, acdtool_opts='',
-                 log_file=None, slice=None, **kwargs):
+                 log_file=None, slice=None, tee=True, **kwargs):
         super().__init__(*args, **kwargs)
         # Where this step's stdout/stderr is teed (see lume_ace3p.logs); None
         # inherits the parent's streams, which is the legacy behavior. The
@@ -930,6 +930,7 @@ class Acdtool(CommandWrapper):
         self.ACE3P_PATH = ace3p_path if ace3p_path is not None else os.environ.get('ACE3P_PATH', '')
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.slice = slice  # lume_ace3p.launch.Slice, or None for serial
+        self.tee = tee  # echo the log to the parent's streams too
         self.acdtool_command = acdtool_command
         self.acdtool_args = list(acdtool_args) if acdtool_args else []
         self.jobname = jobname
@@ -1047,7 +1048,8 @@ class Acdtool(CommandWrapper):
         self.output_file = spec.resolve_output(jobname)
         check_exit('acdtool ' + name,
                    run_logged(self._command_line(name, operands, spec),
-                              cwd=self.workdir, log_file=self.log_file),
+                              cwd=self.workdir, log_file=self.log_file,
+                              tee=self.tee),
                    self.log_file)
         if spec.parses:
             self.load_output()

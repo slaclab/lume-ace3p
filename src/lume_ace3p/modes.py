@@ -60,7 +60,10 @@ writers have been removed; :mod:`lume_ace3p.results` is the one and only writer.
 import itertools
 import os
 import sys
+import threading
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import NamedTuple
 
 import numpy as np
@@ -106,8 +109,9 @@ MODE_KEYS = {
     'gp_parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
     'collect_training_data': frozenset({
         'store', 'output_dir', 'num_samples', 'sampler', 'seed', 'fidelity',
-        'variables', 'resume', 'on_error', 'design', 'grid', 'off_beta',
-        'events_per_run', 'min_histories_per_macro', 'histories_per_macro'}),
+        'variables', 'resume', 'on_error', 'workers', 'design', 'grid',
+        'off_beta', 'events_per_run', 'min_histories_per_macro',
+        'histories_per_macro'}),
     'train_surrogate': frozenset({
         'store', 'output_dir', 'variance', 'num_components', 'seed', 'model_dir',
         'holdout', 'dose_transform', 'floor', 'n_jobs', 'model',
@@ -181,8 +185,9 @@ def worker_plan(mode_cfg, workflow, environ=None):
     if requested == 1:
         return 1, None
     allocation = allocation_from_env(os.environ if environ is None else environ)
+    mpi_caller = (getattr(workflow, 'paths', None) or {}).get('mpi', '')
     workers, slice = plan_workers(workflow.modules, requested, allocation,
-                                  mpi_caller=workflow.paths.get('mpi', ''))
+                                  mpi_caller=mpi_caller)
     summary = plan_summary(workers, slice, allocation)
     if summary:
         print(' - ' + summary)
@@ -244,8 +249,9 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
 
     ``on_error`` (``single`` / ``parameter_sweep`` / ``collect_training_data``) is
     validated here, before anything runs; see :func:`parameter_sweep`. So is
-    ``workers`` (``single`` / ``parameter_sweep``), against the Slurm allocation
-    the run is inside — see :func:`worker_plan`."""
+    ``workers`` (the same three modes), against the Slurm allocation the run is
+    inside — see :func:`worker_plan` — and the plan is handed to the mode, which
+    runs that many points at once (:func:`_run_pool`)."""
     if mode_cfg.get('type') is None and mode_cfg.get('mode') is not None:
         _deprecation_warning(
             "the 'mode:' key inside the mode block is a legacy alias for 'type:'. "
@@ -258,21 +264,25 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     resume = bool(mode_cfg.get('resume', False))
     on_error = (on_error_of(mode_cfg)
                 if 'on_error' in MODE_KEYS.get(mode_type, ()) else None)
+    plan = (1, None)
     if 'workers' in MODE_KEYS.get(mode_type, ()):
         # Sized here so a count that does not fit is refused before the first
-        # point. Phase 3 of plans/parallel_sweep_plan.md hands the result to the
-        # pool; until then the table modes still run their points one at a time.
-        worker_plan(mode_cfg, workflow)
+        # point. ``single`` is one point and runs it as always; it accepts the
+        # key so a YAML moves between it and parameter_sweep unedited.
+        plan = worker_plan(mode_cfg, workflow)
     elif 'workers' in mode_cfg:
         raise ValueError(
-            f"mode '{mode_type}' does not take workers; only single and "
-            "parameter_sweep run points concurrently.")
+            f"mode '{mode_type}' does not take workers; only single, "
+            "parameter_sweep and collect_training_data run points "
+            "concurrently.")
     if mode_type == 'single':
         df = single(workflow, resume=resume, on_error=on_error)
     elif mode_type == 'parameter_sweep':
-        df = parameter_sweep(workflow, resume=resume, on_error=on_error)
+        workers, slice = plan
+        df = parameter_sweep(workflow, resume=resume, on_error=on_error,
+                             workers=workers, slice=slice)
     elif mode_type == 'collect_training_data':
-        return collect_training_data(mode_cfg, workflow)
+        return collect_training_data(mode_cfg, workflow, plan=plan)
     elif mode_type == 'train_surrogate':
         return train_surrogate(mode_cfg, workflow)
     elif mode_type == 'invert_optimize':
@@ -338,7 +348,8 @@ def single(workflow, resume=False, on_error='skip'):
     return _assemble(workflow, input_names, [point])
 
 
-def parameter_sweep(workflow, resume=False, on_error='skip'):
+def parameter_sweep(workflow, resume=False, on_error='skip', workers=1,
+                    slice=None):
     """Run the workflow over the tensor product of its swept axes, one row per
     grid point (or per ``(grid-point, field-index)`` for a field-indexed
     solver). Returns the result DataFrame.
@@ -373,7 +384,16 @@ def parameter_sweep(workflow, resume=False, on_error='skip'):
     point failed the table gains a :data:`~lume_ace3p.results.STATUS_COLUMN`
     (``complete`` / ``failed``); a run with no failure has the same columns as
     always. Under ``raise`` the first failure ends the sweep and no table is
-    written."""
+    written.
+
+    **``workers``** (``mode: {workers: N}``) runs N points at once, each in its
+    own ``slice`` of the Slurm allocation (both from :func:`worker_plan`), through
+    :func:`_run_pool`. The table is the serial run's: point indices — and so the
+    workdir names ``resume`` finds — are assigned before anything runs, and
+    :func:`_assemble` sorts by them. Every point needs its own workdir for this,
+    so a sweep whose points would share one is refused. The tools' output then
+    goes only to the per-module logs, and the job's stdout carries one line per
+    point started and finished instead (see :func:`_run_pool`)."""
     _require_resumable(workflow, resume)
     axes = workflow.sweep_axes()
     input_names = [label for label, _values, _setter in axes]
@@ -383,12 +403,22 @@ def parameter_sweep(workflow, resume=False, on_error='skip'):
     if not resume:
         _note_existing_runs(workflow, tensor, bool(axes))
 
-    points = []
+    jobs = []
     for i in range(tensor.shape[0]):
         scalars = tensor[i].tolist()
-        points.append(_run_point(workflow, i, scalars,
-                                 scalars if axes else None, input_names,
-                                 resume, on_error))
+        jobs.append(_Job(i, f'point {i}', dict(zip(input_names, scalars)),
+                         _failed_workdir(workflow, scalars if axes else None, i)))
+    if workers > 1:
+        _require_distinct_workdirs(jobs)
+    tee = workers <= 1
+
+    def run(job):
+        scalars = tensor[job.index].tolist()
+        return _run_point(workflow, job.index, scalars,
+                          scalars if axes else None, input_names, resume,
+                          on_error, slice=slice, tee=tee)
+
+    points = _run_pool(jobs, workers, run)
     _report_failures([p.point_index for p in points if p.status == FAILED],
                      len(points), 'points')
     return _assemble(workflow, input_names, points)
@@ -428,7 +458,7 @@ def _check_files(workflow):
 
 
 def _run_point(workflow, i, scalars, input_scalars, input_names, resume,
-               on_error):
+               on_error, slice=None, tee=True):
     """Evaluate point ``i`` and return its :class:`_PointResult` — a failed one,
     with NaN outputs, under ``on_error: skip`` (see :func:`parameter_sweep`).
 
@@ -437,7 +467,7 @@ def _run_point(workflow, i, scalars, input_scalars, input_names, resume,
     sweep."""
     try:
         outputs, ctx = _evaluate_point(workflow, input_scalars, i,
-                                       resume=resume)
+                                       resume=resume, slice=slice, tee=tee)
         index = _table_index(workflow, ctx, outputs)
         handle = _persist_field(workflow, ctx, i, index)
     except Exception as exc:
@@ -448,7 +478,7 @@ def _run_point(workflow, i, scalars, input_scalars, input_names, resume,
                              _failed_workdir(workflow, input_scalars, i), exc)
         return _PointResult(i, scalars,
                             {name: np.nan for name in _output_names(workflow)},
-                            None, None, status=FAILED)
+                            None, None, status=FAILED, error=_one_line(exc))
     return _PointResult(i, scalars, outputs, index, handle)
 
 
@@ -462,15 +492,152 @@ def _failed_workdir(workflow, input_scalars, i):
 
 def _report_failed_point(label, values, workdir, exc):
     """Print one failed point's error to stderr, under a line naming it."""
-    at = ', '.join(f'{name}={_number(value)}' for name, value in values.items())
-    print(f"Error: {label}{f' ({at})' if at else ''} failed"
-          f"{f' in {workdir}' if workdir else ''}; its row is NaN and the run "
-          "goes on (on_error: skip).", file=sys.stderr)
-    if isinstance(exc, _POINT_ERRORS):
-        print(f'  {type(exc).__name__}: {exc}', file=sys.stderr)
-    else:
-        traceback.print_exception(type(exc), exc, exc.__traceback__,
-                                  file=sys.stderr)
+    at = _values_text(values)
+    with _EVENT_LOCK:
+        print(f"Error: {label}{f' ({at})' if at else ''} failed"
+              f"{f' in {workdir}' if workdir else ''}; its row is NaN and the "
+              "run goes on (on_error: skip).", file=sys.stderr)
+        if isinstance(exc, _POINT_ERRORS):
+            print(f'  {type(exc).__name__}: {exc}', file=sys.stderr)
+        else:
+            traceback.print_exception(type(exc), exc, exc.__traceback__,
+                                      file=sys.stderr)
+
+
+def _values_text(values):
+    """``name=value, …`` of a point's inputs, for its messages."""
+    return ', '.join(f'{name}={_number(value)}' for name, value in values.items())
+
+
+def _one_line(exc):
+    """The first line of an exception's message, for a point-event line."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text.splitlines()[0] if text else ''}"
+
+
+# --------------------------------------------------------------------------- #
+# The worker pool (Phase 3 of plans/parallel_sweep_plan.md): ``workers: N``
+# runs N independent points at once in threads. A worker spends its life in
+# ``subprocess.wait``, and each point already has its own RunContext, module
+# instances, workdir and manifest, so the threads share nothing they write.
+# --------------------------------------------------------------------------- #
+
+# Serializes what the workers print — point events, progress lines and failure
+# reports — so two of them never interleave. It also guards the pool's slot
+# bookkeeping, which is only touched while printing.
+_EVENT_LOCK = threading.Lock()
+
+
+class _Job(NamedTuple):
+    """One unit of pool work, named before anything runs."""
+
+    index: int          # the point's (or sample's) index, fixed at submission
+    label: str          # 'point 7', 'sample 3', 'bin 0 beta 40'
+    values: dict        # its input values, for the event lines
+    workdir: object     # where it runs, or None when unknown
+
+
+def _require_distinct_workdirs(jobs):
+    """Refuse concurrent points that would run in one directory.
+
+    ``workdir_mode: manual`` puts every point there, and ``auto``'s value-based
+    names can collide; serially that loses all but the last point's files, but
+    two points running in one directory at once corrupt each other's."""
+    seen = {}
+    for job in jobs:
+        if job.workdir is None:
+            continue
+        key = os.path.abspath(job.workdir)
+        if key in seen:
+            raise ValueError(
+                f"workers > 1 needs a workdir per point, but {seen[key]} and "
+                f"{job.label} both run in '{job.workdir}'. Set "
+                "workflow_parameters: {workdir_mode: indexed}.")
+        seen[key] = job.label
+
+
+def _run_pool(jobs, workers, run):
+    """``[run(job) for job in jobs]``, with up to ``workers`` running at once.
+
+    One worker is the serial loop, printing nothing of its own. With more, each
+    worker holds a stable slot number 1..N, and the job's stdout gets one line
+    when a job starts, one when it finishes (complete or failed, with its wall
+    time) and a progress line naming what every busy worker is running, so a
+    sweep whose solver output now goes only to the per-module logs can still be
+    followed.
+
+    ``run`` handles a point that fails under ``on_error: skip`` itself and
+    returns a result whose ``status`` is ``failed`` (and ``error`` its message).
+    An exception escaping ``run`` — ``on_error: raise``, or a campaign-level
+    error such as a scoring mesh edited mid-run — ends the pool: no further job
+    starts, the ones already running finish (so their manifests are complete),
+    and the first exception is re-raised. The results come back in job order,
+    whatever order they finished in."""
+    if workers <= 1:
+        return [run(job) for job in jobs]
+    free = list(range(1, workers + 1))
+    running = {}
+    counts = {'done': 0, 'failed': 0}
+    stop = threading.Event()
+
+    def progress():
+        busy = ', '.join(
+            f"worker {slot} {job.label}"
+            + (f" ({_values_text(job.values)})" if job.values else '')
+            for slot, job in sorted(running.items()))
+        failed = f", {counts['failed']} failed" if counts['failed'] else ''
+        print(f" - {counts['done']} of {len(jobs)} done{failed}"
+              + (f'; running: {busy}' if busy else ''), flush=True)
+
+    def finish(slot, job, started, error):
+        running.pop(slot)
+        free.append(slot)
+        free.sort()
+        counts['done'] += 1
+        took = f'{time.monotonic() - started:.0f} s'
+        if error is None:
+            print(f' - {job.label} complete in {took}', flush=True)
+        else:
+            counts['failed'] += 1
+            print(f' - {job.label} failed in {took}: {error}', flush=True)
+        progress()
+
+    def work(job):
+        with _EVENT_LOCK:
+            if stop.is_set():
+                return None
+            slot = free.pop(0)
+            running[slot] = job
+            at = _values_text(job.values)
+            print(f" - {job.label} started{f' ({at})' if at else ''}"
+                  f"{f' in {job.workdir}' if job.workdir else ''} "
+                  f"(worker {slot})", flush=True)
+        started = time.monotonic()
+        try:
+            result = run(job)
+        except BaseException as exc:
+            # Set before the slot is released, so no queued job can start
+            # after this failure is known.
+            stop.set()
+            with _EVENT_LOCK:
+                finish(slot, job, started, _one_line(exc))
+            raise
+        with _EVENT_LOCK:
+            finish(slot, job, started,
+                   getattr(result, 'error', None)
+                   if getattr(result, 'status', None) == FAILED else None)
+        return result
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(work, job) for job in jobs]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            stop.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+    return [future.result() for future in futures]
 
 
 def _report_failures(failed, total, what):
@@ -502,7 +669,8 @@ def _require_resumable(workflow, resume):
             "not guaranteed unique.")
 
 
-def _evaluate_point(workflow, input_scalars, point_index, resume=False):
+def _evaluate_point(workflow, input_scalars, point_index, resume=False,
+                    slice=None, tee=True):
     """Evaluate one sweep point, choosing its workdir.
 
     ``workdir_mode: indexed`` is implemented **here** rather than in
@@ -518,7 +686,8 @@ def _evaluate_point(workflow, input_scalars, point_index, resume=False):
     see :func:`_iteration_workdir`."""
     workdir = (workflow.point_workdir(point_index)
                if getattr(workflow, 'workdir_mode', None) == 'indexed' else None)
-    return _evaluate(workflow, input_scalars, workdir=workdir, resume=resume)
+    return _evaluate(workflow, input_scalars, workdir=workdir, resume=resume,
+                     slice=slice, tee=tee)
 
 
 def _iteration_workdir(workflow, iteration):
@@ -572,19 +741,25 @@ def _require_own_workdirs(workflow, evaluations):
           "(or 'indexed') to give each evaluation its own directory.")
 
 
-def _evaluate(workflow, input_scalars, workdir=None, resume=False):
+def _evaluate(workflow, input_scalars, workdir=None, resume=False, slice=None,
+              tee=True):
     """Call ``workflow.evaluate``, passing only the keywords that carry something.
 
-    An omitted ``workdir=`` means "name it yourself" and an omitted ``resume=``
-    means "as always", so the default call is the one-argument form this seam has
-    had since Phase 1 — which is what keeps the several test doubles whose
-    ``evaluate`` predates one of these keywords working, and what keeps the
-    non-resume path byte-for-byte the call it was."""
+    An omitted ``workdir=`` means "name it yourself", an omitted ``resume=``
+    "as always", and omitted ``slice=`` / ``tee=`` the serial launch, so the
+    default call is the one-argument form this seam has had since Phase 1 —
+    which is what keeps the several test doubles whose ``evaluate`` predates one
+    of these keywords working, and what keeps the non-resume path byte-for-byte
+    the call it was."""
     kwargs = {}
     if workdir is not None:
         kwargs['workdir'] = workdir
     if resume:
         kwargs['resume'] = True
+    if slice is not None:
+        kwargs['slice'] = slice
+    if not tee:
+        kwargs['tee'] = False
     return workflow.evaluate(input_scalars, **kwargs)
 
 
@@ -897,7 +1072,7 @@ def _doe_bounds(mode_cfg, beta_names):
     return bounds
 
 
-def collect_training_data(mode_cfg, workflow):
+def collect_training_data(mode_cfg, workflow, plan=None):
     """Generate and persist ``(β, dose_grid)`` training pairs (Phase 2).
 
     Samples ``num_samples`` scattered points in the D-dimensional β space via a
@@ -940,10 +1115,17 @@ def collect_training_data(mode_cfg, workflow):
     ``design: per_bin`` collects a per-bin store instead (one 1-D β sweep per
     bin, for an additive surrogate); see :func:`_collect_per_bin`.
 
+    ``workers`` runs that many samples at once, as :func:`parameter_sweep` runs
+    points (:func:`_run_pool`); ``plan`` is the ``(workers, slice)``
+    :func:`run_mode` already sized, and is sized here when not given. Samples
+    are indexed before anything runs, so the store is the serial run's.
+
     Returns the training-store result :class:`pandas.DataFrame`."""
+    if plan is None:
+        plan = worker_plan(mode_cfg, workflow)
     design = mode_cfg.get('design', 'doe')
     if design == surrogate_data.PER_BIN_DESIGN:
-        return _collect_per_bin(mode_cfg, workflow)
+        return _collect_per_bin(mode_cfg, workflow, plan)
     if design != 'doe':
         raise ValueError(
             f"collect_training_data: unknown design '{design}'; use 'doe' "
@@ -976,62 +1158,65 @@ def collect_training_data(mode_cfg, workflow):
     # Drive each sample into its own directory by passing the workdir straight to
     # evaluate. That used to be done by mutating workflow.workdir_mode /
     # baseworkdir and restoring them in a finally; the explicit argument means the
-    # collector never writes to shared workflow state at all.
-    rows = []
-    failed = []
-    mesh_shape = None
-    measured = {}
+    # collector never writes to shared workflow state at all — which is also what
+    # lets samples run concurrently.
+    workers, slice = plan
+    jobs = []
     for i in range(num_samples):
-        beta_vec = design[i]
-        sample_dir = os.path.join(store, f'sample_{i:05d}')
+        overrides = {name: float(v) for name, v in zip(beta_names, design[i])}
+        jobs.append(_Job(i, f'sample {i}', overrides,
+                         os.path.join(store, f'sample_{i:05d}')))
+
+    def run(job):
+        sample_dir = job.workdir
         field_path = os.path.join(sample_dir, 'field.npz')
-        overrides = {name: float(v) for name, v in zip(beta_names, beta_vec)}
-
         if os.path.isfile(field_path):
-            # Already done: the dose grid for this β is persisted, and the grid is
-            # the whole of the sample. The recognised legacy state above — it
+            # Already done: the dose grid for this β is persisted, and the grid
+            # is the whole of the sample. The recognised legacy state above — it
             # predates the run manifest and every existing store is in it.
-            handle = field_path
-        else:
-            # Constraint #3: defend against a mid-campaign edit to the geant4
-            # input file's scoring mesh. Re-read the fingerprint before each
-            # fresh evaluation and hard-fail on drift, so a partway mesh change
-            # is caught here rather than silently misaligning the PCA basis at
-            # train time.
-            if mesh_fingerprint is not None:
-                current = surrogate_data.read_mesh_fingerprint(
-                    _geant4_input_path(workflow))
-                if not surrogate_data.mesh_fingerprints_match(
-                        current, mesh_fingerprint):
-                    raise ValueError(
-                        f"dose scoring mesh changed at sample {i} "
-                        f"(was {mesh_fingerprint}, now {current}); the mesh "
-                        "must stay fixed for the whole campaign "
-                        "(constraint #3).")
-            try:
-                _outputs, ctx = _evaluate(workflow, overrides,
-                                          workdir=sample_dir, resume=resume)
-                handle = save_field(workflow.field(ctx), field_path)
-                measured[i] = _run_fidelity(ctx)
-            except Exception as exc:
-                if on_error == 'raise':
-                    raise
-                _report_failed_point(f'sample {i}', overrides, sample_dir, exc)
-                failed.append(i)
-                handle = None
+            return _Sample(field_path, None)
+        # Constraint #3: defend against a mid-campaign edit to the geant4 input
+        # file's scoring mesh. Re-read the fingerprint before each fresh
+        # evaluation and hard-fail on drift, so a partway mesh change is caught
+        # here rather than silently misaligning the PCA basis at train time.
+        if mesh_fingerprint is not None:
+            current = surrogate_data.read_mesh_fingerprint(
+                _geant4_input_path(workflow))
+            if not surrogate_data.mesh_fingerprints_match(
+                    current, mesh_fingerprint):
+                raise ValueError(
+                    f"dose scoring mesh changed at sample {job.index} "
+                    f"(was {mesh_fingerprint}, now {current}); the mesh "
+                    "must stay fixed for the whole campaign "
+                    "(constraint #3).")
+        try:
+            _outputs, ctx = _evaluate(workflow, job.values, workdir=sample_dir,
+                                      resume=resume, slice=slice,
+                                      tee=workers <= 1)
+            return _Sample(save_field(workflow.field(ctx), field_path),
+                           _run_fidelity(ctx))
+        except Exception as exc:
+            if on_error == 'raise':
+                raise
+            _report_failed_point(job.label, job.values, sample_dir, exc)
+            return _Sample(None, None, status=FAILED, error=_one_line(exc))
 
-        if handle is not None and mesh_shape is None:
-            mesh_shape = _mesh_shape(handle)
-
-        row = dict(overrides)
+    samples = _run_pool(jobs, workers, run)
+    rows = []
+    failed = [job.index for job, sample in zip(jobs, samples)
+              if sample.status == FAILED]
+    mesh_shape = next((_mesh_shape(sample.handle) for sample in samples
+                       if sample.handle is not None), None)
+    for job, sample in zip(jobs, samples):
+        row = dict(job.values)
         row[surrogate_data.FIDELITY_COLUMN] = (
             float(fidelity) if fidelity is not None else np.nan)
         # A skipped (already stored) sample was measured by the run that
         # stored it; read the same files back from its workdir.
-        row.update(measured.get(i) or _workdir_fidelity(sample_dir, workflow))
-        if handle is not None:
-            row[FIELD_ARTIFACT_COLUMN] = handle
-        row[STATUS_COLUMN] = FAILED if i in failed else COMPLETE
+        row.update(sample.measured or _workdir_fidelity(job.workdir, workflow))
+        if sample.handle is not None:
+            row[FIELD_ARTIFACT_COLUMN] = sample.handle
+        row[STATUS_COLUMN] = sample.status
         rows.append(row)
     _report_failures(failed, num_samples, 'samples')
 
@@ -1119,7 +1304,16 @@ def _count_rows(path):
         return sum(1 for line in f if line.strip() and not line.startswith('#'))
 
 
-def _collect_per_bin(mode_cfg, workflow):
+class _Sample(NamedTuple):
+    """What one collected sample (or per-bin run) contributes to the store."""
+
+    handle: object                    # its persisted field.npz, or None
+    measured: object                  # _run_fidelity of a fresh run, or None
+    status: str = COMPLETE
+    error: str = None                 # a FAILED run's message, for its event
+
+
+def _collect_per_bin(mode_cfg, workflow, plan=(1, None)):
     """Collect a per-bin store: for each bin ``b`` and each β on ``grid``, one
     chain run with bin ``b`` at β and the others at ``off_beta`` (default 1.0,
     which zeroes their weights).
@@ -1157,45 +1351,55 @@ def _collect_per_bin(mode_cfg, workflow):
           f"({int(np.min(primaries * hpm))} to {int(np.max(primaries * hpm))} "
           "per run)")
 
-    rows, failed = [], []
-    mesh_shape = None
+    workers, slice = plan
+    jobs = []
     for b in range(num_bins):
         for i, value in enumerate(grid):
             beta = surrogate_data.per_bin_beta(value, b, num_bins, off_beta)
-            label = f'bin {b} beta {value:g}'
-            run_dir = os.path.join(store, f'bin{b}', f'beta{value:g}')
-            field_path = os.path.join(run_dir, 'field.npz')
             overrides = {f'particles:{name}': v
                          for name, v in zip(beta_names, beta)}
             overrides['geant4:histories_per_macro'] = int(hpm[b, i])
-            if os.path.isfile(field_path):
-                handle = field_path
-            else:
-                try:
-                    _check_mesh_unchanged(workflow, mesh_fingerprint, label)
-                    _outputs, ctx = _evaluate(workflow, overrides,
-                                              workdir=run_dir, resume=resume)
-                    _check_planned_primaries(ctx, primaries[b, i], label)
-                    handle = save_field(workflow.field(ctx), field_path)
-                except _MeshChanged:
-                    raise
-                except Exception as exc:
-                    if on_error == 'raise':
-                        raise
-                    _report_failed_point(label, overrides, run_dir, exc)
-                    failed.append((b, i))
-                    handle = None
-            if handle is not None and mesh_shape is None:
-                mesh_shape = _mesh_shape(handle)
-            row = {surrogate_data.BIN_COLUMN: b,
-                   **dict(zip(beta_names, beta)),
-                   surrogate_data.PRIMARIES_COLUMN: int(primaries[b, i]),
-                   surrogate_data.HPM_COLUMN: int(hpm[b, i]),
-                   surrogate_data.EVENTS_COLUMN: int(primaries[b, i] * hpm[b, i])}
-            if handle is not None:
-                row[FIELD_ARTIFACT_COLUMN] = handle
-            row[STATUS_COLUMN] = FAILED if (b, i) in failed else COMPLETE
-            rows.append(row)
+            jobs.append(_Job((b, i), f'bin {b} beta {value:g}', overrides,
+                             os.path.join(store, f'bin{b}', f'beta{value:g}')))
+
+    def run(job):
+        (b, i), label, run_dir = job.index, job.label, job.workdir
+        field_path = os.path.join(run_dir, 'field.npz')
+        if os.path.isfile(field_path):
+            return _Sample(field_path, None)
+        try:
+            _check_mesh_unchanged(workflow, mesh_fingerprint, label)
+            _outputs, ctx = _evaluate(workflow, job.values, workdir=run_dir,
+                                      resume=resume, slice=slice,
+                                      tee=workers <= 1)
+            _check_planned_primaries(ctx, primaries[b, i], label)
+            return _Sample(save_field(workflow.field(ctx), field_path), None)
+        except _MeshChanged:
+            raise
+        except Exception as exc:
+            if on_error == 'raise':
+                raise
+            _report_failed_point(label, job.values, run_dir, exc)
+            return _Sample(None, None, status=FAILED, error=_one_line(exc))
+
+    runs = _run_pool(jobs, workers, run)
+    failed = [job.index for job, sample in zip(jobs, runs)
+              if sample.status == FAILED]
+    mesh_shape = next((_mesh_shape(sample.handle) for sample in runs
+                       if sample.handle is not None), None)
+    rows = []
+    for job, sample in zip(jobs, runs):
+        b, i = job.index
+        beta = surrogate_data.per_bin_beta(grid[i], b, num_bins, off_beta)
+        row = {surrogate_data.BIN_COLUMN: b,
+               **dict(zip(beta_names, beta)),
+               surrogate_data.PRIMARIES_COLUMN: int(primaries[b, i]),
+               surrogate_data.HPM_COLUMN: int(hpm[b, i]),
+               surrogate_data.EVENTS_COLUMN: int(primaries[b, i] * hpm[b, i])}
+        if sample.handle is not None:
+            row[FIELD_ARTIFACT_COLUMN] = sample.handle
+        row[STATUS_COLUMN] = sample.status
+        rows.append(row)
     _report_failures(failed, num_bins * grid.size, 'runs')
 
     columns = ([surrogate_data.BIN_COLUMN] + list(beta_names)
@@ -1997,6 +2201,7 @@ class _PointResult(NamedTuple):
     index: object                     # this point's (label, values), or None
     handle: object                    # persisted field artifact, or None
     status: str = COMPLETE            # FAILED for a point skipped by on_error
+    error: str = None                 # a FAILED point's message, for its event
 
 
 def _assemble(workflow, input_names, points):

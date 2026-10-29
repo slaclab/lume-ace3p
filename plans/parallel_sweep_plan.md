@@ -3,7 +3,7 @@
 **Status: IN PROGRESS** — written 2026-10-27 on S3DF against `dev` at
 `10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
 2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phase 2 done
-2026-10-29; Phases 3–5 open.
+2026-10-29; Phase 3 done 2026-10-29; Phases 4–5 open.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on
@@ -438,6 +438,24 @@ still run serially until Phase 3. Settled while implementing:
 - The printed slice summary line is asserted once.
 
 ## Phase 3 — The pool, point events, tee off
+
+**Done 2026-10-29.** `modes._run_pool(jobs, workers, run)` is the one pool,
+used by `parameter_sweep` and both `collect_training_data` designs (DOE and
+`per_bin`); `run_mode` hands it the `(workers, slice)` plan. Tests in
+`tests/test_parallel_sweep.py`. Settled while implementing:
+
+- `Workflow.evaluate` no longer reads `self.workdir` back after assigning it
+  (it held whichever point started last under threads); the workdir is a local
+  passed to `_resume_state` and the manifest writes.
+- `workers > 1` refuses a sweep whose points resolve to one workdir (`manual`,
+  or colliding `auto` names), naming `indexed`. Serially that is a warning.
+- `tee` reaches the wrappers as `RunContext.tee`, beside `capture_output`.
+- A worker failure under `raise` sets a stop flag before releasing its slot,
+  so no queued point starts once the failure is known; running points finish.
+- Event lines: ` - point 7 started (radius=100) in wd_7 (worker 2)`,
+  ` - point 7 complete in 412 s` / ` - point 9 failed in 88 s: <first line>`,
+  then ` - 12 of 32 done, 1 failed; running: worker 1 point 13 (radius=100), …`.
+  The `Error:` block with the full message still goes to stderr.
 
 ### Approach
 

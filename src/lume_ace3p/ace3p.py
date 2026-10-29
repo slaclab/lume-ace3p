@@ -310,7 +310,7 @@ class ACE3P(CommandWrapper):
 
     def __init__(self, *args, ace3p_tasks=1, ace3p_cores=1, ace3p_opts='',
                  ace3p_path=None, mpi_caller=None, results_dir=None, slice=None,
-                 log_file=None, input_name=None, **kwargs):
+                 tee=True, log_file=None, input_name=None, **kwargs):
         super().__init__(*args, **kwargs)
         # The filename :meth:`run` writes the merged input under, in the
         # workdir. ``None`` keeps the input's own basename; the module layer
@@ -325,6 +325,7 @@ class ACE3P(CommandWrapper):
         # The worker's share of the allocation (lume_ace3p.launch.Slice), or
         # None for the serial launch line.
         self.slice = slice
+        self.tee = tee  # echo the log to the parent's streams too
         self.ace3p_tasks = ace3p_tasks
         self.ace3p_cores = ace3p_cores
         self.ace3p_opts = ace3p_opts
@@ -375,7 +376,7 @@ class ACE3P(CommandWrapper):
     def run(self):
         self.write_input(*([self.input_name] if self.input_name else []))
         completed = run_logged(self.solver_command(), cwd=self.workdir,
-                               log_file=self.log_file)
+                               log_file=self.log_file, tee=self.tee)
         self.returncode = completed.returncode
         if self.returncode:
             # Raised before the parser runs: a solver that crashed after writing

@@ -83,13 +83,14 @@ class Geant4(CommandWrapper):
 
     def __init__(self, *args, geant4_threads=1, geant4_opts='',
                  mpi_caller=None, geant4_app_path=None, geant4_app_exe=None,
-                 log_file=None, slice=None, **kwargs):
+                 log_file=None, slice=None, tee=True, **kwargs):
         super().__init__(*args, **kwargs)
         # Where this step's stdout/stderr is teed (see lume_ace3p.logs); None
         # inherits the parent's streams, which is the legacy behavior.
         self.log_file = log_file
         self.MPI_CALLER = mpi_caller if mpi_caller is not None else os.environ.get('MPI_CALLER', '')
         self.slice = slice  # lume_ace3p.launch.Slice, or None for serial
+        self.tee = tee  # echo the log to the parent's streams too
         self.GEANT4_APP_PATH = geant4_app_path if geant4_app_path is not None else os.environ.get('GEANT4_APP_PATH', '')
         self.GEANT4_APP_EXE = geant4_app_exe if geant4_app_exe is not None else os.environ.get('GEANT4_APP_EXE', '')
         self.geant4_threads = geant4_threads
@@ -198,7 +199,8 @@ class Geant4(CommandWrapper):
                            self.geant4_opts, exe + ' ' + self.input_file,
                            self.slice)
         check_exit('geant4', run_logged(cmd, cwd=self.workdir,
-                                        log_file=self.log_file), self.log_file)
+                                        log_file=self.log_file, tee=self.tee),
+                   self.log_file)
 
     def configure(self):
         return 'Not implemented.'

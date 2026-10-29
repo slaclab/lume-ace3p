@@ -251,13 +251,20 @@ class RunContext:
         :class:`lume_ace3p.launch.Slice`), handed to every external-tool
         wrapper. ``None`` — the default, and every serial run — gives each tool
         its historical launch line.
+    ``tee``
+        whether a captured subprocess's output is also echoed to the parent's
+        stdout/stderr (:func:`lume_ace3p.logs.run_logged`). ``True`` by default;
+        a concurrent sweep turns it off so M solvers do not interleave on the
+        job's stdout, and their per-module logs are then the only copy.
     """
 
     def __init__(self, workdir, inputs=None, artifacts=None, outputs=None,
                  dry_run=False, paths=None, stage_mode='copy', modules=None,
-                 capture_output=False, config_hash=None, slice=None):
+                 capture_output=False, config_hash=None, slice=None,
+                 tee=True):
         self.workdir = workdir
         self.slice = slice
+        self.tee = bool(tee)
         self.config_hash = config_hash
         self.modules = list(modules) if modules else []
         self.capture_output = bool(capture_output)
@@ -801,7 +808,7 @@ class CubitModule(Module):
                       ace3p_path=ctx.paths.get('ace3p', ''),
                       cubit_path=ctx.paths.get('cubit', ''),
                       mpi_caller=ctx.paths.get('mpi', ''),
-                      slice=ctx.slice,
+                      slice=ctx.slice, tee=ctx.tee,
                       log_file=self.log_file(ctx))
         if inputs.cubit:
             cubit.set_value(inputs.cubit)
@@ -973,7 +980,7 @@ class _SolverModule(Module):
                                workdir=ctx.workdir,
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''),
-                               slice=ctx.slice,
+                               slice=ctx.slice, tee=ctx.tee,
                                log_file=self.log_file(ctx),
                                input_name=self._input_name(ctx))
         solver.set_value(inputs.ace3p)
@@ -2329,7 +2336,7 @@ class AcdtoolModule(Module):
                           acdtool_opts=self.opts,
                           ace3p_path=ctx.paths.get('ace3p', ''),
                           mpi_caller=ctx.paths.get('mpi', ''),
-                          slice=ctx.slice,
+                          slice=ctx.slice, tee=ctx.tee,
                           log_file=self.log_file(ctx))
         if skip_execution:
             # Resumed: this command already ran in this workdir, so read the
@@ -3042,7 +3049,7 @@ class Geant4Module(Module):
                                      geant4_opts=self.geant4_opts,
                                      workdir=ctx.workdir,
                                      mpi_caller=ctx.paths.get('mpi', ''),
-                                     slice=ctx.slice,
+                                     slice=ctx.slice, tee=ctx.tee,
                                      geant4_app_path=ctx.paths.get('geant4_app_path', ''),
                                      geant4_app_exe=ctx.paths.get('geant4_app_exe', ''),
                                      log_file=self.log_file(ctx))
