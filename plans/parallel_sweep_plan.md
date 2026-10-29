@@ -2,7 +2,8 @@
 
 **Status: IN PROGRESS** — written 2026-10-27 on S3DF against `dev` at
 `10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
-2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phases 2–5 open.
+2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phase 2 done
+2026-10-29; Phases 3–5 open.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on
@@ -393,6 +394,22 @@ retired `geant4_beta_surrogate`.
   (`tests/baseline_utils.py` untouched).
 
 ## Phase 2 — Allocation model and sizing
+
+**Done 2026-10-29.** `allocation_from_env`, `plan_workers`, `plan_summary` in
+`launch.py`; `Module.launch_size()` gives each module's `(tasks, cores)`
+(Cubit `(1, 1)`, a serial acdtool command one rank, Geant4 `(1, threads)`);
+`modes.workers_of` / `modes.worker_plan`; `--workers N|auto` on the CLI.
+`run_mode` sizes and prints the plan before the first point, but the points
+still run serially until Phase 3. Settled while implementing:
+
+- The §4 multi-node question went the proposed way: fewer workers than the
+  nodes hold is refused (two two-node workers on six nodes lists `1, 3`).
+- `workers: 1` returns `(1, None)` without reading the workflow or the
+  environment, so no existing config or test double is touched.
+- Under Slurm with `workers > 1` the MPI caller must be `srun` (the slice
+  flags are srun step options); outside Slurm any caller is accepted.
+- `auto` with nothing that fits runs serially rather than refusing.
+- `workers` on any other mode is refused, not just warned about.
 
 ### Approach
 

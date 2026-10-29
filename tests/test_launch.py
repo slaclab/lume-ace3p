@@ -197,3 +197,224 @@ def test_ctx_slice_reaches_every_wrapper(tmp_path):
     from lume_ace3p.modules import RunContext
     assert RunContext(str(tmp_path)).slice is None
     assert RunContext(str(tmp_path), slice=SLICE).slice is SLICE
+
+
+# --------------------------------------------------------------------------- #
+# Phase 2: the allocation and the worker plan.
+# --------------------------------------------------------------------------- #
+
+from lume_ace3p.launch import (  # noqa: E402
+    Allocation, allocation_from_env, footprint, plan_summary, plan_workers,
+)
+from lume_ace3p.modules import (  # noqa: E402
+    AcdtoolModule, CubitModule, Geant4Module, Omega3PModule,
+)
+
+
+def _chain(tasks, cores):
+    """Cubit → Omega3P (tasks × cores) → serial-shaped acdtool rf."""
+    return [CubitModule({'journal': 'cavity.jou'}),
+            Omega3PModule({'input': 'cavity.omega3p', 'tasks': tasks,
+                           'cores': cores}),
+            AcdtoolModule({'input': 'x.rfpost', 'tasks': 4, 'cores': 1})]
+
+
+def _env(cpus, mem='491520', **extra):
+    env = {'SLURM_JOB_ID': '1', 'SLURM_JOB_CPUS_PER_NODE': cpus, **extra}
+    if mem is not None:
+        env['SLURM_MEM_PER_NODE'] = mem
+    return env
+
+
+@pytest.mark.parametrize('cpus, expect', [
+    ('120(x2)', (2, 120)),
+    ('120', (1, 120)),
+    ('64(x2),64', (3, 64)),
+])
+def test_allocation_reads_the_compressed_cpu_list(cpus, expect):
+    alloc = allocation_from_env(_env(cpus))
+    assert (alloc.nodes, alloc.cpn) == expect
+    assert alloc.mem_per_node == 491520
+
+
+def test_allocation_memory_per_cpu_and_none():
+    assert allocation_from_env(
+        _env('120', mem=None, SLURM_MEM_PER_CPU='4000')).mem_per_node == 480000
+    assert allocation_from_env(_env('256(x4)', mem=None)).mem_per_node is None
+
+
+def test_no_slurm_is_no_allocation():
+    assert allocation_from_env({}) is None
+
+
+def test_a_heterogeneous_allocation_is_refused():
+    with pytest.raises(ValueError, match='equal CPU counts'):
+        allocation_from_env(_env('120,64'))
+
+
+def test_footprint_is_the_largest_step():
+    assert footprint(_chain(15, 4)) == 60
+    assert footprint([CubitModule({'journal': 'j'})]) == 1
+    assert footprint([Geant4Module({'geant4_input': 'g', 'geant4_threads': 32})]) == 32
+    # A serial acdtool command is one rank whatever 'tasks' says.
+    serial = AcdtoolModule({'command': 'postprocess transwake', 'tasks': 16,
+                            'cores': 8})
+    assert serial.launch_size() == (1, 8)
+
+
+TWO = Allocation(2, 120, 491520)
+
+
+@pytest.mark.parametrize('tasks, cores, alloc, requested, workers, slice', [
+    # 4 half-node workers on 2 nodes: 2 per node.
+    (15, 4, TWO, 4, 4, Slice(1, 60, '--mem-per-cpu=4096')),
+    (15, 4, TWO, 2, 2, Slice(1, 60, '--mem-per-cpu=4096')),
+    (15, 4, TWO, 'auto', 4, Slice(1, 60, '--mem-per-cpu=4096')),
+    # 2 two-node workers on 4 nodes.
+    (240, 1, Allocation(4, 120, 491520), 2, 2, Slice(2, 120, '--mem-per-cpu=4096')),
+    (240, 1, Allocation(4, 120, 491520), 'auto', 2,
+     Slice(2, 120, '--mem-per-cpu=4096')),
+    # No memory limit (Perlmutter): --mem=0.
+    (16, 8, Allocation(1, 256, None), 2, 2, Slice(1, 128, '--mem=0')),
+])
+def test_counts_that_tile_the_allocation(tasks, cores, alloc, requested,
+                                         workers, slice):
+    assert plan_workers(_chain(tasks, cores), requested, alloc) == (workers, slice)
+
+
+@pytest.mark.parametrize('tasks, cores, alloc, requested, listed', [
+    (15, 4, TWO, 3, 'Counts that fit: 1, 2, 4.'),
+    (15, 4, TWO, 6, 'Counts that fit: 1, 2, 4.'),
+    # Two two-node workers on three nodes: nodes are not a multiple of 2.
+    (240, 1, Allocation(3, 120, 491520), 2, 'Counts that fit: 1.'),
+    # Fewer workers than the nodes hold would idle nodes (§4, Phase 2).
+    (240, 1, Allocation(6, 120, 491520), 2, 'Counts that fit: 1, 3.'),
+])
+def test_counts_that_do_not_tile_are_refused(tasks, cores, alloc, requested,
+                                             listed):
+    with pytest.raises(ValueError, match='does not tile') as info:
+        plan_workers(_chain(tasks, cores), requested, alloc)
+    assert str(info.value).endswith(listed)
+
+
+def test_the_listed_counts_for_a_sixty_cpu_footprint_on_two_wide_nodes():
+    """The plan's own example: a 60-CPU footprint on two nodes that each hold
+    four lists 2, 4, 6, 8."""
+    with pytest.raises(ValueError, match='Counts that fit: 1, 2, 4, 6, 8.$'):
+        plan_workers(_chain(15, 4), 3, Allocation(2, 240, None))
+
+
+def test_auto_with_nothing_that_fits_is_serial():
+    assert plan_workers(_chain(120, 1), 'auto', Allocation(1, 120, 491520)) == (1, None)
+
+
+def test_one_worker_is_always_the_serial_run():
+    assert plan_workers(_chain(15, 4), 1, TWO) == (1, None)
+    assert plan_workers(_chain(15, 4), 1, None) == (1, None)
+
+
+def test_no_slurm_runs_the_requested_count_without_a_slice():
+    assert plan_workers(_chain(15, 4), 3, None) == (3, None)
+    assert plan_workers(_chain(15, 4), 'auto', None) == (1, None)
+
+
+def test_a_multi_node_step_must_spread_over_the_slice():
+    """Check 3: a worker's nodes are fixed by its largest step, so a smaller
+    parallel step must still place at least one rank per node, and a single
+    rank cannot be wider than a node."""
+    chain = _chain(240, 1)
+    chain[2] = AcdtoolModule({'input': 'x.rfpost', 'tasks': 1, 'cores': 1})
+    assert plan_workers(chain, 2, Allocation(4, 120, None))[0] == 2
+    chain[2] = AcdtoolModule({'input': 'x.rfpost', 'tasks': 3, 'cores': 80})
+    with pytest.raises(ValueError, match="'acdtool'.*does not spread"):
+        plan_workers(chain, 2, Allocation(4, 120, None))
+    wide = [Geant4Module({'geant4_input': 'g', 'geant4_threads': 200})]
+    with pytest.raises(ValueError, match='cannot span nodes'):
+        plan_workers(wide, 2, Allocation(4, 120, None))
+
+
+def test_inside_slurm_the_caller_must_be_srun():
+    with pytest.raises(ValueError, match='needs srun'):
+        plan_workers(_chain(15, 4), 2, TWO, mpi_caller='mpirun')
+    assert plan_workers(_chain(15, 4), 2, TWO, mpi_caller='/usr/bin/srun')[0] == 2
+
+
+def test_the_slice_summary_line():
+    workers, slice = plan_workers(_chain(30, 2), 4, TWO)
+    assert plan_summary(workers, slice, TWO) == (
+        '4 workers × (60 CPUs, 240 GB) on 2 nodes')
+    nomem = Allocation(1, 256, None)
+    workers, slice = plan_workers(_chain(16, 8), 2, nomem)
+    assert 'memory is not isolated' in plan_summary(workers, slice, nomem)
+    assert plan_summary(1, None, TWO) is None
+    assert 'not inside a Slurm job' in plan_summary(3, None, None)
+
+
+# --------------------------------------------------------------------------- #
+# The mode key and the CLI flag.
+# --------------------------------------------------------------------------- #
+
+from lume_ace3p import modes  # noqa: E402
+
+
+@pytest.mark.parametrize('value, expect', [
+    (None, 1), (1, 1), (4, 4), ('4', 4), ('auto', 'auto'), ('AUTO', 'auto')])
+def test_workers_of_accepts(value, expect):
+    cfg = {} if value is None else {'workers': value}
+    assert modes.workers_of(cfg) == expect
+
+
+@pytest.mark.parametrize('value', [0, -2, 'many', 2.5, True])
+def test_workers_of_refuses(value):
+    with pytest.raises(ValueError, match="positive integer or 'auto'"):
+        modes.workers_of({'workers': value})
+
+
+class _Flow:
+    """Just enough of a Workflow for :func:`modes.worker_plan`."""
+    def __init__(self, modules, mpi='srun'):
+        self.modules = modules
+        self.paths = {'mpi': mpi}
+
+
+def test_worker_plan_reads_the_environment_and_prints_the_slice(capsys):
+    env = _env('120(x2)')
+    assert modes.worker_plan({'workers': 4}, _Flow(_chain(15, 4)), env) == (
+        4, Slice(1, 60, '--mem-per-cpu=4096'))
+    assert capsys.readouterr().out == ' - 4 workers × (60 CPUs, 240 GB) on 2 nodes\n'
+    with pytest.raises(ValueError, match='does not tile'):
+        modes.worker_plan({'workers': 3}, _Flow(_chain(15, 4)), env)
+
+
+def test_worker_plan_for_one_worker_reads_nothing():
+    """The serial default never looks at the workflow or the environment, so
+    every existing config and test double runs as before."""
+    assert modes.worker_plan({}, None, {'SLURM_JOB_ID': 'x'}) == (1, None)
+
+
+def test_run_mode_refuses_a_bad_count_before_any_point(monkeypatch):
+    monkeypatch.setattr(modes, 'parameter_sweep',
+                        lambda *a, **k: pytest.fail('a point ran'))
+    monkeypatch.setattr(modes.os, 'environ', _env('120(x2)'))
+    with pytest.raises(ValueError, match='does not tile'):
+        modes.run_mode({'type': 'parameter_sweep', 'workers': 3},
+                       _Flow(_chain(15, 4)))
+
+
+def test_workers_on_a_sequential_mode_is_refused():
+    with pytest.raises(ValueError, match='does not take workers'):
+        modes.run_mode({'type': 'scalar_optimize', 'workers': 2}, None)
+
+
+def test_cli_workers_overrides_the_mode_block(tmp_path, monkeypatch):
+    from lume_ace3p import run_lume_ace3p
+    config = tmp_path / 'c.yaml'
+    config.write_text('workflow:\n  - module: cubit\n    journal: j.jou\n'
+                      'mode:\n  type: parameter_sweep\n  workers: 2\n')
+    seen = {}
+    monkeypatch.setattr(run_lume_ace3p, '_run_declarative',
+                        lambda data, config_dir=None: seen.update(data['mode']))
+    monkeypatch.setattr('sys.argv',
+                        ['run-lume-ace3p', '--workers', 'auto', str(config)])
+    run_lume_ace3p.main()
+    assert seen == {'type': 'parameter_sweep', 'workers': 'auto'}

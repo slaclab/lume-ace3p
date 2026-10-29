@@ -71,6 +71,7 @@ from lume_ace3p.results import (
 )
 from lume_ace3p import surrogate_data
 from lume_ace3p.config import warn_unrecognized
+from lume_ace3p.launch import allocation_from_env, plan_summary, plan_workers
 from lume_ace3p.modules import FieldEmissionModule
 from lume_ace3p.workflow_graph import _is_array
 from lume_ace3p.state import COMPLETE, FAILED, point_status, read_state
@@ -98,9 +99,9 @@ _COMMON_MODE_KEYS = frozenset({'type', 'mode'})
 # — extend it when a mode learns a key, or the mode's own new key will warn.
 MODE_KEYS = {
     'single': frozenset({'output_file', 'sweep_output_file', 'resume',
-                         'on_error'}),
+                         'on_error', 'workers'}),
     'parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume',
-                                  'on_error'}),
+                                  'on_error', 'workers'}),
     'scalar_optimize': frozenset({'output_file', 'resume'}),
     'gp_parameter_sweep': frozenset({'output_file', 'sweep_output_file', 'resume'}),
     'collect_training_data': frozenset({
@@ -154,6 +155,38 @@ def on_error_of(mode_cfg):
         raise ValueError(
             f"mode: on_error must be 'skip' or 'raise', not {value!r}.")
     return str(value).lower()
+
+
+def workers_of(mode_cfg):
+    """The validated ``workers`` of a mode config: a positive int or
+    ``'auto'`` (default 1). A digit string (the ``--workers`` CLI value) is read
+    as its int."""
+    value = (mode_cfg or {}).get('workers', 1)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        value = int(text) if text.isdigit() else text
+    if value == 'auto' or (isinstance(value, int) and not isinstance(value, bool)
+                           and value >= 1):
+        return value
+    raise ValueError(
+        f"mode: workers must be a positive integer or 'auto', not {value!r}.")
+
+
+def worker_plan(mode_cfg, workflow, environ=None):
+    """``(workers, slice)`` for a table mode — see
+    :func:`lume_ace3p.launch.plan_workers` — after printing what each worker
+    holds when there is more than one. Raises before anything runs when the
+    requested count does not fit the Slurm allocation."""
+    requested = workers_of(mode_cfg)
+    if requested == 1:
+        return 1, None
+    allocation = allocation_from_env(os.environ if environ is None else environ)
+    workers, slice = plan_workers(workflow.modules, requested, allocation,
+                                  mpi_caller=workflow.paths.get('mpi', ''))
+    summary = plan_summary(workers, slice, allocation)
+    if summary:
+        print(' - ' + summary)
+    return workers, slice
 
 
 def mode_type_of(mode_cfg):
@@ -210,7 +243,9 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     and does the extraction inside :meth:`Workflow.evaluate`.
 
     ``on_error`` (``single`` / ``parameter_sweep`` / ``collect_training_data``) is
-    validated here, before anything runs; see :func:`parameter_sweep`."""
+    validated here, before anything runs; see :func:`parameter_sweep`. So is
+    ``workers`` (``single`` / ``parameter_sweep``), against the Slurm allocation
+    the run is inside — see :func:`worker_plan`."""
     if mode_cfg.get('type') is None and mode_cfg.get('mode') is not None:
         _deprecation_warning(
             "the 'mode:' key inside the mode block is a legacy alias for 'type:'. "
@@ -223,6 +258,15 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     resume = bool(mode_cfg.get('resume', False))
     on_error = (on_error_of(mode_cfg)
                 if 'on_error' in MODE_KEYS.get(mode_type, ()) else None)
+    if 'workers' in MODE_KEYS.get(mode_type, ()):
+        # Sized here so a count that does not fit is refused before the first
+        # point. Phase 3 of plans/parallel_sweep_plan.md hands the result to the
+        # pool; until then the table modes still run their points one at a time.
+        worker_plan(mode_cfg, workflow)
+    elif 'workers' in mode_cfg:
+        raise ValueError(
+            f"mode '{mode_type}' does not take workers; only single and "
+            "parameter_sweep run points concurrently.")
     if mode_type == 'single':
         df = single(workflow, resume=resume, on_error=on_error)
     elif mode_type == 'parameter_sweep':

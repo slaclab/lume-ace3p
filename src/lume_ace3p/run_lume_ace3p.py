@@ -134,7 +134,7 @@ def main():
         print(f"lume-ace3p {__version__}")
         return
     if not args or args[0] in ('--help', '-h'):
-        print("usage: run-lume-ace3p <input.yaml>\n"
+        print("usage: run-lume-ace3p [--workers N|auto] <input.yaml>\n"
               "       run-lume-ace3p --status <input.yaml>\n"
               "       run-lume-ace3p --version\n\n"
               "Runs a LUME-ACE3P workflow from a declarative YAML config (a "
@@ -144,9 +144,24 @@ def main():
               "'mode: {resume: true}' would pick up from. For a sweep that is a "
               "per-point completion table read from each workdir's run manifest; "
               "for an optimization it is the evaluations and best objective "
-              "recorded in its xopt_state.yml.")
+              "recorded in its xopt_state.yml.\n\n"
+              "--workers overrides the mode block's 'workers:' (single and "
+              "parameter_sweep): how many points run at once inside the Slurm "
+              "allocation, or 'auto' for as many as fit.")
         # Exit non-zero when no input file was given (a usage error), zero for -h.
         sys.exit(0 if args else 1)
+
+    workers = None
+    if args[0] == '--workers':
+        if len(args) < 2:
+            print("Error: --workers needs a count: "
+                  "run-lume-ace3p --workers N|auto <input.yaml>")
+            sys.exit(1)
+        workers, args = args[1], args[2:]
+        if not args:
+            print("Error: --workers needs a config file: "
+                  "run-lume-ace3p --workers N|auto <input.yaml>")
+            sys.exit(1)
 
     report_status = args[0] == '--status'
     if report_status:
@@ -166,6 +181,11 @@ def main():
     except Exception as exc:
         print(exc)
         sys.exit(1)
+    if workers is not None:
+        # Overrides the YAML so one config runs under a one-node or a four-node
+        # batch file; validated with the key itself, in run_mode.
+        lume_ace3p_data['mode'] = {**(lume_ace3p_data.get('mode') or {}),
+                                   'workers': workers}
 
     # A store-consuming mode (train_surrogate / invert_optimize) reads an on-disk
     # store or saved model and never drives the module chain, so it legitimately

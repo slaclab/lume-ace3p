@@ -542,6 +542,12 @@ class Module:
         paths are in the module's config, which the hash covers anyway."""
         return []
 
+    def launch_size(self):
+        """``(tasks, cores)`` of the largest external-tool step this module
+        launches, or ``None`` when it launches none. What
+        :func:`lume_ace3p.launch.footprint` sizes a sweep worker's slice from."""
+        return None
+
     def required_files(self):
         """The files whose absence fails every point: :meth:`input_files`, and
         a solver's ``files:``. Checked once, before the first point, by
@@ -755,6 +761,10 @@ class CubitModule(Module):
     provides = frozenset({MESH})
     input_buckets = ('cubit',)
 
+    def launch_size(self):
+        # The mesher and meshconvert, both single-threaded.
+        return 1, 1
+
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
         self.journal = self.config.get('journal') or self.config.get('cubit_input')
@@ -917,6 +927,9 @@ class _SolverModule(Module):
         files = self.config.get('files') or []
         self.files = [files] if isinstance(files, str) else list(files)
         self._solver = None
+
+    def launch_size(self):
+        return self.tasks or 1, self.cores or 1
 
     def input_files(self):
         return [self.input_file]
@@ -2233,6 +2246,11 @@ class AcdtoolModule(Module):
         # N points warns once per spec rather than N times.
         self._warned = set()
 
+    def launch_size(self):
+        # A serial command runs on one rank whatever 'tasks' says (see
+        # Acdtool._command_line); its CPU count is still honored.
+        return (self.tasks or 1) if self.spec.parallel else 1, self.cores or 1
+
     def input_files(self):
         return [self.input_file]
 
@@ -2944,6 +2962,9 @@ class Geant4Module(Module):
         # they would otherwise re-read the same file several times per
         # evaluation.
         self._detector_cache = {}
+
+    def launch_size(self):
+        return 1, self.geant4_threads or 1
 
     def input_files(self):
         return [self.geant4_input]
