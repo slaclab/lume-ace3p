@@ -3,7 +3,7 @@
 **Status: IN PROGRESS** — written 2026-10-27 on S3DF against `dev` at
 `10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
 2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phase 2 done
-2026-10-29; Phase 3 done 2026-10-29; Phases 4–5 open.
+2026-10-29; Phase 3 done 2026-10-29; Phase 4 done 2026-10-29; Phase 5 open.
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on
@@ -359,7 +359,10 @@ the one failure a pool would otherwise never report.
   `12 of 32 complete; running: worker 1 point 13 (cav_radius=100.0), worker 2 point 14 (cav_radius=101.0)`.
 - **Phase 4:** whether a timed-out step is distinguishable from a crashed
   one in `--status` (proposed: the manifest error string says `timed out
-  after N s`, no new status value).
+  after N s`, no new status value). **Settled 2026-10-29: as proposed.**
+  `--status` prints no error column, so the distinction is in the manifest
+  and in the resume line (`re-runs from 'omega3p' (failed: ToolExitError:
+  omega3p timed out after 0.5 s …)`).
 
 ---
 
@@ -497,6 +500,30 @@ used by `parameter_sweep` and both `collect_training_data` designs (DOE and
   baseline change.
 
 ## Phase 4 — Step timeout
+
+**Done 2026-10-29.** Tests in `tests/test_step_timeout.py`. Settled while
+implementing:
+
+- On expiry the group gets SIGTERM, then SIGKILL after `logs.KILL_GRACE`
+  (10 s), so srun can forward the signal to the step's tasks; a SIGKILLed
+  srun cannot. The returned `logs.TimedOut` has status `-9` whatever the
+  killed shell reported.
+- `start_new_session` is set only when a timeout is, so a step without one
+  launches exactly as before (serial byte-identity holds). With one, Ctrl-C
+  no longer reaches the child directly; `run_logged` stops the group on any
+  interrupt and re-raises.
+- `timeout` lives on the `Module` base (`self.timeout`) and is a launch key
+  of every tool module (Cubit, the solvers, acdtool, Geant4): out of the
+  module hash, so a longer timeout resumes a failed point without re-running
+  its completed modules. It bounds each step a module launches, not the
+  module: Cubit's mesher and meshconvert each get the full limit.
+- A value that is not a positive finite number (`0`, `'1h'`, `true`) is
+  refused when the module is built.
+- The solver's message is `omega3p timed out after N s and was killed
+  (command: …) — check <log> for how far it got`; the other wrappers'
+  is `<tool> timed out after N s and was killed (command: …) — check <log>`.
+  The log's last line is `lume-ace3p: timed out after N s; the step was
+  stopped.`
 
 ### Approach
 

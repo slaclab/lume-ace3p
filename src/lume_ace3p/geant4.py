@@ -199,7 +199,8 @@ class Geant4(CommandWrapper):
                            self.geant4_opts, exe + ' ' + self.input_file,
                            self.slice)
         check_exit('geant4', run_logged(cmd, cwd=self.workdir,
-                                        log_file=self.log_file, tee=self.tee),
+                                        log_file=self.log_file, tee=self.tee,
+                                        timeout=self.timeout),
                    self.log_file)
 
     def configure(self):

@@ -120,7 +120,8 @@ class Cubit(CommandWrapper):
         argv = self.CUBIT_PATH + 'cubit -nographics -nojournal -noecho ' + self.input_file
         check_exit('cubit', run_logged(
             step_command(self.MPI_CALLER, 1, 1, '', argv, self.slice, form=BARE),
-            cwd=self.workdir, log_file=self.log_file, tee=self.tee),
+            cwd=self.workdir, log_file=self.log_file, tee=self.tee,
+            timeout=self.timeout),
             self.log_file)
         if mcflag:
             self.meshconvert()
@@ -135,7 +136,8 @@ class Cubit(CommandWrapper):
             check_exit('acdtool meshconvert', run_logged(
                 step_command(self.MPI_CALLER, 1, 1, '', argv, self.slice,
                              form=MESHCONVERT),
-                cwd=self.workdir, log_file=self.log_file, tee=self.tee),
+                cwd=self.workdir, log_file=self.log_file, tee=self.tee,
+                timeout=self.timeout),
             self.log_file)
         
     def configure(self):

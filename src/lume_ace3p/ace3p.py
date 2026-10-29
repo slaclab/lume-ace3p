@@ -7,7 +7,7 @@ import numpy as np
 from lume.base import CommandWrapper
 
 from lume_ace3p.launch import step_command
-from lume_ace3p.logs import ToolExitError, run_logged
+from lume_ace3p.logs import ToolExitError, run_logged, timeout_note
 
 
 class Section:
@@ -376,8 +376,10 @@ class ACE3P(CommandWrapper):
     def run(self):
         self.write_input(*([self.input_name] if self.input_name else []))
         completed = run_logged(self.solver_command(), cwd=self.workdir,
-                               log_file=self.log_file, tee=self.tee)
+                               log_file=self.log_file, tee=self.tee,
+                               timeout=self.timeout)
         self.returncode = completed.returncode
+        self._timed_out = timeout_note(completed)
         if self.returncode:
             # Raised before the parser runs: a solver that crashed after writing
             # some output must not have that output accepted, and one that
@@ -397,6 +399,12 @@ class ACE3P(CommandWrapper):
         code = getattr(self, 'returncode', 0)
         if not code:
             return ''
+        timed_out = getattr(self, '_timed_out', None)
+        if timed_out:
+            # Stopped by lume-ace3p, so neither of the causes below applies.
+            return (f"{self.module_name} {timed_out} and was killed (command: "
+                    f"{self.solver_command().strip()}) — check "
+                    f"{self.log_file or 'its output above'} for how far it got.")
         # Two very different causes share this line: the launcher refused the
         # step (srun's "More processors requested than permitted" -- nothing
         # ran) or the solver itself died (S3P's SIGFPE on a 2.6k-element mesh

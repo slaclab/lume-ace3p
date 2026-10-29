@@ -1049,7 +1049,7 @@ class Acdtool(CommandWrapper):
         check_exit('acdtool ' + name,
                    run_logged(self._command_line(name, operands, spec),
                               cwd=self.workdir, log_file=self.log_file,
-                              tee=self.tee),
+                              tee=self.tee, timeout=self.timeout),
                    self.log_file)
         if spec.parses:
             self.load_output()

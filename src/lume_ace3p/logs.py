@@ -22,12 +22,19 @@ plain inherited-stream behavior exactly.
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
+import time
 
 
 LOG_SUFFIX = '.log'
+
+# How long a timed-out step has to exit after SIGTERM before its process group
+# is sent SIGKILL: long enough for srun to forward the signal to the step's
+# tasks and wait for them, which a SIGKILLed srun cannot do.
+KILL_GRACE = 10.0
 
 # A module's instance name comes from the YAML ``name:`` key, so it is not
 # guaranteed to be a safe filename component. Anything outside this set is
@@ -44,7 +51,7 @@ def log_path(workdir, name):
     return os.path.join(workdir, _UNSAFE.sub('_', str(name)) + LOG_SUFFIX)
 
 
-def run_logged(command, cwd=None, log_file=None, tee=True):
+def run_logged(command, cwd=None, log_file=None, tee=True, timeout=None):
     """Run ``command`` through the shell, teeing its output to ``log_file``.
 
     With ``log_file`` unset this is exactly
@@ -61,6 +68,13 @@ def run_logged(command, cwd=None, log_file=None, tee=True):
     truncating would keep only the last invocation. Each invocation writes a
     ``$ <command>`` header line so a multi-invocation log stays readable.
 
+    ``timeout`` (seconds) bounds the run. The command then starts in a session
+    of its own, so on expiry its whole process group (the shell, srun, whatever
+    they started) can be stopped: SIGTERM, then SIGKILL after
+    :data:`KILL_GRACE` seconds. A timed-out run returns a :class:`TimedOut`,
+    whose status is nonzero whatever the killed shell reported, and its log ends
+    with a line saying so. ``None`` (the default) launches exactly as before.
+
     Returns the :class:`subprocess.CompletedProcess`. The exit status is
     reported, **not** checked: this function only runs and records. Judging the
     status is the caller's job, since the caller knows what it ran — each wrapper
@@ -68,31 +82,125 @@ def run_logged(command, cwd=None, log_file=None, tee=True):
     :func:`check_exit`).
     """
     if not log_file:
-        return subprocess.run(command, shell=True, cwd=cwd)
+        if timeout is None:
+            return subprocess.run(command, shell=True, cwd=cwd)
+        process = subprocess.Popen(command, shell=True, cwd=cwd,
+                                   start_new_session=True)
+        if _wait(process, timeout):
+            sys.stderr.write(_timeout_line(timeout))
+            sys.stderr.flush()
+            return TimedOut(command, timeout)
+        return subprocess.CompletedProcess(command, process.returncode)
     parent = os.path.dirname(os.path.abspath(log_file))
     if parent and not os.path.isdir(parent):
         os.makedirs(parent, exist_ok=True)
     # stdout and stderr are pumped concurrently into one file, so every write to
     # it is serialized.
     lock = threading.Lock()
+    timed_out = False
     with open(log_file, 'a', errors='replace') as log:
         log.write('$ ' + str(command) + '\n')
         log.flush()
         process = subprocess.Popen(command, shell=True, cwd=cwd,
                                    stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE,
-                                   text=True, errors='replace', bufsize=1)
+                                   text=True, errors='replace', bufsize=1,
+                                   start_new_session=timeout is not None)
         pumps = [threading.Thread(target=_pump, args=(stream, log, lock, sink),
                                   daemon=True)
                  for stream, sink in ((process.stdout, sys.stdout if tee else None),
                                       (process.stderr, sys.stderr if tee else None))]
         for pump in pumps:
             pump.start()
-        returncode = process.wait()
-        # Join before leaving the ``with``: the pumps write to ``log``.
+        if timeout is None:
+            process.wait()
+        else:
+            timed_out = _wait(process, timeout)
+        # Join before leaving the ``with``: the pumps write to ``log``. A
+        # stopped group's pipes close with it, but a descendant that left the
+        # group could hold them open, so under a timeout the join is bounded.
         for pump in pumps:
-            pump.join()
-    return subprocess.CompletedProcess(command, returncode)
+            pump.join(None if timeout is None else KILL_GRACE)
+        if timed_out:
+            with lock:
+                log.write(_timeout_line(timeout))
+                log.flush()
+            if tee:
+                sys.stderr.write(_timeout_line(timeout))
+                sys.stderr.flush()
+    if timed_out:
+        return TimedOut(command, timeout)
+    return subprocess.CompletedProcess(command, process.returncode)
+
+
+class TimedOut(subprocess.CompletedProcess):
+    """What :func:`run_logged` returns for a run it stopped at its timeout.
+    ``timeout`` is the limit in seconds; the status is ``-9`` (SIGKILL), so a
+    caller checking only the status sees a failure."""
+
+    def __init__(self, args, timeout):
+        super().__init__(args, -signal.SIGKILL)
+        self.timeout = timeout
+
+
+def seconds(value):
+    """A duration in seconds as the messages spell it: ``60``, ``0.5``."""
+    return f'{value:g}'
+
+
+def timeout_note(completed):
+    """``'timed out after N s'`` for a :class:`TimedOut`, else ``None`` — the
+    phrase every timeout message is built around, so the manifest's ``error``,
+    the resume line and the log share one wording."""
+    if isinstance(completed, TimedOut):
+        return f'timed out after {seconds(completed.timeout)} s'
+    return None
+
+
+def _timeout_line(timeout):
+    return (f'lume-ace3p: timed out after {seconds(timeout)} s; the step was '
+            'stopped.\n')
+
+
+def _wait(process, timeout):
+    """Wait up to ``timeout`` seconds for ``process``, the leader of a process
+    group of its own. On expiry stop the group and return ``True``; otherwise
+    return ``False``. An interrupt (which, in another session, the child no
+    longer receives itself) stops the group too and is re-raised."""
+    try:
+        process.wait(timeout)
+        return False
+    except subprocess.TimeoutExpired:
+        _stop_group(process)
+        return True
+    except BaseException:
+        _stop_group(process)
+        raise
+
+
+def _stop_group(process):
+    """SIGTERM the process group ``process`` leads, then SIGKILL whatever is
+    left of it after :data:`KILL_GRACE` seconds."""
+    _signal_group(process, signal.SIGTERM)
+    deadline = time.monotonic() + KILL_GRACE
+    while time.monotonic() < deadline:
+        # Reap the shell: an unreaped leader keeps the group in existence.
+        process.poll()
+        if not _signal_group(process, 0):
+            break
+        time.sleep(0.05)
+    else:
+        _signal_group(process, signal.SIGKILL)
+    process.wait()
+
+
+def _signal_group(process, sig):
+    """Send ``sig`` to the group ``process`` leads; ``False`` when it is gone."""
+    try:
+        os.killpg(process.pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
 
 
 class ToolExitError(RuntimeError):
@@ -111,8 +219,11 @@ class ToolExitError(RuntimeError):
 
 def exit_message(tool, completed, log_file=None):
     """The one-line description of a nonzero exit that :class:`ToolExitError`
-    carries: the tool, its status, its command line, and where to look."""
-    return (f"{tool} exited with status {completed.returncode} (command: "
+    carries: the tool, its status (or its timeout), its command line, and where
+    to look."""
+    what = (timeout_note(completed)
+            or f"exited with status {completed.returncode}")
+    return (f"{tool} {what} (command: "
             f"{str(completed.args).strip()}) — check "
             f"{log_file or 'its output above'}.")
 

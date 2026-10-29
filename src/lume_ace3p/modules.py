@@ -392,6 +392,19 @@ def _remove_output(ctx, name):
         os.remove(path)
 
 
+def _parse_timeout(value, name):
+    """A module's ``timeout:`` as seconds, or ``None`` when it is unset.
+    Refused unless it is a positive number: ``timeout: 0`` stopping every step
+    at once, or ``'1h'`` read as nothing, would be a silent misreading."""
+    if value is None:
+        return None
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not value > 0 or value == float('inf')):
+        raise ValueError(f"module '{name}': 'timeout' is a step's limit in "
+                         f"seconds, a positive number; got {value!r}.")
+    return value
+
+
 def _fresh(ctx, skip_execution):
     """Whether a module's ``run`` is a fresh one — not resumed and not a dry
     run — and so should re-stage its inputs (``_stage_file(..., fresh=)``).
@@ -458,13 +471,17 @@ class Module:
     # change without invalidating this module's output.
     input_buckets = ()
     # Config keys that size the run without changing its answer (ranks, cores,
-    # launcher options). Left out of the module hash, so a resumed campaign can
-    # be given a different allocation.
+    # launcher options, the step timeout). Left out of the module hash, so a
+    # resumed campaign can be given a different allocation or a longer timeout.
     _launch_keys = frozenset()
 
     def __init__(self, config=None, name=None):
         self.config = dict(config) if config else {}
         self.name = name or self.type
+        # Seconds each external-tool step of this module may run before it is
+        # stopped and the module recorded failed (lume_ace3p.logs.run_logged).
+        # None, the default, is no limit. Read by the modules that launch one.
+        self.timeout = _parse_timeout(self.config.get('timeout'), self.name)
         # The entry's raw ``from:`` value (``None`` when absent), and the
         # ``{required kind: producer name}`` that ``workflow_graph._resolve_order``
         # resolves from it or from the one producer of that kind. ``sources`` is
@@ -767,6 +784,7 @@ class CubitModule(Module):
     type = 'cubit'
     provides = frozenset({MESH})
     input_buckets = ('cubit',)
+    _launch_keys = frozenset({'timeout'})
 
     def launch_size(self):
         # The mesher and meshconvert, both single-threaded.
@@ -808,7 +826,7 @@ class CubitModule(Module):
                       ace3p_path=ctx.paths.get('ace3p', ''),
                       cubit_path=ctx.paths.get('cubit', ''),
                       mpi_caller=ctx.paths.get('mpi', ''),
-                      slice=ctx.slice, tee=ctx.tee,
+                      slice=ctx.slice, tee=ctx.tee, timeout=self.timeout,
                       log_file=self.log_file(ctx))
         if inputs.cubit:
             cubit.set_value(inputs.cubit)
@@ -902,7 +920,7 @@ class _SolverModule(Module):
     _label = ''
     _artifact = EM_SOLUTION
     input_buckets = ('ace3p',)
-    _launch_keys = frozenset({'tasks', 'cores', 'opts',
+    _launch_keys = frozenset({'tasks', 'cores', 'opts', 'timeout',
                               'ace3p_tasks', 'ace3p_cores', 'ace3p_opts'})
     # The one upstream artifact :meth:`run` insists on. A mesh for the field
     # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
@@ -981,6 +999,7 @@ class _SolverModule(Module):
                                ace3p_path=ctx.paths.get('ace3p', ''),
                                mpi_caller=ctx.paths.get('mpi', ''),
                                slice=ctx.slice, tee=ctx.tee,
+                               timeout=self.timeout,
                                log_file=self.log_file(ctx),
                                input_name=self._input_name(ctx))
         solver.set_value(inputs.ace3p)
@@ -2235,7 +2254,7 @@ class AcdtoolModule(Module):
     # Class-level default for the common case; __init__ narrows it per command.
     requires = frozenset({EM_SOLUTION})
     provides = frozenset({RF_POST})
-    _launch_keys = frozenset({'tasks', 'cores', 'opts'})
+    _launch_keys = frozenset({'tasks', 'cores', 'opts', 'timeout'})
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
@@ -2336,7 +2355,7 @@ class AcdtoolModule(Module):
                           acdtool_opts=self.opts,
                           ace3p_path=ctx.paths.get('ace3p', ''),
                           mpi_caller=ctx.paths.get('mpi', ''),
-                          slice=ctx.slice, tee=ctx.tee,
+                          slice=ctx.slice, tee=ctx.tee, timeout=self.timeout,
                           log_file=self.log_file(ctx))
         if skip_execution:
             # Resumed: this command already ran in this workdir, so read the
@@ -2937,7 +2956,7 @@ class Geant4Module(Module):
     requires = frozenset({PARTICLE_SOURCE})
     provides = frozenset({DOSE_GRID, EDEP_GRID})
     input_buckets = ('macro', 'particles')
-    _launch_keys = frozenset({'geant4_threads', 'geant4_opts'})
+    _launch_keys = frozenset({'geant4_threads', 'geant4_opts', 'timeout'})
 
     # A detector-scored Geant4 run is tabulated over its detectors, not over the
     # Track3P field levels upstream (``Track3PModule.index_precedence`` is 1):
@@ -3050,6 +3069,7 @@ class Geant4Module(Module):
                                      workdir=ctx.workdir,
                                      mpi_caller=ctx.paths.get('mpi', ''),
                                      slice=ctx.slice, tee=ctx.tee,
+                                     timeout=self.timeout,
                                      geant4_app_path=ctx.paths.get('geant4_app_path', ''),
                                      geant4_app_exe=ctx.paths.get('geant4_app_exe', ''),
                                      log_file=self.log_file(ctx))
