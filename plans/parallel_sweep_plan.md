@@ -581,6 +581,26 @@ the MUMPS factorization/preconditioning. Settled while implementing:
 - `CHANGELOG.md` under Unreleased; this plan's status to COMPLETE.
 - Minor version bump (new keys, no behavior change at defaults): 0.9.0.
 
+**Release review (2026-11-02, `bd36805`).** Three fixes before the PR:
+`capture_output: false` is refused under `workers > 1` (the per-point logs
+are the only copy of the tools' output); `single` accepts `workers` but no
+longer sizes it, so it prints no plan line and refuses no count; the CLI
+takes `--workers` / `--status` in any order before the config file and
+refuses trailing or unknown options (`x.yaml --workers 4` used to run a
+serial sweep). The surrogate modes' reference configs moved to
+`tests/fixtures/surrogate_modes/` so the mode-coverage test is green with no
+shipped example. Geant4 under `collect_training_data` with `workers: auto`
+validated on milano (job 42793735, an EL9 node, no `OS_VER:8.10` pin:
+Geant4 does not need it): 4 Sobol samples, `geant4_threads: 60`, plan line
+`2 workers × (60 CPUs, 240 GB) on 1 node`, sacct shows two 60-CPU `sim`
+steps at a time, 5m58s for the job, 4 rows with field artifacts, every
+sample's `geant4.log` opens with
+`srun -N 1 -n 1 -c 60 --exact --mem-per-cpu=4096 … sim input_7cell.geant4`.
+Run under `/sdf/scratch/users/d/dbizzoze/lume-ace3p-tests/geant4_workers/`.
+Noted, not changed: the Python-side module prints (the `field_emission`
+particle summary) still reach the job's stdout under `workers > 1`; only the
+tools' subprocess output is confined to the logs.
+
 ---
 
 ## 5. Out of scope
