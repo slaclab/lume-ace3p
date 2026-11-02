@@ -17,15 +17,17 @@ and tables are unchanged. Also carries the unreleased `chi2_per_voxel`.
 
 ### Added
 
-- `mode: {workers: N|auto}` for `single`, `parameter_sweep` and
-  `collect_training_data`, and `run-lume-ace3p --workers N|auto`: N points
+- `mode: {workers: N|auto}` for `parameter_sweep` and `collect_training_data`
+  (`single` accepts the key and runs its one point as always), and
+  `run-lume-ace3p --workers N|auto`: N points
   run at once, each in its own slice of the allocation (the chain's largest
   `tasks × cores`, plus that share of the job's memory). Steps launch as
   `srun -N <nodes> … --exact --mem-per-cpu=…` so they pack. A count that does
   not tile the allocation is refused before anything runs, listing the counts
   that fit; `auto` takes the largest. Under `workers > 1` the tools' output
-  goes only to the per-point logs and stdout carries point events and a
-  progress line. See `docs/parameter_sweep.md`, "Running points in parallel".
+  goes only to the per-point logs (so `capture_output: false` is refused) and
+  stdout carries point events and a progress line. See
+  `docs/parameter_sweep.md`, "Running points in parallel".
 - `timeout:` (seconds) on every tool module (`cubit`, the solvers, `acdtool`,
   `geant4`): a step still running at its limit is stopped, and the module is
   recorded failed with `timed out after N s`. It is out of the module hash,
@@ -45,6 +47,13 @@ and tables are unchanged. Also carries the unreleased `chi2_per_voxel`.
   half a milano node, so its points can pack two per node.
 - Under a sweep worker's slice, Cubit runs under `srun` inside the slice
   rather than bare on the job's first node. Serial runs still run it bare.
+- `run-lume-ace3p` takes its options (`--workers`, `--status`) in any order
+  before the config file, and refuses anything after it or an option it does
+  not know. Trailing arguments used to be ignored, so `x.yaml --workers 4`
+  ran a serial sweep.
+- The Geant4 dose-surrogate modes have no shipped example since 0.8.2; their
+  reference configs now live in `tests/fixtures/surrogate_modes/` so their
+  key sets stay checked, and the test suite is green again.
 
 ## [0.8.2] — 2026-10-21
 

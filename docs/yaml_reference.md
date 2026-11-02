@@ -146,7 +146,7 @@ Additional `mode:` keys:
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
 | `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
 | `on_error`          | `single`, `parameter_sweep`, `collect_training_data` | `'skip'` | What a point that fails does to the run: `skip` records it and goes on, `raise` ends the run. See [](#on-error). |
-| `workers`           | `single`, `parameter_sweep`, `collect_training_data` | `1` | How many points run at once inside the Slurm job: an integer or `'auto'`. A count that does not tile the allocation is refused. `--workers` on the command line overrides it. See [](#running-points-in-parallel). |
+| `workers`           | `parameter_sweep`, `collect_training_data` (accepted by `single`) | `1` | How many points run at once inside the Slurm job: an integer or `'auto'`. A count that does not tile the allocation, or `capture_output: false`, is refused. `--workers` on the command line overrides it. See [](#running-points-in-parallel). |
 
 The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
 can be swept or optimized, since the objective is an `output_parameters` name.
@@ -260,7 +260,8 @@ with a `$ <command line>` header before each invocation, so a shared (`'manual'`
 workdir or a re-run keeps the earlier record.
 
 `capture_output: false` turns it off; the child processes then inherit the
-parent's file descriptors and nothing is written to disk.
+parent's file descriptors and nothing is written to disk. A concurrent run
+(`workers > 1`) needs the logs and refuses this setting.
 
 (run-manifest)=
 ### The run manifest — `lume_ace3p_state.json`

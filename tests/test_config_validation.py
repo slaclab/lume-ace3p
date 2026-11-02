@@ -191,17 +191,34 @@ def test_user_namespaced_blocks_are_never_inspected(capsys):
 # --------------------------------------------------------------------------- #
 
 
-def _example_configs():
-    """Every YAML under examples/, `incomplete/` included."""
+# The Geant4 dose-surrogate pipeline (collect_training_data, train_surrogate,
+# invert_optimize, invert_bayesian) has one user and ships no example since
+# 13deade retired it. Its configs live here instead, so its key sets stay
+# checked the same way as the shipped examples'.
+SURROGATE_CONFIGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     'fixtures', 'surrogate_modes')
+
+
+def _configs_under(directory):
     found = []
-    for root, _dirs, files in os.walk(bu.EXAMPLES_DIR):
+    for root, _dirs, files in os.walk(directory):
         for name in sorted(files):
             if name.endswith(('.yaml', '.yml')):
                 found.append(os.path.join(root, name))
     return sorted(found)
 
 
-@pytest.mark.parametrize('path', _example_configs(),
+def _example_configs():
+    """Every YAML under examples/, `incomplete/` included."""
+    return _configs_under(bu.EXAMPLES_DIR)
+
+
+def _checked_configs():
+    """The shipped examples plus the surrogate pipeline's reference configs."""
+    return _example_configs() + _configs_under(SURROGATE_CONFIGS_DIR)
+
+
+@pytest.mark.parametrize('path', _checked_configs(),
                          ids=lambda p: os.path.basename(p))
 def test_every_shipped_example_is_clean(path, capsys):
     """No shipped config produces an unrecognized-key warning.
@@ -236,14 +253,23 @@ def test_every_shipped_example_is_clean(path, capsys):
 
 
 def test_the_examples_actually_cover_every_mode():
-    """The test above is only as good as its coverage: assert the shipped examples
-    exercise every mode with a key set, so a wrong set cannot hide behind a mode no
-    example uses."""
-    covered = {modes.mode_type_of(load_yaml(path).get('mode') or {})
-               for path in _example_configs()}
+    """The test above is only as good as its coverage: assert the checked configs
+    exercise every mode with a key set, so a wrong set cannot hide behind a mode
+    no config uses. The surrogate modes are covered by the reference configs in
+    ``tests/fixtures/surrogate_modes``; every other mode must have a shipped
+    example."""
+    def covered_by(paths):
+        return {modes.mode_type_of(load_yaml(path).get('mode') or {})
+                for path in paths}
 
-    missing = sorted(set(modes.MODE_KEYS) - covered)
+    surrogate_modes = {'collect_training_data', 'train_surrogate',
+                       'invert_optimize', 'invert_bayesian'}
+    missing = sorted(set(modes.MODE_KEYS) - surrogate_modes
+                     - covered_by(_example_configs()))
     assert missing == [], f'no shipped example uses {missing}'
+    unchecked = sorted(surrogate_modes
+                       - covered_by(_configs_under(SURROGATE_CONFIGS_DIR)))
+    assert unchecked == [], f'no reference config uses {unchecked}'
 
 
 # --------------------------------------------------------------------------- #

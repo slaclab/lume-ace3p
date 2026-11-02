@@ -184,6 +184,15 @@ def worker_plan(mode_cfg, workflow, environ=None):
     requested = workers_of(mode_cfg)
     if requested == 1:
         return 1, None
+    if not getattr(workflow, 'capture_output', True):
+        # Under workers > 1 the tools' output goes only to the per-point logs;
+        # with no logs there would be nothing but N tools interleaving on the
+        # job's stdout, and no record of any point.
+        raise ValueError(
+            "workers > 1 needs the per-point logs, which "
+            "'workflow_parameters: {capture_output: false}' turns off: the "
+            "tools' output goes only to each point's <module>.log when points "
+            "run concurrently. Remove capture_output: false, or set workers: 1.")
     allocation = allocation_from_env(os.environ if environ is None else environ)
     mpi_caller = (getattr(workflow, 'paths', None) or {}).get('mpi', '')
     workers, slice = plan_workers(workflow.modules, requested, allocation,
@@ -265,16 +274,20 @@ def run_mode(mode_cfg, workflow, output_spec=None, vocs=None, xopt=None,
     on_error = (on_error_of(mode_cfg)
                 if 'on_error' in MODE_KEYS.get(mode_type, ()) else None)
     plan = (1, None)
-    if 'workers' in MODE_KEYS.get(mode_type, ()):
+    if mode_type == 'single':
+        # One point, run as always. The key is accepted (and its value checked)
+        # so a YAML moves between single and parameter_sweep unedited, but it is
+        # not sized against the allocation: there is nothing to run concurrently.
+        workers_of(mode_cfg)
+    elif 'workers' in MODE_KEYS.get(mode_type, ()):
         # Sized here so a count that does not fit is refused before the first
-        # point. ``single`` is one point and runs it as always; it accepts the
-        # key so a YAML moves between it and parameter_sweep unedited.
+        # point.
         plan = worker_plan(mode_cfg, workflow)
     elif 'workers' in mode_cfg:
         raise ValueError(
-            f"mode '{mode_type}' does not take workers; only single, "
-            "parameter_sweep and collect_training_data run points "
-            "concurrently.")
+            f"mode '{mode_type}' does not take workers; only parameter_sweep "
+            "and collect_training_data run points concurrently (single accepts "
+            "the key and runs its one point as always).")
     if mode_type == 'single':
         df = single(workflow, resume=resume, on_error=on_error)
     elif mode_type == 'parameter_sweep':

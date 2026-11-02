@@ -170,8 +170,11 @@ mode :
 ```
 
 `run-lume-ace3p --workers N|auto <yaml>` overrides the key, so one YAML can
-run under different batch files. `workers` applies to `single`,
-`parameter_sweep` and `collect_training_data`.
+run under different batch files; options go before the config file. `workers`
+applies to `parameter_sweep` and `collect_training_data` (a Geant4 campaign's
+samples pack the same way: its footprint is `geant4_threads`). `single`
+accepts the key, so a YAML moves between it and `parameter_sweep` unedited,
+but runs its one point as always.
 
 Each worker owns a **slice** of the allocation for its whole chain: as many
 CPUs as the chain's largest step (`tasks × cores`), and the matching share of
@@ -223,7 +226,9 @@ progress line:
 ```
 
 Concurrent points need one workdir each: `workdir_mode: manual` is refused
-under `workers > 1`. `on_error` and `resume` mean what they mean serially.
+under `workers > 1`, and so is `capture_output: false`, since the per-point
+logs are then the only copy of the tools' output. `on_error` and `resume`
+mean what they mean serially.
 Outside a Slurm job (a laptop, the test suite) the workers still run, with the
 serial launch lines.
 

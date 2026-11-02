@@ -207,7 +207,7 @@ from lume_ace3p.launch import (  # noqa: E402
     Allocation, allocation_from_env, footprint, plan_summary, plan_workers,
 )
 from lume_ace3p.modules import (  # noqa: E402
-    AcdtoolModule, CubitModule, Geant4Module, Omega3PModule,
+    AcdtoolModule, CubitModule, FieldEmissionModule, Geant4Module, Omega3PModule,
 )
 
 
@@ -406,15 +406,96 @@ def test_workers_on_a_sequential_mode_is_refused():
         modes.run_mode({'type': 'scalar_optimize', 'workers': 2}, None)
 
 
-def test_cli_workers_overrides_the_mode_block(tmp_path, monkeypatch):
+def test_single_accepts_workers_without_sizing_it(monkeypatch, capsys):
+    """``single`` runs one point whatever ``workers`` says, so the key is only
+    checked: a count that would not tile the allocation for a sweep is not
+    refused here, and no plan line is printed. (A YAML moves between single and
+    parameter_sweep unedited.)"""
+    seen = {}
+    monkeypatch.setattr(modes, 'single',
+                        lambda wf, **kw: seen.update(kw) or 'df')
+    monkeypatch.setattr(modes.os, 'environ', _env('120(x2)'))
+    flow = _Flow(_chain(15, 4))
+    flow.capture_output = True
+    assert modes.run_mode({'type': 'single', 'workers': 3}, flow) == 'df'
+    assert 'workers' not in seen and 'slice' not in seen
+    assert capsys.readouterr().out == ''
+    with pytest.raises(ValueError, match="positive integer or 'auto'"):
+        modes.run_mode({'type': 'single', 'workers': 'lots'}, flow)
+
+
+def test_worker_plan_refuses_capture_output_off():
+    """With no per-point logs there is nowhere for N concurrent tools' output
+    to go but the job's stdout, interleaved; refused before anything runs. One
+    worker is unaffected: it tees as it always did."""
+    flow = _Flow(_chain(15, 4))
+    flow.capture_output = False
+    with pytest.raises(ValueError, match='capture_output: false'):
+        modes.worker_plan({'workers': 2}, flow, _env('120(x2)'))
+    with pytest.raises(ValueError, match='capture_output: false'):
+        modes.worker_plan({'workers': 'auto'}, flow, {})
+    assert modes.worker_plan({'workers': 1}, flow, _env('120(x2)')) == (1, None)
+
+
+def test_worker_plan_sizes_a_geant4_chain_by_its_threads(capsys):
+    """A Geant4 chain's footprint is ``1 × geant4_threads`` (the weighting steps
+    launch nothing), so two 60-thread Geant4 runs pack on a 120-CPU node and
+    each launches as one rank holding its slice's 60 CPUs."""
+    chain = [FieldEmissionModule({'num_bins': 2, 'beta_inputs': ['b0', 'b1'],
+                                  'bin_edges': [0.0, 0.5, 1.0]}),
+             Geant4Module({'geant4_input': 'g', 'geant4_threads': 60})]
+    workers, slice = modes.worker_plan({'workers': 'auto'}, _Flow(chain),
+                                       _env('120'))
+    assert (workers, slice) == (2, Slice(1, 60, '--mem-per-cpu=4096'))
+    assert capsys.readouterr().out == ' - 2 workers × (60 CPUs, 240 GB) on 1 node\n'
+    assert step_command('srun', 1, 60, '', '/app/sim in.geant4', slice) == (
+        'srun -N 1 -n 1 -c 60 --exact --mem-per-cpu=4096 /app/sim in.geant4')
+
+
+def _cli(tmp_path, monkeypatch, *argv):
+    """Run ``run-lume-ace3p <argv>`` against a two-key sweep config, with the
+    run and the status report replaced by recorders. Returns what each saw."""
     from lume_ace3p import run_lume_ace3p
     config = tmp_path / 'c.yaml'
     config.write_text('workflow:\n  - module: cubit\n    journal: j.jou\n'
                       'mode:\n  type: parameter_sweep\n  workers: 2\n')
     seen = {}
     monkeypatch.setattr(run_lume_ace3p, '_run_declarative',
-                        lambda data, config_dir=None: seen.update(data['mode']))
-    monkeypatch.setattr('sys.argv',
-                        ['run-lume-ace3p', '--workers', 'auto', str(config)])
+                        lambda data, config_dir=None: seen.update(run=data['mode']))
+    monkeypatch.setattr(run_lume_ace3p, '_report_status',
+                        lambda data, config_dir=None: seen.update(status=data['mode']))
+    monkeypatch.setattr('sys.argv', ['run-lume-ace3p']
+                        + [str(config) if a == 'CONFIG' else a for a in argv])
     run_lume_ace3p.main()
-    assert seen == {'type': 'parameter_sweep', 'workers': 'auto'}
+    return seen
+
+
+def test_cli_workers_overrides_the_mode_block(tmp_path, monkeypatch):
+    assert _cli(tmp_path, monkeypatch, '--workers', 'auto', 'CONFIG') == {
+        'run': {'type': 'parameter_sweep', 'workers': 'auto'}}
+
+
+def test_cli_options_combine_in_any_order(tmp_path, monkeypatch):
+    assert _cli(tmp_path, monkeypatch, '--status', '--workers', '4', 'CONFIG') == {
+        'status': {'type': 'parameter_sweep', 'workers': '4'}}
+    assert _cli(tmp_path, monkeypatch, '--workers', '4', '--status', 'CONFIG') == {
+        'status': {'type': 'parameter_sweep', 'workers': '4'}}
+
+
+@pytest.mark.parametrize('argv, message', [
+    (['CONFIG', '--workers', '4'], 'unexpected arguments after the config file'),
+    (['--workers', 'CONFIG'], '--workers needs a count'),
+    (['--workers', '--status', 'CONFIG'], '--workers needs a count'),
+    (['--workers', '4'], '--workers needs a config file'),
+    (['--status'], '--status needs a config file'),
+    (['--worker', '4', 'CONFIG'], "unknown option '--worker'"),
+])
+def test_cli_refuses_a_misplaced_or_unknown_option(tmp_path, monkeypatch,
+                                                   capsys, argv, message):
+    """A trailing or misspelled option used to be ignored, so
+    ``run-lume-ace3p x.yaml --workers 4`` ran a serial sweep. Every such line is
+    now a usage error that runs nothing."""
+    with pytest.raises(SystemExit) as exit_info:
+        _cli(tmp_path, monkeypatch, *argv)
+    assert exit_info.value.code == 1
+    assert message in capsys.readouterr().out
