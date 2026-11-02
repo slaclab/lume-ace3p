@@ -134,7 +134,7 @@ def main():
         print(f"lume-ace3p {__version__}")
         return
     if not args or args[0] in ('--help', '-h'):
-        print("usage: run-lume-ace3p <input.yaml>\n"
+        print("usage: run-lume-ace3p [--workers N|auto] <input.yaml>\n"
               "       run-lume-ace3p --status <input.yaml>\n"
               "       run-lume-ace3p --version\n\n"
               "Runs a LUME-ACE3P workflow from a declarative YAML config (a "
@@ -144,17 +144,40 @@ def main():
               "'mode: {resume: true}' would pick up from. For a sweep that is a "
               "per-point completion table read from each workdir's run manifest; "
               "for an optimization it is the evaluations and best objective "
-              "recorded in its xopt_state.yml.")
+              "recorded in its xopt_state.yml.\n\n"
+              "--workers overrides the mode block's 'workers:' (parameter_sweep "
+              "and collect_training_data): how many points run at once inside "
+              "the Slurm allocation, or 'auto' for as many as fit.")
         # Exit non-zero when no input file was given (a usage error), zero for -h.
         sys.exit(0 if args else 1)
 
-    report_status = args[0] == '--status'
-    if report_status:
-        args = args[1:]
-        if not args:
-            print("Error: --status needs a config file: "
-                  "run-lume-ace3p --status <input.yaml>")
+    # Options come before the config file, in any order; anything after it is
+    # a usage error rather than silently ignored, so 'x.yaml --workers 4' does
+    # not run a serial sweep.
+    usage = 'run-lume-ace3p [--workers N|auto] [--status] <input.yaml>'
+    workers = None
+    report_status = False
+    last_option = None
+    while args and args[0].startswith('-'):
+        last_option = args[0]
+        if args[0] == '--workers':
+            value = args[1].strip().lower() if len(args) > 1 else ''
+            if not (value.isdigit() or value == 'auto'):
+                print(f"Error: --workers needs a count (N or auto): {usage}")
+                sys.exit(1)
+            workers, args = args[1], args[2:]
+        elif args[0] == '--status':
+            report_status, args = True, args[1:]
+        else:
+            print(f"Error: unknown option '{args[0]}': {usage}")
             sys.exit(1)
+    if not args:
+        print(f"Error: {last_option} needs a config file: {usage}")
+        sys.exit(1)
+    if len(args) > 1:
+        print(f"Error: unexpected arguments after the config file: "
+              f"{' '.join(args[1:])}. Options go before it: {usage}")
+        sys.exit(1)
 
     input_file = args[0]
     # Where a derived_parameters 'python:' module is looked for besides sys.path.
@@ -166,6 +189,11 @@ def main():
     except Exception as exc:
         print(exc)
         sys.exit(1)
+    if workers is not None:
+        # Overrides the YAML so one config runs under a one-node or a four-node
+        # batch file; validated with the key itself, in run_mode.
+        lume_ace3p_data['mode'] = {**(lume_ace3p_data.get('mode') or {}),
+                                   'workers': workers}
 
     # A store-consuming mode (train_surrogate / invert_optimize) reads an on-disk
     # store or saved model and never drives the module chain, so it legitimately

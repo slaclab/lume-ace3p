@@ -292,6 +292,39 @@ def test_dry_run_pipeline_produces_store(tmp_path):
         os.chdir(cwd)
 
 
+def test_dry_run_pipeline_under_workers_writes_the_serial_store(tmp_path):
+    """The real track3p_source -> field_emission -> geant4 chain, three samples
+    at a time: the store table, the per-sample particle files and the manifests
+    are byte for byte the serial run's (Geant4 is the dry-run step here; the
+    weighting is real and per sample). This is the Geant4 campaign's own mode
+    under ``workers``, which the plan settled as in scope."""
+    import shutil
+    from lume_ace3p.state import read_state
+
+    wf = _staged_beta_workflow(tmp_path)
+
+    def collect(plan):
+        collect_training_data(_mode_cfg(tmp_path, num_samples=5), wf, plan=plan)
+        store = tmp_path / 'store'
+        files = {}
+        for i in range(5):
+            sample = store / f'sample_{i:05d}'
+            files[i] = ((sample / 'particles.data').read_bytes(),
+                        read_state(str(sample))['point'])
+        table = (store / surrogate_data.TABLE_FILENAME).read_bytes()
+        shutil.rmtree(store)
+        return table, files
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        serial = collect((1, None))
+        parallel = collect((3, None))
+    finally:
+        os.chdir(cwd)
+    assert parallel == serial
+
+
 def test_run_mode_dispatches_collect(tmp_path):
     cwd = os.getcwd()
     try:

@@ -15,14 +15,19 @@ workflow :
     journal : 'pillbox-rtop.jou'
   - module : omega3p
     input : 'pillbox-rtop.omega3p'
-    tasks : 12
-    cores : 8
+    # 60 CPUs, half a milano node: two concurrent points fit on each node.
+    tasks : 15
+    cores : 4
     opts : '--cpu-bind=cores'
   - module : acdtool
     input : 'pillbox-rtop.rfpost'
 
 mode :
   type : parameter_sweep
+  # Points run one at a time by default. 'workers: 4' (or 'auto') runs four at
+  # once under a two-node job: run_lume-ace3p_omega3p_sweep_s3df_4workers.batch
+  # passes '--workers auto' instead, so this file needs no edit.
+  # workers : 4
   output_file : 'omega3p_sweep_output.txt'
 
 input_parameters :

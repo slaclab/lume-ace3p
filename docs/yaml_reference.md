@@ -41,6 +41,25 @@ validation error, so two entries of one type need distinct `name:` keys.
 Every module entry also accepts `from:`, which names the producer of an artifact
 it requires. It is needed only when several modules provide that artifact.
 
+(step-timeout)=
+### `timeout` — a limit on each step
+
+Every module that launches a tool (`cubit`, the solvers, `acdtool`, `geant4`)
+accepts `timeout:`, a limit in seconds on each step it launches (Cubit's
+mesher and `meshconvert` are two steps). A step still running at its limit is
+stopped (SIGTERM, then SIGKILL 10 s later), its log ends with
+`lume-ace3p: timed out after N s; the step was stopped.`, and the module is
+recorded `failed` with `timed out after N s` in its manifest `error`. Under
+`on_error: skip` the point gets a NaN row. `timeout` is left out of the module
+hash, like `tasks` and `cores`, so a resume with a longer limit re-runs only
+the step that timed out. Unset (the default) means no limit.
+
+```yaml
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    timeout : 7200                # seconds
+```
+
 (several-instances-of-one-module)=
 ### Several instances of one module
 
@@ -127,6 +146,7 @@ Additional `mode:` keys:
 | `resume`            | `single`, `parameter_sweep`, `collect_training_data` | `False` | Pick each point up from the run manifest in its workdir instead of re-running it; see [](#resume). |
 | `resume`            | `scalar_optimize`, `gp_parameter_sweep` | `False` | Continue an interrupted optimization from `xopt_state.yml`; see [](#xopt-resume). A different mechanism with a weaker promise. |
 | `on_error`          | `single`, `parameter_sweep`, `collect_training_data` | `'skip'` | What a point that fails does to the run: `skip` records it and goes on, `raise` ends the run. See [](#on-error). |
+| `workers`           | `parameter_sweep`, `collect_training_data` (accepted by `single`) | `1` | How many points run at once inside the Slurm job: an integer or `'auto'`. A count that does not tile the allocation, or `capture_output: false`, is refused. `--workers` on the command line overrides it. See [](#running-points-in-parallel). |
 
 The modes are workflow-agnostic: any chain (S3P, Geant4, a multi-step pipeline)
 can be swept or optimized, since the objective is an `output_parameters` name.
@@ -240,7 +260,8 @@ with a `$ <command line>` header before each invocation, so a shared (`'manual'`
 workdir or a re-run keeps the earlier record.
 
 `capture_output: false` turns it off; the child processes then inherit the
-parent's file descriptors and nothing is written to disk.
+parent's file descriptors and nothing is written to disk. A concurrent run
+(`workers > 1`) needs the logs and refuses this setting.
 
 (run-manifest)=
 ### The run manifest — `lume_ace3p_state.json`
@@ -1584,7 +1605,7 @@ Runs against the surrogate, not Geant4. No `workflow:` needed.
 | `bounds`               | `dict`  | model's training range | Optional per-beta `[lo, hi]` search box. Outside the training range the GP extrapolates, so only narrow it. |
 | `identifiability`      | `bool`  | `True`  | Analyse which beta directions the dose constrains; writes `identifiability.txt`. Costs `2·D` GP evaluations. |
 | `identifiability_file` | `str`   | `identifiability.txt` beside the result table | Override that path. |
-| `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2`, then the betas. |
+| `output_file`          | `str`   | `<store>/inversion_result.txt` | One row per distinct minimum: `rank`, `misfit`, `relative_l2` (additive model: also `chi2_per_voxel`), then the betas. |
 | `target_histories_per_macro` | `int` | `1` | Additive model only (see [](#additive-surrogate)): the target run's `histories_per_macro`, which sets its predicted noise. |
 
 **On non-uniqueness.** The surrogate reaches beta only through its `k` retained
@@ -1653,6 +1674,13 @@ model. With the additive model:
   Every bin moves the dose, but a bin far below the dominant one moves it by
   less than the noise. Errors are inflated 2× because voxel noise is correlated
   and the noise model is diagonal (measured on the real chain).
+- `inversion_result.txt` gains a `chi2_per_voxel` column: the voxel
+  chi-square of the estimate per voxel, under the predicted noise before the 2×
+  inflation. In-model targets give 0.5 to 2.6. Well above that (the campaign
+  uses 4) the dose is not a sum of the trained shapes at any beta in the box:
+  an emitter above the training range, or a bin pair the model cannot separate.
+  The `misfit` column cannot tell you this, since it is the same chi-square
+  only up to a constant.
 - In `invert_bayesian`, `dose_sigma` multiplies the predicted noise (default 2,
   the same inflation) instead of setting an absolute scale.
 

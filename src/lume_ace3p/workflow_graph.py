@@ -768,7 +768,8 @@ class Workflow:
 
     # ---- the single seam the modes call ----------------------------------
 
-    def evaluate(self, input_scalars=None, workdir=None, resume=False):
+    def evaluate(self, input_scalars=None, workdir=None, resume=False,
+                 slice=None, tee=True):
         """Run the ordered module chain once for one input point.
 
         ``input_scalars`` selects the input point:
@@ -794,6 +795,12 @@ class Workflow:
         different study would be worse than no resume at all, which is what the
         module hashes and this default together prevent.
 
+        ``slice`` and ``tee`` are the concurrent sweep's (``workers > 1``,
+        :func:`lume_ace3p.modes.parameter_sweep`): the share of the allocation
+        this evaluation's steps launch in (:class:`lume_ace3p.launch.Slice`), and
+        whether the tools' output is also echoed to the job's stdout besides
+        their per-module logs. The defaults are the serial run's.
+
         Returns ``(outputs, ctx)``: ``{output_name: extracted_value}`` for the
         ``output_parameters`` spec, and the populated :class:`RunContext` that
         produced it. The context is the per-evaluation carrier — pass it back to
@@ -808,8 +815,11 @@ class Workflow:
         complete before it runs the ones it did not — so being killed again is not
         a loss of the record."""
         inputs, sweep_scalars = self._materialize(input_scalars)
-        self.workdir = (workdir if workdir is not None
-                        else self._getworkdir(inputs, sweep_scalars))
+        if workdir is None:
+            workdir = self._getworkdir(inputs, sweep_scalars)
+        # Assigned for the single-run convenience but never read back below:
+        # under ``workers > 1`` it holds whichever point started last.
+        self.workdir = workdir
         current_hash = config_hash(self.entries, inputs, self.output_spec,
                                    self._derived_payload())
         # A fresh module list per evaluation: module instances hold run state, so
@@ -820,22 +830,23 @@ class Workflow:
         # context carries it: it identifies this evaluation's configuration and
         # input point, which is what 'geant4_seed: auto' needs to derive a seed
         # that differs between sweep points and reproduces across re-runs.
-        ctx = RunContext(self.workdir, inputs=inputs, dry_run=self.dry_run,
+        ctx = RunContext(workdir, inputs=inputs, dry_run=self.dry_run,
                          paths=self.paths, stage_mode=self.stage_mode,
                          modules=self._build_modules(),
                          capture_output=self.capture_output,
-                         config_hash=current_hash)
+                         config_hash=current_hash, slice=slice, tee=tee)
         ctx.ensure_workdir()
 
         # Read before the new manifest overwrites it.
-        previous = self._resume_state(current_hash) if resume else None
+        previous = (self._resume_state(workdir, current_hash) if resume
+                    else None)
 
         state = new_state(config_hash=current_hash,
                           point=self._point_record(inputs, sweep_scalars),
-                          workdir=self.workdir)
+                          workdir=workdir)
         # Written before the first module runs, so a point killed inside module 0
         # still leaves its identity and config hash behind.
-        write_state(self.workdir, state)
+        write_state(workdir, state)
 
         # Stays True only while every module so far was recorded complete under
         # its current hash and still verifies; once one has to run, so does
@@ -868,13 +879,13 @@ class Workflow:
                 # means "not complete".
                 record_module(state, module, FAILED,
                               error=f'{type(exc).__name__}: {exc}')
-                write_state(self.workdir, state)
+                write_state(workdir, state)
                 raise
             record_module(state, module, COMPLETE,
                           hash=hashes[module.name],
                           **self._module_record(ctx, module),
                           **({'resumed': True} if reusing else {}))
-            write_state(self.workdir, state)
+            write_state(workdir, state)
 
         try:
             outputs = self._extract_outputs(ctx)
@@ -884,7 +895,7 @@ class Workflow:
             # point (a solver that exited 0 and wrote nothing, a quantity its
             # output does not have), and the manifest says so at the top level.
             state['error'] = f'{type(exc).__name__}: {exc}'
-            write_state(self.workdir, state)
+            write_state(workdir, state)
             raise
         ctx.outputs = outputs
         # Only for the same configuration: with another output_parameters spec a
@@ -892,7 +903,7 @@ class Workflow:
         if previous is not None and previous.get('config_hash') == current_hash:
             self._compare_recorded_outputs(previous, outputs)
         record_outputs(state, outputs)
-        write_state(self.workdir, state)
+        write_state(workdir, state)
         self.last_context = ctx
         return outputs, ctx
 
@@ -915,7 +926,7 @@ class Workflow:
 
     # ---- resume (Phase 4) -------------------------------------------------- #
 
-    def _resume_state(self, current_hash):
+    def _resume_state(self, workdir, current_hash):
         """The manifest a resume may reuse in this workdir, or ``None``.
 
         ``None`` covers every reason not to trust one: there is no manifest, or
@@ -926,13 +937,13 @@ class Workflow:
         (written by 0.7.x) is trusted only for the *same* resolved configuration,
         and a mismatch is worth saying out loud, since the user asked to resume
         and is about to watch the point run from the start anyway."""
-        previous = read_state(self.workdir)
+        previous = read_state(workdir)
         if previous is None:
             return None
         if has_module_hashes(previous):
             return previous
         if previous.get('config_hash') != current_hash:
-            print(f" - resume: '{self.workdir}' was written for a different "
+            print(f" - resume: '{workdir}' was written for a different "
                   "configuration (its config_hash does not match this one), so "
                   "this point is re-run from the start. The hash covers the "
                   "module entries, the input point, output_parameters and "
@@ -964,11 +975,11 @@ class Workflow:
                 why = str(entry.get('status'))
                 if entry.get('error'):
                     why += ': ' + str(entry['error'])
-            print(f" - resume: '{self.workdir}' re-runs from '{module.name}' "
+            print(f" - resume: '{ctx.workdir}' re-runs from '{module.name}' "
                   f"({why}).")
             return False
         if not hash_matches(previous, module.name, current_hash):
-            print(f" - resume: '{module.name}' re-runs in '{self.workdir}': its "
+            print(f" - resume: '{module.name}' re-runs in '{ctx.workdir}': its "
                   "configuration or an input it depends on changed (its module "
                   "entry other than tasks/cores/opts, the inputs it reads, the "
                   "contents of its input file, or an upstream module).")
@@ -976,7 +987,7 @@ class Workflow:
         if module.verify(ctx) is False:
             where = recorded_output(entry) or 'its output'
             print(f" - resume: '{module.name}' is recorded complete in "
-                  f"'{self.workdir}' but {where} is missing, so it and every "
+                  f"'{ctx.workdir}' but {where} is missing, so it and every "
                   "later step are re-run.")
             return False
         return True
