@@ -9,6 +9,21 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-11-03
+
+A patch release: a `workers` count the allocation cannot hold no longer
+stops a sweep.
+
+### Changed
+
+- `mode: {workers: N}` with a count the allocation does not hold (too many
+  workers for the nodes, or one that leaves CPUs idle) no longer stops the run
+  before the first point. The sweep runs with the count `'auto'` would choose
+  (the largest that fits, or 1) and prints a `Warning:` on stderr naming the
+  requested and the chosen count, so the job's error file records the change.
+  The other sizing errors (an MPI caller that is not `srun`, a step no slice
+  can hold) are refused as before.
+
 ## [0.9.1] — 2026-11-03
 
 A patch release: the S3DF batch scripts follow the cluster's move to Rocky 9.
