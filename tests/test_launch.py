@@ -204,7 +204,8 @@ def test_ctx_slice_reaches_every_wrapper(tmp_path):
 # --------------------------------------------------------------------------- #
 
 from lume_ace3p.launch import (  # noqa: E402
-    Allocation, allocation_from_env, footprint, plan_summary, plan_workers,
+    Allocation, UntiledWorkers, allocation_from_env, footprint, plan_summary,
+    plan_workers,
 )
 from lume_ace3p.modules import (  # noqa: E402
     AcdtoolModule, CubitModule, FieldEmissionModule, Geant4Module, Omega3PModule,
@@ -292,9 +293,13 @@ def test_counts_that_tile_the_allocation(tasks, cores, alloc, requested,
 ])
 def test_counts_that_do_not_tile_are_refused(tasks, cores, alloc, requested,
                                              listed):
-    with pytest.raises(ValueError, match='does not tile') as info:
+    with pytest.raises(UntiledWorkers, match='does not tile') as info:
         plan_workers(_chain(tasks, cores), requested, alloc)
     assert str(info.value).endswith(listed)
+    # The run layer falls back to what 'auto' picks, read from the error.
+    assert info.value.requested == requested
+    assert info.value.fitting == [int(c) for c in listed[len('Counts that fit: 1'):]
+                                  .rstrip('.').replace(',', ' ').split()]
 
 
 def test_the_listed_counts_for_a_sixty_cpu_footprint_on_two_wide_nodes():
@@ -382,8 +387,44 @@ def test_worker_plan_reads_the_environment_and_prints_the_slice(capsys):
     assert modes.worker_plan({'workers': 4}, _Flow(_chain(15, 4)), env) == (
         4, Slice(1, 60, '--mem-per-cpu=4096'))
     assert capsys.readouterr().out == ' - 4 workers × (60 CPUs, 240 GB) on 2 nodes\n'
-    with pytest.raises(ValueError, match='does not tile'):
-        modes.worker_plan({'workers': 3}, _Flow(_chain(15, 4)), env)
+
+
+@pytest.mark.parametrize('requested, chosen', [(3, 4), (16, 4), (5, 4)])
+def test_worker_plan_falls_back_to_auto_when_the_count_does_not_tile(
+        requested, chosen, capsys):
+    """A count the allocation does not hold is not fatal: the run takes what
+    'auto' would (the largest count that fits) and says so on stderr, naming
+    both counts, so the job's error log records the change. The plan line then
+    describes the count that actually runs."""
+    env = _env('120(x2)')
+    plan = modes.worker_plan({'workers': requested}, _Flow(_chain(15, 4)), env)
+    assert plan == (chosen, Slice(1, 60, '--mem-per-cpu=4096'))
+    out, err = capsys.readouterr()
+    assert out == f' - {chosen} workers × (60 CPUs, 240 GB) on 2 nodes\n'
+    assert err.startswith(
+        f"Warning: workers changed from {requested} to {chosen} (the largest "
+        f"count that fits, as 'auto' would choose). workers: {requested} does "
+        f"not tile this allocation (2 nodes of 120 CPUs)")
+    assert err.rstrip().endswith('Counts that fit: 1, 2, 4.')
+
+
+def test_worker_plan_falls_back_to_serial_when_nothing_tiles(capsys):
+    """A chain whose footprint is the whole node has no concurrent layout, so
+    the fallback is the serial run: no slice, no plan line, one warning."""
+    plan = modes.worker_plan({'workers': 8}, _Flow(_chain(120, 1)), _env('120'))
+    assert plan == (1, None)
+    out, err = capsys.readouterr()
+    assert out == ''
+    assert err.startswith('Warning: workers changed from 8 to 1 ')
+    assert 'Counts that fit: 1.' in err
+
+
+def test_worker_plan_still_raises_sizing_errors_that_are_not_the_count():
+    """Only the count falls back. A chain no slice can hold, or an MPI caller
+    that is not srun, is refused as before."""
+    flow = _Flow(_chain(15, 4), mpi='mpirun')
+    with pytest.raises(ValueError, match='needs srun'):
+        modes.worker_plan({'workers': 2}, flow, _env('120(x2)'))
 
 
 def test_worker_plan_for_one_worker_reads_nothing():
@@ -392,13 +433,18 @@ def test_worker_plan_for_one_worker_reads_nothing():
     assert modes.worker_plan({}, None, {'SLURM_JOB_ID': 'x'}) == (1, None)
 
 
-def test_run_mode_refuses_a_bad_count_before_any_point(monkeypatch):
+def test_run_mode_runs_a_bad_count_at_the_auto_count(monkeypatch, capsys):
+    """The sweep gets the fallen-back plan, not the requested count."""
+    seen = {}
     monkeypatch.setattr(modes, 'parameter_sweep',
-                        lambda *a, **k: pytest.fail('a point ran'))
+                        lambda wf, **kw: seen.update(kw) or 'df')
     monkeypatch.setattr(modes.os, 'environ', _env('120(x2)'))
-    with pytest.raises(ValueError, match='does not tile'):
-        modes.run_mode({'type': 'parameter_sweep', 'workers': 3},
-                       _Flow(_chain(15, 4)))
+    assert modes.run_mode({'type': 'parameter_sweep', 'workers': 3},
+                          _Flow(_chain(15, 4))) == 'df'
+    assert seen['workers'] == 4
+    assert seen['slice'] == Slice(1, 60, '--mem-per-cpu=4096')
+    assert capsys.readouterr().err.startswith(
+        'Warning: workers changed from 3 to 4 ')
 
 
 def test_workers_on_a_sequential_mode_is_refused():

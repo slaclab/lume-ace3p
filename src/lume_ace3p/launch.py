@@ -194,18 +194,31 @@ def _check_steps_fit(modules, slice, alloc):
                 f"{alloc.cpn // cores * slice.nodes}.")
 
 
+class UntiledWorkers(ValueError):
+    """``workers: N`` does not tile the allocation. ``requested`` is N and
+    ``fitting`` the counts above 1 that do, ascending (empty when only the
+    serial run fits), so a caller can fall back to what ``'auto'`` would pick
+    (:func:`lume_ace3p.modes.worker_plan` does)."""
+
+    def __init__(self, message, requested, fitting):
+        super().__init__(message)
+        self.requested = requested
+        self.fitting = list(fitting)
+
+
 def plan_workers(modules, requested, allocation, mpi_caller='srun'):
     """``(workers, slice)`` for running ``modules`` as ``requested`` concurrent
-    workers (an int or ``'auto'``) inside ``allocation``, or a ``ValueError``
-    saying which counts would fit.
+    workers (an int or ``'auto'``) inside ``allocation``, or an
+    :class:`UntiledWorkers` saying which counts would fit.
 
     One worker is the serial run: ``(1, None)`` whatever the allocation, so its
     command lines are the historical ones. Outside Slurm (``allocation`` None)
     the requested count runs with no slice — the test suite and a laptop. Under
     Slurm the count must tile the allocation (decision 4 of
-    ``plans/parallel_sweep_plan.md``): a count that does not is refused rather
-    than left for Slurm to serialize silently. ``'auto'`` takes the largest
-    count that does, or 1 when none does."""
+    ``plans/parallel_sweep_plan.md``): a count that does not is refused here
+    rather than left for Slurm to serialize silently; the run layer catches
+    that and falls back to ``'auto'``. ``'auto'`` takes the largest count that
+    does, or 1 when none does."""
     auto = requested == 'auto'
     if not auto and requested == 1:
         return 1, None
@@ -226,10 +239,10 @@ def plan_workers(modules, requested, allocation, mpi_caller='srun'):
         where = (f'{allocation.nodes} node' + ('s' if allocation.nodes > 1 else '')
                  + f' of {allocation.cpn} CPUs')
         fits = ', '.join(str(c) for c in [1] + counts)
-        raise ValueError(
+        raise UntiledWorkers(
             f'workers: {requested} does not tile this allocation ({where}) for '
             f'a {foot}-CPU footprint (the largest step\'s tasks × cores). '
-            f'Counts that fit: {fits}.')
+            f'Counts that fit: {fits}.', requested, counts)
     slice = _slice_for(foot, allocation)
     _check_steps_fit(modules, slice, allocation)
     # Check 6, implied by the tiling above; kept because the failure it guards
