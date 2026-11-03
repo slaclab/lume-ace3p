@@ -173,7 +173,8 @@ def _alive(pid):
     try:
         with open(f'/proc/{pid}/stat') as f:
             return f.read().rsplit(')', 1)[1].split()[0] != 'Z'
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # Gone before the open, or reaped between the open and the read.
         return False
 
 
