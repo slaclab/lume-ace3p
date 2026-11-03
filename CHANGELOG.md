@@ -9,6 +9,15 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+### Changed
+
+- The S3DF batch scripts target the group's Rocky 9 ACE3P build of 2026-11-02:
+  `--constraint=OS_VER:9.6`, `source /sdf/group/rfar/ace3p/ace3p.sh` in place
+  of `module load openmpi/v4.1.6-spack` (the OpenMPI settings now come from
+  that script), and `/sdf/group/rfar/ace3p/lib-rocky9-compat` on
+  `LD_LIBRARY_PATH` for Cubit's `libGLU.so.1`. The RHEL 8 nodes the 0.9.0
+  scripts pinned are gone, so those scripts can no longer run on S3DF.
+
 ## [0.9.0] — 2026-10-29
 
 Points of a sweep can run concurrently inside one Slurm job, and a hung step
