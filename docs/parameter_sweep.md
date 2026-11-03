@@ -196,17 +196,22 @@ The run prints its plan before the first point:
  - 4 workers × (60 CPUs, 240 GB) on 2 nodes
 ```
 
-A worker count that does not tile the allocation is refused before anything
-runs, with the counts that would fit:
+A worker count that does not tile the allocation (too many for the nodes, or
+one that would leave CPUs idle) is not run as asked: the sweep falls back to
+what `auto` would choose and says so on stderr (the job's error file), naming
+both counts and the ones that fit:
 
 ```text
-workers: 3 does not tile this allocation (2 nodes of 120 CPUs) for a 60-CPU
-footprint (the largest step's tasks × cores). Counts that fit: 1, 2, 4.
+Warning: workers changed from 16 to 4 (the largest count that fits, as 'auto'
+would choose). workers: 16 does not tile this allocation (2 nodes of 120 CPUs)
+for a 60-CPU footprint (the largest step's tasks × cores). Counts that fit:
+1, 2, 4.
 ```
 
-Slurm would otherwise queue the extra worker's steps silently and the sweep
+Slurm would otherwise queue the extra workers' steps silently and the sweep
 would run at a fraction of the expected speed. `auto` picks the largest count
-that fits, or 1 when none does.
+that fits, or 1 when none does; a chain whose footprint is the whole
+allocation therefore runs serially, with the same warning.
 
 Memory is your judgment. Each step gets its slice's share; a mesher or solver
 that needs more than that should run with fewer workers. To give a

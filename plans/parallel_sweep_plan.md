@@ -323,7 +323,11 @@ the one failure a pool would otherwise never report.
 4. **Refuse, don't warn, on a non-fitting worker count.** The probe shows
    the failure mode is silent queueing; a sweep that "works" at a third of
    the expected speed is worse than one that stops with the list of counts
-   that fit.
+   that fit. *Revised 2026-11-03 (0.9.2):* a user's job stopped on this
+   with a too-large count, so `worker_plan` now falls back to the `auto`
+   count and prints a `Warning:` on stderr naming both counts. The sizing
+   function still raises (`UntiledWorkers`); nothing is silently queued,
+   since the fallback count tiles by construction.
 5. **No per-module memory key.** The slice model gives every step the
    worker's memory share, which is the right answer for the ACE3P-bound
    case that motivates the feature. A `memory:` hint was considered and

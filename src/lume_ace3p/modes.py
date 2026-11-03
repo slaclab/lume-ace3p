@@ -74,7 +74,9 @@ from lume_ace3p.results import (
 )
 from lume_ace3p import surrogate_data
 from lume_ace3p.config import warn_unrecognized
-from lume_ace3p.launch import allocation_from_env, plan_summary, plan_workers
+from lume_ace3p.launch import (
+    UntiledWorkers, allocation_from_env, plan_summary, plan_workers,
+)
 from lume_ace3p.modules import FieldEmissionModule
 from lume_ace3p.workflow_graph import _is_array
 from lume_ace3p.state import COMPLETE, FAILED, point_status, read_state
@@ -179,8 +181,15 @@ def workers_of(mode_cfg):
 def worker_plan(mode_cfg, workflow, environ=None):
     """``(workers, slice)`` for a table mode — see
     :func:`lume_ace3p.launch.plan_workers` — after printing what each worker
-    holds when there is more than one. Raises before anything runs when the
-    requested count does not fit the Slurm allocation."""
+    holds when there is more than one.
+
+    A count that does not tile the Slurm allocation (too many workers for the
+    nodes, or one that leaves CPUs idle) is not fatal: the run falls back to
+    what ``'auto'`` would choose — the largest count that fits, or 1 — and says
+    so on stderr, naming both counts, so the job's error log records that the
+    sweep did not run with the workers it asked for. The other sizing errors
+    (a non-srun MPI caller, a step no slice can hold) are not about the count
+    and still raise before anything runs."""
     requested = workers_of(mode_cfg)
     if requested == 1:
         return 1, None
@@ -195,8 +204,15 @@ def worker_plan(mode_cfg, workflow, environ=None):
             "run concurrently. Remove capture_output: false, or set workers: 1.")
     allocation = allocation_from_env(os.environ if environ is None else environ)
     mpi_caller = (getattr(workflow, 'paths', None) or {}).get('mpi', '')
-    workers, slice = plan_workers(workflow.modules, requested, allocation,
-                                  mpi_caller=mpi_caller)
+    try:
+        workers, slice = plan_workers(workflow.modules, requested, allocation,
+                                      mpi_caller=mpi_caller)
+    except UntiledWorkers as exc:
+        workers, slice = plan_workers(workflow.modules, 'auto', allocation,
+                                      mpi_caller=mpi_caller)
+        print(f"Warning: workers changed from {requested} to {workers} (the "
+              f"largest count that fits, as 'auto' would choose). {exc}",
+              file=sys.stderr, flush=True)
     summary = plan_summary(workers, slice, allocation)
     if summary:
         print(' - ' + summary)
