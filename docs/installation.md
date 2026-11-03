@@ -91,7 +91,8 @@ To run the examples from an S3DF iana terminal:
 
 1. Copy `/sdf/group/rfar/lume-ace3p/examples` to a desired location.
 2. Run the ACE3P setup script: `source /sdf/group/rfar/ace3p/ace3p.sh`
-   (required to run ACE3P on S3DF).
+   (needed to run the ACE3P tools or Cubit by hand; the S3DF batch scripts
+   source it themselves).
 3. Activate the `lume-ace3p` conda environment (if not already active).
    Do this **after** sourcing the ACE3P (or Geant4) setup script. Those scripts
    reset `PATH`, so activating conda first leaves the shell without
@@ -107,14 +108,16 @@ step with `More processors requested than permitted` and the run fails on its
 first point. The Perlmutter scripts are sized for 256 logical CPUs and use
 larger products; do not copy their `tasks`/`cores` onto S3DF unchanged.
 
-**Why the S3DF scripts pin the OS.** Every S3DF batch script carries
-`#SBATCH --constraint=OS_VER:8.10`. The ACE3P binaries (`omega3p`, `s3p`,
-`t3p`, `acdtool`) link `libgsl.so.23` from the node's `/lib64`, and only RHEL
-8.10 provides that soname — EL9 ships gsl 2.7 as `libgsl.so.25`. The milano
-partition is a mix of both, so an unpinned job can land on an EL9 node where
-the solver exits before `main` with `cannot open shared object file`. Keep the
-constraint until ACE3P is rebuilt against the EL9 gsl; a job that sits
-`PENDING` unusually long is the cost of it, since it restricts the node pool.
+**The S3DF scripts target the Rocky 9 build.** Every S3DF batch script
+carries `#SBATCH --constraint=OS_VER:9.6` and sources
+`/sdf/group/rfar/ace3p/ace3p.sh`. The group's ACE3P build of 2026-11-02 (gcc
+11.5, its own OpenMPI 4.1.8 with Slurm PMI, so `srun` launches a step directly
+and no `module load` is needed) runs only on Rocky 9 nodes, which is what
+milano now is; the previous RHEL 8 setup is kept under
+`/sdf/group/rfar/ace3p/rocky8`. The scripts also put
+`/sdf/group/rfar/ace3p/lib-rocky9-compat` on `LD_LIBRARY_PATH`: Cubit 16.12
+needs `libGLU.so.1`, which the Rocky 9 image lacks, and `ace3p.sh` supplies it
+only through a shell alias that a subprocess never sees.
 
 (executable-paths)=
 ## Executable paths

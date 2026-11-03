@@ -4,7 +4,8 @@
 `10fdfb3` (0.8.2 plus the unreleased `chi2_per_voxel`). Phase 1 done
 2026-10-29 (`lume_ace3p/launch.py`, `tests/test_launch.py`); Phase 2 done
 2026-10-29; Phase 3 done 2026-10-29; Phase 4 done 2026-10-29; Phase 5 done
-2026-10-29. **COMPLETE**; released as 0.9.0.
+2026-10-29. **COMPLETE**; released as 0.9.0 (2026-11-02), S3DF batch scripts
+moved to the Rocky 9 ACE3P build in 0.9.1 (2026-11-03).
 
 Follow-on to `plans/evaluation_isolation_resume_plan.md`, which removed the
 shared per-evaluation state and left `max_concurrent` as "a small follow-on

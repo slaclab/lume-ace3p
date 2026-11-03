@@ -151,7 +151,9 @@ The log in that workdir holds the tool's own output, and the cause is there. A
 step that `srun` refused (for example "More processors requested than
 permitted") shows only `srun`'s message. An
 exit status of 127 means the binary or a library it links was not found (on
-S3DF, an ACE3P binary on an EL9 node; request `--constraint=OS_VER:8.10`).
+S3DF, a batch script that does not source `/sdf/group/rfar/ace3p/ace3p.sh`,
+or Cubit without `libGLU.so.1` on `LD_LIBRARY_PATH`; see the S3DF notes in
+the installation guide).
 Any nonzero status is a failure, even if the tool wrote output first, and the
 step's previous output is removed before it runs, so a crashed step never
 leaves an earlier run's results to be read as its own.
