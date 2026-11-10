@@ -1,4 +1,4 @@
-import os, shutil
+import os, re, shutil
 
 from lume.base import CommandWrapper
 
@@ -44,40 +44,53 @@ class Cubit(CommandWrapper):
                     self.ncflag[i] = i+1
         self.ncflag = [i-1 for i in self.ncflag if i != 0]
         
+    def find_declaration(self, key):
+        """Index into ``self.lines`` of the first declaration of ``key``, or None.
+
+        A declaration is an APREPRO line ``#{key = ...}`` or a plain line
+        ``key = ...``. ``key`` must match a whole identifier (``radius`` does
+        not match ``cav_radius``), and ``==`` is not an assignment. Comment
+        lines are skipped: those starting with ``#`` but not ``#{``, which
+        covers ``##{...}`` and ``# key=1``.
+        """
+        name = re.escape(key)
+        aprepro = re.compile(r'#\{\s*' + name + r'\s*=(?!=)')
+        plain = re.compile(name + r'\s*=(?!=)')
+        for i in self.ncflag:
+            line = self.lines[i].lstrip()
+            if line.startswith('#{'):
+                if aprepro.match(line):
+                    return i
+            elif not line.startswith('#') and plain.match(line):
+                return i
+        return None
+
     def get_value(self, key):  #Read value of first instance of variable
-        value = None
-        for i in range(len(self.ncflag)):
-            line = self.lines[self.ncflag[i]]
-            flag = line.replace(' ','').find(key + '=')
-            if flag != -1:    #If variable name declaration found in file
-                indx = line.find('=')    #Index of '=' sign following name
-                if line.strip().startswith('#{'):    #If APREPRO code line
-                    value = line[indx+1::].replace('}','')
-                else:
-                    value = line[indx+1::].strip()
-                break
-        if flag == -1:
+        i = self.find_declaration(key)
+        if i is None:
             print('Warning: \'' + key + '=\' not found in Cubit journal file, ' \
                   + 'value \'None\' returned.')
             return None
+        line = self.lines[i]
+        indx = line.find('=')    #Index of '=' sign following name
+        if line.strip().startswith('#{'):    #If APREPRO code line
+            value = line[indx+1::].replace('}','')
         else:
-            return eval(value)
-    
+            value = line[indx+1::].strip()
+        return eval(value)
+
     def set_value(self, kwargs):    #Set value of first instance of variable
         for key, value in kwargs.items():
-            for i in range(len(self.ncflag)):
-                line = self.lines[self.ncflag[i]]
-                flag = line.replace(' ','').find(key + '=')
-                if flag != -1:    #If variable name declaration found in file
-                    indx = line.find('=')    #Index of '=' sign following name
-                    if line.strip().startswith('#{'):    #If APREPRO code line
-                        new_line = line[0:indx] + '=' + str(value) + '}\n'
-                    else:
-                        new_line = line[0:indx] + '=' + str(value) + '\n'
-                    self.lines[self.ncflag[i]] = new_line
-                    break
-#            if flag == -1:
-#                print('Warning: \'' + key + '\' not found in Cubit journal file, no action taken.')
+            i = self.find_declaration(key)
+            if i is None:
+                continue  # undeclared names are validated at the workflow level
+            line = self.lines[i]
+            indx = line.find('=')    #Index of '=' sign following name
+            if line.strip().startswith('#{'):    #If APREPRO code line
+                new_line = line[0:indx] + '=' + str(value) + '}\n'
+            else:
+                new_line = line[0:indx] + '=' + str(value) + '\n'
+            self.lines[i] = new_line
 
     def get_export(self):
         for i in range(len(self.ncflag)):
