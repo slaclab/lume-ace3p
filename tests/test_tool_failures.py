@@ -62,7 +62,7 @@ def test_a_crashed_cubit_is_recorded_failed(staged):
     recorded = _recorded(workdir)
     assert recorded['cubit']['status'] == 'failed'
     assert 'ToolExitError: cubit exited with status 3' in recorded['cubit']['error']
-    assert 'cubit -nographics' in recorded['cubit']['error']
+    assert 'cubit -batch -nographics' in recorded['cubit']['error']
     assert 'omega3p' not in recorded
 
 

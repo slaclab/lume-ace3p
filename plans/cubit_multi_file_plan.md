@@ -1,7 +1,7 @@
 # Cubit Multi-File Journals — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-11-10 on S3DF against `dev` at `1ef749f`
-(0.9.2). Phase 1 done 2026-11-10.
+(0.9.2). Phases 1 and 2 done 2026-11-10.
 
 Users split their Cubit work across several files: one declares the APREPRO
 variables, one imports STEP/STL/SAT geometry, one meshes and exports. A
@@ -183,6 +183,12 @@ returns `files:` (decision 5), so editing a STEP file re-runs the step.
 2. **Multi-journal `Cubit` wrapper** (3.3, 3.4): list input, per-file
    rewrite, `quit` stripping, `-batch`, export across the list. Fake-binary
    tests assert the command line, the rewritten copies, and file order.
+   **DONE:** `Cubit` takes a path or a list (`_Journal` per file); copies are
+   named by basename (an absolute path outside the workdir no longer writes
+   `<path>_copy` beside the source); basename clash and Python-only lists
+   raise `ValueError`; a name declared in several journals warns;
+   `set_export` now edits the last export, the one `get_export` reads.
+   Checked against real Cubit 16.12 on milano (`cubit_phase2_real/` in scratch).
 3. **`CubitModule` config** (3.1, 3.4, 3.6): `journal:` list, `files:`
    staging, `input_files`/`required_files`, all `_journal_export` callers,
    hash-pinning test for a string `journal:`.

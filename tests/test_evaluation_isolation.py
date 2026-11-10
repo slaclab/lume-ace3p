@@ -447,14 +447,14 @@ def test_a_failing_step_leaves_its_error_in_the_module_log(tmp_path, monkeypatch
     with open(os.path.join(wf.workdir, 'cubit.log')) as f:
         logged = f.read()
     assert 'ERROR: could not open the display' in logged
-    assert 'meshing -nographics -nojournal -noecho cavity.jou' in logged
+    assert 'meshing -batch -nographics -nojournal -noecho cavity.jou' in logged
     # The command line that produced it, so a log with several invocations in it
     # says which is which.
-    assert '$ ' in logged and 'cubit -nographics' in logged
+    assert '$ ' in logged and 'cubit -batch -nographics' in logged
 
     captured = capsys.readouterr()
     assert 'ERROR: could not open the display' in captured.err
-    assert 'meshing -nographics' in captured.out
+    assert 'meshing -batch -nographics' in captured.out
 
 
 @posix_only
