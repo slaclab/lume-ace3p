@@ -1,0 +1,26 @@
+#!/bin/bash
+
+#SBATCH --partition=milano
+#SBATCH --account=rfar:regular
+# The group's ACE3P and Geant4 builds on S3DF run on Rocky 9 (OS_VER:9.6).
+#SBATCH --constraint=OS_VER:9.6
+#SBATCH --job-name=lume-ace3p_omega3p_multi_journal
+#SBATCH --output=output-%j.txt
+#SBATCH --error=error-%j.txt
+#SBATCH --nodes=1
+#SBATCH --mem=480gb
+#SBATCH --ntasks-per-node=120
+#SBATCH --time=0-00:30:00
+
+# ACE3P environment (Rocky 9 build): its OpenMPI, so srun launches the steps
+# directly, plus libraries and PATH. It resets PATH, so the conda environment
+# run-lume-ace3p lives in is put back in front afterwards. The OMPI_MCA_*
+# settings come from ace3p.sh itself.
+_path=$PATH
+source /sdf/group/rfar/ace3p/ace3p.sh
+export PATH=$_path:$PATH
+# Cubit 16.12 needs libGLU.so.1, which the Rocky 9 image lacks. ace3p.sh
+# supplies it only through a shell alias, which a subprocess never sees.
+export LD_LIBRARY_PATH=/sdf/group/rfar/ace3p/lib-rocky9-compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+run-lume-ace3p omega3p_sweep_multi_journal.yaml

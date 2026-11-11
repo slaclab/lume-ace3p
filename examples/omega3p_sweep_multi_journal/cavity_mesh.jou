@@ -1,0 +1,15 @@
+volume all scheme Tetmesh geometry approximation angle 5
+set trimesher geometry sizing on
+mesh volume all
+
+Sideset 1 surface 1
+Sideset 2 surface 6
+Sideset 6 surface all except 1 6
+
+block 1 volume all
+block 1 element type tetra10
+transform mesh output scale 0.001
+
+export Genesis  "pillbox-rtop4.gen" block all overwrite
+
+quit

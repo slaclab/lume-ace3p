@@ -1,0 +1,48 @@
+# The omega3p_sweep grid with the Cubit work split across three journals and
+# one imported geometry file:
+#   workflow:  cubit -> omega3p -> acdtool
+#   mode:      parameter_sweep
+# The journals run in order in one Cubit session, so the variables declared in
+# cavity_vars.jou are visible in the next two. beampipe.sat is staged into the
+# workdir, where cavity_geometry.jou imports it. The meshes, and so the table,
+# match omega3p_sweep's.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_omega3p_multi_journal_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  - module : cubit
+    journal : ['cavity_vars.jou', 'cavity_geometry.jou', 'cavity_mesh.jou']
+    files : 'beampipe.sat'
+  - module : omega3p
+    input : 'pillbox-rtop.omega3p'
+    tasks : 15
+    cores : 4
+    opts : '--cpu-bind=cores'
+  - module : acdtool
+    input : 'pillbox-rtop.rfpost'
+
+mode :
+  type : parameter_sweep
+  output_file : 'omega3p_multi_journal_output.txt'
+
+input_parameters :
+  cubit :
+    # Declared in cavity_vars.jou.
+    'cav_radius' :
+      'min' : 90.0
+      'max' : 120.0
+      'num' : 4
+    'ellipticity' :
+      'min' : 0.5
+      'max' : 1.25
+      'num' : 4
+
+output_parameters :
+  'R/Q' : {module: acdtool, section: RoverQ, quantity: RoQ, at: {mode: 0}}
+  'Mode_freq' : {module: omega3p, quantity: Frequency, at: {mode: 0}}
+  'E_max' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax, at: {surface: 6}}
+  'loc_x' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: x, at: {surface: 6}}
+  'loc_y' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: y, at: {surface: 6}}
+  'loc_z' : {module: acdtool, section: maxFieldsOnSurface, quantity: Emax_location, component: z, at: {surface: 6}}

@@ -1,7 +1,7 @@
 # Cubit Multi-File Journals — Implementation Plan
 
-**Status: IN PROGRESS** — written 2026-11-10 on S3DF against `dev` at `1ef749f`
-(0.9.2). Phases 1 and 2 done 2026-11-10, Phases 3 and 4 2026-11-11.
+**Status: COMPLETE** — written 2026-11-10 on S3DF against `dev` at `1ef749f`
+(0.9.2). Phases 1 and 2 done 2026-11-10, Phases 3-5 2026-11-11.
 
 Users split their Cubit work across several files: one declares the APREPRO
 variables, one imports STEP/STL/SAT geometry, one meshes and exports. A
@@ -223,8 +223,25 @@ returns `files:` (decision 5), so editing a STEP file re-runs the step.
    `docs/workflow_inputs.md`. Run it on milano and compare against the
    all-in-one `omega3p_sweep` table (same Rocky 9 Cubit, so it should be
    identical).
+   **DONE:** `examples/omega3p_sweep_multi_journal` (`cavity_vars.jou`,
+   `cavity_geometry.jou`, `cavity_mesh.jou`, `files: beampipe.sat`), plus
+   docs, CHANGELOG and a dry-run baseline. **The staged file is ACIS `.sat`,
+   not STEP:** the geometry journal blends curves by ID, and a STEP import of
+   the same cylinder changes the topology. Plain or `heal` STEP import logs
+   "No curve with ID 15" (Cubit still exits 0 with a mesh). With
+   `regularize` it runs clean but gives a different mesh. The `.sat` import
+   gives byte-identical meshes (probe in scratch `cubit_phase5_probe/`). Real
+   run, job 44341297 (milano, Rocky 9.6, `--workers auto`, both sweeps in one
+   job, scratch `cubit_phase5_real/`): all 16 meshes identical to
+   `omega3p_sweep`'s. Every table column is equal except `Mode_freq`, at most
+   1e-4 Hz apart on 1.4 GHz (solver round-off).
 
 ## 5. Open questions
+
+0. Cubit exits 0 after `ERROR:` lines (a failed command, such as a blend on a
+   missing curve ID) and still writes a mesh. The module accepts that mesh.
+   Failing the step on `Errors found during session` in the log would catch
+   it. That is a behavior change for every journal, so it is not done here.
 
 1. A mesh exported from a Python script can't be read from the files. Add an
    optional `mesh:` key naming the export (overrides 3.4), or require the
