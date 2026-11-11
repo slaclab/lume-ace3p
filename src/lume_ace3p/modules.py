@@ -754,32 +754,67 @@ class ParticleSourceModule(_SourceModule):
 # --------------------------------------------------------------------------- #
 
 
-def _journal_export(journal):
-    """The filename the **last** ``export`` statement of a Cubit journal writes,
-    or ``None`` when the journal declares none or cannot be read.
+def _as_list(value):
+    """A config value that may be one path or a list of paths, as a list."""
+    if value is None:
+        return []
+    return [value] if isinstance(value, (str, os.PathLike)) else list(value)
 
-    The same statement :meth:`lume_ace3p.cubit.Cubit.get_export` finds, read
+
+def _journals_export(journals):
+    """The filename the **last** ``export`` statement across an ordered list of
+    Cubit journals writes, or ``None`` when none declares one or a journal
+    cannot be read. ``.py`` entries are skipped: a Python script is run as
+    given, never read.
+
+    The same statement :meth:`lume_ace3p.cubit.Cubit.get_export` finds (the
+    last ``export`` naming a quoted file, searching the files last first), read
     without constructing a :class:`Cubit` — which would create the workdir and
-    copy the journal into it, side effects a question about a *past* run must not
-    have. Used by :meth:`CubitModule.verify` to name the mesh a completed step
-    should have left behind."""
-    try:
-        with open(journal) as file:
-            lines = file.readlines()
-    except (OSError, TypeError):
-        return None
-    for line in reversed(lines):
-        words = line.split()
-        if words and words[0] == 'export':
-            for word in words:
-                if len(word) > 1 and word.startswith('"') and word.endswith('"'):
-                    return word.strip('"')
+    copy the journals into it, side effects a question about a *past* run must
+    not have. Names the mesh for :meth:`CubitModule.run` (resume and dry run),
+    :meth:`CubitModule.clean`, :meth:`CubitModule.verify` and the mesh
+    collision check."""
+    texts = []
+    for journal in _as_list(journals):
+        if str(journal).lower().endswith('.py'):
+            continue
+        try:
+            with open(journal) as file:
+                texts.append(file.readlines())
+        except (OSError, TypeError):
+            return None
+    for lines in reversed(texts):
+        for line in reversed(lines):
+            words = line.split()
+            if words and words[0] == 'export':
+                for word in words:
+                    if (len(word) > 1 and word.startswith('"')
+                            and word.endswith('"')):
+                        return word.strip('"')
     return None
 
 
+def _basename_clashes(paths):
+    """``(first, second, basename)`` for each path whose basename an earlier,
+    different path already has: both would land on one workdir file."""
+    seen, clashes = {}, []
+    for path in paths:
+        base = os.path.basename(str(path))
+        if base in seen and seen[base] != path:
+            clashes.append((seen[base], path, base))
+        seen.setdefault(base, path)
+    return clashes
+
+
 class CubitModule(Module):
-    """Provide a ``mesh`` from a Cubit ``journal``. Runs meshconvert unless
-    ``meshconvert: false``."""
+    """Provide a ``mesh`` from one Cubit session over ``journal`` — one journal
+    or an ordered list of journals and ``.py`` scripts, run in order — with the
+    geometry it imports staged from ``files:``. Runs meshconvert unless
+    ``meshconvert: false``.
+
+    ``files:`` are staged into the workdir by basename and never edited or run,
+    as on the solvers. The mesh is the last ``export`` across the journals
+    (:func:`_journals_export`)."""
 
     type = 'cubit'
     provides = frozenset({MESH})
@@ -792,31 +827,65 @@ class CubitModule(Module):
 
     def __init__(self, config=None, name=None):
         super().__init__(config, name)
+        # As configured (a path or a list); ``journals`` is always a list.
         self.journal = self.config.get('journal') or self.config.get('cubit_input')
+        self.journals = _as_list(self.journal)
+        self.files = _as_list(self.config.get('files'))
         self.meshconvert = self.config.get('meshconvert', True)
 
     def input_files(self):
-        return [self.journal]
+        # Unlike a solver's, a Cubit module's ``files:`` are hashed: they are
+        # the geometry the journals import, so editing a STEP file changes the
+        # mesh. A string ``journal:`` with no ``files:`` gives ``[journal]``,
+        # as before, so existing hashes do not move.
+        return self.journals + self.files
+
+    def _mesh_name(self):
+        """The mesh filename the journals export, or ``None``."""
+        return _journals_export(self.journals)
 
     def run(self, ctx, skip_execution=False):
-        if self.journal is None:
+        if not self.journals:
             raise ValueError("cubit module requires a 'journal'.")
         inputs = ctx.inputs.for_module(self.name)
         if ctx.dry_run:
             # Legacy dry-run skipped Cubit entirely; record a nominal mesh path
-            # (side-effect-free) so a downstream solver's requirement is met.
-            base = os.path.splitext(os.path.basename(self.journal))[0]
-            ctx.provide(self, MESH, os.path.join(ctx.workdir, base + '.genesis'))
+            # (side-effect-free) so a downstream solver's requirement is met:
+            # the journals' export when they name one, else
+            # ``<first journal stem>.genesis``.
+            mesh = self._mesh_name() or (
+                os.path.splitext(os.path.basename(str(self.journals[0])))[0]
+                + '.genesis')
+            ctx.provide(self, MESH, os.path.join(ctx.workdir, mesh))
             _append_marker(ctx, 'Dry run mode: Cubit step skipped.\n'
                                 f'Cubit journal: {self.journal}\n'
-                                f'Cubit inputs: {inputs.cubit}\n')
+                                + (f'Cubit files: {self.files}\n'
+                                   if self.files else '')
+                                + f'Cubit inputs: {inputs.cubit}\n')
             return
+        clashes = _basename_clashes(self.journals + self.files)
+        if clashes:
+            # Checked here, not only by the Cubit wrapper: a staged file and a
+            # journal of one basename would have the journal rewrite written
+            # through a symlinked or hardlinked stage onto the user's source.
+            first, second, base = clashes[0]
+            raise ValueError(
+                f"cubit module '{self.name}': '{first}' and '{second}' share "
+                f"the basename '{base}', so both would be written to the same "
+                "workdir file. Rename one of them.")
+        for path in self.files:
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"module 'cubit' lists '{path}' under 'files:' but there "
+                    "is no such file (paths resolve from the directory "
+                    "run-lume-ace3p was started in).")
+            _stage_file(ctx, path, fresh=_fresh(ctx, skip_execution))
         if skip_execution:
             # Resumed: the mesh this step exported is already in the workdir. Cubit
             # has no output *parser* to re-run — the mesh file is its whole output,
             # and the solver downstream reads it, not this module — so naming the
             # artifact is all a re-run would have contributed. The name comes from
-            # the journal's own export statement, the same place :meth:`verify`
+            # the journals' own export statement, the same place :meth:`verify`
             # reads it and the same value ``cubit.exportfile`` would give, so
             # neither the mesh built here nor the one resumed is found differently.
             ctx.provide(self, MESH, self._mesh_path(ctx))
@@ -849,15 +918,15 @@ class CubitModule(Module):
                                  else ctx.workdir))
 
     def clean(self, ctx):
-        """Remove the mesh the journal exports and, when this step converts,
+        """Remove the mesh the journals export and, when this step converts,
         the ``<stem>.ncdf`` ``acdtool meshconvert`` writes beside it.
 
-        Both names come from the journal's ``export`` statement — the same read
+        Both names come from the journals' last ``export`` statement — the same read
         :meth:`verify` makes — so a crashed Cubit cannot leave an earlier run's
-        mesh to be solved as this point's. A journal that names no export has
+        mesh to be solved as this point's. Journals that name no export have
         nothing to remove. The ``.ncdf`` is removed only under ``meshconvert``:
         with it off, a ``.ncdf`` of that stem is not this step's to delete."""
-        mesh = _journal_export(self.journal)
+        mesh = self._mesh_name()
         if not mesh:
             return
         _remove_output(ctx, mesh)
@@ -867,12 +936,12 @@ class CubitModule(Module):
     def _mesh_path(self, ctx):
         """The mesh this step exported, named without running Cubit.
 
-        The journal's last ``export`` statement (:func:`_journal_export`) is the
+        The journals' last ``export`` statement (:func:`_journals_export`) is the
         same source :meth:`lume_ace3p.cubit.Cubit.get_export` reads, so a resumed
         step and a fresh one record the same path. Falls back to the recorded
-        artifact, then to the workdir, exactly as :meth:`run` does when the journal
-        names no export."""
-        mesh = _journal_export(self.journal)
+        artifact, then to the workdir, exactly as :meth:`run` does when the
+        journals name no export."""
+        mesh = self._mesh_name()
         if mesh:
             return os.path.join(ctx.workdir or '', mesh)
         return ctx.artifacts.lookup(MESH, self.name, None) or ctx.workdir
@@ -880,18 +949,18 @@ class CubitModule(Module):
     def verify(self, ctx):
         """Whether the mesh file is still in the workdir.
 
-        The mesh is named by the journal's ``export`` statement — read from the
-        journal (:func:`_journal_export`) rather than from ``ctx.artifacts``, so
+        The mesh is named by the journals' last ``export`` statement — read from the
+        journals (:func:`_journals_export`) rather than from ``ctx.artifacts``, so
         the question can be asked *before* the step is re-run, which is when a
         resume needs the answer. Falls back to the recorded artifact when the
-        journal names nothing.
+        journals name nothing.
 
         ``None`` under dry-run: that path deliberately skips Cubit and records a
         nominal mesh path nothing wrote, so its absence is not evidence of
         anything."""
         if ctx.dry_run:
             return None
-        mesh = _journal_export(self.journal)
+        mesh = self._mesh_name()
         path = (os.path.join(ctx.workdir or '', mesh) if mesh
                 else ctx.artifacts.lookup(MESH, self.name, None))
         if not path:

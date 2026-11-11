@@ -60,7 +60,7 @@ import numpy as np
 from lume_ace3p.modules import (
     CubitModule, FieldEmissionModule, Geant4Module, RunContext,
     TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
-    Track3PModule, _SolverModule, _journal_export,
+    Track3PModule, _SolverModule,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.derived import DerivedSpec
@@ -446,7 +446,8 @@ def _validate_disk_collisions(modules):
     * Two ACE3P solvers of one type must resolve distinct results directories:
       ``results_dir:`` on one of them.
     * Two ``cubit`` modules must export distinct mesh names — read from each
-      journal's last ``export`` statement; an unreadable journal is skipped.
+      module's journals' last ``export`` statement; unreadable journals are
+      skipped.
 
     A shared input *file* is not a collision: each instance writes its merged
     copy under its own name (:meth:`_SolverModule._input_name`)."""
@@ -469,14 +470,14 @@ def _validate_disk_collisions(modules):
     for m in modules:
         if not isinstance(m, CubitModule):
             continue
-        mesh = _journal_export(m.journal)
+        mesh = m._mesh_name()
         if mesh is None:
             continue
         if mesh in meshes:
             raise WorkflowValidationError(
                 f"cubit modules '{meshes[mesh]}' and '{m.name}' both export "
                 f"'{mesh}', so the second would overwrite the first's mesh. "
-                "Give one journal a different export filename.")
+                "Give one of them a different export filename.")
         meshes[mesh] = m.name
 
 

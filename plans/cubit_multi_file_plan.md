@@ -1,7 +1,7 @@
 # Cubit Multi-File Journals — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-11-10 on S3DF against `dev` at `1ef749f`
-(0.9.2). Phases 1 and 2 done 2026-11-10.
+(0.9.2). Phases 1 and 2 done 2026-11-10, Phase 3 2026-11-11.
 
 Users split their Cubit work across several files: one declares the APREPRO
 variables, one imports STEP/STL/SAT geometry, one meshes and exports. A
@@ -192,6 +192,15 @@ returns `files:` (decision 5), so editing a STEP file re-runs the step.
 3. **`CubitModule` config** (3.1, 3.4, 3.6): `journal:` list, `files:`
    staging, `input_files`/`required_files`, all `_journal_export` callers,
    hash-pinning test for a string `journal:`.
+   **DONE:** `CubitModule.journals`/`files` (`journal:` and `files:` take a
+   string or a list); `files:` staged before Cubit runs (missing file →
+   `FileNotFoundError`, and `required_files` lists them); `input_files` =
+   journals + files; `_journals_export` replaces `_journal_export` for every
+   caller, dry-run included (export name, else `<first stem>.genesis`). A
+   journal and a `files:` entry with the same basename raise `ValueError` at
+   run time. Without that check, a symlinked or hardlinked stage would let the
+   journal rewrite overwrite the user's source file. Phase 4 moves the check
+   to validation. Tests: `tests/test_cubit_module.py` (the 0.9.2 hash is pinned).
 4. **Validation** (3.5): collision and undeclared-variable checks. Survey
    `examples/` and `tests/` configs for stray `cubit:` names first. If any
    real example trips it, stop and ask before choosing warning vs error.
