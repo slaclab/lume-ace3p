@@ -9,6 +9,13 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-11
+
+A `cubit` module can run several journals and Python scripts in one Cubit
+session and stage the geometry they import. A `cubit:` input that no
+journal declares is now an error, so a config that set one by mistake
+stops before the first point.
+
 ### Added
 
 - A `cubit` module's `journal:` takes an ordered list of journals and `.py`
