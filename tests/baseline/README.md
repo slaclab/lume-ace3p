@@ -103,6 +103,7 @@ baseline did **not** move.
 | `t3p_sweep` | t3p sweep, dry-run | swept grid (cell_radius × iris_radius) and the `s` wake-coordinate column, which pins that a T3P table goes long-format the way an S3P one goes over `Frequency` | `loss_factor`, `W` |
 | `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision. The derived `P_balance` column pins that a derived array rides the `t` axis | `P_in`, `P_out`, `P_wall`, `P_balance` |
 | `omega3p_p_refinement` | cubit + two named omega3p, dry-run | swept `cav_radius`, and in the marker the scoped `FiniteElement.Order` each instance received (1, then 2); structurally that two instances on one input file validate and that `module:` routes by name | `f_*`, `Q_*`, `f_shift_ppm` |
+| `omega3p_sweep_multi_journal` | cubit (three journals + a staged `.sat`) + omega3p + acdtool sweep, dry-run | the same swept grid as `omega3p_sweep`; structurally that a `journal:` list with `files:` validates, undeclared-variable check included | R/Q, Mode_freq, E_max, loc_* (NaN without acdtool) |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 

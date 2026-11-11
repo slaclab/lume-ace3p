@@ -1,0 +1,6 @@
+## Writes beampipe.sat. Not part of the workflow: run it once, by hand, to
+## regenerate the file (cubit -batch -nographics make_beampipe.jou).
+reset
+create Cylinder height 300 radius 35
+export acis "beampipe.sat" overwrite
+quit

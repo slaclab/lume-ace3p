@@ -1,0 +1,11 @@
+## Cavity dimensions (mm). lume-ace3p edits cav_radius and ellipticity here.
+## The beam pipe (300 mm long, 35 mm radius) is fixed in beampipe.sat.
+reset
+
+#{cav_length = 90}
+#{cav_radius = 100}
+#{ellipticity = 0.5}
+#{iris_rounding = 12}
+
+## Not the last file, so lume-ace3p comments this quit out of the copy it runs.
+quit

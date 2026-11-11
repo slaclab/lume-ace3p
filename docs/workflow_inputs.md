@@ -33,7 +33,9 @@ input parameters.
 
 :::{important}
 The variable names in the Cubit journal must **exactly** match those used in the
-`cubit:` sub-block of `input_parameters` in the `lume-ace3p` YAML.
+`cubit:` sub-block of `input_parameters` in the `lume-ace3p` YAML. A name that
+no journal declares is an error before the first point. Declare one variable
+per line: a line such as `#{a = 1, b = 2}` is not read.
 :::
 
 Since ACE3P can use acdtool to convert Genesis (`.gen`) meshes into NetCDF
@@ -51,6 +53,35 @@ not a separate workflow entry. Set `meshconvert: false` on the `cubit` module
 entry to skip conversion, e.g. when the journal already exports a `.ncdf` mesh.
 To skip Cubit meshing entirely, drop the `cubit` module and provide the mesh
 with a `mesh` source module instead; see [](yaml_reference.md).
+
+### Several files in one session
+
+`journal:` also takes an ordered list. The files run in that order in one Cubit
+session, so APREPRO variables declared in one file are visible in the next.
+`files:` lists geometry the journals import. Those files are staged into the
+workdir and never edited:
+
+```yaml
+- module : cubit
+  journal : ['cavity_vars.jou', 'cavity_geometry.jou', 'cavity_mesh.jou']
+  files : 'beampipe.step'
+```
+
+- Each `cubit:` input is written into the first journal that declares it. A
+  name declared in several journals gives a warning.
+- The mesh is the last `export` across the list.
+- `quit` and `exit` are commented out of every journal except the last file,
+  because a `quit` partway through would end the session without a mesh.
+- `.py` files run as Python scripts, as given. They are never searched for
+  variables or an `export`.
+- Relative paths in `import` commands resolve in the workdir, where `files:`
+  are staged.
+- Every listed journal and file is hashed, so editing any of them re-runs the
+  step on a resume.
+- Two listed files may not share a basename.
+
+`examples/omega3p_sweep_multi_journal` splits the `omega3p_sweep` journal this
+way.
 
 For more on Cubit journal files, see the official
 [Cubit documentation](https://cubit.sandia.gov/documentation/).

@@ -1,0 +1,39 @@
+3100 0 1 0           
+13 Cubit 16.12.0 17 ACIS 31.0 Unknown 24 Wed Nov 11 12:57:55 2026 
+1 9.9999999999999995e-07 1e-10 
+T @77 9J7MD732D2KKCCCAG5H_D2Q2U6UK4HN8NASYE654B8DVM8P3FA3VKC56YD6ME47UPCRBGPPWPB6VF 
+body $1 -1 -1 $-1 0 $2 $-1 $-1 F #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $0 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 1 #
+lump $3 -1 -1 $-1 $-1 $4 $0 F #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $2 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 1 #
+shell $-1 -1 -1 $-1 $-1 $-1 $5 $-1 $2 F #
+face $6 -1 -1 $-1 $7 $8 $4 $-1 $9 forward single F F #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $5 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 1 #
+face $10 -1 -1 $-1 $11 $12 $4 $-1 $13 forward single F F #
+loop $-1 -1 -1 $-1 $14 $15 $5 T -35 -35 -150 35 35 -150 unknown #
+cone-surface $-1 -1 -1 $-1 0 0 0 0 0 1 35 0 0 1 I I 0 1 35 forward I I I I #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $7 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 2 #
+face $16 -1 -1 $-1 $-1 $17 $4 $-1 $18 forward single F F #
+loop $-1 -1 -1 $-1 $-1 $19 $7 T -35 -35 -150 35 35 -150 unknown #
+plane-surface $-1 -1 -1 $-1 0 0 -150 0 0 -1 -1 0 0 forward_v I I I I #
+loop $-1 -1 -1 $-1 $-1 $20 $5 T -35 -35 150 35 35 150 unknown #
+coedge $-1 -1 -1 $-1 $15 $15 $19 $21 reversed $8 $-1 #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $11 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 3 #
+loop $-1 -1 -1 $-1 $-1 $22 $11 T -35 -35 150 35 35 150 unknown #
+plane-surface $-1 -1 -1 $-1 0 0 150 0 0 1 1 0 0 forward_v I I I I #
+coedge $-1 -1 -1 $-1 $19 $19 $15 $21 forward $12 $-1 #
+coedge $-1 -1 -1 $-1 $20 $20 $22 $23 reversed $14 $-1 #
+edge $24 -1 -1 $-1 $25 0 $25 6.2831853071795862 $19 $26 forward @7 unknown T -35 -35 -150 35 35 -150 #
+coedge $-1 -1 -1 $-1 $22 $22 $20 $23 forward $17 $-1 #
+edge $27 -1 -1 $-1 $28 0 $28 6.2831853071795862 $22 $29 forward @7 unknown T -35 -35 150 35 35 150 #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $21 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 1 #
+vertex $30 -1 -1 $-1 $21 $31 #
+ellipse-curve $-1 -1 -1 $-1 0 0 -150 0 0 -1 35 0 0 1 I I #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $23 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 2 #
+vertex $32 -1 -1 $-1 $23 $33 #
+ellipse-curve $-1 -1 -1 $-1 0 0 150 0 0 1 35 0 0 1 I I #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $25 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 1 #
+point $-1 -1 -1 $-1 35 0 -150 #
+integer_attrib-name_attrib-gen-attrib $-1 -1 $-1 $-1 $28 2 1 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 @8 CUBIT_ID 2 #
+point $-1 -1 -1 $-1 35 0 150 #
+End-of-ACIS-data 

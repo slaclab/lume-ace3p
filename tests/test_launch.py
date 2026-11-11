@@ -120,7 +120,7 @@ def test_serial_serial_acdtool_line(src, commands):
 def test_serial_cubit_and_meshconvert_lines(src, commands):
     _cubit(src, mpi_caller='srun').run()
     assert commands == [
-        '/cubit/cubit -nographics -nojournal -noecho cavity.jou',
+        '/cubit/cubit -batch -nographics -nojournal -noecho cavity.jou',
         'srun --nodes=1 --ntasks=1 /ace3p/acdtool meshconvert cavity.gen',
     ]
 
@@ -163,7 +163,7 @@ def test_sliced_cubit_runs_under_the_mpi_caller(src, commands):
     _cubit(src, mpi_caller='srun', slice=SLICE).run()
     assert commands == [
         'srun -N 1 -n 1 -c 30 --exact --mem-per-cpu=4096 '
-        '/cubit/cubit -nographics -nojournal -noecho cavity.jou',
+        '/cubit/cubit -batch -nographics -nojournal -noecho cavity.jou',
         'srun -N 1 -n 1 -c 30 --exact --mem-per-cpu=4096 '
         '/ace3p/acdtool meshconvert cavity.gen',
     ]

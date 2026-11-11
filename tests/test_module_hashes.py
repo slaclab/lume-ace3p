@@ -216,7 +216,8 @@ def _hashes(entries, **buckets):
 def test_a_bucket_change_moves_only_the_modules_that_read_it(tmp_path,
                                                             monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / 'cavity.jou').write_text('export genesis "c.gen"\n')
+    (tmp_path / 'cavity.jou').write_text(
+        '#{r = 1.0}\nexport genesis "c.gen"\n')
     sample = os.path.join(os.path.dirname(__file__), '..', 'examples', 'assets',
                           'sample_track3p_particles.txt')
     entries = [{'module': 'cubit', 'journal': 'cavity.jou'},

@@ -1,0 +1,17 @@
+## The cavity cell, united with the beam pipe imported from beampipe.sat
+## (staged into the workdir by 'files:'). The curve IDs below assume the
+## topology of an ACIS import, so the pipe is a .sat file rather than STEP.
+create Cylinder height {cav_length} radius {cav_radius}
+import acis "beampipe.sat"
+unite volume all
+compress ids
+
+webcut volume 1 with plane xplane offset 0 noimprint nomerge
+webcut volume 1 with plane yplane offset 0 noimprint nomerge
+delete volume 1 2
+compress ids
+
+volume 1 scale X {1.0/ellipticity} Y {1.0/ellipticity} Z 1.0
+modify curve 14 16 blend radius {0.5*cav_length}
+volume 1 scale X {ellipticity} Y {ellipticity} Z 1.0
+modify curve 15 17 blend radius {iris_rounding}

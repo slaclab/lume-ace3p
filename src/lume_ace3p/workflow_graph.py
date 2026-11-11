@@ -60,7 +60,7 @@ import numpy as np
 from lume_ace3p.modules import (
     CubitModule, FieldEmissionModule, Geant4Module, RunContext,
     TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
-    Track3PModule, _SolverModule, _journal_export,
+    Track3PModule, _SolverModule, _basename_clashes, _clash_message,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.derived import DerivedSpec
@@ -446,7 +446,12 @@ def _validate_disk_collisions(modules):
     * Two ACE3P solvers of one type must resolve distinct results directories:
       ``results_dir:`` on one of them.
     * Two ``cubit`` modules must export distinct mesh names — read from each
-      journal's last ``export`` statement; an unreadable journal is skipped.
+      module's journals' last ``export`` statement; unreadable journals are
+      skipped.
+    * Every journal and ``files:`` entry of a ``cubit`` module is written into
+      the workdir by basename, so one module may not list a basename twice, and
+      two modules may share one only for the same source file in the same role
+      (a journal is rewritten, a staged file must not be).
 
     A shared input *file* is not a collision: each instance writes its merged
     copy under its own name (:meth:`_SolverModule._input_name`)."""
@@ -469,15 +474,101 @@ def _validate_disk_collisions(modules):
     for m in modules:
         if not isinstance(m, CubitModule):
             continue
-        mesh = _journal_export(m.journal)
+        mesh = m._mesh_name()
         if mesh is None:
             continue
         if mesh in meshes:
             raise WorkflowValidationError(
                 f"cubit modules '{meshes[mesh]}' and '{m.name}' both export "
                 f"'{mesh}', so the second would overwrite the first's mesh. "
-                "Give one journal a different export filename.")
+                "Give one of them a different export filename.")
         meshes[mesh] = m.name
+
+    staged = {}
+    for m in modules:
+        if not isinstance(m, CubitModule):
+            continue
+        clashes = _basename_clashes(m.journals + m.files)
+        if clashes:
+            raise WorkflowValidationError(_clash_message(m.name, *clashes[0]))
+        for role, paths in (('journal', m.journals), ('files', m.files)):
+            for path in paths:
+                base = os.path.basename(str(path))
+                entry = (m.name, path, role, os.path.abspath(str(path)))
+                other = staged.setdefault(base, entry)
+                if other[2:] == entry[2:]:
+                    continue
+                raise WorkflowValidationError(
+                    f"cubit modules '{other[0]}' and '{m.name}' both write "
+                    f"'{base}' into the workdir: '{other[1]}' (under "
+                    f"'{other[2]}:') and '{path}' (under '{role}:'). "
+                    + ("Rename one of them." if other[3] != entry[3] else
+                       "A file is either a journal, which is rewritten, or "
+                       "staged as-is under 'files:', not both."))
+
+
+def _validate_cubit_inputs(modules, inputs):
+    """Every ``input_parameters: cubit:`` name must be declared in a journal
+    (plans/cubit_multi_file_plan.md §3.5), since one that is not would be
+    silently ignored.
+
+    * A scoped name (``cubit: {<module>: {name: …}}``) must be declared in that
+      module's journals.
+    * A shared name must be declared in some ``cubit`` module's journals, or be
+      a β a ``field_emission`` module reads back from the ``cubit`` bucket.
+
+    A module with a journal that cannot be read is skipped (a shared name then
+    goes unchecked): the missing file is reported before the first point."""
+    cubits = [m for m in modules if isinstance(m, CubitModule)]
+    by_name = {m.name: m for m in cubits}
+    for scope, buckets in inputs.scoped.items():
+        module = by_name.get(scope)
+        if module is None or not buckets['cubit']:
+            continue
+        names = list(buckets['cubit'])
+        declared = module.declared_names(names)
+        if declared is None:
+            continue
+        missing = [n for n in names if n not in declared]
+        if missing:
+            raise WorkflowValidationError(
+                _undeclared_message(missing, f"cubit: {scope}:", [module]))
+
+    beta = set()
+    for m in modules:
+        if isinstance(m, FieldEmissionModule):
+            if m.params.get('beta_input') is not None:
+                beta.add(m.params['beta_input'])
+            beta.update(m.params.get('beta_inputs') or ())
+    names = [n for n in inputs.cubit if n not in beta]
+    if not names:
+        return
+    declared = set()
+    for m in cubits:
+        found = m.declared_names(names)
+        if found is None:
+            return
+        declared |= found
+    missing = [n for n in names if n not in declared]
+    if missing:
+        raise WorkflowValidationError(
+            _undeclared_message(missing, 'cubit:', cubits))
+
+
+def _undeclared_message(missing, block, cubits):
+    names = ', '.join(repr(n) for n in missing)
+    if not cubits:
+        return (f"'input_parameters: {block}' sets {names}, but the workflow "
+                "has no cubit module to read it. Remove it (a field-emission "
+                "β belongs under 'particles:').")
+    searched = ', '.join(str(j) for m in cubits for j in m.journals
+                         if not str(j).lower().endswith('.py'))
+    return (f"'input_parameters: {block}' sets {names}, but no journal "
+            f"declares it (searched {searched}), so the value would never "
+            "reach Cubit. A journal declares one variable per line, as "
+            "'#{name = value}' or 'name = value'; a line declaring several "
+            "('#{a = 1, b = 2}') is not read, and Python files are not "
+            "searched.")
 
 
 def _resolve_order(modules):
@@ -594,6 +685,7 @@ class Workflow:
         self.modules = self._build_modules()
         self.module_types = {m.type for m in self.modules}
         _validate_scopes(self.modules, self.inputs)
+        _validate_cubit_inputs(self.modules, self.inputs)
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
         if self.workdir_mode not in WORKDIR_MODES:

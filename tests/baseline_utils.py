@@ -422,6 +422,11 @@ _MULTI_INSTANCE = (
     'Phase 4 of plans/multi_instance_workflow_plan.md (2026-10-12). First '
     'freeze -- a new example, so nothing was regenerated.')
 
+# Provenance for the multi-journal Cubit example.
+_CUBIT_MULTI_FILE = (
+    'Phase 5 of plans/cubit_multi_file_plan.md (2026-11-11). First freeze -- '
+    'a new example, so nothing was regenerated.')
+
 # Provenance for the Geant4 beta sweep after the Fowler-Nordheim reconciliation.
 _GEANT4_TRACK3P_BETA = (
     _PHASE_05 + ' Re-frozen 2026-10-01 for Phase 2 of '
@@ -609,6 +614,23 @@ EXAMPLES = {
                       'this pins that two named omega3p instances on one input '
                       'file validate, that output module: routes by instance '
                       'name, and that the dry-run table stays wide.'),
+    },
+    # ---- added by Phase 5 of the Cubit multi-file plan ------------------- #
+    'omega3p_sweep_multi_journal': {
+        'kind': 'sweep',
+        'yaml': 'omega3p_sweep_multi_journal.yaml',
+        'files': {
+            'omega3p_multi_journal_output.txt': (
+                'omega3p_multi_journal_output.txt', 'table'),
+        },
+        'digests': {},
+        'frozen': _CUBIT_MULTI_FILE,
+        'checkable': ('NUMERIC: the swept cubit grid (cav_radius x '
+                      'ellipticity), the same as omega3p_sweep. Outputs are '
+                      'NaN without a solver -> reachability-only. Structurally '
+                      'this pins that a journal list plus files: validates, '
+                      'including the check that every cubit: input is declared '
+                      'in one of the journals.'),
     },
     # ---- added by Phase 6 of the acdtool rework -------------------------- #
     'omega3p_dispersion_sweep': {

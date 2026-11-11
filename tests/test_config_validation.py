@@ -385,7 +385,7 @@ xopt_parameters :
 
 
 def _cli(tmp_path, monkeypatch, xopt_block):
-    (tmp_path / 'x.jou').write_text('## nothing\n')
+    (tmp_path / 'x.jou').write_text('#{x = 0.5}\n')
     (tmp_path / 'c.yaml').write_text(_BAD_CONFIG.format(xopt_block))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr('sys.argv', ['run-lume-ace3p', 'c.yaml'])
@@ -419,7 +419,7 @@ def test_a_bug_is_not_flattened_into_a_one_line_error(tmp_path, monkeypatch):
     """The handler is for *configuration* errors. A solver crash, a parse failure or a
     bug must still produce a traceback — flattening those would trade the diagnosis
     for tidiness."""
-    (tmp_path / 'x.jou').write_text('## nothing\n')
+    (tmp_path / 'x.jou').write_text('#{x = 0.5}\n')
     (tmp_path / 'c.yaml').write_text(_BAD_CONFIG.format(
         "    'generator' : 'NelderMeadGenerator'\n    'num_step' : 2"))
     monkeypatch.chdir(tmp_path)

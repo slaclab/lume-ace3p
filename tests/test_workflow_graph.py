@@ -1204,7 +1204,8 @@ def _scoped_sweep(tmp_path, monkeypatch, text=_SCOPED_SWEEP_YAML):
     from lume_ace3p.inputs import load_yaml
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'cav.jou').write_text(
+        '#{radius = 1.0}\nexport genesis "cav.gen"\n')
     (tmp_path / 'cav.omega3p').write_text(
         'ModelInfo: {\n  File: cav.ncdf\n}\n'
         'FiniteElement: {\n  Order: 1\n}\n')
@@ -1272,7 +1273,8 @@ def test_a_scoped_cubit_value_names_the_auto_workdir_and_the_point(
     from lume_ace3p.inputs import load_yaml
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / 'cav.jou').write_text('export genesis "cav.gen"\n')
+    (tmp_path / 'cav.jou').write_text(
+        '#{radius = 1.0}\n#{mesh_size = 0.1}\nexport genesis "cav.gen"\n')
     (tmp_path / 'c.yaml').write_text("""\
 workflow_parameters :
   workdir : wd

@@ -1,0 +1,13 @@
+{
+  "checkable": "NUMERIC: the swept cubit grid (cav_radius x ellipticity), the same as omega3p_sweep. Outputs are NaN without a solver -> reachability-only. Structurally this pins that a journal list plus files: validates, including the check that every cubit: input is declared in one of the journals.",
+  "digests": {},
+  "files": {
+    "omega3p_multi_journal_output.txt": {
+      "compare": "table",
+      "pattern": "omega3p_multi_journal_output.txt"
+    }
+  },
+  "frozen": "Phase 5 of plans/cubit_multi_file_plan.md (2026-11-11). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "sweep",
+  "yaml": "omega3p_sweep_multi_journal.yaml"
+}

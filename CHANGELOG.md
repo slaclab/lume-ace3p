@@ -9,6 +9,41 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-11
+
+A `cubit` module can run several journals and Python scripts in one Cubit
+session and stage the geometry they import. A `cubit:` input that no
+journal declares is now an error, so a config that set one by mistake
+stops before the first point.
+
+### Added
+
+- A `cubit` module's `journal:` takes an ordered list of journals and `.py`
+  scripts, run in one Cubit session (`cubit -batch`), so APREPRO variables
+  carry from file to file. Each `cubit:` input is written into the first
+  journal that declares it, the mesh is the last `export` across the list,
+  and `quit`/`exit` is commented out of every journal but the last file.
+- `files:` on a `cubit` module stages the geometry its journals import (STEP,
+  SAT, STL, …) into the workdir. These files are hashed, so editing one
+  re-runs the step on a resume.
+- Example `omega3p_sweep_multi_journal`: the `omega3p_sweep` grid with the
+  journal split into variables, geometry and mesh files, and the beam pipe
+  imported from a `.sat` file.
+
+### Changed
+
+- A `cubit:` input that no journal declares is now an error before the first
+  point. It used to be ignored without a message. A field-emission β still
+  under `cubit:` is exempt.
+- A Cubit variable is matched as a whole name: `radius` no longer matches
+  `cav_radius = …`, and commented-out lines (`# r = 1`, `##{r = 1}`) are
+  skipped.
+- Cubit runs with `-batch`, so a journal without a final `quit` no longer
+  waits for input.
+- Two files of one `cubit` module with the same basename are refused, and so
+  is a basename shared by two `cubit` modules unless it is the same file in
+  the same role.
+
 ## [0.9.2] — 2026-11-03
 
 A patch release: a `workers` count the allocation cannot hold no longer

@@ -21,7 +21,7 @@ that artifact then names the one it reads with `from:` (see
 
 | Module type       | Provides            | Requires           | Key config keys |
 |-------------------|---------------------|--------------------|-----------------|
-| `cubit`           | mesh                | —                  | `journal:` (Cubit `.jou`); `meshconvert:` (bool, default `True`). |
+| `cubit`           | mesh                | —                  | `journal:` (a Cubit `.jou`, or an ordered list of `.jou` and `.py` files run in one session); `files:` (geometry the journals import, staged into the workdir); `meshconvert:` (bool, default `True`). See [](workflow_inputs.md#several-files-in-one-session). |
 | `mesh`            | mesh                | —                  | `file:`, a prebuilt mesh file. |
 | `omega3p`         | em_solution         | mesh               | `input:` (`.omega3p`); `tasks:`, `cores:`, `opts:` (MPI settings); `results_dir:`. Eigensolver; see [](#omega3p-module). |
 | `s3p`             | em_solution         | mesh               | `input:` (`.s3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. S-parameter (frequency-scan) solver; see [](#s3p-module). |
@@ -104,6 +104,9 @@ output_parameters :
   copy to the workdir as `<stem>_<name><ext>` (`pillbox-rtop_fine.omega3p`), so
   each can carry its own [scoped overrides](#module-scoped-inputs).
 - **Meshes.** Two `cubit` modules must export different mesh filenames.
+- **Cubit files.** A `cubit` module's journals and `files:` land in the
+  workdir by basename, so one module may not list a basename twice, and two
+  modules may share one only for the same file in the same role.
 
 `examples/omega3p_p_refinement` runs two `omega3p` instances on one mesh and one
 input file, at element orders 1 and 2.
@@ -1101,6 +1104,7 @@ field-enhancement variables read by the `field_emission` module's `beta_input` /
 
 :::{important}
 `cubit:` keys must exactly match the variable names in the Cubit journal file.
+A key that no journal declares is an error before the first point.
 :::
 
 (module-scoped-inputs)=
