@@ -147,3 +147,110 @@ def test_two_modules_exporting_one_mesh_across_lists_collide(src):
     b = CubitModule({'journal': 'mesh.jou'}, name='b')
     with pytest.raises(WorkflowValidationError, match="'cavity.gen'"):
         _validate_disk_collisions([a, b])
+
+
+# ---- Phase 4: validation at build time ---------------------------------- #
+
+from lume_ace3p.workflow_graph import Workflow  # noqa: E402
+
+
+def _workflow(cubit_inputs, *entries):
+    entries = entries or ({'module': 'cubit', 'journal': _LIST,
+                           'files': ['cavity.step']},)
+    return Workflow.from_config({
+        'workflow': list(entries),
+        'input_parameters': {'cubit': cubit_inputs},
+        'workflow_parameters': {'dry_run': True}})
+
+
+def test_a_variable_declared_in_any_journal_of_the_list_passes(src):
+    _workflow({'r': [1.0, 2.0], 'h': 3.0})
+
+
+def test_an_undeclared_variable_is_refused(src):
+    with pytest.raises(WorkflowValidationError) as err:
+        _workflow({'r': 1.0, 'radius': 2.0})
+    message = str(err.value)
+    assert "'radius'" in message and "'r'" not in message
+    assert 'searched vars.jou, geom.jou, mesh.jou' in message
+
+
+def test_a_multi_assignment_line_reads_as_undeclared(src):
+    (src / 'vars.jou').write_text('#{r = 1.0, w = 2.0}\n')
+    with pytest.raises(WorkflowValidationError, match='one variable per line'):
+        _workflow({'w': 1.0})
+
+
+def test_a_commented_declaration_does_not_count(src):
+    (src / 'vars.jou').write_text('##{w = 1.0}\n# w = 2.0\n#{r = 1.0}\n')
+    with pytest.raises(WorkflowValidationError, match="'w'"):
+        _workflow({'w': 1.0})
+
+
+def test_a_shared_variable_needs_only_one_cubit_module(src):
+    (src / 'other.jou').write_text('#{w = 1}\nexport genesis "o.gen"\n')
+    _workflow({'r': 1.0, 'w': 2.0},
+              {'module': 'cubit', 'name': 'a', 'journal': _LIST},
+              {'module': 'cubit', 'name': 'b', 'journal': 'other.jou'})
+
+
+def test_a_scoped_variable_must_be_in_its_own_module(src):
+    (src / 'other.jou').write_text('#{w = 1}\nexport genesis "o.gen"\n')
+    entries = ({'module': 'cubit', 'name': 'a', 'journal': _LIST},
+               {'module': 'cubit', 'name': 'b', 'journal': 'other.jou'})
+    _workflow({'b': {'w': 2.0}}, *entries)
+    with pytest.raises(WorkflowValidationError, match="cubit: a:.*'w'"):
+        _workflow({'a': {'w': 2.0}}, *entries)
+
+
+def test_a_cubit_input_with_no_cubit_module_is_refused(src):
+    with pytest.raises(WorkflowValidationError, match='no cubit module'):
+        _workflow({'r': 1.0}, {'module': 'mesh', 'file': 'cavity.step'})
+
+
+def test_a_legacy_beta_under_cubit_is_allowed(src):
+    (src / 'dump.txt').write_text('x InitialNormalField InitialFaceArea\n')
+    _workflow({'b1': 50.0},
+              {'module': 'track3p_source', 'file': 'dump.txt'},
+              {'module': 'field_emission', 'beta_input': 'b1', 'num_bins': 1})
+
+
+def test_an_unreadable_journal_skips_the_check(src):
+    _workflow({'anything': 1.0}, {'module': 'cubit', 'journal': 'gone.jou'})
+
+
+@pytest.mark.parametrize('files', [['sub/geom.jou'], ['cavity.step',
+                                                      'cavity.step']])
+def test_a_basename_clash_within_a_module_is_refused_at_build(src, files):
+    (src / 'sub').mkdir()
+    (src / 'sub' / 'geom.jou').write_text('reset\n')
+    with pytest.raises(WorkflowValidationError, match='basename|twice'):
+        _workflow({}, {'module': 'cubit', 'journal': _LIST, 'files': files})
+
+
+def test_modules_may_share_a_source_file_in_one_role(src):
+    (src / 'other.jou').write_text('export genesis "o.gen"\n')
+    _workflow({}, {'module': 'cubit', 'name': 'a', 'journal': _LIST,
+                   'files': 'cavity.step'},
+              {'module': 'cubit', 'name': 'b',
+               'journal': ['vars.jou', 'other.jou'], 'files': 'cavity.step'})
+
+
+def test_modules_writing_different_sources_to_one_name_collide(src):
+    (src / 'sub').mkdir()
+    (src / 'sub' / 'cavity.step').write_text('other\n')
+    (src / 'other.jou').write_text('export genesis "o.gen"\n')
+    with pytest.raises(WorkflowValidationError,
+                       match="'a' and 'b' both write 'cavity.step'.*Rename"):
+        _workflow({}, {'module': 'cubit', 'name': 'a', 'journal': _LIST,
+                       'files': 'cavity.step'},
+                  {'module': 'cubit', 'name': 'b', 'journal': 'other.jou',
+                   'files': 'sub/cavity.step'})
+
+
+def test_a_journal_of_one_module_staged_by_another_collides(src):
+    (src / 'other.jou').write_text('export genesis "o.gen"\n')
+    with pytest.raises(WorkflowValidationError, match='not both'):
+        _workflow({}, {'module': 'cubit', 'name': 'a', 'journal': _LIST},
+                  {'module': 'cubit', 'name': 'b', 'journal': 'other.jou',
+                   'files': 'vars.jou'})

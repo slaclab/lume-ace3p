@@ -37,7 +37,7 @@ import warnings
 
 import numpy as np
 
-from lume_ace3p.cubit import Cubit
+from lume_ace3p.cubit import Cubit, _Journal
 # ALWAYS / MONITORS are the T3P monitor table; ace3p's own GRID shape constant is
 # deliberately NOT imported, since acdtool exports one of the same name and value
 # — T3PModule tests for a monitor's missing index axis instead.
@@ -795,15 +795,25 @@ def _journals_export(journals):
 
 
 def _basename_clashes(paths):
-    """``(first, second, basename)`` for each path whose basename an earlier,
-    different path already has: both would land on one workdir file."""
+    """``(first, second, basename)`` for each path whose basename an earlier
+    path already has: both would land on one workdir file. A path listed twice
+    counts too, as the :class:`~lume_ace3p.cubit.Cubit` wrapper refuses it."""
     seen, clashes = {}, []
     for path in paths:
         base = os.path.basename(str(path))
-        if base in seen and seen[base] != path:
+        if base in seen:
             clashes.append((seen[base], path, base))
         seen.setdefault(base, path)
     return clashes
+
+
+def _clash_message(module, first, second, base):
+    if first == second:
+        return (f"cubit module '{module}' lists '{first}' twice across "
+                "'journal:' and 'files:'; list it once.")
+    return (f"cubit module '{module}': '{first}' and '{second}' share the "
+            f"basename '{base}', so both would be written to the same workdir "
+            "file. Rename one of them.")
 
 
 class CubitModule(Module):
@@ -844,6 +854,19 @@ class CubitModule(Module):
         """The mesh filename the journals export, or ``None``."""
         return _journals_export(self.journals)
 
+    def declared_names(self, names):
+        """The subset of Cubit variable ``names`` that some journal of this
+        module declares (:meth:`lume_ace3p.cubit._Journal.find_declaration`),
+        or ``None`` when a journal cannot be read: run time reports that.
+        Python files are not searched."""
+        try:
+            journals = [_Journal(path) for path in self.journals]
+        except (OSError, TypeError, ValueError):
+            return None
+        return {name for name in names
+                if any(j.find_declaration(str(name)) is not None
+                       for j in journals)}
+
     def run(self, ctx, skip_execution=False):
         if not self.journals:
             raise ValueError("cubit module requires a 'journal'.")
@@ -865,14 +888,11 @@ class CubitModule(Module):
             return
         clashes = _basename_clashes(self.journals + self.files)
         if clashes:
-            # Checked here, not only by the Cubit wrapper: a staged file and a
-            # journal of one basename would have the journal rewrite written
+            # A Workflow refuses this at build time (_validate_disk_collisions);
+            # checked again for a module run on its own, since a staged file and
+            # a journal of one basename would have the journal rewrite written
             # through a symlinked or hardlinked stage onto the user's source.
-            first, second, base = clashes[0]
-            raise ValueError(
-                f"cubit module '{self.name}': '{first}' and '{second}' share "
-                f"the basename '{base}', so both would be written to the same "
-                "workdir file. Rename one of them.")
+            raise ValueError(_clash_message(self.name, *clashes[0]))
         for path in self.files:
             if not os.path.isfile(path):
                 raise FileNotFoundError(

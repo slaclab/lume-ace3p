@@ -1,7 +1,7 @@
 # Cubit Multi-File Journals — Implementation Plan
 
 **Status: IN PROGRESS** — written 2026-11-10 on S3DF against `dev` at `1ef749f`
-(0.9.2). Phases 1 and 2 done 2026-11-10, Phase 3 2026-11-11.
+(0.9.2). Phases 1 and 2 done 2026-11-10, Phases 3 and 4 2026-11-11.
 
 Users split their Cubit work across several files: one declares the APREPRO
 variables, one imports STEP/STL/SAT geometry, one meshes and exports. A
@@ -204,6 +204,19 @@ returns `files:` (decision 5), so editing a STEP file re-runs the step.
 4. **Validation** (3.5): collision and undeclared-variable checks. Survey
    `examples/` and `tests/` configs for stray `cubit:` names first. If any
    real example trips it, stop and ask before choosing warning vs error.
+   **DONE:** survey clean (every `cubit:` input of the 14 example and test
+   YAMLs that set one is declared), so both checks are errors.
+   `_validate_cubit_inputs` (run once, in `Workflow.__init__`): a scoped name
+   must be declared in its module's journals, a shared one in some `cubit`
+   module's or be a `field_emission` `beta_input(s)`. A module whose journal
+   can't be read is skipped (`required_files` reports it). Undeclared
+   names in VOCS `variables:` (routed to the `cubit` bucket at run time) are
+   not checked: the Workflow never sees them. `_validate_disk_collisions`:
+   a basename listed twice in one module (even the same path, as the wrapper
+   refuses it) is an error, and so is a basename shared by two modules unless
+   it is the same source file in the same role (journal/journal or
+   file/file). The run-time check stays for a `CubitModule` run outside a
+   Workflow. Tests: `tests/test_cubit_module.py`.
 5. **Example, docs, S3DF run:** split `examples/omega3p_sweep`'s journal into
    a new example (vars / geometry / mesh, plus a STEP file in `files:`).
    Update `docs/yaml_reference.md` (cubit row) and the Cubit section of

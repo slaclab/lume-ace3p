@@ -231,13 +231,13 @@ def test_a_manifest_exists_before_the_first_module_runs(tmp_path, monkeypatch):
     wf = Workflow(
         [{'module': 'mesh', 'file': 'nowhere.gen'}],
         workflow_params={'workdir': str(tmp_path / 'wd'), 'dry_run': True},
-        inputs=WorkflowInputs(cubit={'radius': 3.0}), output_spec={})
+        inputs=WorkflowInputs(particles={'beta': 3.0}), output_spec={})
     with pytest.raises(RuntimeError):
         wf.evaluate()
 
     recorded = state.read_state(str(tmp_path / 'wd'))
     assert recorded['config_hash'].startswith('sha256:')
-    assert recorded['point'] == {'axes': {'radius': 3.0}}
+    assert recorded['point'] == {'axes': {'beta': 3.0}}
     assert [e['status'] for e in recorded['modules']] == ['failed']
 
 
