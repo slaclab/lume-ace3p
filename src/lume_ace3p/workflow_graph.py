@@ -60,7 +60,8 @@ import numpy as np
 from lume_ace3p.modules import (
     CubitModule, FieldEmissionModule, Geant4Module, RunContext,
     TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
-    Track3PModule, _SolverModule, _basename_clashes, _clash_message,
+    Tem3PModule, Track3PModule, _SolverModule, _basename_clashes,
+    _clash_message,
 )
 from lume_ace3p.ace3p import parse_ace3p
 from lume_ace3p.derived import DerivedSpec
@@ -83,7 +84,8 @@ class WorkflowValidationError(ValueError):
 # Module types whose run() invokes an ACE3P binary (cubit/omega3p/s3p/t3p/
 # acdtool) vs. the Geant4 binary — used only to auto-enable dry-run when the
 # matching environment is absent, mirroring the legacy per-workflow behavior.
-_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'track3p', 'acdtool'})
+_ACE3P_TYPES = frozenset({'cubit', 'omega3p', 's3p', 't3p', 'track3p', 'tem3p',
+                          'acdtool'})
 _GEANT4_TYPES = frozenset({'geant4'})
 
 # How an evaluation's working directory is named. ``manual`` shares one directory
@@ -141,6 +143,9 @@ def _infer_output_module(spec):
       * ``'count'``/``'total_weight'`` -> ``field_emission``,
       * a Track3P quantity (``'max_enhancement'``, ``'mp_onset_level'``, ...) or
         a mapping keyed ``at: {field_level: ...}`` -> ``track3p``,
+      * a TEM3P quantity (``'max_temperature'``, ``'u_mag_max'``, ...; not
+        ``'run_time'`` or ``'n_dofs'``) or a mapping keyed ``at: {sideset:
+        ...}`` or ``at: {problem: ...}`` -> ``tem3p``,
       * anything naming a T3P monitor — a mapping with a ``monitor: inputPower``
         key — -> ``t3p``,
       * a T3P wakefield quantity (``'loss_factor'``, ``'W'``, ...), or a mapping
@@ -183,6 +188,8 @@ def _infer_output_module(spec):
             return 't3p'
         if quantity in Track3PModule.QUANTITIES or 'field_level' in at:
             return 'track3p'
+        if quantity in Tem3PModule.BARE or 'sideset' in at or 'problem' in at:
+            return 'tem3p'
         return 's3p'
     if isinstance(spec, str):
         if spec in ('count', 'total_weight'):
@@ -191,6 +198,8 @@ def _infer_output_module(spec):
             return 'geant4'
         if spec in Track3PModule.QUANTITIES:
             return 'track3p'
+        if spec in Tem3PModule.BARE:
+            return 'tem3p'
         return 't3p' if spec in T3PModule.QUANTITIES else 's3p'
     if isinstance(spec, (list, tuple)) and spec:
         head = spec[0]
@@ -200,6 +209,8 @@ def _infer_output_module(spec):
             return FieldEmissionModule.type
         if head in Track3PModule.QUANTITIES:
             return 'track3p'
+        if head in Tem3PModule.BARE:
+            return 'tem3p'
         return 't3p' if head in T3PModule.QUANTITIES else 's3p'
     raise WorkflowValidationError(f"cannot route output spec {spec!r}.")
 
@@ -369,27 +380,31 @@ def _validate_scopes(modules, inputs):
 def _binding_map(module):
     """The entry's ``from:`` as ``{kind: producer name}``.
 
-    The string shorthand is the full form for a module with exactly one
-    requirement; on a module with several it is an error, since it would not
-    say which requirement it names."""
+    The string shorthand is the full form for a module that reads exactly one
+    kind, counting its optional requirements; on a module that reads several
+    it is an error, since it would not say which requirement it names."""
     binding = module.binding
     if binding is None:
         return {}
+    reads = module.requires | module.optional_requires
     if isinstance(binding, str):
-        if len(module.requires) != 1:
-            needs = sorted(module.requires) or ['nothing']
+        if len(reads) != 1:
+            needs = (sorted(module.requires)
+                     + [f'{kind} (optional)'
+                        for kind in sorted(module.optional_requires)]
+                     or ['nothing'])
             raise WorkflowValidationError(
                 f"module '{module.name}' has 'from: {binding}', but it requires "
                 f"{', '.join(needs)}, so a single name does not say which "
                 "requirement it binds. Use the mapping form, "
                 f"'from: {{<kind>: {binding}}}'.")
-        return {next(iter(module.requires)): binding}
+        return {next(iter(reads)): binding}
     if isinstance(binding, dict):
-        stray = sorted(str(k) for k in binding if k not in module.requires)
+        stray = sorted(str(k) for k in binding if k not in reads)
         if stray:
             raise WorkflowValidationError(
                 f"module '{module.name}' binds {stray} with 'from:', but it "
-                f"requires only {sorted(module.requires)}.")
+                f"requires only {sorted(reads)}.")
         return {str(k): str(v) for k, v in binding.items()}
     raise WorkflowValidationError(
         f"module '{module.name}': 'from:' must be a module name or a "
@@ -400,10 +415,14 @@ def _bind(module, producers, index, modules):
     """``{required kind: producer name}`` for one module (§3.4): the ``from:``
     name when given (it must exist and provide the kind), else the one producer
     of the kind in the list. Several producers and no ``from:`` is an error
-    listing them."""
+    listing them.
+
+    An optional requirement (:attr:`Module.optional_requires`) binds the same
+    way, except that no producer at all leaves it unbound."""
     explicit = _binding_map(module)
+    reads = module.requires | module.optional_requires
     sources = {}
-    for kind in sorted(module.requires):
+    for kind in sorted(reads):
         candidates = [modules[i].name for i in producers.get(kind, [])
                       if modules[i] is not module]
         if kind in explicit:
@@ -422,6 +441,8 @@ def _bind(module, producers, index, modules):
                     f"{kind}: {candidates or 'none'}.")
             sources[kind] = name
         elif not candidates:
+            if kind not in module.requires:
+                continue
             raise WorkflowValidationError(
                 f"module '{module.name}' requires artifact '{kind}' but no "
                 f"module in the workflow provides it.")
@@ -430,13 +451,27 @@ def _bind(module, producers, index, modules):
                 f"module '{module.name}' requires artifact '{kind}', which "
                 f"{len(candidates)} modules provide ({candidates}). Name the one "
                 f"it reads with 'from:' on its entry, e.g.\n"
-                f"    from: {candidates[0]}"
-                + ('' if len(module.requires) == 1 else
-                   f"\nor, since it requires several artifacts,\n"
-                   f"    from: {{{kind}: {candidates[0]}}}"))
+                + (f"    from: {candidates[0]}" if len(reads) == 1 else
+                   # The shorthand is refused on a module that reads several
+                   # kinds (_binding_map), so only the mapping form is offered.
+                   f"    from: {{{kind}: {candidates[0]}}}\n"
+                   "(the mapping form, since it reads "
+                   f"{', '.join(sorted(reads))})"))
         else:
             sources[kind] = candidates[0]
     return sources
+
+
+def _validate_module_checks(modules, inputs):
+    """Each module's own build-time checks (:meth:`Module.check_build`), over
+    the bound chain. Every problem is reported in one error, so a user fixes
+    them all in one pass rather than one per attempt."""
+    problems = [problem for module in modules
+                for problem in module.check_build(modules, inputs)]
+    if problems:
+        raise WorkflowValidationError(
+            f"{len(problems)} problem(s) found before running:\n"
+            + '\n'.join(f'  - {problem}' for problem in problems))
 
 
 def _validate_disk_collisions(modules):
@@ -686,6 +721,7 @@ class Workflow:
         self.module_types = {m.type for m in self.modules}
         _validate_scopes(self.modules, self.inputs)
         _validate_cubit_inputs(self.modules, self.inputs)
+        _validate_module_checks(self.modules, self.inputs)
 
         self.workdir_mode = self.workflow_params.get('workdir_mode', 'manual')
         if self.workdir_mode not in WORKDIR_MODES:

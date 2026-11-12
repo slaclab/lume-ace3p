@@ -2098,3 +2098,10 @@ class Tem3P(ACE3P):
         the run did not finish."""
         self.output_data = parse_tem3p_results(
             os.path.join(self.workdir, self.results_dir()))
+
+    def update_input(self, edit):
+        """Apply ``edit`` to the parsed input tree in place and re-serialize
+        ``input_data``. For edits :meth:`set_input_leaf` cannot address: a leaf
+        of the n-th ``Boundary`` of a problem block."""
+        edit(self._input_tree())
+        self.input_data = write_ace3p(self._tree)

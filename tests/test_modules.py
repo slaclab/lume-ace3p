@@ -31,6 +31,7 @@ from lume_ace3p.modules import (
     Track3PModule, AcdtoolModule,
     Track3PSourceModule, FieldEmissionModule, ParticleSourceModule, Geant4Module,
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
+    TEM3P_SOLUTION,
     PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
     _stage_file, STAGE_MODES,
 )
@@ -239,6 +240,9 @@ def test_registry_edges_match_plan():
         # the source module supplies, so a workflow lists one or the other.
         'track3p': ({EM_SOLUTION}, {TRACK3P_PARTICLES}),
         'track3p_source': (set(), {TRACK3P_PARTICLES}),
+        # Requires the body mesh; the em_solution it couples to is optional
+        # (optional_requires), and it provides the deformed vacuum mesh.
+        'tem3p': ({MESH}, {TEM3P_SOLUTION, MESH}),
         'field_emission': ({TRACK3P_PARTICLES}, {PARTICLE_SOURCE}),
         'particle_source': (set(), {PARTICLE_SOURCE}),
         'geant4': ({PARTICLE_SOURCE}, {DOSE_GRID, EDEP_GRID}),

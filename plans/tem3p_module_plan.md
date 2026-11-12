@@ -1,8 +1,8 @@
 # TEM3P as a Workflow Module — Implementation Plan
 
 **Status: Phase 0 done 2026-11-12 (job 44528190; results in §4, fixtures in
-`tests/fixtures/tem3p/`). Phase 1 done 2026-11-12 (wrapper and parsers; see
-§4). Next: Phase 2.**
+`tests/fixtures/tem3p/`). Phases 1 and 2 done 2026-11-12 (wrapper, parsers,
+module; see §4). Next: Phase 3.**
 
 Written 2026-11-12 on S3DF, following the investigation in
 `plans/tem3p_investigation.md` (the shareable summary; this plan assumes it).
@@ -241,10 +241,16 @@ are positional children of `ThermostaticProblem` and/or `ElasticProblem`.
    A check confirms that `MeshFile`'s basename equals the producer's exported
    name; on a mismatch, the build fails and names both.
 2. **`Directory`** in every coupled `Boundary` and every RF `HeatSource` is set
-   to `./<bound EM job>`, unless the value already names an existing directory
-   (the Track3P rule).
-   - Two coupled boundaries that name *different* directories is a build-time
-     error, because TEM3P keeps only the last one.
+   to the bound EM job, **always** (changed at Phase 2). The Track3P rule of
+   keeping a value that names an existing directory is unsafe here: the shared
+   workdir holds the *other* EM runs, so an appended pair whose input still
+   says `omega3p_results` would silently read the first run's fields. A
+   different user value is replaced with a printed note.
+   - The "two coupled boundaries name different directories" error is gone:
+     with an EM run bound every entry gets the same value, and with none bound
+     the coupling check in §3.2 already fails the build.
+   - Leaves are injected as the bare job name (`omega3p_results`), the form
+     Phase 0 ran, not `./omega3p_results`.
 3. **`MeshDump.EMMeshInputDir`** is set to the *base* EM job:
    - the bound EM producer itself, if that producer's mesh did not come from a
      `tem3p`;
@@ -324,9 +330,10 @@ are positional children of `ThermostaticProblem` and/or `ElasticProblem`.
 
 - *Gap:* derived expressions read outputs only, so `k_l = df / Eacc²` needs
   `Eacc` written as a constant. That is wrong under a gradient sweep.
-- *Proposal:* let derived expressions read swept *inputs* by label. This is
-  small and generally useful, but it touches the derived-parameters grammar
-  policy. **Ask the user before Phase 3.**
+- **Decided 2026-11-12 (user):** derived expressions read swept *inputs* by
+  label as well as outputs, so they can use any quantity a row carries. This
+  goes in at Phase 3. It widens what names an expression can see; it does not
+  add functions to the grammar.
 
 ### 3.6 Launch and resources
 
@@ -451,6 +458,34 @@ Tests:
 - each lint and guard;
 - dry run.
 
+**Phase 2 results (DONE 2026-11-12).**
+
+- `Module.optional_requires` and a generic `Module.check_build(modules,
+  inputs)` hook. `Workflow` runs every module's `check_build` after binding and
+  raises **one** error listing every problem, so a user fixes all of them in
+  one pass. The ambiguity error no longer suggests the `from:` shorthand to a
+  module that reads several kinds (the shorthand is refused there).
+- `Tem3PModule` in `modules.py`, registered, in `_ACE3P_TYPES`, with bare
+  routing for its quantities (not `run_time` or `n_dofs`, which are generic)
+  and for `at: {sideset:}` / `at: {problem:}`.
+- Lint (§3.4 item 5, all errors per the user's decision), plus one item found
+  in the source: a `MeshDump` switch (`WriteDeformedEMMesh` and the other two)
+  is on only for the exact string `on`, so `On` is reported.
+- The `Omega3PId` guard is an error when a module consumes the mesh and a
+  warning when the mesh is written but nothing reads it.
+- `MeshFile` is checked against a `cubit` producer's export (or its `.ncdf`
+  under `meshconvert`) and a `mesh` source's basename. A body mesh bound to a
+  `tem3p` is an error.
+- The §3.7 pre-flight is in: before a fresh run, each EM directory TEM3P reads
+  must have a `VECTOR/postprocess.in` whose `ModelInfo.File` exists.
+- A fresh run that should write `DeformedVacuumMesh.ncdf` and did not fails.
+  `verify` checks `ResultFile`, the log's `Ending run at` and that mesh.
+  `clean` removes the job directory, which is what keeps `ResultFile` to one
+  run.
+- `field()` is not implemented (deferred, §3.5).
+- Tests: `tests/test_tem3p_module.py`, including real runs through a fake
+  `tem3p` that replays the fixtures.
+
 ### Phase 3: mesh hand-off and the shipped example
 
 - The `mesh_output` / `ModelInfo.File` injection in `_SolverModule`.
@@ -489,7 +524,7 @@ No new examples unless asked.
 
 1. ~~Lint as error or warning~~ **Error**, with a message naming the fix
    (user, 2026-11-12; §3.4 item 5).
-2. Derived expressions reading swept inputs, for `k_l` (§3.5). Ask before
-   Phase 3.
+2. ~~Derived expressions reading swept inputs~~ **Yes**: any quantity a row
+   carries, swept inputs included (user, 2026-11-12; §3.5). Lands in Phase 3.
 3. ~~Whether appended pairs are supported~~ **Yes** (P4, 2026-11-12), with
    `EMMeshInputDir` resolved to the base EM run as in §3.4 item 3.
