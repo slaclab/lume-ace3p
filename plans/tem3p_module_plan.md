@@ -1,9 +1,9 @@
 # TEM3P as a Workflow Module — Implementation Plan
 
 **Status: Phase 0 done 2026-11-12 (job 44528190; results in §4, fixtures in
-`tests/fixtures/tem3p/`). Phases 1, 2 and 3 done 2026-11-12 (wrapper,
-parsers, module, mesh hand-off and the `tem3p_lfd` example; see §4). Next:
-Phase 4.**
+`tests/fixtures/tem3p/`). Phases 1 to 4 done 2026-11-12 (wrapper, parsers,
+module, mesh hand-off, the `tem3p_lfd` example, the other problem types and
+`files:` directories; see §4). Next: Phase 5.**
 
 Written 2026-11-12 on S3DF, following the investigation in
 `plans/tem3p_investigation.md` (the shareable summary; this plan assumes it).
@@ -546,6 +546,52 @@ Fixture-driven tests:
 - the Tesla eigen axis (`Mode`).
 
 No new examples unless asked.
+
+**Phase 4 results (DONE 2026-11-12).**
+
+- **`files:` takes a directory.** Every CW23 TEM3P case names its k(T) and
+  Rs(T) tables `functions/<name>`, and `files:` staged by basename, so those
+  paths could not resolve. A solver's `files:` entry may now be a directory,
+  staged whole under its own name (`_stage_dir`): `files: [functions]` gives
+  `<workdir>/functions/`, and the CW23 input runs as written. `stage_mode`
+  applies (a symlink links the directory, a hardlink links each file). A fresh
+  run re-stages a copied tree. A directory with no name of its own (`.`,
+  `..`) is refused, since its "basename" would be the workdir itself.
+  `check_files` accepts an existing directory.
+- **Table check** (`_tem3p_unstaged_tables`, in `check_build`): a
+  `Function`, `SurfaceResistance`, `SigmaFunction`,
+  `DielectricConstantFunction{E,H}` or `ExtVHeatingFile` leaf with a
+  non-numeric value must be put in the working directory by `files:`. A
+  `dir/name` path needs a `files:` directory `dir` holding `name`; a bare
+  name needs a `files:` entry of that basename. One error per missing
+  directory (the CW23 SrfCoupler input names ten tables in one). Without
+  the table TEM3P is not silent: job 44552664 removed `functions/NbTi` and
+  got `File functions/NbTi not found. TEM3P FATAL ERROR` (rc 137), but on
+  srun's stdout only, not in `tem3p.log`. The check saves the launch and the
+  search.
+- **Real run** (job 44552664, throwaway config in
+  `/sdf/scratch/users/d/dbizzoze/lume-ace3p-tests/tem3p_p4/`, not an
+  example): `mesh → s3p → tem3p` on the CW23 SrfCoupler meshes, 96 ranks,
+  `files: [functions]` under `stage_mode: symlink`, 2m12s. `t_max`
+  324.352 K, 9 Newton iterations, scaling factor 437.5, sideset 4 power
+  0.781339; every `ResultFile` data line equals P8's. The input had the
+  ignored tolerance spellings deleted rather than corrected, so it ran P8's
+  effective configuration.
+- **Reordered boundary** (the open item from the Phase 3 validation): job
+  44551379 ran the CW23 SRFCell input with only the LFDetuning block moved
+  first, and the example's `SRFCell.tem3p` verbatim, on the CW23 meshes.
+  Both `ResultFile`s and `DeformedVacuumMesh.ncdf`s are byte-identical to
+  P1's, and the deformed frequency is 1300950556.377 Hz in all three. Order
+  does not matter; the example's 0.4% offset is all Cubit remeshing.
+- Tests: `tests/test_tem3p_problem_types.py`. RfGun runs
+  `omega3p → tem3p → omega3p_deformed` through fakes that replay both real
+  `omega3p.out` files, giving the archived Δf = +47427.3 Hz as a derived
+  column, with per-problem `scaling_factor`/`n_dofs` and both problems'
+  injected `Directory`. SrfCoupler runs `s3p → tem3p` under all three stage
+  modes, with the fake `tem3p` failing when a table is not in its working
+  directory. TeslaCavity sweeps a body-mesh parameter into a table long over
+  `Mode` (10 rows for 2 points × 5 modes; a narrowed output repeats down the
+  rows; all-narrowed stays wide), and a resume re-parses to keep the axis.
 
 ### Phase 5: docs
 

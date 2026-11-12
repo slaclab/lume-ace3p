@@ -451,6 +451,53 @@ def _stage_file(ctx, src, fresh=False):
     return dest
 
 
+def _staged_dir_name(src):
+    """The name a ``files:`` directory is staged under: its basename, trailing
+    separators ignored. Raises for ``.``, ``..`` or a filesystem root, whose
+    'basename' would stage onto the workdir itself."""
+    name = os.path.basename(os.path.normpath(str(src)))
+    if name in ('', '.', '..', os.sep):
+        raise ValueError(
+            f"'files:' lists the directory '{src}', which has no name of its "
+            "own to be staged under in the workdir. Name the directory itself "
+            "(for example 'files: [functions]').")
+    return name
+
+
+def _stage_dir(ctx, src, fresh=False):
+    """Stage directory ``src`` into the workdir as ``workdir/<basename>`` and
+    return that path: the directory form of :func:`_stage_file`, for a solver's
+    ``files:``. An input that names ``functions/CURRR100`` (every CW23 TEM3P
+    case) then resolves as written.
+
+    ``ctx.stage_mode`` applies: ``copy`` copies the tree, ``symlink`` links the
+    directory, ``hardlink`` links each file (copying the tree when linking
+    fails). ``fresh`` replaces an existing copy unless it already follows the
+    source, as for a file. The same read-only invariant holds."""
+    ctx.ensure_workdir()
+    dest = os.path.join(ctx.workdir, _staged_dir_name(src))
+    if os.path.abspath(src) == os.path.abspath(dest):
+        return dest
+    if fresh and os.path.lexists(dest) and not _same_file(src, dest):
+        _remove_output(ctx, os.path.basename(dest))
+    if os.path.lexists(dest):
+        return dest
+    mode = ctx.stage_mode
+    if mode == 'symlink':
+        os.symlink(os.path.abspath(src), dest)
+    elif mode == 'hardlink':
+        try:
+            shutil.copytree(src, dest, copy_function=os.link)
+        except (OSError, shutil.Error) as exc:
+            print(f"Warning: hardlink of {src} failed ({exc}); copying "
+                  "instead.")
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(src, dest)
+    else:
+        shutil.copytree(src, dest)
+    return dest
+
+
 # --------------------------------------------------------------------------- #
 # Module base
 # --------------------------------------------------------------------------- #
@@ -1079,18 +1126,24 @@ class _SolverModule(Module):
         return [self.input_file]
 
     def required_files(self):
-        return super().required_files() + self.files
+        # A ``files:`` directory exists, so it is not listed as missing; a
+        # mistyped one is neither file nor directory and is.
+        return super().required_files() + [p for p in self.files
+                                           if not os.path.isdir(p)]
 
     def run(self, ctx, skip_execution=False):
         if self.upstream(ctx, self._input_artifact)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
                              f"{self._input_artifact} artifact.")
         for path in self.files:
+            if os.path.isdir(path):
+                _stage_dir(ctx, path, fresh=_fresh(ctx, skip_execution))
+                continue
             if not os.path.isfile(path):
                 raise FileNotFoundError(
                     f"module '{self.type}' lists '{path}' under 'files:' but "
-                    "there is no such file (paths resolve from the directory "
-                    "run-lume-ace3p was started in).")
+                    "there is no such file or directory (paths resolve from "
+                    "the directory run-lume-ace3p was started in).")
             _stage_file(ctx, path, fresh=_fresh(ctx, skip_execution))
         # The shared ``ace3p:`` tree with this module's own scope over it.
         inputs = ctx.inputs.for_module(self.name)
@@ -2284,6 +2337,14 @@ _TEM3P_LFD = frozenset({'LFDetuning', 'LFdetuning'})
 # 'WriteDeformedEMMesh: on'. Per-mode variants of an eigen run are out of scope.
 TEM3P_DEFORMED_MESH = 'DeformedVacuumMesh.ncdf'
 
+# Leaves whose value names a table file TEM3P reads from its working directory:
+# k(T) and Rs(T) tables in the CW23 cases ('Function: functions/CURRR100'), and
+# the other file-valued keys in the binary's strings. A numeric value is not a
+# file and is left alone.
+_TEM3P_TABLE_KEYS = ('Function', 'SurfaceResistance', 'SigmaFunction',
+                     'DielectricConstantFunctionE',
+                     'DielectricConstantFunctionH', 'ExtVHeatingFile')
+
 # Keys TEM3P never reads, by the spelling CW23 inputs use, with the fix. None of
 # them draws a warning from the binary (plans/tem3p_module_plan.md §2, P5).
 _TEM3P_IGNORED_KEYS = {
@@ -2424,6 +2485,74 @@ def _tem3p_lint(tree):
     return problems
 
 
+def _tem3p_table_files(tree):
+    """``[(where, key, value)]`` for every leaf of ``tree`` that names a table
+    file (:data:`_TEM3P_TABLE_KEYS`) by a non-numeric value."""
+    found = []
+
+    def walk(section, where):
+        for name, child in section.entries:
+            if isinstance(child, Section):
+                ident = child.get_leaf('Id')
+                label = name if ident is None else f'{name} Id {ident}'
+                walk(child, f'{where} {label}'.strip())
+            elif name in _TEM3P_TABLE_KEYS and isinstance(child, str):
+                value = child.strip()
+                try:
+                    float(value)
+                except ValueError:
+                    if value:
+                        found.append((where, name, value))
+
+    walk(tree, '')
+    return found
+
+
+def _tem3p_unstaged_tables(tree, files):
+    """Messages for each table file ``tree`` names that the module's ``files:``
+    do not put where TEM3P looks: the working directory, with ``files:`` staged
+    by basename (:func:`_stage_file`, :func:`_stage_dir`). A ``files:`` entry
+    that does not exist is skipped; :meth:`Workflow.check_files` reports it."""
+    staged = {}
+    for path in files:
+        try:
+            staged[_staged_dir_name(path)] = str(path)
+        except ValueError:
+            continue
+    problems, unstaged_dirs = [], {}
+    for where, key, value in _tem3p_table_files(tree):
+        if os.path.isabs(value):
+            continue
+        parts = os.path.normpath(value).split(os.sep)
+        entry = staged.get(parts[0])
+        if entry is not None and not os.path.exists(entry):
+            continue
+        what = f"{where}: '{key}: {value}'"
+        if len(parts) == 1:
+            if entry is None or os.path.isdir(entry):
+                problems.append(
+                    f"{what} names a table TEM3P reads from its working "
+                    f"directory, and no 'files:' entry puts '{value}' there. "
+                    f"Add the file to the module's 'files:'.")
+        elif entry is None or not os.path.isdir(entry):
+            unstaged_dirs.setdefault(parts[0], []).append(what)
+        elif not os.path.isfile(os.path.join(entry, *parts[1:])):
+            problems.append(
+                f"{what}: the staged directory '{entry}' has no "
+                f"'{os.path.join(*parts[1:])}'.")
+    # One message per directory: a CW23 input names ten tables in one.
+    for directory, whats in unstaged_dirs.items():
+        problems.append(
+            f"{len(whats)} table entr{'y' if len(whats) == 1 else 'ies'} "
+            f"name files in the directory '{directory}' ({whats[0]}"
+            f"{', …' if len(whats) > 1 else ''}), and no 'files:' entry "
+            f"stages a directory '{directory}' into the working directory. "
+            "'files:' places each entry under its own name, so a file entry "
+            f"lands as its basename. Add 'files: [{directory}]' and the paths "
+            "resolve as written.")
+    return problems
+
+
 def _same_dir(a, b):
     return os.path.normpath(str(a)) == os.path.normpath(str(b))
 
@@ -2468,7 +2597,9 @@ class Tem3PModule(_SolverModule):
     EM run is bound; a downstream module reads the deformed mesh but the input
     will not write it, or sets no ``Omega3PId`` so the mesh would come out
     undeformed (P3); ``MeshFile`` names a mesh the producer does not export;
-    and every entry TEM3P ignores without saying so (:func:`_tem3p_lint`).
+    a table file (``Function: functions/CURRR100``) that ``files:`` does not
+    stage where TEM3P reads it (:func:`_tem3p_unstaged_tables`); and every
+    entry TEM3P ignores without saying so (:func:`_tem3p_lint`).
 
     Quantities come from ``ResultFile`` and ``tem3p.log``
     (:func:`lume_ace3p.ace3p.parse_tem3p_results`); see :meth:`extract`.
@@ -2534,7 +2665,8 @@ class Tem3PModule(_SolverModule):
         if tree is None:
             return []
         name = f"module '{self.name}' ({self.input_file})"
-        errors = [f'{name}: {problem}' for problem in _tem3p_lint(tree)]
+        errors = [f'{name}: {problem}' for problem in _tem3p_lint(tree)
+                  + _tem3p_unstaged_tables(tree, self.files)]
 
         coupled = _tem3p_coupled(tree)
         writes_mesh = _tem3p_writes_em_mesh(tree)

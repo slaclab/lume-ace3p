@@ -107,6 +107,12 @@ output_parameters :
 - **Cubit files.** A `cubit` module's journals and `files:` land in the
   workdir by basename, so one module may not list a basename twice, and two
   modules may share one only for the same file in the same role.
+- **Solver files.** A solver's `files:` entries also land in the workdir
+  under their own names. An entry may be a directory, which is staged whole:
+  `files: [functions]` gives `<workdir>/functions/`, so an input naming
+  `functions/CURRR100` resolves as written. `stage_mode` applies to it (a
+  `symlink` links the directory, a `hardlink` links each file). A file entry
+  `functions/CURRR100` lands as `CURRR100`.
 
 `examples/omega3p_p_refinement` runs two `omega3p` instances on one mesh and one
 input file, at element orders 1 and 2.

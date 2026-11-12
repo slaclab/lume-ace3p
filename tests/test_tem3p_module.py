@@ -67,6 +67,11 @@ def _stage(root, tem3p='SRFCell.tem3p', case='srfcell', text=None,
         (root / em_input).write_text(_fixture('srfcoupler', em_input))
     (root / tem3p).write_text(
         text if text is not None else _fixed(_fixture(case, tem3p)))
+    if tem3p == 'FPC-Body.tem3p':
+        # The k(T) and Rs(T) tables it names as functions/<name>.
+        shutil.copytree(os.path.join(FIXTURES, 'srfcoupler', 'inputs',
+                                     'functions'), root / 'functions',
+                        dirs_exist_ok=True)
     return root
 
 
@@ -213,7 +218,8 @@ def test_cw23_srfcoupler_tolerance_spellings(tmp_path, monkeypatch):
                              em_input='FPC-Vacuum.s3p'))
     with pytest.raises(WorkflowValidationError) as excinfo:
         _dry(tmp_path, _lfd(tem3p='FPC-Body.tem3p', em='s3p',
-                            em_input='FPC-Vacuum.s3p', deformed=False))
+                            em_input='FPC-Vacuum.s3p', deformed=False,
+                            files=['functions']))
     message = _problems(excinfo)
     assert "NonlinearSolver: 'Abs tolerance'" in message
     assert "spell it 'AbsTolerance'" in message
@@ -431,8 +437,8 @@ def test_srfcoupler_injects_the_heat_source(tmp_path, monkeypatch):
                              case='srfcoupler', body='2D-TTF3-FPC-Body.ncdf',
                              em_input='FPC-Vacuum.s3p'))
     _, ctx = _dry(tmp_path, _lfd(tem3p='FPC-Body.tem3p', em='s3p',
-                                 em_input='FPC-Vacuum.s3p',
-                                 deformed=False)).evaluate()
+                                 em_input='FPC-Vacuum.s3p', deformed=False,
+                                 files=['functions'])).evaluate()
     marker = _marker(tmp_path)
     assert 'ThermostaticProblem HeatSource Id 5 Directory: s3p_results\n' \
         in marker
@@ -651,14 +657,21 @@ printf 'ModelInfo : {\\n  File : %s/%s\\n}\\nJobName : %s\\n' "$PWD" "$mesh" \
   "$dir" > "$dir/VECTOR/postprocess.in"
 """
 
-# 'tem3p <input> [dir]': appends the fixture ResultFile and copies its log, as
-# the real binary appends and overwrites; writes the deformed mesh when the
-# input asks for it, unless FAKE_TEM3P_NO_MESH is set.
+# 'tem3p <input> [dir]': appends the fixture ResultFile (the first run's copy
+# where the fixture holds two) and copies its log, as the real binary appends
+# and overwrites; writes the deformed mesh when the input asks for it, unless
+# FAKE_TEM3P_NO_MESH is set. Exits before writing anything when a k(T)/Rs(T)
+# table the input names is not in the working directory.
 _TEM3P = """#!/bin/sh
 dir=${2:-tem3p_results}
+for table in `sed -n 's/^[ \\t]*\\(Function\\|SurfaceResistance\\)[ \\t]*:[ \\t]*\\([^ \\t]*\\).*/\\2/p' "$1"`; do
+  [ -f "$table" ] || { echo "tem3p: cannot read $table"; exit 3; }
+done
 mkdir -p "$dir"
 cp "$1" "$dir/input.echo"
-cat "$FAKE_TEM3P_FIXTURE/ResultFile.first_run" >> "$dir/ResultFile"
+result="$FAKE_TEM3P_FIXTURE/ResultFile.first_run"
+[ -f "$result" ] || result="$FAKE_TEM3P_FIXTURE/ResultFile"
+cat "$result" >> "$dir/ResultFile"
 cp "$FAKE_TEM3P_FIXTURE/tem3p.log" "$dir/tem3p.log"
 if grep -q 'WriteDeformedEMMesh *: *on' "$1" && [ -z "$FAKE_TEM3P_NO_MESH" ]; then
   echo deformed > "$dir/DeformedVacuumMesh.ncdf"
