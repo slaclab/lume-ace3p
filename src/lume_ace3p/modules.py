@@ -72,10 +72,11 @@ TRACK3P_PARTICLES = 'track3p_particles'  # raw Track3P dump (track3p run, or sup
 PARTICLE_SOURCE = 'particle_source'    # Geant4-format particle file (Particles output)
 DOSE_GRID = 'dose_grid'                # Geant4 dose scoring output
 EDEP_GRID = 'edep_grid'                # Geant4 energy-deposit scoring output
+TEM3P_SOLUTION = 'tem3p_solution'      # TEM3P job directory (thermal/elastic results)
 
 ARTIFACT_KINDS = frozenset({
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
-    PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
+    PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID, TEM3P_SOLUTION,
 })
 
 # The acdtool command table names the artifact each command consumes, and it

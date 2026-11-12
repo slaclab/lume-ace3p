@@ -1721,3 +1721,380 @@ class Track3P(ACE3P):
         results = os.path.join(self.workdir, self.results_dir())
         self.output_data = read_track3p_results(
             results, declared_levels=self.field_levels())
+
+
+# --------------------------------------------------------------------------- #
+# TEM3P
+# --------------------------------------------------------------------------- #
+
+TEM3P_RESULT_FILE = 'ResultFile'
+TEM3P_LOG = 'tem3p.log'
+TEM3P_DONE = 'Ending run at'
+
+# The problem classes the log names, by the short key the parsed results use.
+_TEM3P_PROBLEMS = {
+    'ThermostaticProblem': 'thermal',
+    'ThermoTransientProblem': 'transient',
+    'ElasticProblem': 'elastic',
+}
+_TEM3P_PROBLEM_NAME = re.compile(
+    r'\b(' + '|'.join(_TEM3P_PROBLEMS) + r')\b')
+_TEM3P_RUN_FLAG = re.compile(r"'run(\w+Problem)' = (\d)")
+_TEM3P_THERMAL_LINE = re.compile(
+    r'^(?:(Max T)|(Min T)|P \(SideSet (\d+)\))\s*=\s*(\S+)$')
+_TEM3P_LOG_PATTERNS = {
+    'dofs': re.compile(r'Total Number of DOFs:\s*(\d+)'),
+    'scaling': re.compile(r'The (?:LF )?scaling factor is\s+(\S+)'),
+    'newton': re.compile(r'Nonlinear Newton iteration (\d+)'),
+    'linear': re.compile(r'solved Ax = b .* after (\d+) iterations'),
+    'mode': re.compile(r'^Mode (\d+), Frequency: (\S+) Hz'),
+    'run_time': re.compile(r'^Total run time = (\d+) seconds'),
+    'mpi': re.compile(r'^Number of MPI processes:\s*(\d+)'),
+    'em_directory': re.compile(r'^Omega3P directory name:\s*(\S+)'),
+    'em_mesh_input_dir': re.compile(r'^EM Mesh input directory:\s*(\S+)'),
+}
+_TEM3P_BANNER = {
+    'ACE3P Codes Source Date:': 'source_date',
+    'ACE3P Codes Source Tag:': 'source_tag',
+    'Compilation Date:': 'compilation_date',
+}
+# The line TEM3P writes once it has read the vacuum mesh named in the EM run's
+# postprocess.in. A log with an 'Omega3P directory name:' line (the load
+# started) and not this one is a run that died loading the EM run -- seen when
+# the evaluation directory moved after the EM step (Phase 0 P9). The 'loading RF
+# solution for TEM3P...' line that precedes both is no evidence of anything:
+# TEM3P prints it whether or not the input couples to RF.
+_TEM3P_EM_LOADED = 'Time for reading the model:'
+
+
+def _tem3p_table_names(header):
+    """Column names and units from a ``ResultFile`` table header.
+
+    The header names its columns with embedded spaces (``#    u_x min [m]
+    u_x max [m] ... block_id``), so neither a whitespace split nor
+    :func:`parse_column_file` recovers them. A ``min``/``max`` token joins the
+    name before it and a ``[unit]`` token is that name's unit:
+    ``u_x min [m]`` becomes ``u_x_min`` in metres, ``Frequency [Hz]`` becomes
+    ``frequency``."""
+    names, units = [], {}
+    for token in header.lstrip('#').split():
+        if token.startswith('[') and names:
+            units[names[-1]] = token.strip('[]')
+        elif token in ('min', 'max') and names:
+            names[-1] += '_' + token
+        else:
+            names.append(token.lower())
+    return names, units
+
+
+def _tem3p_runs(text):
+    """Split ``ResultFile`` text into runs, each a list of records.
+
+    TEM3P opens ``ResultFile`` in append mode, so a re-run into the same job
+    directory adds a second copy below the first (Phase 0 P2). A record is a
+    thermal block (the lines between two ``=====`` rules), a table header (a
+    ``#`` line) or a data row. A run holds at most one of each block kind, so a
+    second thermal block or a second header starts the next run. Records within
+    a run come in either order: RfGun writes the elastic header, then the
+    thermal block, then the elastic row.
+
+    One case is invisible here: an elastic-only run appended after a
+    thermal-only one reads as a single thermo-elastic run. The module's
+    ``clean`` removes ``ResultFile`` before a fresh run, so the file it reads
+    holds one run."""
+    runs, current, seen = [], [], set()
+    in_block = False
+
+    def start(kind):
+        nonlocal current, seen
+        if kind in seen:
+            runs.append(current)
+            current, seen = [], set()
+        seen.add(kind)
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('====='):
+            if not in_block:
+                start('thermal')
+                current.append(('thermal', []))
+            in_block = not in_block
+        elif in_block:
+            current[-1][1].append(line)
+        elif line.startswith('#'):
+            start('table')
+            current.append(('header', line))
+        else:
+            current.append(('row', line))
+    if current:
+        runs.append(current)
+    return runs
+
+
+def _tem3p_thermal(lines):
+    data = {'max_temperature': None, 'min_temperature': None,
+            'sideset_power': {}}
+    for line in lines:
+        match = _TEM3P_THERMAL_LINE.match(line)
+        if not match:
+            continue
+        maximum, minimum, sideset, value = match.groups()
+        if maximum:
+            data['max_temperature'] = float(value)
+        elif minimum:
+            data['min_temperature'] = float(value)
+        else:
+            data['sideset_power'][int(sideset)] = float(value)
+    return data
+
+
+def parse_tem3p_result_file(text):
+    """Parse the **last** run in a TEM3P ``ResultFile`` (see :func:`_tem3p_runs`).
+
+    Returns a dict with:
+
+    * ``thermal``: ``{'max_temperature', 'min_temperature', 'sideset_power'}``,
+      the last a ``{sideset id: power}`` dict, or ``None`` when no thermal
+      problem ran. Values carry the 6 significant digits TEM3P writes;
+    * ``elastic``: one static solve as ``{column: float}`` (``u_x_min`` ...
+      ``u_mag_max`` and ``block_id``), or ``None``. The values are global
+      minima and maxima over the body; ``block_id`` is the block holding the
+      largest ``|u|``, not a per-block row;
+    * ``eigen``: the mechanical eigenmode table as ``{column: array}`` with a
+      ``mode`` column (1, 2, ...) added, or ``None``. A table whose first
+      column is ``Frequency`` is an eigen table;
+    * ``units``: ``{column: unit}`` from the table header;
+    * ``runs``: how many runs the file holds. More than one means TEM3P ran
+      twice into the same job directory.
+
+    Raises ``ValueError`` on a data row with no header above it, a row whose
+    width does not match its header, or a static header with no row under it
+    (a run that died between writing the two).
+    """
+    runs = _tem3p_runs(text)
+    data = {'thermal': None, 'elastic': None, 'eigen': None, 'units': {},
+            'runs': len(runs)}
+    if not runs:
+        return data
+    names, rows = None, []
+    for kind, value in runs[-1]:
+        if kind == 'thermal':
+            data['thermal'] = _tem3p_thermal(value)
+        elif kind == 'header':
+            names, data['units'] = _tem3p_table_names(value)
+        else:
+            if names is None:
+                raise ValueError(
+                    f'ResultFile data row with no header above it: {value!r}')
+            row = [float(token) for token in value.split()]
+            if len(row) != len(names):
+                raise ValueError(
+                    f'ResultFile row has {len(row)} values but its header names '
+                    f'{len(names)} columns ({", ".join(names)}): {value!r}')
+            rows.append(row)
+    if names is None:
+        return data
+    table = np.array(rows, dtype=float).reshape(len(rows), len(names)).T
+    columns = dict(zip(names, table))
+    if names[0] == 'frequency':
+        columns['mode'] = np.arange(1, len(rows) + 1)
+        if 'block_id' in columns:
+            columns['block_id'] = columns['block_id'].astype(int)
+        data['eigen'] = columns
+    else:
+        if len(rows) != 1:
+            raise ValueError(
+                f'ResultFile has {len(rows)} data rows under its displacement '
+                'header; a static solve writes exactly one (none means the run '
+                'died before writing it).')
+        elastic = {name: float(values[0]) for name, values in columns.items()}
+        if 'block_id' in elastic:
+            elastic['block_id'] = int(elastic['block_id'])
+        data['elastic'] = elastic
+    return data
+
+
+def parse_tem3p_log(text):
+    """Parse ``tem3p.log`` into a dict of run facts.
+
+    * ``completed``: the ``Ending run at`` line is present. A killed or aborted
+      run leaves a log without it;
+    * ``problems``: the problems the run solved (``thermal``, ``transient``,
+      ``elastic``), from the ``'run<Name>Problem' = 1`` flags TEM3P logs as it
+      starts;
+    * ``n_dofs``: ``{problem: DOFs}``. Only the body mesh's count: the log
+      also prints one for each read of the vacuum mesh, and those are skipped;
+    * ``scaling_factors``: ``{problem: [factor, ...]}``, one entry per coupled
+      boundary or heat source, in log order. ``The LF scaling factor is`` lines
+      land under ``elastic``, ``The scaling factor is`` lines under ``thermal``;
+    * ``newton_iterations``: ``{problem: count}`` for a nonlinear solve;
+    * ``linear_iterations``: ``{problem: [count, ...]}`` from the solver's
+      ``solved Ax = b ... after N iterations`` lines;
+    * ``modes``: ``{mode: frequency in Hz}`` at the full precision of the
+      ``Mode n, Frequency:`` lines. ARPACK's own indented ``Frequency:`` lines
+      are a different quantity (off by the speed of light) and are ignored;
+    * ``run_time`` (seconds), ``mpi_processes``, ``em_directory`` (the EM run
+      TEM3P loaded) and ``em_mesh_input_dir`` (the vacuum mesh it deformed),
+      each ``None`` when absent;
+    * ``em_loaded``: ``None`` when the run loads no EM solution, ``True`` once
+      every load it started finished, ``False`` when it died during one;
+    * ``source_date``, ``source_tag``, ``compilation_date`` from the banner.
+
+    The log's displacement and temperature summaries are not read: their
+    precision varies from run to run (RfGun logs ``Max T = 28.6``), and the
+    ``Strain/Stress`` lines are uninitialised sentinels (``-1e+09``).
+    """
+    data = {'completed': False, 'problems': [], 'n_dofs': {},
+            'scaling_factors': {}, 'newton_iterations': {},
+            'linear_iterations': {}, 'modes': {}, 'run_time': None,
+            'mpi_processes': None, 'em_directory': None,
+            'em_mesh_input_dir': None, 'em_loaded': None}
+    for key in _TEM3P_BANNER.values():
+        data[key] = None
+    patterns = _TEM3P_LOG_PATTERNS
+    problem = None
+    awaiting_dofs = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(TEM3P_DONE):
+            data['completed'] = True
+            continue
+        if not data['problems']:
+            flags = _TEM3P_RUN_FLAG.findall(line)
+            if flags:
+                data['problems'] = [_TEM3P_PROBLEMS[name] for name, on in flags
+                                    if on == '1' and name in _TEM3P_PROBLEMS]
+                continue
+        if line.startswith(_TEM3P_EM_LOADED) and data['em_loaded'] is False:
+            data['em_loaded'] = True
+            continue
+        named = _TEM3P_PROBLEM_NAME.search(line)
+        if named:
+            problem = _TEM3P_PROBLEMS[named.group(1)]
+            if 'instantiating ScalarDiscreteDomain' in line:
+                awaiting_dofs = problem
+        match = patterns['dofs'].search(line)
+        if match:
+            if awaiting_dofs is not None:
+                data['n_dofs'][awaiting_dofs] = int(match.group(1))
+                awaiting_dofs = None
+            continue
+        match = patterns['scaling'].match(line)
+        if match:
+            data['scaling_factors'].setdefault(problem, []).append(
+                float(match.group(1)))
+            continue
+        match = patterns['newton'].match(line)
+        if match:
+            data['newton_iterations'][problem] = max(
+                data['newton_iterations'].get(problem, 0),
+                int(match.group(1)) + 1)
+            continue
+        match = patterns['linear'].search(line)
+        if match:
+            data['linear_iterations'].setdefault(problem, []).append(
+                int(match.group(1)))
+            continue
+        match = patterns['mode'].match(line)
+        if match:
+            data['modes'].setdefault(int(match.group(1)),
+                                     float(match.group(2)))
+            continue
+        for key in ('run_time', 'mpi', 'em_directory', 'em_mesh_input_dir'):
+            match = patterns[key].match(line)
+            if match:
+                value = match.group(1)
+                if key in ('run_time', 'mpi'):
+                    value = int(value)
+                data['mpi_processes' if key == 'mpi' else key] = value
+                if key == 'em_directory':
+                    data['em_loaded'] = False
+                break
+        for prefix, key in _TEM3P_BANNER.items():
+            if line.startswith(prefix):
+                data[key] = line[len(prefix):].strip()
+    return data
+
+
+def parse_tem3p_results(job_dir):
+    """Read a TEM3P job directory: ``{thermal, elastic, eigen, units, runs,
+    log}``.
+
+    ``log`` is :func:`parse_tem3p_log` of ``tem3p.log``; the other keys are
+    :func:`parse_tem3p_result_file` of ``ResultFile``.
+
+    Checks the log first, because TEM3P's exit status cannot be trusted: a
+    wrong argument count prints the usage and exits 0. Raises
+    ``FileNotFoundError`` when the log or ``ResultFile`` is missing, and
+    ``ValueError`` when the log has no ``Ending run at`` line.
+    """
+    log_path = os.path.join(job_dir, TEM3P_LOG)
+    if not os.path.isfile(log_path):
+        raise FileNotFoundError(
+            f'no {TEM3P_LOG} in {job_dir}: TEM3P writes it as soon as it starts, '
+            'so it never ran there. A wrong command line makes tem3p print its '
+            "usage and exit 0; otherwise it wrote to another job directory (set "
+            "'results_dir' on the tem3p module to match).")
+    with open(log_path) as file:
+        log = parse_tem3p_log(file.read())
+    if not log['completed']:
+        message = (f"{log_path} has no '{TEM3P_DONE}' line, so the run did not "
+                   'finish; its results were not read.')
+        if log['em_loaded'] is False:
+            message += (
+                ' The log stops while loading the EM solution, which is what '
+                "TEM3P does when the mesh named in the EM run's "
+                'VECTOR/postprocess.in no longer exists (the evaluation '
+                'directory moved): re-run the EM step.')
+        raise ValueError(message)
+    result_path = os.path.join(job_dir, TEM3P_RESULT_FILE)
+    if not os.path.isfile(result_path):
+        raise FileNotFoundError(
+            f'no {TEM3P_RESULT_FILE} in {job_dir}, although {TEM3P_LOG} says the '
+            'run finished.')
+    with open(result_path) as file:
+        data = parse_tem3p_result_file(file.read())
+    data['log'] = log
+    return data
+
+
+class Tem3P(ACE3P):
+    """The ACE3P thermal and structural solver.
+
+    One binary covers every TEM3P problem type; which ones run is decided by
+    the blocks in the input (``ThermostaticProblem``, ``ElasticProblem``, an
+    ``EigenSolver`` inside the latter). A run writes into the second positional
+    argument, else ``tem3p_results``. :meth:`output_parser` reads that
+    directory through :func:`parse_tem3p_results`.
+
+    ``tem3p.out`` is only an echo of the input. The results are in
+    ``ResultFile``, which TEM3P **appends** to, and ``tem3p.log``, which it
+    overwrites.
+    """
+
+    module_name = 'tem3p'
+
+    default_job_name = 'tem3p_results'
+
+    # Usage is 'tem3p <input> [jobname]' (from the binary's own usage text).
+    accepts_results_dir_arg = True
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.output_file = TEM3P_RESULT_FILE
+
+    def make_default_input(self):
+        self.input_file = 'tem3p_input_file.tem3p'
+        with open(self.input_file, 'w') as f:
+            pass
+
+    def output_parser(self):
+        """Read the job directory (:func:`parse_tem3p_results`) into
+        ``output_data``. Raises when the log or ``ResultFile`` is missing or
+        the run did not finish."""
+        self.output_data = parse_tem3p_results(
+            os.path.join(self.workdir, self.results_dir()))

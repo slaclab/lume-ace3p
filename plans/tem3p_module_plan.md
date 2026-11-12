@@ -1,7 +1,8 @@
 # TEM3P as a Workflow Module — Implementation Plan
 
 **Status: Phase 0 done 2026-11-12 (job 44528190; results in §4, fixtures in
-`tests/fixtures/tem3p/`). Next: Phase 1.**
+`tests/fixtures/tem3p/`). Phase 1 done 2026-11-12 (wrapper and parsers; see
+§4). Next: Phase 2.**
 
 Written 2026-11-12 on S3DF, following the investigation in
 `plans/tem3p_investigation.md` (the shareable summary; this plan assumes it).
@@ -273,10 +274,13 @@ are positional children of `ThermostaticProblem` and/or `ElasticProblem`.
 
    **P5 confirmed** that `NeumanValue` is silently ignored: a 1e5 Pa load
    spelled that way leaves `ResultFile` identical to the unloaded run.
-   **Decision for the user at Phase 2:** the CW23 inputs carry these spellings
-   verbatim, so the lint could be a warning instead. The proposal is an error
-   for keys whose value is non-default and a warning when the ignored value
-   equals the default (`NeumanValue: 0.`).
+   **Decided 2026-11-12 (user): every item is a build-time error, including
+   an ignored value that equals the default (`NeumanValue: 0.`).** Each
+   message says the key is not one TEM3P reads, that TEM3P ignores it
+   silently, and names the fix: for example, "`NeumanValue` is not a key
+   TEM3P reads (it is ignored without a warning); spell it `NeumannValue`".
+   The CW23 inputs carry these spellings verbatim, so the shipped example's
+   inputs use the corrected spellings.
 
 ### 3.5 Outputs
 
@@ -285,9 +289,14 @@ are positional children of `ThermostaticProblem` and/or `ElasticProblem`.
 - **Read `ResultFile` from the last header onward.** It is opened in append
   mode (P2: a re-run gives two identical blocks; `tem3p.log` is overwritten),
   so the module's `clean` must also remove it before a fresh run.
-- **The elastic table** goes through `parse_column_file`, using its header
-  (`u_x min [m]` …). The thermal block is parsed by prefix (`Max T =`,
-  `P (SideSet n) =`).
+- **The elastic table** is read with its own header splitter, not
+  `parse_column_file`: the header names columns with embedded spaces
+  (`u_x min [m]`), so a whitespace split cannot recover them. `u_x min [m]`
+  becomes `u_x_min`, `Frequency [Hz]` becomes `frequency`. The thermal block is
+  parsed by prefix (`Max T =`, `P (SideSet n) =`).
+- **The elastic row is one global summary per solve, not one row per block.**
+  `block_id` is the block holding the largest |u| (`ElasticProblem.C`), so the
+  displacement quantities need no `at:` axis.
 - **The RfGun layout** puts the elastic header before the thermal block and
   its rows after it. Fixtures cover it.
 
@@ -297,10 +306,11 @@ are positional children of `ThermostaticProblem` and/or `ElasticProblem`.
 |---|---|---|
 | `max_temperature`, `min_temperature` | thermal block | — |
 | `sideset_power` | `P (SideSet n)` | `at: {sideset: n}` (required) |
-| `u_x_min` … `u_z_max`, `u_mag_max` | elastic table | `at: {block: id}`. Default: the single block, or the max of \|u\| over blocks for `u_mag_max` |
+| `u_x_min` … `u_z_max`, `u_mag_max` | elastic table | — (global; `block_id` names where \|u\| peaks) |
 | `mechanical_frequency` | eigen table. The log's `Mode n, Frequency:` lines agree with it (P6); only ARPACK's own `Frequency:` lines are off by c | `field_index` = `Mode` |
-| `scaling_factor` | `The (LF )?scaling factor is` (log). Printed once per coupled boundary or heat source (5× in SrfCoupler), so the value is the first line, or `at: {line: n}` | — |
-| `newton_iterations`, `n_dofs`, `run_time` | log | — |
+| `scaling_factor` | `The (LF )?scaling factor is` (log), per problem. Printed once per coupled boundary or heat source (5× in SrfCoupler); RfGun has one thermal and one LF factor. Default: the single problem's first value; `at: {problem: thermal\|elastic}` otherwise | — |
+| `newton_iterations`, `n_dofs` | log, per problem (`n_dofs` skips the vacuum-mesh DOF lines); same default as `scaling_factor` | — |
+| `run_time` | log | — |
 
 - **Ignore the log's stress and strain min/max.** They are uninitialized
   sentinels.
@@ -403,6 +413,29 @@ transient and needs no repo change (user).
 - The new kind `TEM3P_SOLUTION`.
 - Characterization tests in `tests/test_tem3p_fixtures.py`.
 
+**Phase 1 results (DONE 2026-11-12).**
+
+- `Tem3P(ACE3P)` and three parsers in `ace3p.py`:
+  - `parse_tem3p_result_file` reads the **last** run of `ResultFile`. A
+    second thermal block or a second `#` header starts a new run, and `runs`
+    counts them;
+  - `parse_tem3p_log` reads per-problem `n_dofs`, `scaling_factors`,
+    `newton_iterations` and `linear_iterations`, plus `modes`, `run_time`,
+    `em_directory`, `em_mesh_input_dir` and `em_loaded`;
+  - `parse_tem3p_results(job_dir)` returns
+    `{thermal, elastic, eigen, units, runs, log}`. It raises when the log or
+    `ResultFile` is missing or the log has no `Ending run at`. A log that
+    stops while loading the EM run (P9) gets a "re-run the EM step" hint.
+- `TEM3P_SOLUTION` is in `ARTIFACT_KINDS`.
+- `tests/test_tem3p_fixtures.py` covers every Phase 0 probe.
+- Found on the way, folded into §3.5: the elastic row is global, not one row
+  per block; the header needs its own splitter; the scaling factor and DOFs
+  are per problem. The `loading RF solution for TEM3P...` line is printed even
+  without RF coupling, so it is no evidence of an EM load; the
+  `Omega3P directory name:` line is.
+- Known limit: an elastic-only run appended after a thermal-only one reads as
+  one run. `clean` removing `ResultFile` (Phase 2) makes that unreachable.
+
 ### Phase 2: the module
 
 - `optional_requires` in `Module` and `_bind`.
@@ -454,8 +487,8 @@ No new examples unless asked.
 
 ## 5. Open decisions
 
-1. Lint as error or warning for ignored misspellings (§3.4 item 5). Ask at
-   Phase 2.
+1. ~~Lint as error or warning~~ **Error**, with a message naming the fix
+   (user, 2026-11-12; §3.4 item 5).
 2. Derived expressions reading swept inputs, for `k_l` (§3.5). Ask before
    Phase 3.
 3. ~~Whether appended pairs are supported~~ **Yes** (P4, 2026-11-12), with
