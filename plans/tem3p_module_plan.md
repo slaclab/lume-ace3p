@@ -644,4 +644,7 @@ No new examples unless asked.
    inputs (which reach both passes) or keeps TEM3P's leaves fixed. Fixing
    it needs a way to give several scopes one axis, which is a
    multi-instance input feature rather than a TEM3P one. Documented as a
-   warning in `docs/tem3p_reference.md`. Not started; the user decides.
+   warning in `docs/tem3p_reference.md`. **Decided 2026-11-12 (user):** the
+   limitation stays documented and nothing more is built now. Other
+   optimization strategies for chained loops like this are future work, to
+   be investigated in their own plan.
