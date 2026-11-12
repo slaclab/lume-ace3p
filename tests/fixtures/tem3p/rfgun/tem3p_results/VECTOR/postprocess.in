@@ -1,0 +1,95 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        ModelInfo : { 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/RfGunBody.ncdf 
+            BoundaryCondition : { 
+                HFormulation : 1 
+                Electric : 1 , 2 , 3 , 4 , 5 , 6 
+            }
+        }
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/tem3p_results/VECTOR 
+        }
+        CurvedSurfaces : on 
+        LinearSolver : { 
+            Preconditioner : DIAGONAL 
+            MaxIterations : 50000 
+            Solver : CG 
+            AbsoluteTolerante : 1.00e-16 
+            Tolerance : 1.00e-10 
+        }
+        JobName : tem3p_results 
+        ProblemType : ElasticityProblem 
+        FiniteElement : { 
+            Order : 2 
+            CurvedSurfaces : on 
+            SeparateLinearDOF : off 
+            ScalarBasisSet : Conventional 
+            ScalarPotential : 0 
+            NumberOfPhysicalVariables : 3 
+        }
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        MeshDump : { 
+            WriteDeformedEMMesh : on 
+            EMMeshInputDir : omega3p_results 
+            WriteStressStrain : on 
+            WriteDeformedMesh : on 
+        }
+        ReferenceT : 25 
+        MeshFile : RfGunBody.ncdf 
+        BasisOrder : 2 
+        Boundary : { 
+            Id : 1 
+            MixedType : NEUMANN , NEUMANN , DIRICHLET 
+            MixedValue : 0. , 0. , 0. 
+            ConditionType : Mixed 
+        }
+        Boundary : { 
+            Id : 2 
+            MixedType : DIRICHLET , NEUMANN , NEUMANN 
+            MixedValue : 0. , 0. , 0. 
+            ConditionType : Mixed 
+        }
+        Boundary : { 
+            Id : 3 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+            MixedValue : 0. , 0. , 0. 
+            ConditionType : Mixed 
+        }
+        Boundary : { 
+            Id : 4 
+            NeumannValue : 0. 
+            ConditionType : Neumann 
+        }
+        Boundary : { 
+            Id : 5 
+            NeumannValue : 0. 
+            ConditionType : Neumann 
+        }
+        Boundary : { 
+            Id : 6 
+            WhichMode : 0 
+            Omega3PId : 6 
+            Directory : omega3p_results 
+            Method : Gradient 
+            TargetGradient : 60e6 
+            EndPoint : 0.0001 , 0.0001 , 0.017018 
+            StartPoint : 0.0001 , 0.0001 , -0.017018 
+            ConditionType : LFDetuning 
+        }
+        VolumeMaterial : { 
+            Id : 1 
+            ElasticMu : 4.3363e+10 
+            ElasticAlpha : 1.70000e-5 
+            ElasticLambda : 8.1244e+10 
+        }
+/********************************/
+
+
+
+

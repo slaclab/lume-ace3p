@@ -1,0 +1,14 @@
+DeformedMesh.ncdf
+DeformedVacuumMesh.ncdf
+Displacement.mod
+OUTPUT
+ResultFile
+RfGunBody.tem3p
+Strain.mod
+Stress.mod
+tem3p.log
+tem3p.out
+tem3pStat.log
+tem3p.warn
+Temperature.mod
+VECTOR

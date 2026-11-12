@@ -1,0 +1,85 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        MeshFile : SRFCellShell.ncdf 
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        JobName : tem3p_pair2c 
+        FiniteElement : { 
+            Order : 2 
+            SeparateLinearDOF : off 
+            ScalarPotential : 0 
+            NumberOfPhysicalVariables : 3 
+            ScalarBasisSet : Conventional 
+            CurvedSurfaces : on 
+        }
+        MeshDump : { 
+            WriteDeformedEMMesh : on 
+            EMMeshInputDir : omega3p_results_deformed 
+        }
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_pair2c/VECTOR 
+        }
+        BasisOrder : 2 
+        LinearSolver : { 
+            Solver : CG 
+            Preconditioner : DIAGONAL 
+            MaxIterations : 150000 
+            Tolerance : 1.00e-10 
+            AbsoluteTolerante : 1.00e-16 
+        }
+        VolumeMaterial : { 
+            Id : 1 
+            ElasticMu : 4.2736232e+10 
+            ElasticLambda : 13.5386473e+10 
+            ElasticAlpha : 6.50000e-6 
+        }
+        ModelInfo : { 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellShell.ncdf 
+            BoundaryCondition : { 
+                HFormulation : 1 
+                Electric : 1 , 2 , 3 , 4 , 5 
+            }
+        }
+        CurvedSurfaces : on 
+        Boundary : { 
+            Id : 1 
+            MixedValue : 0. , 0. , 0. 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+            ConditionType : Mixed 
+        }
+        Boundary : { 
+            Id : 2 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+        }
+        Boundary : { 
+            Id : 3 
+            NeumanValue : 0. 
+            ConditionType : Neumann 
+        }
+        Boundary : { 
+            Id : 4 
+            NeumanValue : 0. 
+            ConditionType : Neumann 
+        }
+        Boundary : { 
+            WhichMode : 0 
+            StartPoint : 0.0 , 0.0 , -0.0577 
+            Omega3PId : 6 
+            Method : Gradient 
+            Directory : omega3p_results_deformed 
+            TargetGradient : 35e6 
+            ConditionType : LFDetuning 
+            EndPoint : 0.0 , 0.0 , 0.0577 
+            Id : 5 
+        }
+        ProblemType : ElasticityProblem 
+/********************************/
+
+
+
+

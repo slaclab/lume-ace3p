@@ -1,0 +1,333 @@
+*************************************************************
+			 Tem3P
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+*************************************************************
+
+Starting master process on sdfmilan030
+Number of MPI processes: 96
+Number of compute nodes: 1
+Number of processes per node: 96
+Data precision: 64 bits
+Compiler: 11.5.0 20240719 (Red Hat 11.5.0-5)
+Beginning run at Thu Nov 12 11:45:01 2026
+
+---------------------------------
+
+Entering ThermoElasticProblem::solve()...
+
+---------------------------------
+
+In ThermoElasticProblem::solve(): begining tem3p iter 0 with 'runThermostaticProblem' = 1 with 'runThermoTransientProblem' = 0 with 'runElasticProblem' = 0
+1 In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: instantiating ScalarDiscreteDomain...
+2 In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting up ScalarDiscreteDomain...
+Read Mesh: 2D-TTF3-FPC-Body.ncdf
+Check Mesh: 2D-TTF3-FPC-Body.ncdf
+Time for read model: 0.29131735
+Time for setBasisOrder: 0.003522889000000029
+    Time for making right-orientation and calculating Adjacency: 0.09346530600000003
+Partitioning Method: PARMETIS
+    Time for partitioning mesh: 0.09304575899999995
+    Time for replicating remote meshes: 0.016989853
+        Time for numberingHierarchical: 0.04891414500000002
+
+***********************************************************
+*	Total Number of Elements read: 	315091
+*	Total Number of Elements used: 	315091
+*	Total Number of DOFs: 	101857
+***********************************************************
+
+        Time for numbering remote nodes: 0.001791640000000094
+        Time for numbering remote edges: 0.01164551400000002
+        Time for numbering remote faces: 0.01486567699999997
+        Time for numbering remote volumes: 0.0001790030000000664
+    Time for numbering DOF entities: 0.07932664099999998
+Time for set model: 0.285533513
+Time for read midpoints: 0.05080660599999998
+Time for creating higher-order elements: 0.003822782999999941
+Shell number         1
+   Shell boundary id 6
+   Shell basis order 1
+   Shell layer       1
+   Shell thickness   1e-05
+   Shell material    221
+Shell number         2
+   Shell boundary id 7
+   Shell basis order 1
+   Shell layer       1
+   Shell thickness   0.0001
+   Shell material    221
+ loading RF solution for TEM3P...
+Omega3P directory name: s3p_results
+Boundary conditions:
+0 = INTERIOR
+1 = IMPEDANCE
+2 = MAGNETIC
+3 = MAGNETIC
+4 = WAVEGUIDE
+5 = WAVEGUIDE
+
+For attribute 0
+Material 1 has the following properties:
+   Eps_r: (9, -0.0009)
+    Mu_r: (1, 0)
+   Sigma: 0
+
+Boundary 1 has surface conductivity of 57000000.00000001 S/m
+Surface impedance model 
+Metal properties: 
+  Epsilon = 1
+  MU = 1
+  Sigma = 57000000
+  Frequency = 1000000000
+
+Read Mesh: /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SrfCoupler/2D-TTF3-FPC-Vacuum.ncdf
+Time for reading the model: 0.336037444
+
+Using curved quadratic tetrahedrons
+Setting global vector finite element basis order to p=2
+[STARTUP] FE framework: setModel: right-orientation                0.08504619599999996 s
+[STARTUP] FE framework: setModel: calculateAdjacency (RCB + faces) 0.5407545830000002 s
+Partitioning Method: parmetis
+[STARTUP] FE framework: setModel: partition                        0.238710934 s
+[STARTUP] FE framework: setModel: DOF weights + replicateSharedCoords 0.01332824200000005 s
+[STARTUP] FE framework: setModel: DOF numbering (DM_Numbering)       2.486698949 s
+
+***********************************************************
+*	Total Number of Elements read: 	139754
+*	Total Number of Elements used: 	139754
+*	Total Number of DOFs: 	968476
+***********************************************************
+
+[STARTUP] FE framework: setModel: remote DOF numbering              0.001117598999999636 s
+[STARTUP] FE framework: setModel (basis order, adjacency)          3.441009337000001 s
+[STARTUP] FE framework: readMidPoints (curved edges)             0.01698794200000009 s
+[STARTUP] FE framework: create higher-order elements             0.2670154350000002 s
+[STARTUP] FE framework: periodic elements                        1.179999999934012e-06 s
+Time for setting up finite element framework: 3.728036306
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Mesh : { 
+            ElementDistribution : { 
+                stddev : 0.0 
+                min : 139754 
+                total : 139754 
+                max : 139754 
+                average : 139754.0 
+            }
+            MeshCoords : 32081 
+            ReplicatedElementDistribution : { 
+                stddev : 0.0 
+                min : 0 
+                total : 0 
+                max : 0 
+                average : 0.0 
+            }
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SrfCoupler/2D-TTF3-FPC-Vacuum.ncdf 
+        }
+/********************************/
+
+
+
+
+[STARTUP] NewPP: mesh read + partition + adjacency (DiscreteDomain::Setup) 4.26 s
+[STARTUP] NewPP: field checkpoint read + redistribute (readEigens) 1.19 s
+Localizer: Bins not given, using 441 (about one element per bin along the longest axis; 139754 elements)
+Localizer: 441 x 41 x 18 bins, 9.7 MB, built in 0.1 s
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting map of boundaries...
+ EM frequency : (1300000000.0,0.0)
+ Powerinput : 437.5 :  : 437.5
+The scaling factor is 437.5
+Volumetric Heating Boundary 5 dielectri constants de(T) = 
+ EM frequency : (1300000000.0,0.0)
+ Powerinput : 437.5 :  : 437.5
+The scaling factor is 437.5
+EM Heating Boundary 6 surface resis R(T) = 
+ EM frequency : (1300000000.0,0.0)
+ Powerinput : 437.5 :  : 437.5
+The scaling factor is 437.5
+EM Heating Boundary 7 surface resis R(T) = 
+ EM frequency : (1300000000.0,0.0)
+ Powerinput : 437.5 :  : 437.5
+The scaling factor is 437.5
+EM Heating Boundary 8 surface resis R(T) = 
+ EM frequency : (1300000000.0,0.0)
+ Powerinput : 437.5 :  : 437.5
+The scaling factor is 437.5
+EM Heating Boundary 9 surface resis R(T) = 
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: map of boundaries set succesfully
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting linear solver...
+Leaving StaticProblem::readKvcParameters1() of ThermostaticProblem
+ Volume id: 221
+ Volume id: 1
+ Volume id: 2
+ Volume id: 3
+ Volume id: 4
+ Volume id: 5
+Entering StaticProblem::instantiateMatrix() of ThermostaticProblem
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 1.2
+
+Entering ThermostaticProblem::solveWithNewton() for global iteration 0
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.2
+ ThermostaticProblem::computeRHS 
+
+ Initial norm         : 2941.1
+ DOFS norm            : 4138.1932047694435823
+ Picard limit         : 100
+ Max Nonlinear Iter   : 500
+ Absolute Tol         : 0.0000000010000000
+ Relative Tol         : 0.0000000010000000
+
+ Nonlinear Newton iteration 0
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1607867869999993
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 12.8072872532944544
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 102091.7014511203306029
+
+ Nonlinear Newton iteration 1
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1707809669999989
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.5354560503166641
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 87059.8801257676095702
+
+ Nonlinear Newton iteration 2
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.4417991890000010
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0184433488964568
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86461.0162161454354646
+
+ Nonlinear Newton iteration 3
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1630986069999949
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0032933724713609
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86261.5008222047617892
+
+ Nonlinear Newton iteration 4
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1622171329999986
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0006122174613492
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86224.5999292458291166
+
+ Nonlinear Newton iteration 5
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1626461299999988
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0001051733068540
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86219.0694466405111598
+
+ Nonlinear Newton iteration 6
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1621993119999985
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0000079058089185
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86219.1464488480414730
+
+ Nonlinear Newton iteration 7
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1668665050000016
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0000032990290945
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86219.1812154022336472
+
+ Nonlinear Newton iteration 8
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.1664106869999955
+ ThermostaticProblem::computeRHS 
+
+ Newton residual norm : 0.0000005887168528
+ Initial norm         : 2941.0629765171688632
+ DOFS norm            : 86219.1563542045623763
+
+Leaving ThermostaticProblem::solveWithNewton() for global iteration 0
+ ThermostaticProblem::computeHeatFlux 
+ Time for heat flux computation : 0.0140040050000039
+Prepare Remote Element List: 
+Calculating the total power flow through every sideset...
+
+ ===================================== 
+ Max T = 324.3520007080687151
+ Min T = 2.0000000000000000
+ P (SideSet 1) = 0.0872578558852282
+ P (SideSet 2) = 0.0005649793010842
+ P (SideSet 3) = 0.0395757442272746
+ P (SideSet 4) = 0.7813392635848984
+ P (SideSet 5) = 0.1005412247487665
+ P (SideSet 6) = 0.0000000000000000
+ P (SideSet 7) = 0.0000000000000000
+ P (SideSet 8) = -0.0325707192115802
+ P (SideSet 9) = -0.0028891156282298
+ P (SideSet 10) = -0.1809940300060884
+ P (SideSet 11) = -0.2004387158972007
+ ===================================== 
+
+ Temperature output file : tem3p_results/Temperature.mod
+
+
+---------------------------------
+
+Leaving ThermoElasticProblem::solve()
+
+---------------------------------
+
+Leaving StaticProblem::destructor() of ThermostaticProblem
+Ending run at Thu Nov 12 11:46:44 2026
+Total run time = 103 seconds

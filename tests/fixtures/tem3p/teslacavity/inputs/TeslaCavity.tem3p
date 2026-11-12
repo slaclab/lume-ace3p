@@ -1,0 +1,54 @@
+ElasticProblem:
+{
+  MeshFile: TeslaCavity.ncdf
+  BasisOrder: 2 
+  CurvedSurfaces: on
+ 
+  MeshDump: {
+   WriteDeformedMesh: on 
+   MeshDeformScale: 0.2
+  }
+
+  EigenSolver : {
+	NumEigenvalues: 5
+	FrequencyShift: 5
+  }
+
+  VolumeMaterial:
+  {
+    Id: 1
+    ElasticLambda  :  20.9512e+10
+    ElasticMu      :   5.77227e+10
+    ElasticAlpha   :   6.50000e-6
+    Density: 8570
+  }
+
+  Boundary:
+  {
+    Id: 1
+    ConditionType: Dirichlet
+    DirichletValue: 0.
+  }
+  
+  Boundary:
+  {
+    Id: 2
+    ConditionType: Dirichlet
+    DirichletValue: 0.
+  }
+  
+  Boundary:
+  {
+    Id: 3
+    ConditionType: Mixed
+    MixedType: NEUMANN DIRICHLET NEUMANN
+    MixedValue: 0., 0., 0.
+  }
+
+  Boundary:
+  {
+    Id: 4
+    ConditionType: Neumann
+    NeumannValue: 0.
+  }
+}

@@ -1,0 +1,183 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Environment : { 
+            start : Thu Nov 12 11:42:02 2026 
+            commsize : 16 
+            user : dbizzoze 
+        }
+        Version : { 
+            Application : Tem3P
+
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Input : { 
+            ThermostaticProblem : { 
+                ThermalConductivity : { 
+                    Id : 1 
+                    Value : 391 
+                }
+                BasisOrder : 2 
+                MeshFile : RfGunBody.ncdf 
+                LinearSolver : { 
+                    Preconditioner : DIAGONAL 
+                    MaxIterations : 5000 
+                    Solver : CG 
+                    AbsoluteTolerance : 1.0e-18 
+                    Tolerance : 1.0e-10 
+                }
+                CurvedSurfaces : on 
+                Boundary : { 
+                    Id : 1 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 2 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 3 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 4 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 5 
+                    RobinConstantFactor : 20000.0 
+                    RobinConstantValue : 440000.0 
+                    ConditionType : Robin 
+                }
+                Boundary : { 
+                    Id : 6 
+                    EndPoint : 0.0001 , 0.0001 , 0.017018 
+                    TargetGradient : 60e6 
+                    Directory : omega3p_results 
+                    DutyFactor : 0.00036 
+                    WhichMode : 0 
+                    Sigma : 5.8e7 
+                    Method : Gradient 
+                    StartPoint : 0.0001 , 0.0001 , -0.017018 
+                    ConditionType : RFHeating 
+                }
+            }
+            ExecDirName : tem3p_results 
+            JobName : tem3p_results 
+            MPI : { 
+                size : 0 
+                rank : 0 
+            }
+            ThermoElasticProblem : { 
+                RunId : 3 
+            }
+            ElasticProblem : { 
+                LinearSolver : { 
+                    Preconditioner : DIAGONAL 
+                    MaxIterations : 50000 
+                    Solver : CG 
+                    AbsoluteTolerante : 1.00e-16 
+                    Tolerance : 1.00e-10 
+                }
+                MeshFile : RfGunBody.ncdf 
+                MeshDump : { 
+                    WriteStressStrain : on 
+                    EMMeshInputDir : omega3p_results 
+                    WriteDeformedEMMesh : on 
+                    WriteDeformedMesh : on 
+                }
+                Boundary : { 
+                    Id : 1 
+                    MixedType : NEUMANN , NEUMANN , DIRICHLET 
+                    MixedValue : 0. , 0. , 0. 
+                    ConditionType : Mixed 
+                }
+                Boundary : { 
+                    Id : 2 
+                    MixedType : DIRICHLET , NEUMANN , NEUMANN 
+                    MixedValue : 0. , 0. , 0. 
+                    ConditionType : Mixed 
+                }
+                Boundary : { 
+                    Id : 3 
+                    MixedType : NEUMANN , DIRICHLET , NEUMANN 
+                    MixedValue : 0. , 0. , 0. 
+                    ConditionType : Mixed 
+                }
+                Boundary : { 
+                    Id : 4 
+                    NeumannValue : 0. 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 5 
+                    NeumannValue : 0. 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 6 
+                    EndPoint : 0.0001 , 0.0001 , 0.017018 
+                    TargetGradient : 60e6 
+                    Directory : omega3p_results 
+                    WhichMode : 0 
+                    Omega3PId : 6 
+                    Method : Gradient 
+                    StartPoint : 0.0001 , 0.0001 , -0.017018 
+                    ConditionType : LFDetuning 
+                }
+                CurvedSurfaces : on 
+                BasisOrder : 2 
+                ReferenceT : 25 
+                VolumeMaterial : { 
+                    Id : 1 
+                    ElasticLambda : 8.1244e+10 
+                    ElasticAlpha : 1.70000e-5 
+                    ElasticMu : 4.3363e+10 
+                }
+            }
+        }
+/********************************/
+
+
+

@@ -1,0 +1,85 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_results/VECTOR 
+        }
+        JobName : tem3p_results 
+        MeshFile : SRFCellShell.ncdf 
+        ProblemType : ElasticityProblem 
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        LinearSolver : { 
+            AbsoluteTolerante : 1.00e-16 
+            Tolerance : 1.00e-10 
+            MaxIterations : 150000 
+            Solver : CG 
+            Preconditioner : DIAGONAL 
+        }
+        ModelInfo : { 
+            BoundaryCondition : { 
+                Electric : 1 , 2 , 3 , 4 , 5 
+                HFormulation : 1 
+            }
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellShell.ncdf 
+        }
+        Boundary : { 
+            MixedValue : 0. , 0. , 0. 
+            ConditionType : Mixed 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+            Id : 1 
+        }
+        Boundary : { 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+            Id : 2 
+        }
+        Boundary : { 
+            NeumanValue : 0. 
+            ConditionType : Neumann 
+            Id : 3 
+        }
+        Boundary : { 
+            NeumanValue : 0. 
+            ConditionType : Neumann 
+            Id : 4 
+        }
+        Boundary : { 
+            EndPoint : 0.0 , 0.0 , 0.0577 
+            Directory : omega3p_results 
+            WhichMode : 0 
+            Id : 5 
+            Omega3PId : 6 
+            TargetGradient : 35e6 
+            Method : Gradient 
+            StartPoint : 0.0 , 0.0 , -0.0577 
+            ConditionType : LFDetuning 
+        }
+        VolumeMaterial : { 
+            ElasticAlpha : 6.50000e-6 
+            ElasticLambda : 13.5386473e+10 
+            ElasticMu : 4.2736232e+10 
+            Id : 1 
+        }
+        FiniteElement : { 
+            ScalarPotential : 0 
+            CurvedSurfaces : on 
+            Order : 2 
+            ScalarBasisSet : Conventional 
+            SeparateLinearDOF : off 
+            NumberOfPhysicalVariables : 3 
+        }
+        CurvedSurfaces : on 
+        MeshDump : { 
+            WriteDeformedEMMesh : on 
+            EMMeshInputDir : omega3p_results 
+        }
+        BasisOrder : 2 
+/********************************/
+
+
+
+

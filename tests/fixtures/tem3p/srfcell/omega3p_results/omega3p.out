@@ -1,0 +1,189 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        AMRLevel : { 
+            Mesh : { 
+                MeshCoords : 19541 
+                ReplicatedElementDistribution : { 
+                    stddev : 671.75450624962 
+                    average : 2918.375 
+                    min : 2018 
+                    total : 46694 
+                    max : 3966 
+                }
+                ElementDistribution : { 
+                    stddev : 155.11995358431 
+                    average : 6597.75 
+                    min : 6216 
+                    total : 105564 
+                    max : 6780 
+                }
+                File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf 
+            }
+            TimeModeWriting : { 
+                stddev : 0.0 
+                average : 0.0 
+                max : 0.0 
+                min : 0.0 
+            }
+            TimeCheckPoint : { 
+                stddev : 0.00037933173022304 
+                average : 0.0667380050625 
+                max : 0.068084710000001 
+                min : 0.066545473999998 
+            }
+            TimePostProcess : { 
+                stddev : 0.00040950462145595 
+                average : 0.55303782025 
+                max : 0.554323251 
+                min : 0.552468061 
+            }
+            Matrix : { 
+                RowDistribution : { 
+                    stddev : 1255.9530710447 
+                    average : 41173.125 
+                    min : 38516 
+                    total : 658770 
+                    max : 43152 
+                }
+                NonlocalelementsDistribution : { 
+                    stddev : 2265.3776579929 
+                    average : 10248.25 
+                    min : 6906 
+                    total : 163972 
+                    max : 14486 
+                }
+                NonZeroDistribution : { 
+                    stddev : 63776.152345005 
+                    average : 1741566.75 
+                    min : 1609336 
+                    total : 27865068 
+                    max : 1832048 
+                }
+            }
+            TimeMeshSet : { 
+                stddev : 4.1545883256751e-05 
+                average : 0.294429690375 
+                max : 0.294582956 
+                min : 0.294407164 
+            }
+            TimeMatrixAssembly : { 
+                stddev : 0.050269718980328 
+                average : 0.96943448725 
+                max : 1.067515628 
+                min : 0.907765268 
+            }
+            TimeSiloConversion : { 
+                stddev : 0.00039697831339972 
+                average : 19.195529266688 
+                max : 19.196784595 
+                min : 19.194924295 
+            }
+            TimeEigenSolver : { 
+                stddev : 1.558666286348e-05 
+                average : 17.141533281812 
+                max : 17.141591139 
+                min : 17.141526268 
+            }
+        }
+        Timestamp : { 
+            begin : Thu Nov 12 11:34:57 2026 
+        }
+        Timestamp : { 
+            end : Thu Nov 12 11:35:16 2026 
+        }
+        Input : { 
+            FiniteElement : { 
+                Order : 2 
+                CurvedSurfaces : on 
+            }
+            ModelInfo : { 
+                File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf 
+                BoundaryCondition : { 
+                    Magnetic : 1 , 2 , 3 
+                    Electric : 6 
+                }
+            }
+            MPI : { 
+                rank : 0 
+                size : 16 
+            }
+            MeshPartition : { 
+                Method : parmetis 
+            }
+            EigenSolver : { 
+                Arnoldi : { 
+                    MaxIterations : 500 
+                    LinearSolver : { 
+                        Solver : MUMPS 
+                    }
+                    Tolerance : 1e-12 
+                    EigenvalueLocation : AboveShift 
+                }
+                FrequencyShift : 1.2e9 
+                NumEigenvalues : 1 
+                SolverMode : automatic 
+            }
+            JobName : omega3p_results 
+            CheckPoint : { 
+                Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/omega3p_results/VECTOR 
+            }
+        }
+        Environment : { 
+            start : Thu Nov 12 11:34:57 2026 
+            user : dbizzoze 
+            commsize : 16 
+        }
+        Mode : { 
+            PowerLoss : 0.0 
+            Frequency : 1300957728.4824 
+            QualityFactor : inf 
+            TotalEnergy : 4.4270939088102e-12 
+            File : omega3p_results/omega3p.l0.m0000.1.3009577e+09.mod 
+        }
+        Version : { 
+            Application : Omega3P
+
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+/********************************/
+
+
+

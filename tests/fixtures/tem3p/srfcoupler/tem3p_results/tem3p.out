@@ -1,0 +1,205 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Environment : { 
+            start : Thu Nov 12 11:45:01 2026 
+            commsize : 96 
+            user : dbizzoze 
+        }
+        Version : { 
+            Application : Tem3P
+
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Input : { 
+            JobName : tem3p_results 
+            MPI : { 
+                size : 0 
+                rank : 0 
+            }
+            ThermostaticProblem : { 
+                PicardSolver : { 
+                    Preconditioner : DIAGONAL 
+                    AbsoluteTolerance : 1.0e-18 
+                    Solver : CG 
+                    MaxIterations : 100000 
+                    Tolerance : 1.0e-10 
+                }
+                MeshFile : 2D-TTF3-FPC-Body.ncdf 
+                LinearSolver : { 
+                    Preconditioner : ILU 
+                    AbsoluteTolerance : 1.0e-18 
+                    Solver : GMRES 
+                    MaxIterations : 100000 
+                    Tolerance : 1.0e-10 
+                }
+                HeatSource : { 
+                    DielectricConstantE : 9 
+                    TargetPowerinput : 437.5 
+                    ConditionType : RFHeating 
+                    Id : 5 
+                    Directory : s3p_results 
+                    WhichMode : 0 
+                    Method : Powerinput 
+                    LossTangentE : 0.0001 
+                }
+                BasisOrder : 1 
+                Shell : { 
+                    Bd : 6 
+                    Thickness : 1e-5 
+                    BasisOrder : 1 
+                    Material : 221 
+                }
+                Shell : { 
+                    Bd : 7 
+                    Thickness : 1e-4 
+                    BasisOrder : 1 
+                    Material : 221 
+                }
+                ThermalConductivity : { 
+                    Function : functions/CURRR100 
+                    Id : 221 
+                }
+                ThermalConductivity : { 
+                    Function : functions/HighRRRNb 
+                    Id : 1 
+                }
+                ThermalConductivity : { 
+                    Function : functions/NbTi 
+                    Id : 2 
+                }
+                ThermalConductivity : { 
+                    Function : functions/ss304 
+                    Id : 3 
+                }
+                ThermalConductivity : { 
+                    Function : functions/CURRR100 
+                    Id : 4 
+                }
+                ThermalConductivity : { 
+                    Function : functions/al300 
+                    Id : 5 
+                }
+                CurvedSurfaces : on 
+                NonlinearSolver : { 
+                    Abstolerance : 2.33e-10 
+                    Solver : Newton 
+                    MaxIterations : 500 
+                    PicardIteration : 100 
+                    Reltolerance : 1.0e-8 
+                }
+                Boundary : { 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                    Id : 1 
+                }
+                Boundary : { 
+                    DirichletValue : 2 
+                    ConditionType : Dirichlet 
+                    Id : 2 
+                }
+                Boundary : { 
+                    DirichletValue : 4 
+                    ConditionType : Dirichlet 
+                    Id : 3 
+                }
+                Boundary : { 
+                    DirichletValue : 70 
+                    ConditionType : Dirichlet 
+                    Id : 4 
+                }
+                Boundary : { 
+                    DirichletValue : 300 
+                    ConditionType : Dirichlet 
+                    Id : 5 
+                }
+                Boundary : { 
+                    WhichMode : 0 
+                    ConditionType : RFHeating 
+                    Id : 6 
+                    Directory : s3p_results 
+                    SurfaceResistance : functions/SRinnerCU 
+                    TargetPowerinput : 437.5 
+                    Method : Powerinput 
+                }
+                Boundary : { 
+                    WhichMode : 0 
+                    ConditionType : RFHeating 
+                    Id : 7 
+                    Directory : s3p_results 
+                    SurfaceResistance : functions/SRinnerCU 
+                    TargetPowerinput : 437.5 
+                    Method : Powerinput 
+                }
+                Boundary : { 
+                    WhichMode : 0 
+                    ConditionType : RFHeating 
+                    Id : 8 
+                    Directory : s3p_results 
+                    SurfaceResistance : functions/SRinnerCU 
+                    TargetPowerinput : 437.5 
+                    Method : Powerinput 
+                }
+                Boundary : { 
+                    WhichMode : 0 
+                    ConditionType : RFHeating 
+                    Id : 9 
+                    Directory : s3p_results 
+                    SurfaceResistance : functions/SRinnerNbTi 
+                    TargetPowerinput : 437.5 
+                    Method : Powerinput 
+                }
+                Boundary : { 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                    Id : 10 
+                }
+                Boundary : { 
+                    NeumannValue : 0.0 
+                    ConditionType : Neumann 
+                    Id : 11 
+                }
+            }
+            ExecDirName : tem3p_results 
+        }
+/********************************/
+
+
+

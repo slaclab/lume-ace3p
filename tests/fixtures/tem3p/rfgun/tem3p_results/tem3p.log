@@ -1,0 +1,361 @@
+*************************************************************
+			 Tem3P
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+*************************************************************
+
+Starting master process on sdfmilan030
+Number of MPI processes: 16
+Number of compute nodes: 1
+Number of processes per node: 16
+Data precision: 64 bits
+Compiler: 11.5.0 20240719 (Red Hat 11.5.0-5)
+Beginning run at Thu Nov 12 11:42:02 2026
+
+---------------------------------
+
+Entering ThermoElasticProblem::solve()...
+
+---------------------------------
+
+In ThermoElasticProblem::solve(): begining tem3p iter 0 with 'runThermostaticProblem' = 1 with 'runThermoTransientProblem' = 0 with 'runElasticProblem' = 1
+1 In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: instantiating ScalarDiscreteDomain...
+2 In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting up ScalarDiscreteDomain...
+Read Mesh: RfGunBody.ncdf
+Check Mesh: RfGunBody.ncdf
+Time for read model: 0.078327644
+Time for setBasisOrder: 0.010658114
+    Time for making right-orientation and calculating Adjacency: 0.08854551299999999
+Partitioning Method: PARMETIS
+    Time for partitioning mesh: 0.06544814300000001
+    Time for replicating remote meshes: 0.017550548
+        Time for numberingHierarchical: 0.22134932
+
+***********************************************************
+*	Total Number of Elements read: 	229035
+*	Total Number of Elements used: 	229035
+*	Total Number of DOFs: 	337804
+***********************************************************
+
+        Time for numbering remote nodes: 0.00387956300000003
+        Time for numbering remote edges: 0.009659018000000019
+        Time for numbering remote faces: 0.01283224999999999
+        Time for numbering remote volumes: 0.0009350049999999888
+    Time for numbering DOF entities: 0.249576883
+Time for set model: 0.42741774
+Time for read midpoints: 0.006360253999999954
+Time for creating higher-order elements: 0.01136135700000007
+ loading RF solution for TEM3P...
+Omega3P directory name: omega3p_results
+Boundary conditions:
+0 = INTERIOR
+1 = ELECTRIC
+2 = MAGNETIC
+3 = MAGNETIC
+4 = MAGNETIC
+5 = ELECTRIC
+6 = EXTERIOR
+
+Read Mesh: /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/RfGunVacuum.ncdf
+Time for reading the model: 0.1318565230000001
+
+Using curved quadratic tetrahedrons
+Setting global vector finite element basis order to p=2
+[STARTUP] FE framework: setModel: right-orientation                0.04918730699999996 s
+[STARTUP] FE framework: setModel: calculateAdjacency (RCB + faces) 0.2387835960000001 s
+Partitioning Method: parmetis
+[STARTUP] FE framework: setModel: partition                        0.09661468499999981 s
+[STARTUP] FE framework: setModel: DOF weights + replicateSharedCoords 0.005312366999999929 s
+[STARTUP] FE framework: setModel: DOF numbering (DM_Numbering)       1.173499545 s
+
+***********************************************************
+*	Total Number of Elements read: 	83124
+*	Total Number of Elements used: 	83124
+*	Total Number of DOFs: 	512188
+***********************************************************
+
+[STARTUP] FE framework: setModel: remote DOF numbering              0.0005627200000000165 s
+[STARTUP] FE framework: setModel (basis order, adjacency)          1.598084588 s
+[STARTUP] FE framework: readMidPoints (curved edges)             0.001787988999999879 s
+[STARTUP] FE framework: create higher-order elements             0.06314501499999992 s
+[STARTUP] FE framework: periodic elements                        1.599999999157831e-07 s
+Time for setting up finite element framework: 1.66406775
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Mesh : { 
+            ElementDistribution : { 
+                min : 83124 
+                max : 83124 
+                average : 83124.0 
+                stddev : 0.0 
+                total : 83124 
+            }
+            ReplicatedElementDistribution : { 
+                min : 0 
+                max : 0 
+                average : 0.0 
+                stddev : 0.0 
+                total : 0 
+            }
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/RfGunVacuum.ncdf 
+            MeshCoords : 16207 
+        }
+/********************************/
+
+
+
+
+[STARTUP] NewPP: mesh read + partition + adjacency (DiscreteDomain::Setup) 1.86 s
+[STARTUP] NewPP: field checkpoint read + redistribute (readEigens) 0.13 s
+Localizer: Bins not given, using 39 (about one element per bin along the longest axis; 83124 elements)
+Localizer: 23 x 39 x 38 bins, 4.8 MB, built in 0.0 s
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting map of boundaries...
+ EM frequency : (2853388398.9,0.0)
+Parameter used in computing gradient: /********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Trajectory : { 
+            EndPoint : 0.0001 , 0.0001 , 0.017018 
+            NumberOfPointsPerSegment : 2000 
+            StartPoint : 0.0001 , 0.0001 , -0.017018 
+            TrajectoryMethod : 1 
+        }
+        SymmetryFactor : 1.0 
+/********************************/
+
+
+
+
+Number of sampled points: 2001
+Vr, Vi, and Voltage on the line1: -3.2021340192772585 5.1302377524764342 6.0475616304711757
+ Scaling Info : Scaling Factor : Target Gradient : EM gradient : Effective Length : Duty Factor : Symmety
+ Scaling Info : 41050781.1468225270509720 : 60000000.0000000000000000 : 177.6813265504517574 : 0.0340360000000000 : 0.0003600000000000 : 0
+The scaling factor is 41050781.1468225270509720
+EM Heating Boundary 6 sigmaSqrt = 7615.7731058639083130
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: map of boundaries set succesfully
+In StaticProblem::readKvcParameters1() of ThermostaticProblem, rank 0: setting linear solver...
+Leaving StaticProblem::readKvcParameters1() of ThermostaticProblem
+Entering StaticProblem::instantiateMatrix() of ThermostaticProblem
+Entering assembleMatrix().
+ Time for assembling thermal matrix: 0.3279058170000000
+ ThermostaticProblem::computeRHS 
+In ThermostaticProblem::solveLinearSystem(), tem3p iter 0: solving Ax = b with ||b||_2 = 26.1598551930892569
+In ThermostaticProblem::solveLinearSystem(), tem3p iter 0: solved Ax = b with ||x||_2 = 14323.4486384304582316, after 1234 iterations
+1 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: instantiating ScalarDiscreteDomain...
+2 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting up ScalarDiscreteDomain...
+Read Mesh: RfGunBody.ncdf
+Time for read model: 0.0824350949999992
+Time for setBasisOrder: 0.0142170189999984
+    Time for making right-orientation and calculating Adjacency: 0.1134053660000003
+Partitioning Method: PARMETIS
+    Time for partitioning mesh: 0.0822255920000003
+    Time for replicating remote meshes: 0.0249340389999997
+        Time for numberingHierarchical: 0.2065742010000005
+
+***********************************************************
+*	Total Number of Elements read: 	229035
+*	Total Number of Elements used: 	229035
+*	Total Number of DOFs: 	1013412
+***********************************************************
+
+        Time for numbering remote nodes: 0.0025593829999995
+        Time for numbering remote edges: 0.0077645900000007
+        Time for numbering remote faces: 0.0106757299999991
+        Time for numbering remote volumes: 0.0007101519999999
+    Time for numbering DOF entities: 0.2288616450000021
+Time for set model: 0.4559053720000001
+Time for read midpoints: 0.0043202130000015
+Time for creating higher-order elements: 0.0125701409999994
+ loading RF solution for TEM3P...
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting map of boundaries...
+ box 1 : 0.0001000000000000 box 0.0001000000000000 : 0.0001000000000000 box 0.0001000000000000 : 0.0001000000000000 box -0.0170180000000000 : 0.0170180000000000
+Parameter used in computing gradient: /********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Trajectory : { 
+            EndPoint : 0.0001 , 0.0001 , 0.017018 
+            NumberOfPointsPerSegment : 2000 
+            StartPoint : 0.0001 , 0.0001 , -0.017018 
+            TrajectoryMethod : 1 
+        }
+        GradientDirection : 0.0 , 0.0 , 1.0 
+        SymmetryFactor : 1.0 
+/********************************/
+
+
+
+
+Number of sampled points: 2001
+Vr, Vi, and Voltage on the line1: -3.2021340192772585 5.1302377524764342 6.0475616304711757
+Scaling Info : Gradient Scaling Factor : Target Gradient : EM gradient : Effective Length : Duty Factor
+Scaling Info : 337683.2060231342911720 : 60000000.0000000000000000 : 177.6813265504517574 : 0.0340360000000000 : 1.0000000000000000
+The LF scaling factor is 114029947630.0625610351562500
+
+ mixed boundary count is 3
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: map of boundaries set succesfully
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting linear solver...
+Leaving StaticProblem::readKvcParameters1() of ElasticProblem
+EM Mesh input directory: omega3p_results
+Entering StaticProblem::instantiateMatrix() of ElasticProblem
+Entering StaticProblem::setSolver() of ElasticProblem
+Memory usage:
+used mem per MPI process: min: 415.1211 MB, max: 455.6523 MB, avg: 433.0159 MB, stddev: 9.9669 MB, total: 6928.2539 MB
+used mem per node in GB : min: 457.4645 GB, max: 457.4645 GB, avg: 457.4645 GB, stddev: 0.0000 GB, total: 457.4645 GB
+used mem per node in %  : min: 90.9093  %, max: 90.9093  %, avg: 90.9093  %, stddev: 0.0000  %
+
+Leaving StaticProblem::setSolver() of ElasticProblem
+ Deformed Vacuum Mesh Calculation ... 
+Boundary conditions:
+0 = INTERIOR
+1 = ELECTRIC
+2 = MAGNETIC
+3 = MAGNETIC
+4 = MAGNETIC
+5 = ELECTRIC
+6 = EXTERIOR
+
+Read Mesh: /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/RfGunVacuum.ncdf
+Time for reading the model: 0.0386
+
+Using curved quadratic tetrahedrons
+Setting global vector finite element basis order to p=2
+[STARTUP] FE framework: setModel: right-orientation                0.0016 s
+[STARTUP] FE framework: setModel: calculateAdjacency (RCB + faces) 0.0292 s
+Partitioning Method: parmetis
+[STARTUP] FE framework: setModel: partition                        0.0281 s
+[STARTUP] FE framework: setModel: DOF weights + replicateSharedCoords 0.0100 s
+[STARTUP] FE framework: setModel: DOF numbering (DM_Numbering)       0.0704 s
+
+***********************************************************
+*	Total Number of Elements read: 	83124
+*	Total Number of Elements used: 	83124
+*	Total Number of DOFs: 	512188
+***********************************************************
+
+[STARTUP] FE framework: setModel: remote DOF numbering              0.0160 s
+[STARTUP] FE framework: setModel (basis order, adjacency)          0.1583 s
+[STARTUP] FE framework: readMidPoints (curved edges)             0.0043 s
+[STARTUP] FE framework: create higher-order elements             0.0039 s
+[STARTUP] FE framework: periodic elements                        0.0000 s
+Time for setting up finite element framework: 0.1670
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Mesh : { 
+            ElementDistribution : { 
+                min : 4633 
+                max : 5329 
+                average : 5195.25 
+                stddev : 208.09597144907 
+                total : 83124 
+            }
+            ReplicatedElementDistribution : { 
+                min : 762 
+                max : 3115 
+                average : 1964.875 
+                stddev : 624.26339259429 
+                total : 31438 
+            }
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/RfGun-Coupler/RfGunVacuum.ncdf 
+            MeshCoords : 16207 
+        }
+/********************************/
+
+
+
+
+[STARTUP] NewPP: mesh read + partition + adjacency (DiscreteDomain::Setup) 0.21 s
+[STARTUP] NewPP: field checkpoint read + redistribute (readEigens) 0.02 s
+Localizer: Bins not given, using 16 (about one element per bin along the longest axis; 4633 elements)
+Localizer: 12 x 16 x 11 bins, 0.3 MB, built in 0.0 s
+Vacuum Mesh Exterior ID : 6 
+Size of Multiphysics surface coord list : 4065
+Size of Multiphysics surface mid coord list : 6337
+ ThermostaticProblem::computeHeatFlux 
+ Time for heat flux computation : 0.0
+Prepare Remote Element List: 
+Calculating the total power flow through every sideset...
+
+ ===================================== 
+ Max T = 28.6
+ Min T = 23.1
+ P (SideSet 1) = 0.0
+ P (SideSet 2) = 0.0
+ P (SideSet 3) = -0.0
+ P (SideSet 4) = -0.1
+ P (SideSet 5) = 213.1
+ P (SideSet 6) = -215.6
+ ===================================== 
+
+ Temperature output file : tem3p_results/Temperature.mod
+
+Strain/Stress Max : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : -1e+09 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 
+Strain/Stress Min : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 1e+09 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 0 : 
+ writing strain file tem3p_results/Strain.mod
+ writing stress file tem3p_results/Stress.mod
+ ===================================== 
+ Min u_x = -0.0
+ Max u_x = 0.0
+ Min u_y = -0.0
+ Max u_y = 0.0
+ Min u_z = 0.0
+ Max u_z = 0.0
+ Max u_mag = 0.0
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement.mod
+
+
+---------------------------------
+
+Leaving ThermoElasticProblem::solve()
+
+---------------------------------
+
+Leaving StaticProblem::destructor() of ElasticProblem
+Leaving StaticProblem::destructor() of ThermostaticProblem
+Ending run at Thu Nov 12 11:44:32 2026
+Total run time = 150 seconds
