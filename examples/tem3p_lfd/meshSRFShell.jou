@@ -1,0 +1,38 @@
+reset 
+
+journal off
+
+import acis "SRFCell3mmThick.sat"
+del body 1
+compress ids
+##shell only
+
+volume 1 scheme Tetmesh
+
+block 1 vol 1
+
+block 1 element type tetra10
+
+vol 1 size 3
+mesh vol 1
+
+# BCs: shell surfaces
+##sym. plane 
+sideset 1 surface 5 6
+
+##disk planes
+sideset 2 surface 8
+sideset 3 surface 1
+
+##shell outer wall
+sideset 4 surface 4 10
+
+##shell inner wall -> connect to RF surfacecs
+sideset 5 surface 2 3 7 9 11
+
+##mm -> m
+transform mesh output scale 0.001
+
+export genesis "SRFCellShell.gen" block 1 overwrite
+
+quality vol all distortion high 0.0 draw mesh

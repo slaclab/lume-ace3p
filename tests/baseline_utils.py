@@ -427,6 +427,11 @@ _CUBIT_MULTI_FILE = (
     'Phase 5 of plans/cubit_multi_file_plan.md (2026-11-11). First freeze -- '
     'a new example, so nothing was regenerated.')
 
+# Provenance for the TEM3P Lorentz-force detuning example.
+_TEM3P = (
+    'Phase 3 of plans/tem3p_module_plan.md (2026-11-12). First freeze -- a '
+    'new example, so nothing was regenerated.')
+
 # Provenance for the Geant4 beta sweep after the Fowler-Nordheim reconciliation.
 _GEANT4_TRACK3P_BETA = (
     _PHASE_05 + ' Re-frozen 2026-10-01 for Phase 2 of '
@@ -631,6 +636,32 @@ EXAMPLES = {
                       'this pins that a journal list plus files: validates, '
                       'including the check that every cubit: input is declared '
                       'in one of the journals.'),
+    },
+    # ---- added by Phase 3 of the TEM3P plan ------------------------------ #
+    'tem3p_lfd': {
+        'kind': 'sweep',
+        'yaml': 'tem3p_lfd.yaml',
+        'files': {
+            'tem3p_lfd_output.txt': ('tem3p_lfd_output.txt', 'table'),
+            # The marker is the only output that shows what was injected: the
+            # TEM3P Directory and EMMeshInputDir, and the deformed Omega3P's
+            # ModelInfo.File pointing at tem3p's mesh.
+            'dry_run_marker.txt': (
+                'lume-ace3p_tem3p_lfd_workdir_15000000.0/DRY_RUN.txt',
+                'marker'),
+        },
+        'digests': {},
+        'frozen': _TEM3P,
+        'checkable': ('NUMERIC: the swept TargetGradient grid (a scoped ACE3P '
+                      'leaf of the tem3p module) and, in the marker, the '
+                      'scoped value tem3p received. f0, f_deformed, u_mag_max, '
+                      'df and k_l are NaN without a solver -> '
+                      'reachability-only. Structurally this pins that the '
+                      'two-cubit, two-omega3p LFD chain validates (lint, '
+                      'MeshFile and Omega3PId checks included), that the '
+                      'injected leaves and the deformed-mesh hand-off appear '
+                      'in the marker, and that k_l reads a swept input by '
+                      'name.'),
     },
     # ---- added by Phase 6 of the acdtool rework -------------------------- #
     'omega3p_dispersion_sweep': {

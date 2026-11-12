@@ -58,8 +58,8 @@ import re
 import numpy as np
 
 from lume_ace3p.modules import (
-    CubitModule, FieldEmissionModule, Geant4Module, RunContext,
-    TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
+    CubitModule, FieldEmissionModule, Geant4Module, MeshSourceModule,
+    RunContext, TRACK3P_PARTICLES, acdtool_spec, build_module, STAGE_MODES, T3PModule,
     Tem3PModule, Track3PModule, _SolverModule, _basename_clashes,
     _clash_message,
 )
@@ -479,10 +479,15 @@ def _validate_disk_collisions(modules):
     (plans/multi_instance_workflow_plan.md §2.3).
 
     * Two ACE3P solvers of one type must resolve distinct results directories:
-      ``results_dir:`` on one of them.
-    * Two ``cubit`` modules must export distinct mesh names — read from each
-      module's journals' last ``export`` statement; unreadable journals are
-      skipped.
+      ``results_dir:`` on one of them. Solvers of different types must not
+      share a job directory either: each removes its own before a fresh run, and
+      a ``tem3p`` writes the deformed mesh it provides into it.
+    * Every mesh file a producer puts at the workdir's top level must be its
+      alone: a ``cubit`` module's export (read from its journals' last
+      ``export`` statement; unreadable journals are skipped) and, under
+      ``meshconvert``, the ``<stem>.ncdf`` written beside it; a ``mesh``
+      source's staged basename. Two ``mesh`` sources may stage one source
+      file.
     * Every journal and ``files:`` entry of a ``cubit`` module is written into
       the workdir by basename, so one module may not list a basename twice, and
       two modules may share one only for the same source file in the same role
@@ -505,19 +510,36 @@ def _validate_disk_collisions(modules):
                     if m.type == 't3p' else '') + '.')
         seen[key] = m.name
 
-    meshes = {}
+    jobs = {}
     for m in modules:
-        if not isinstance(m, CubitModule):
+        if not isinstance(m, _SolverModule):
             continue
-        mesh = m._mesh_name()
-        if mesh is None:
-            continue
-        if mesh in meshes:
+        job = m._written_results_dir()
+        if m._wrapper.results_subdir:
+            job = os.path.dirname(job)
+        job = os.path.normpath(job)
+        other = jobs.setdefault(job, m)
+        if other is not m:
             raise WorkflowValidationError(
-                f"cubit modules '{meshes[mesh]}' and '{m.name}' both export "
+                f"modules '{other.name}' ('{other.type}') and '{m.name}' "
+                f"('{m.type}') would both write into '{job}'; each removes its "
+                "own results directory before a fresh run, so one would delete "
+                "the other's results. Set 'results_dir:' on one of them.")
+
+    meshes = {}
+    for m, mesh, how, source in _mesh_files(modules):
+        other = meshes.setdefault(mesh, (m, how, source))
+        if other[0] is m or (source is not None and other[2] == source):
+            continue
+        if other[1] == how == 'export':
+            raise WorkflowValidationError(
+                f"cubit modules '{other[0].name}' and '{m.name}' both export "
                 f"'{mesh}', so the second would overwrite the first's mesh. "
                 "Give one of them a different export filename.")
-        meshes[mesh] = m.name
+        raise WorkflowValidationError(
+            f"modules '{other[0].name}' and '{m.name}' both put a mesh named "
+            f"'{mesh}' in the workdir ({other[1]}; {how}), so one would "
+            "overwrite the other's. Rename one of them.")
 
     staged = {}
     for m in modules:
@@ -540,6 +562,25 @@ def _validate_disk_collisions(modules):
                     + ("Rename one of them." if other[3] != entry[3] else
                        "A file is either a journal, which is rewritten, or "
                        "staged as-is under 'files:', not both."))
+
+
+def _mesh_files(modules):
+    """``(module, filename, how, source)`` for each mesh file a producer
+    puts at the workdir's top level. ``source`` is the absolute path a staged
+    file comes from, ``None`` for a written one."""
+    for m in modules:
+        if isinstance(m, CubitModule):
+            mesh = m._mesh_name()
+            if mesh is None:
+                continue
+            yield m, mesh, 'export', None
+            converted = os.path.splitext(mesh)[0] + '.ncdf'
+            if m.meshconvert and converted != mesh:
+                yield m, converted, f'meshconvert of {mesh}', None
+        elif isinstance(m, MeshSourceModule) and m.config.get('file'):
+            path = str(m.config['file'])
+            yield (m, os.path.basename(path), f"staged from '{path}'",
+                   os.path.abspath(path))
 
 
 def _validate_cubit_inputs(modules, inputs):
@@ -701,8 +742,10 @@ class Workflow:
         # so declaring one with no entries does not move the config hash.
         if derived_spec is not None and not isinstance(derived_spec,
                                                        DerivedSpec):
-            derived_spec = DerivedSpec.from_config(derived_spec,
-                                                   self.output_spec)
+            names, ambiguous = self.inputs.named_values()
+            derived_spec = DerivedSpec.from_config(
+                derived_spec, self.output_spec, input_names=names,
+                ambiguous_inputs=ambiguous)
         self.derived_spec = derived_spec if derived_spec and \
             derived_spec.entries else None
 
@@ -797,13 +840,23 @@ class Workflow:
         names = [entry.get('name') or str(entry.get('module', '')).lower()
                  for entry in entries if isinstance(entry, dict)]
         output_spec = yaml_data.get('output_parameters')
+        inputs = build_inputs(yaml_data, module_names=names)
         derived = yaml_data.get('derived_parameters')
         if derived is not None:
-            derived = DerivedSpec.from_config(derived, output_spec or {},
-                                              base_dir=config_dir)
+            # An expression may read an input under any name a row or a VOCS
+            # variable gives it; a VOCS variable no input_parameters block
+            # declares still reaches the inputs (as a cubit variable).
+            values, ambiguous = inputs.named_values()
+            vocs = yaml_data.get('vocs_parameters') or {}
+            variables = vocs.get('variables') if isinstance(vocs, dict) \
+                else None
+            derived = DerivedSpec.from_config(
+                derived, output_spec or {}, base_dir=config_dir,
+                input_names=[*values, *(variables or {})],
+                ambiguous_inputs=ambiguous)
         return cls(entries,
                    workflow_params=yaml_data.get('workflow_parameters'),
-                   inputs=build_inputs(yaml_data, module_names=names),
+                   inputs=inputs,
                    output_spec=output_spec,
                    derived_spec=derived)
 
@@ -1049,7 +1102,8 @@ class Workflow:
             # After extraction and before recording, so a derived value is an
             # output like any other: manifest, table column, VOCS lookup, and
             # the resume comparison.
-            outputs.update(self.derived_spec.compute(outputs))
+            outputs.update(self.derived_spec.compute(
+                outputs, ctx.inputs.named_values()[0]))
         return outputs
 
     # ---- resume (Phase 4) -------------------------------------------------- #

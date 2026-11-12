@@ -548,6 +548,95 @@ def test_generic_names_do_not_route_bare(spec):
 
 
 # --------------------------------------------------------------------------- #
+# Mesh hand-off (§3.3) and disk collisions
+# --------------------------------------------------------------------------- #
+
+
+def test_dry_run_marker_names_the_deformed_mesh(tmp_path, monkeypatch):
+    """Only the Omega3P bound to the tem3p is pointed at the deformed mesh; the
+    one bound to a cubit keeps its input's own ModelInfo.File."""
+    monkeypatch.chdir(_stage(tmp_path))
+    _dry(tmp_path, _lfd()).evaluate()
+    marker = _marker(tmp_path)
+    line = 'Omega3P ModelInfo.File: ./tem3p_results/DeformedVacuumMesh.ncdf\n'
+    assert marker.count(line) == 1
+    assert marker.index(line) > marker.index('TEM3P step skipped')
+    assert marker.count('ModelInfo.File') == 1
+
+
+def test_appended_pair_hands_on_its_own_mesh(tmp_path, monkeypatch):
+    monkeypatch.chdir(_stage(tmp_path))
+    entries = _lfd() + [
+        {'module': 'tem3p', 'name': 'tem3p_2', 'input': 'SRFCell.tem3p',
+         'results_dir': 'tem3p_2',
+         'from': {'mesh': 'body', 'em_solution': 'omega3p_deformed'}},
+        {'module': 'omega3p', 'name': 'omega3p_d2', 'input': 'SRFCell.omega3p',
+         'results_dir': 'omega3p_d2', 'from': 'tem3p_2'}]
+    _dry(tmp_path, entries).evaluate()
+    marker = _marker(tmp_path)
+    assert 'ModelInfo.File: ./tem3p_2/DeformedVacuumMesh.ncdf\n' in \
+        marker[marker.rindex('TEM3P step skipped'):]
+
+
+def test_no_cubit_or_mesh_source_declares_a_mesh_output():
+    """Only tem3p hands on a mesh inside its job directory, so no existing
+    workflow's ModelInfo.File is touched."""
+    declaring = sorted(name for name, cls in MODULE_REGISTRY.items()
+                       if getattr(cls, 'mesh_output', None))
+    assert declaring == ['tem3p']
+
+
+def test_tem3p_sharing_another_solver_s_directory_is_an_error(tmp_path,
+                                                              monkeypatch):
+    """Different types, one job directory: tem3p's clean would remove the EM
+    run's results, and its mesh would land among them."""
+    monkeypatch.chdir(_stage(tmp_path))
+    with pytest.raises(WorkflowValidationError,
+                       match=r"'omega3p' \('omega3p'\) and 'tem3p' \('tem3p'\) "
+                             r"would both write into 'omega3p_results'"):
+        _dry(tmp_path, _lfd(results_dir='omega3p_results'))
+
+
+def test_two_meshconverts_onto_one_ncdf_is_an_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _journal(tmp_path / 'a.jou', 'cav.gen')
+    _journal(tmp_path / 'b.jou', 'cav.exo')
+    entries = [{'module': 'cubit', 'name': 'a', 'journal': 'a.jou'},
+               {'module': 'cubit', 'name': 'b', 'journal': 'b.jou'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=r"'a' and 'b' both put a mesh named 'cav.ncdf'.*"
+                             r"meshconvert of cav.gen; meshconvert of cav.exo"):
+        _dry(tmp_path, entries)
+    entries[1]['meshconvert'] = False
+    _dry(tmp_path, entries)
+
+
+def test_a_mesh_source_onto_a_cubit_export_is_an_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _journal(tmp_path / 'a.jou', 'cav.gen')
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'cav.ncdf').write_text('')
+    entries = [{'module': 'cubit', 'name': 'a', 'journal': 'a.jou'},
+               {'module': 'mesh', 'name': 'm', 'file': 'src/cav.ncdf'}]
+    with pytest.raises(WorkflowValidationError,
+                       match=r"'a' and 'm' both put a mesh named 'cav.ncdf'"):
+        _dry(tmp_path, entries)
+
+
+def test_two_mesh_sources_may_stage_one_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'cav.ncdf').write_text('')
+    (tmp_path / 'other').mkdir()
+    (tmp_path / 'other' / 'cav.ncdf').write_text('')
+    entries = [{'module': 'mesh', 'name': 'm1', 'file': 'cav.ncdf'},
+               {'module': 'mesh', 'name': 'm2', 'file': 'cav.ncdf'}]
+    _dry(tmp_path, entries)
+    entries[1]['file'] = 'other/cav.ncdf'
+    with pytest.raises(WorkflowValidationError, match="'m1' and 'm2'"):
+        _dry(tmp_path, entries)
+
+
+# --------------------------------------------------------------------------- #
 # Real runs, through a fake tem3p replaying the fixtures
 # --------------------------------------------------------------------------- #
 
@@ -730,3 +819,72 @@ def test_resume_reparses_without_relaunching(real):
     assert echo.stat().st_mtime_ns == stamp
     assert second == first
     assert ctx.artifacts.of(MESH, 'tem3p').endswith('DeformedVacuumMesh.ncdf')
+
+
+@posix_only
+def test_the_deformed_omega3p_reads_the_deformed_mesh(real, capsys):
+    """One shared Omega3P input: the first instance keeps its own mesh, the
+    second is pointed at tem3p's, with a note naming the value it replaced."""
+    root, paths = real
+    _real_workflow(root, paths).evaluate()
+    wd = root / 'wd'
+
+    def mesh_of(name):
+        return parse_ace3p((wd / name).read_text()).find(
+            'ModelInfo').get_leaf('File')
+
+    assert mesh_of('SRFCell_omega3p.omega3p') == 'SRFCellVacuum.ncdf'
+    assert mesh_of('SRFCell_omega3p_deformed.omega3p') == \
+        './tem3p_results/DeformedVacuumMesh.ncdf'
+    out = capsys.readouterr().out
+    assert ("'omega3p_deformed' reads the mesh 'tem3p' writes, so its "
+            "ModelInfo.File: SRFCellVacuum.ncdf is replaced by "
+            "./tem3p_results/DeformedVacuumMesh.ncdf") in out
+    # The deformed run's own postprocess.in names the deformed mesh, which is
+    # what an appended tem3p's pre-flight reads.
+    post = (wd / 'omega3p_results_deformed' / 'VECTOR' /
+            'postprocess.in').read_text()
+    assert 'tem3p_results/DeformedVacuumMesh.ncdf' in post
+
+
+@posix_only
+def test_a_mesh_leaf_already_naming_the_deformed_mesh_is_kept(real, capsys):
+    """The CW23 SRFCellDeformed.omega3p spells the path itself."""
+    root, paths = real
+    (root / 'SRFCellDeformed.omega3p').write_text(
+        _fixture('srfcell', 'SRFCellDeformed.omega3p'))
+    entries = _lfd()
+    entries[-1]['input'] = 'SRFCellDeformed.omega3p'
+    _real_workflow(root, paths, entries=entries).evaluate()
+    assert 'is replaced by' not in capsys.readouterr().out
+    written = parse_ace3p((root / 'wd' / 'SRFCellDeformed.omega3p').read_text())
+    assert written.find('ModelInfo').get_leaf('File') == \
+        './tem3p_results/DeformedVacuumMesh.ncdf'
+
+
+@posix_only
+def test_an_appended_pair_runs(real):
+    """Use case B end to end: the second tem3p reads the deformed run's fields
+    and the original mesh, and the last Omega3P reads the second tem3p's mesh."""
+    root, paths = real
+    entries = _lfd() + [
+        {'module': 'tem3p', 'name': 'tem3p_2', 'input': 'SRFCell.tem3p',
+         'results_dir': 'tem3p_2',
+         'from': {'mesh': 'body', 'em_solution': 'omega3p_deformed'}},
+        {'module': 'omega3p', 'name': 'omega3p_d2', 'input': 'SRFCell.omega3p',
+         'results_dir': 'omega3p_d2', 'from': 'tem3p_2'}]
+    Workflow(entries,
+             workflow_params={'workdir': str(root / 'wd'), 'dry_run': False,
+                              'paths': paths},
+             output_spec={'u2': {'module': 'tem3p_2',
+                                 'quantity': 'u_mag_max'}}).evaluate()
+    wd = root / 'wd'
+    echo = parse_ace3p((wd / 'tem3p_2' / 'input.echo').read_text())
+    elastic = echo.find('ElasticProblem')
+    assert elastic.find('Boundary', Id='5').get_leaf('Directory') == \
+        'omega3p_results_deformed'
+    assert elastic.find('MeshDump').get_leaf('EMMeshInputDir') == \
+        'omega3p_results'
+    last = parse_ace3p((wd / 'SRFCell_omega3p_d2.omega3p').read_text())
+    assert last.find('ModelInfo').get_leaf('File') == \
+        './tem3p_2/DeformedVacuumMesh.ncdf'

@@ -1,8 +1,9 @@
 # TEM3P as a Workflow Module — Implementation Plan
 
 **Status: Phase 0 done 2026-11-12 (job 44528190; results in §4, fixtures in
-`tests/fixtures/tem3p/`). Phases 1 and 2 done 2026-11-12 (wrapper, parsers,
-module; see §4). Next: Phase 3.**
+`tests/fixtures/tem3p/`). Phases 1, 2 and 3 done 2026-11-12 (wrapper,
+parsers, module, mesh hand-off and the `tem3p_lfd` example; see §4). Next:
+Phase 4.**
 
 Written 2026-11-12 on S3DF, following the investigation in
 `plans/tem3p_investigation.md` (the shareable summary; this plan assumes it).
@@ -499,6 +500,42 @@ Tests:
   - s3df and perlmutter batch files.
 - A baseline in `tests/baseline/`.
 - Validation on milano, recorded in `plans/s3df_example_validation_plan.md`.
+
+**Phase 3 results (DONE 2026-11-12).**
+
+- **Mesh hand-off.** `Module.mesh_output` (only `Tem3PModule` sets it) and
+  `_SolverModule._mesh_leaf = ('ModelInfo', 'File')`, which is `None` on
+  Track3P and TEM3P. `_inject_mesh` runs after the `ace3p:` merge and before
+  `_prepare_solver`, so a resume injects too. A value that already names the
+  mesh (`normpath` equality) is kept; any other is replaced, with a printed
+  note. A dry run writes `Omega3P ModelInfo.File: ./tem3p_results/…` to the
+  marker.
+- **Disk collisions.** Solvers of *different* types may no longer share a job
+  directory: each one's `clean` removes its own, and tem3p's mesh lives in
+  its. Mesh files at the workdir's top level must be unique across producers:
+  a cubit export, its meshconvert `.ncdf` (`a.gen` and `a.exo` both give
+  `a.ncdf`), and a `mesh` source's basename. Two `mesh` sources may stage
+  the same file.
+- **Derived expressions read inputs** (`WorkflowInputs.named_values`). An
+  input is readable by its axis label, its qualified label, and its bare
+  name when unique. VOCS variables are known names at build time. Outputs
+  and derived names shadow inputs. A bare name several inputs share is a
+  build error naming the labels to use. The `python:` hatch still gets the
+  outputs only, per the grammar policy. Hashes do not move: `canonical()` is
+  unchanged.
+- **`examples/tem3p_lfd`.** The CW23 `.sat` and journals (converted to LF),
+  the CW23 `SRFCell.omega3p` shared by both solves, and `SRFCell.tem3p` with
+  the corrected spellings and the LFDetuning boundary first. The YAML sweeps
+  `TargetGradient` over 15 / 25 / 35 MV/m through a scoped
+  `ace3p: tem3p:` block, and gives `df` and `k_l` columns. Baseline in
+  `tests/baseline/tem3p_lfd/` (table plus marker).
+- **Validation, job 44548443** (details in
+  `plans/s3df_example_validation_plan.md`):
+  - 4m17s, no NaNs;
+  - `k_l` = −5.8310 Hz/(MV/m)² at all three gradients (constant to 1e-5);
+  - `df` at 35 MV/m = −7143.0 Hz, 0.4% from Phase 0's −7172.1 Hz, because
+    Cubit regenerates the meshes slightly differently from CW23's shipped
+    ones.
 
 ### Phase 4: the other problem types
 

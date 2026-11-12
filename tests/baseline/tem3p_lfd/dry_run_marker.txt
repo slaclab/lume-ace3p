@@ -1,0 +1,20 @@
+Dry run mode: Cubit step skipped.
+Cubit journal: meshSRFVacuum.jou
+Cubit files: ['SRFCell3mmThick.sat']
+Cubit inputs: {}
+Dry run mode: Cubit step skipped.
+Cubit journal: meshSRFShell.jou
+Cubit files: ['SRFCell3mmThick.sat']
+Cubit inputs: {}
+Dry run mode: Omega3P step skipped.
+Cubit: {}
+ACE3P: []
+Dry run mode: TEM3P step skipped.
+Cubit: {}
+ACE3P: [((('ElasticProblem', 0), ('Boundary', 0), ('TargetGradient', 0)), '15000000.0')]
+TEM3P ElasticProblem Boundary Id 5 Directory: omega3p_results
+TEM3P ElasticProblem MeshDump EMMeshInputDir: omega3p_results
+Dry run mode: Omega3P step skipped.
+Cubit: {}
+ACE3P: []
+Omega3P ModelInfo.File: ./tem3p_results/DeformedVacuumMesh.ncdf

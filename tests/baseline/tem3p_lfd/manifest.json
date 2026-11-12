@@ -1,0 +1,17 @@
+{
+  "checkable": "NUMERIC: the swept TargetGradient grid (a scoped ACE3P leaf of the tem3p module) and, in the marker, the scoped value tem3p received. f0, f_deformed, u_mag_max, df and k_l are NaN without a solver -> reachability-only. Structurally this pins that the two-cubit, two-omega3p LFD chain validates (lint, MeshFile and Omega3PId checks included), that the injected leaves and the deformed-mesh hand-off appear in the marker, and that k_l reads a swept input by name.",
+  "digests": {},
+  "files": {
+    "dry_run_marker.txt": {
+      "compare": "marker",
+      "pattern": "lume-ace3p_tem3p_lfd_workdir_15000000.0/DRY_RUN.txt"
+    },
+    "tem3p_lfd_output.txt": {
+      "compare": "table",
+      "pattern": "tem3p_lfd_output.txt"
+    }
+  },
+  "frozen": "Phase 3 of plans/tem3p_module_plan.md (2026-11-12). First freeze -- a new example, so nothing was regenerated.",
+  "kind": "sweep",
+  "yaml": "tem3p_lfd.yaml"
+}

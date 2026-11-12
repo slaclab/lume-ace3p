@@ -1337,12 +1337,26 @@ derived column is `NaN` too. Nothing else is accepted: attribute access,
 subscripts, lambdas, keyword arguments and any other call are rejected when the
 workflow is built, with a message naming the construct.
 
-**Names.** A name an expression reads must be an `output_parameters` name or a
-`derived_parameters` entry declared above it. Wrap a name that is not a Python
-identifier in backticks: `` `R/Q` ``, `` `S(0,0)` ``. Without them, `R/Q` reads as
-`R` divided by `Q`. All names are checked before anything runs, so a misspelling
-or a forward reference fails at startup. A derived name may not repeat an
-`output_parameters` name.
+**Names.** An expression can read three kinds of name:
+
+- an `output_parameters` name;
+- a `derived_parameters` entry declared above it;
+- an **input**, under any name a table row or a VOCS variable gives it: its
+  sweep-axis label (`cav_radius`, `ace3p:tem3p/ElasticProblem.Boundary.TargetGradient`),
+  its qualified label (`cubit:cav_radius`), or its bare leaf name
+  (`TargetGradient`) when no other input has that name. A VOCS variable is an
+  input too.
+
+An output or derived name hides an input of the same spelling. A bare input name
+that several inputs share must be written as one of its labels. Wrap a name that
+is not a Python identifier in backticks: `` `R/Q` ``, `` `S(0,0)` ``. Without
+them, `R/Q` reads as `R` divided by `Q`. All names are checked before anything
+runs, so a misspelling or a forward reference fails at startup. A derived name
+may not repeat an `output_parameters` name.
+
+An input is what makes a coefficient over a swept quantity possible, for
+example `'k_l' : 'df / (TargetGradient / 1e6)**2'` in
+`examples/tem3p_lfd`.
 
 **`{python: 'module:callable'}`** is for what an expression cannot express. The
 callable takes exactly one argument, a dict of the outputs and the earlier

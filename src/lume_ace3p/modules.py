@@ -32,6 +32,7 @@ bool.
 import glob
 import hashlib
 import os
+import posixpath
 import shutil
 import warnings
 
@@ -472,6 +473,13 @@ class Module:
     # zero producers leaves the kind unbound rather than failing the build.
     optional_requires = frozenset()
     provides = frozenset()
+    # The mesh file this module writes, relative to its own job directory, when
+    # it provides a ``mesh`` there rather than at the workdir's top level
+    # (plans/tem3p_module_plan.md §3.3). A solver bound to such a producer has
+    # its ``ModelInfo.File`` pointed at ``./<job>/<mesh_output>``
+    # (:meth:`_SolverModule._upstream_mesh`). ``None`` for every producer that
+    # writes its mesh at the top level, which is all of them but ``tem3p``.
+    mesh_output = None
     # The WorkflowInputs buckets this module reads, which its module hash covers
     # (with its own scoped block laid over them). A bucket not listed here can
     # change without invalidating this module's output.
@@ -1012,6 +1020,10 @@ class _SolverModule(Module):
     provide a solution artifact, differing only in the wrapper they construct,
     the dry-run label, and which artifact kind they produce.
 
+    A solver whose ``mesh`` producer writes the mesh into its own job
+    directory (a ``tem3p``'s deformed vacuum mesh, :attr:`Module.mesh_output`)
+    has its ``ModelInfo.File`` pointed at it (:meth:`_inject_mesh`).
+
     Omega3P/S3P provide an ``em_solution`` (frequency domain); T3P provides a
     ``td_solution`` (time domain). The split is deliberate: ``acdtool`` requires
     ``em_solution``, so a T3P workflow that lists ``acdtool`` fails validation
@@ -1029,6 +1041,10 @@ class _SolverModule(Module):
     # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
     # its mesh out of the upstream solver's results directory.
     _input_artifact = MESH
+    # The input leaf that names the mesh this solver reads, set from a bound
+    # producer that declares :attr:`Module.mesh_output`. ``None`` for a solver
+    # that names its mesh some other way (TEM3P's ``MeshFile``) or reads none.
+    _mesh_leaf = ('ModelInfo', 'File')
     # The one output file whose presence means this solver's results are still on
     # disk (see :meth:`verify`) — the same file the solver's own
     # ``output_parser`` reads first, so "verify passes" and "the results are
@@ -1090,6 +1106,10 @@ class _SolverModule(Module):
             # builds its command line from this.
             ctx.set_job_name(self, self._artifact,
                              self.results_dir or self._wrapper.default_job_name)
+            mesh = self._upstream_mesh(ctx)
+            if mesh is not None:
+                _append_marker(ctx, f'{self._label} '
+                                    f'{".".join(self._mesh_leaf)}: {mesh}\n')
             self._prepare_dry_run(ctx)
             return
         ctx.ensure_workdir()
@@ -1106,6 +1126,7 @@ class _SolverModule(Module):
                                log_file=self.log_file(ctx),
                                input_name=self._input_name(ctx))
         solver.set_value(inputs.ace3p)
+        self._inject_mesh(ctx, solver)
         self._prepare_solver(ctx, solver)
         if skip_execution:
             # Resumed: this solve already finished in this workdir, so read its
@@ -1146,6 +1167,49 @@ class _SolverModule(Module):
             return None
         stem, ext = os.path.splitext(base)
         return f'{stem}_{self.name}{ext}'
+
+    def _upstream_mesh(self, ctx):
+        """``./<job>/<file>``, the mesh this solver reads relative to the
+        workdir, when its bound ``mesh`` producer writes the mesh into its own
+        job directory (:attr:`Module.mesh_output`); ``None`` otherwise, which
+        leaves the input's own ``ModelInfo.File`` alone.
+
+        The deformed-mesh hand-off of plans/tem3p_module_plan.md §3.3: an
+        ``omega3p`` after a ``tem3p`` reads
+        ``./tem3p_results/DeformedVacuumMesh.ncdf``, so both Omega3P runs of an
+        RF-detuning chain can share one input file."""
+        if self._mesh_leaf is None or MESH not in self.requires:
+            return None
+        producer = self.producer(ctx, MESH)
+        output = getattr(producer, 'mesh_output', None)
+        if not output:
+            return None
+        job = ctx.job_names.lookup(MESH, producer.name, None)
+        if not job:
+            return None
+        return './' + posixpath.join(job, output)
+
+    def _inject_mesh(self, ctx, solver):
+        """Point the solver's mesh leaf at :meth:`_upstream_mesh`. A value that
+        already names that file is kept as written; any other is replaced, with
+        a note, since the producer bound in the workflow decides which mesh
+        this run reads."""
+        mesh = self._upstream_mesh(ctx)
+        if mesh is None:
+            return
+        section = solver._input_tree()
+        for name in self._mesh_leaf[:-1]:
+            section = section.find(name) if section is not None else None
+        current = (section.get_leaf(self._mesh_leaf[-1])
+                   if section is not None else None)
+        if current is not None and _same_dir(current, mesh):
+            return
+        if current is not None:
+            print(f"Note: module '{self.name}' reads the mesh "
+                  f"'{self.producer(ctx, MESH).name}' writes, so its "
+                  f"{'.'.join(self._mesh_leaf)}: {current} is replaced by "
+                  f"{mesh}.")
+        solver.set_input_leaf(self._mesh_leaf, mesh)
 
     def _prepare_solver(self, ctx, solver):
         """Hook: edit the solver's input tree after the ``ace3p:`` overrides
@@ -1856,6 +1920,7 @@ class Track3PModule(_SolverModule):
     _label = 'Track3P'
     _artifact = TRACK3P_PARTICLES
     _input_artifact = EM_SOLUTION
+    _mesh_leaf = None
     # The run log, which every run writes and which carries the 'Done!' that
     # says it finished. verify() checks both.
     _results_file = 'track3p.log'
@@ -2392,6 +2457,13 @@ class Tem3PModule(_SolverModule):
     :meth:`check_build` confirms the name matches what the mesh producer
     exports.
 
+    **The deformed mesh it hands on.** When the input writes
+    ``DeformedVacuumMesh.ncdf`` (and runs no ``EigenSolver``), this module
+    provides it as a ``mesh``; a solver bound to it has its ``ModelInfo.File``
+    set to ``./<job>/DeformedVacuumMesh.ncdf``
+    (:meth:`_SolverModule._upstream_mesh`), so both Omega3P runs of the chain
+    can read one input file.
+
     **Build-time checks** (:meth:`check_build`): the input couples to RF but no
     EM run is bound; a downstream module reads the deformed mesh but the input
     will not write it, or sets no ``Omega3PId`` so the mesh would come out
@@ -2410,8 +2482,11 @@ class Tem3PModule(_SolverModule):
     _label = 'TEM3P'
     _artifact = TEM3P_SOLUTION
     _results_file = TEM3P_RESULT_FILE
-    # The file a downstream solver's ModelInfo.File names, relative to this
-    # module's job directory (the injection itself is Phase 3).
+    # TEM3P names its body mesh in each problem block's MeshFile, which
+    # check_build checks rather than rewrites (§3.4 item 1).
+    _mesh_leaf = None
+    # The file a downstream solver's ModelInfo.File is pointed at, relative to
+    # this module's job directory (_SolverModule._upstream_mesh).
     mesh_output = TEM3P_DEFORMED_MESH
 
     THERMAL = frozenset({'max_temperature', 'min_temperature'})

@@ -1,0 +1,80 @@
+# Lorentz-force detuning of a 1.3 GHz SRF cell (the CW23 SRFCell case), swept
+# over accelerating gradient:
+#   workflow:  cubit(vacuum) -> omega3p ----------------+ em_solution
+#              cubit(shell) ------------------------> tem3p -> omega3p_deformed
+#                                                mesh        mesh
+#   mode:      parameter_sweep  (one row per gradient)
+#
+# Omega3P solves the vacuum mode. TEM3P deforms the niobium shell under that
+# mode's radiation pressure, scaled to TargetGradient, and writes the deformed
+# vacuum mesh. A second Omega3P solves the same input on that mesh. The
+# frequency difference is the detuning, and df / Eacc^2 is the Lorentz-force
+# detuning coefficient, which should come out the same at every gradient.
+
+workflow_parameters :
+  'workdir' : 'lume-ace3p_tem3p_lfd_workdir'
+  'workdir_mode' : 'auto'
+
+workflow :
+  # Both journals import SRFCell3mmThick.sat and keep one of its two bodies.
+  - module : cubit
+    name : cubit_vacuum
+    journal : 'meshSRFVacuum.jou'
+    files : 'SRFCell3mmThick.sat'
+  - module : cubit
+    name : cubit_shell
+    journal : 'meshSRFShell.jou'
+    files : 'SRFCell3mmThick.sat'
+  - module : omega3p
+    input : 'SRFCell.omega3p'
+    from : cubit_vacuum
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+  # The body mesh comes from the shell journal, the fields from omega3p. TEM3P
+  # is pure MPI, and each rank holds the whole vacuum mesh and its fields
+  # (about 0.3 GB per rank here).
+  - module : tem3p
+    input : 'SRFCell.tem3p'
+    from : {mesh : cubit_shell, em_solution : omega3p}
+    tasks : 16
+    cores : 1
+    opts : '--cpu-bind=cores'
+  # The same Omega3P input as the first solve. lume-ace3p points its
+  # ModelInfo.File at ./tem3p_results/DeformedVacuumMesh.ncdf, because its mesh
+  # is bound to the tem3p module.
+  - module : omega3p
+    name : omega3p_deformed
+    input : 'SRFCell.omega3p'
+    results_dir : 'omega3p_results_deformed'
+    from : tem3p
+    tasks : 16
+    cores : 4
+    opts : '--cpu-bind=cores'
+
+mode :
+  type : parameter_sweep
+  output_file : 'tem3p_lfd_output.txt'
+
+input_parameters :
+  ace3p :
+    # Scoped to the tem3p module, so neither Omega3P input gains an
+    # ElasticProblem block. 'Boundary' reaches the first Boundary block of
+    # ElasticProblem, which in SRFCell.tem3p is the LFDetuning one.
+    tem3p :
+      'ElasticProblem' :
+        'Boundary' :
+          'TargetGradient' : [15.0e+6, 25.0e+6, 35.0e+6]
+
+output_parameters :
+  'f0'        : {module: omega3p,          quantity: Frequency, at: {mode: 0}}
+  'f_deformed': {module: omega3p_deformed, quantity: Frequency, at: {mode: 0}}
+  # The largest displacement of the shell, m.
+  'u_mag_max' : {module: tem3p, quantity: u_mag_max}
+
+derived_parameters :
+  # The detuning, Hz.
+  'df'  : 'f_deformed - f0'
+  # The Lorentz-force detuning coefficient, Hz/(MV/m)^2. TargetGradient is the
+  # swept input, read by name like an output.
+  'k_l' : 'df / (TargetGradient / 1e6)**2'

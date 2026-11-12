@@ -1,0 +1,86 @@
+// Lorentz-force detuning of the CW23 SRFCell: the elastic deformation of the
+// 3 mm niobium shell under the radiation pressure of the Omega3P mode.
+//
+// Changed from the CW23 SRFCell.tem3p:
+//  - 'NeumanValue' is spelled 'NeumannValue'. TEM3P ignores the misspelling
+//    without a warning, and lume-ace3p refuses it.
+//  - The 'AbsoluteTolerante' line is gone. TEM3P reads only 'Tolerance'.
+//  - The LFDetuning boundary is the first Boundary block. An input_parameters
+//    override reaches same-named blocks by position, so this is what lets the
+//    YAML set its TargetGradient with a single 'Boundary:' entry.
+//
+// lume-ace3p sets the two EM directories itself, the LFDetuning 'Directory'
+// and 'MeshDump.EMMeshInputDir', from the workflow's omega3p module. The
+// values written here are what that module writes, so the file also runs by
+// hand.
+// =================================
+ElasticProblem: {
+  MeshFile:       SRFCellShell.ncdf
+  BasisOrder:     2
+  CurvedSurfaces: on
+
+  MeshDump: {
+   WriteDeformedEMMesh: on
+   EMMeshInputDir:      omega3p_results
+  }
+
+  LinearSolver: {
+    Solver:            CG
+    Preconditioner:    DIAGONAL
+    Tolerance:         1.00e-10
+    MaxIterations:     150000
+  }
+
+  //Nb cell shell
+  VolumeMaterial: {
+    Id: 1
+     ElasticLambda  :  13.5386473e+10
+     ElasticMu      :   4.2736232e+10
+     ElasticAlpha   :   6.50000e-6
+  }
+
+  // ----------
+  // cavity inner surface : Multiphysics boundary : LF detuning
+  Boundary: {
+    Id: 5
+    ConditionType: LFDetuning
+    Directory: omega3p_results
+    Omega3PId: 6   // wall surface in SRFCellVacuum.ncdf
+    WhichMode: 0
+
+    Method: Gradient
+    TargetGradient: 35e6
+    StartPoint: 0.0, 0.0, -0.0577
+    EndPoint:   0.0, 0.0, 0.0577
+  }
+
+  // ----------
+  // cavity symmetry plane
+  Boundary: {
+    Id: 1
+    ConditionType: Mixed
+    MixedType: NEUMANN DIRICHLET NEUMANN
+    MixedValue: 0., 0., 0.
+  }
+
+  // cavity disk : fix one side at z
+  Boundary: {
+    Id: 2
+    ConditionType: Dirichlet
+    DirichletValue: 0.
+  }
+
+  // cavity disk : allow expansion/contraction along the disk center line
+  Boundary: {
+    Id: 3
+    ConditionType: Neumann
+    NeumannValue: 0.
+  }
+
+  // cavity outer surface : free boundary
+  Boundary: {
+    Id: 4
+    ConditionType: Neumann
+    NeumannValue: 0.
+  }
+}
