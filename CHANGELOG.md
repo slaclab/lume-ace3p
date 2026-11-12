@@ -9,6 +9,60 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+A `tem3p` module runs TEM3P, ACE3P's thermal and structural solver, so a
+workflow can compute RF detuning: Omega3P, then TEM3P deforming the cavity
+under that mode's loads, then Omega3P again on the deformed vacuum mesh. A
+config without a `tem3p` module hashes as before. The design and its verified
+facts are in [`plans/tem3p_module_plan.md`](plans/tem3p_module_plan.md).
+
+### Added
+
+- **The `tem3p` module.** It requires the body `mesh` and, optionally, an
+  `em_solution` (bound when one `omega3p`/`s3p` exists, named with `from:`
+  when several do). It sets `Directory` in every RF-coupled boundary and heat
+  source to the bound EM run, and `MeshDump.EMMeshInputDir` to the run whose
+  mesh is deformed. Quantities: `max_temperature`, `min_temperature`,
+  `sideset_power` (`at: {sideset: n}`), the displacement extrema `u_x_min` …
+  `u_mag_max`, `mechanical_frequency` (over a `Mode` axis), and
+  `scaling_factor`, `newton_iterations`, `n_dofs`, `run_time` from the log.
+  See `docs/tem3p_reference.md`.
+- **The deformed vacuum mesh as a `mesh`.** A `tem3p` whose input sets
+  `WriteDeformedEMMesh: on` provides `DeformedVacuumMesh.ncdf`, and a solver
+  bound to it gets its `ModelInfo.File` pointed there, so both Omega3P solves
+  share one input file. A further `tem3p → omega3p` pair deforms the original
+  vacuum mesh, not the deformed one.
+- **Build-time checks of a TEM3P input**, all errors and listed together:
+  the spellings TEM3P ignores without a warning (`NeumanValue`,
+  `AbsoluteTolerante`, `Abs tolerance`, …), a `MeshDump` switch not written
+  `on`, a bad `MixedType`, an `LFDetuning` without `Method`, a table file
+  `files:` does not stage, an RF-coupled input with no EM run bound, a read
+  mesh with no `Omega3PId` (TEM3P would write it undeformed), and a
+  `MeshFile` that is not the bound mesh. Before launching, the module also
+  checks that the EM run's absolute mesh path still exists, since TEM3P
+  aborts without a message when it does not.
+- `derived_parameters` expressions read swept inputs by name (axis label,
+  qualified label, or a unique bare name), so `'k_l': 'df /
+  (TargetGradient / 1e6)**2'` holds under a gradient sweep. The `python:`
+  hatch still receives the outputs only.
+- A solver's `files:` entry may be a directory, staged whole under its own
+  name: `files: [functions]` gives `<workdir>/functions/`, so an input naming
+  `functions/CURRR100` runs as written.
+- Example `tem3p_lfd`: Lorentz-force detuning of the CW23 SRFCell over three
+  gradients, giving `df` and a constant `k_l` = −5.831 Hz/(MV/m)².
+
+### Changed
+
+- Two solvers may not share a job directory even when their types differ,
+  and mesh files at the top of the workdir must not collide across producers
+  (a `cubit` export, its `meshconvert` `.ncdf`, a `mesh` source). Both are
+  refused at build time; before, one step could remove or replace the other's
+  files.
+- A workflow with several module-level problems reports them in one error,
+  so they can be fixed in one pass.
+- The "name the producer" error no longer suggests the `from: <name>`
+  shorthand to a module that reads several artifact kinds, where the
+  shorthand is refused.
+
 ## [0.10.0] — 2026-11-11
 
 A `cubit` module can run several journals and Python scripts in one Cubit

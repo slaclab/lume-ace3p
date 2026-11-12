@@ -2021,10 +2021,10 @@ def parse_tem3p_log(text):
 
 
 def parse_tem3p_results(job_dir):
-    """Read a TEM3P job directory: ``{thermal, elastic, eigen, units, runs,
-    log}``.
+    """Read a TEM3P job directory into one dict.
 
-    ``log`` is :func:`parse_tem3p_log` of ``tem3p.log``; the other keys are
+    Its keys are ``thermal``, ``elastic``, ``eigen``, ``units``, ``runs`` and
+    ``log``. ``log`` is :func:`parse_tem3p_log` of ``tem3p.log``; the other keys are
     :func:`parse_tem3p_result_file` of ``ResultFile``.
 
     Checks the log first, because TEM3P's exit status cannot be trusted: a

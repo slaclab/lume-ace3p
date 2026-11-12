@@ -1,9 +1,10 @@
 # TEM3P as a Workflow Module — Implementation Plan
 
-**Status: Phase 0 done 2026-11-12 (job 44528190; results in §4, fixtures in
-`tests/fixtures/tem3p/`). Phases 1 to 4 done 2026-11-12 (wrapper, parsers,
-module, mesh hand-off, the `tem3p_lfd` example, the other problem types and
-`files:` directories; see §4). Next: Phase 5.**
+**Status: COMPLETE 2026-11-12.** Phase 0 ran as job 44528190 (fixtures in
+`tests/fixtures/tem3p/`). Phases 1 to 4 built the wrapper, parsers, module,
+mesh hand-off, the `tem3p_lfd` example, the other problem types and `files:`
+directories. Phase 5 wrote the docs (`docs/tem3p_reference.md`). Results are
+in §4; the one follow-up is in §6. Unreleased on dev.
 
 Written 2026-11-12 on S3DF, following the investigation in
 `plans/tem3p_investigation.md` (the shareable summary; this plan assumes it).
@@ -603,6 +604,28 @@ No new examples unless asked.
 - `CHANGELOG`.
 - The `mesh deform` and `postprocess project` notes in `acdtool.py`.
 
+**Phase 5 results (DONE 2026-11-12).**
+
+- `docs/tem3p_reference.md`: the chain, which problems run, what a run
+  writes, how TEM3P reads the EM run (and the moved-workdir abort), what the
+  module sets, the deformed vacuum mesh, the appended-pair recipe with the P4
+  numbers, the build-time check table, quantities, and memory per rank.
+- `docs/yaml_reference.md`: a `tem3p` row in the module table, a
+  `### tem3p module` section (anchor `tem3p-module`), `tem3p` in the bare
+  routing list, `.tem3p` in the `input_parameters.ace3p` list. The "Several
+  instances" bullets now state the Phase 3 rules: no two solvers share a job
+  directory whatever their types, and mesh files must not collide across
+  producers.
+- `docs/index.md` (a "Running TEM3P?" pointer and the toctree), the README
+  module list, and `CHANGELOG.md` `[Unreleased]` covering Phases 1 to 5.
+- `acdtool.py` and `docs/acdtool_reference.md`: the `mesh deform` note no
+  longer says TEM3P's `MeshDeformScale` writes the mesh (P0 found it is not
+  read). The "TEM3P out of scope" paragraph is replaced by a
+  `postprocess project` note.
+- Found on the way: the `parse_tem3p_results` docstring broke a literal
+  across its summary line, a Sphinx warning; fixed. The docs build has one
+  warning left, in `surrogate_jax`, which predates this plan.
+
 ## 5. Open decisions
 
 1. ~~Lint as error or warning~~ **Error**, with a message naming the fix
@@ -611,3 +634,14 @@ No new examples unless asked.
    carries, swept inputs included (user, 2026-11-12; §3.5). Lands in Phase 3.
 3. ~~Whether appended pairs are supported~~ **Yes** (P4, 2026-11-12), with
    `EMMeshInputDir` resolved to the base EM run as in §3.4 item 3.
+
+## 6. Follow-ups
+
+1. **One swept TEM3P leaf for every pass of an appended chain.** A scoped
+   `ace3p: tem3p: …` sweep reaches one module. A second scope for `tem3p_2`
+   is a second axis (a tensor product), and an unscoped block is also
+   appended to the Omega3P inputs. So an appended chain today sweeps Cubit
+   inputs (which reach both passes) or keeps TEM3P's leaves fixed. Fixing
+   it needs a way to give several scopes one axis, which is a
+   multi-instance input feature rather than a TEM3P one. Documented as a
+   warning in `docs/tem3p_reference.md`. Not started; the user decides.

@@ -204,11 +204,10 @@ COMMANDS = {
         POSITIONAL, nargs=(2, 2), note=_MESH_PRODUCER_NOTE),
     'mesh deform': Command(
         POSITIONAL, nargs=(3, 3),
-        note='invocable, but wiring it as a mesh producer is a follow-on '
-             '(per-instance artifacts now allow two meshes in one workflow); '
-             'TEM3P\'s own '
-             'MeshDump: {MeshDeformScale, EMMeshInputDir} writes the deformed '
-             'vacuum mesh directly and is the better route'),
+        note='invocable, but not a workflow mesh producer: the tem3p module '
+             'hands on the deformed vacuum mesh TEM3P writes itself '
+             '(MeshDump: {WriteDeformedEMMesh: on}); mesh deform only scales '
+             'a deformation for viewing'),
     'mesh warpsurface': Command(
         POSITIONAL, nargs=(1, 1),
         note='its warp.in input is a third dialect (flat "Key: value", no '
@@ -261,8 +260,8 @@ COMMANDS = {
              'everything but selected-particle Trajectory extraction'),
     'postprocess project': Command(
         POSITIONAL, nargs=(1, 2),
-        note='TEM3P is out of scope, and the L2 projections go to stdout / '
-             'acdtool.log rather than a structured file'),
+        note='nothing consumes tem3p_solution yet, and the L2 projections go '
+             'to stdout / acdtool.log rather than a structured file'),
 }
 
 # Extension -> the command inferred from it when none is given explicitly. Only

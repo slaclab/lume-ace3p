@@ -28,6 +28,7 @@ that artifact then names the one it reads with `from:` (see
 | `t3p`             | td_solution         | mesh               | `input:` (`.t3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`. Time-domain (wakefield) solver; see [](#t3p-module). |
 | `acdtool`         | rf_post             | *depends on `command:`* (em_solution or td_solution) | `command:`, `input:` (`.rfpost`), `args:`, `jobname:`; `tasks:`, `cores:`, `opts:`. Postprocessor (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …); see [](#acdtool-module). |
 | `track3p`         | track3p_particles   | em_solution        | `input:` (`.track3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Particle tracker (multipacting, dark current); see [](#track3p-module). |
+| `tem3p`           | tem3p_solution; mesh (the deformed vacuum mesh, when the input writes it) | mesh (the body mesh); em_solution, optional | `input:` (`.tem3p`); `tasks:`, `cores:`, `opts:`; `results_dir:`; `files:`. Thermal and structural solver (RF detuning, RF heating, mechanical modes); see [](#tem3p-module). |
 | `track3p_source`  | track3p_particles   | —                  | `file:`, an externally produced Track3P dump. The alternative to running `track3p` in the pipeline. |
 | `field_emission`  | particle_source     | track3p_particles  | Fowler–Nordheim weighting of a Track3P dump; see [](#field-emission-module-keys). |
 | `particle_source` | particle_source     | —                  | `file:`, a prebuilt Geant4-format source file. Bypasses the `field_emission` weighting step. |
@@ -97,13 +98,17 @@ output_parameters :
 - **Outputs.** `module:` in an `output_parameters` spec names an instance first
   and a type second, so `module: omega3p` still works when there is one
   `omega3p`. When a type matches several instances, the error lists their names.
-- **Results directories.** Two solvers of one type must write to different
-  directories: set `results_dir:` on one. For `t3p`, whose `results_dir:` only
-  says where to read, use a `JobName` leaf in its input file instead.
+- **Results directories.** Two solvers must write to different directories,
+  whatever their types: set `results_dir:` on one. For `t3p`, whose
+  `results_dir:` only says where to read, use a `JobName` leaf in its input
+  file instead.
 - **Input files.** Two solvers may share an input file. Each writes its merged
   copy to the workdir as `<stem>_<name><ext>` (`pillbox-rtop_fine.omega3p`), so
   each can carry its own [scoped overrides](#module-scoped-inputs).
-- **Meshes.** Two `cubit` modules must export different mesh filenames.
+- **Meshes.** Mesh files at the top of the workdir must not collide: two
+  `cubit` modules must export different filenames, and a `cubit` export (or
+  its `.ncdf` under `meshconvert`) may not share a basename with a `mesh`
+  source. Two `mesh` sources may stage the same file.
 - **Cubit files.** A `cubit` module's journals and `files:` land in the
   workdir by basename, so one module may not list a basename twice, and two
   modules may share one only for the same file in the same role.
@@ -834,6 +839,85 @@ per field level at cryomodule scale). Since one dump reweights analytically for
 any β, prefer `track3p_source` over a pre-run dump for β studies and use this
 head when the fields themselves change. See `examples/track3p_geant4_chain`.
 
+(tem3p-module)=
+### `tem3p` module
+
+TEM3P is the ACE3P thermal and structural solver. It requires the **body**
+`mesh` and, optionally, an `em_solution`: the Omega3P or S3P run whose fields
+heat or load the walls. It takes the same keys as the other solvers
+(`input:`, `tasks:`, `cores:`, `opts:`, `results_dir:`, default
+`tem3p_results`) plus `files:` for the k(T) and Rs(T) tables its input names.
+TEM3P is pure MPI, so use `cores: 1`. What a run writes, the lint list and
+memory per rank are in [](tem3p_reference.md). See `examples/tem3p_lfd`.
+
+```yaml
+workflow :
+  - module : cubit
+    name : cubit_vacuum
+    journal : 'meshSRFVacuum.jou'
+  - module : cubit
+    name : cubit_shell
+    journal : 'meshSRFShell.jou'
+  - module : omega3p
+    input : 'SRFCell.omega3p'
+    from : cubit_vacuum
+  - module : tem3p
+    input : 'SRFCell.tem3p'
+    from : {mesh : cubit_shell, em_solution : omega3p}
+    cores : 1
+  - module : omega3p
+    name : omega3p_deformed
+    input : 'SRFCell.omega3p'            # the same input as the first solve
+    results_dir : 'omega3p_results_deformed'
+    from : tem3p                         # its mesh: the deformed vacuum mesh
+```
+
+- **The EM run is optional.** Without an `omega3p`/`s3p` in the workflow the
+  module runs unbound: a pure thermal or mechanical-eigenmode problem. With
+  one, it binds automatically; with several, name it in `from:`. An input
+  with an RF-coupled `Boundary`/`HeatSource` and no bound EM run is a build
+  error.
+- **Injection.** The module sets `Directory` in every RF-coupled boundary and
+  heat source to the bound EM run's results directory, and
+  `MeshDump.EMMeshInputDir` to the run whose mesh is deformed. A different
+  value in the input is replaced, with a printed note. `MeshFile` is checked
+  against the body mesh producer, not rewritten.
+- **It provides a mesh** when its input sets
+  `ElasticProblem: { MeshDump: { WriteDeformedEMMesh: on } }` and runs no
+  `EigenSolver`. That mesh is `<results_dir>/DeformedVacuumMesh.ncdf`. A
+  solver bound to it gets `ModelInfo.File` pointed there, so both Omega3P
+  solves can share one input file. A module bound to a `tem3p` that will not
+  write the mesh is a build error.
+- **Build-time checks.** TEM3P ignores misspelled keys without a warning.
+  `NeumanValue`, `Abs tolerance` and the other CW23 spellings, a wrong
+  `MixedType`, an `LFDetuning` without `Method`, a table file `files:` does
+  not stage, and a missing `Omega3PId` (the mesh would come out undeformed)
+  are all build errors, listed together. The full list is in
+  [](tem3p_reference.md#build-time-checks).
+- **Appended pairs.** A further `tem3p → omega3p` pair reading
+  `em_solution` from `omega3p_deformed` deforms the original vacuum mesh, not
+  the deformed one. See [](tem3p_reference.md#appended-pairs-for-convergence).
+
+| Quantity | Meaning | `at:` |
+|---|---|---|
+| `max_temperature`, `min_temperature` | K | — |
+| `sideset_power` | power into one sideset, W | `{sideset: n}`, required |
+| `u_x_min` … `u_z_max`, `u_mag_max` | global displacement extrema, m | — |
+| `mechanical_frequency` | eigenmode frequencies over the `Mode` axis, Hz | `{mode: n}`, optional |
+| `scaling_factor`, `newton_iterations`, `n_dofs` | per problem, from `tem3p.log` | `{problem: thermal\|elastic}` when both ran |
+| `run_time` | s | — |
+
+`run_time` and `n_dofs` need `module: tem3p`; the other names route bare.
+A mechanical eigenmode run is tabulated over `Mode` like Omega3P's modes:
+long-format unless every output is narrowed with `at: {mode: n}`. The
+detuning is a [derived parameter](#derived_parameters):
+
+```yaml
+derived_parameters :
+  'df'  : 'f_deformed - f0'
+  'k_l' : 'df / (TargetGradient / 1e6)**2'    # TargetGradient is swept
+```
+
 (acdtool-module)=
 ### `acdtool` module
 
@@ -1191,7 +1275,9 @@ that can satisfy it.
   (see [](#geant4-output-specs));
   `count`/`total_weight` → `field_emission`; a Track3P quantity
   (`max_enhancement`, `mp_onset_level`, …) or an `at: {field_level: …}` →
-  `track3p`; a `monitor:` key or a T3P wakefield
+  `track3p`; a TEM3P quantity (`max_temperature`, `u_mag_max`, …; not
+  `run_time` or `n_dofs`) or an `at: {sideset: …}` / `at: {problem: …}` →
+  `tem3p`; a `monitor:` key or a T3P wakefield
   quantity (`loss_factor`/`kick_factor`/`W`/`I_bunch`/`s`) → `t3p`; a `.rfpost`
   block name (`RoverQ`, `kickFactor`, `maxFieldsOnSurface`, …) → `acdtool`
   (deprecated; use the mapping form); a bare S-parameter string or any other
@@ -1386,7 +1472,7 @@ it did before the block existed.
 
 The `ace3p:` sub-block of [`input_parameters`](#input_parameters) is a nested
 mapping following the ACE3P input-file hierarchy. It overrides or sweeps values
-inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p` input files, or supplies them
+inside the `.omega3p` / `.s3p` / `.t3p` / `.track3p` / `.tem3p` input files, or supplies them
 inline when no separate ACE3P input file is provided. Leaf values take the same
 `min`/`max`/`num` and list conventions as the other sub-blocks; scalars are
 written through unchanged. The deprecated top-level `ace3p_input_parameters:` key
