@@ -9,6 +9,8 @@ coarser grain than the entries above them.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-17
+
 A `tem3p` module runs TEM3P, ACE3P's thermal and structural solver, so a
 workflow can compute RF detuning: Omega3P, then TEM3P deforming the cavity
 under that mode's loads, then Omega3P again on the deformed vacuum mesh. A
