@@ -365,3 +365,131 @@ def test_scalar_optimize_minimizes_a_derived_objective(staged):
         data['f_error'],
         np.abs(data['ace3p:FrequencyScan.Start'] - 2.6e9) / 1e9, rtol=1e-6)
     assert data['f_error'].min() < data['f_error'].iloc[0]
+
+
+# --------------------------------------------------------------------------- #
+# 7. Inputs are names too (plans/tem3p_module_plan.md §3.5)
+# --------------------------------------------------------------------------- #
+
+
+def _scoped_inputs():
+    """A cubit variable, a shared ACE3P leaf and a scoped one."""
+    from lume_ace3p.ace3p import Section
+    shared = Section()
+    shared.append('FrequencyScan', Section([('Start', '1.0e9')]))
+    scoped = Section()
+    scoped.append('ElasticProblem',
+                  Section([('Boundary', Section([('TargetGradient', 35e6)]))]))
+    return WorkflowInputs(cubit={'cav_radius': 95.0}, ace3p=shared,
+                          scoped={'tem3p': {'ace3p': scoped}})
+
+
+def test_named_values_name_each_input_every_way_a_row_does():
+    values, ambiguous = _scoped_inputs().named_values()
+    assert values['cav_radius'] == values['cubit:cav_radius'] == 95.0
+    # A numeric string (how an ACE3P leaf can arrive) reads as a number.
+    assert values['ace3p:FrequencyScan.Start'] == values['Start'] == 1.0e9
+    label = 'ace3p:tem3p/ElasticProblem.Boundary.TargetGradient'
+    assert values[label] == values['TargetGradient'] == 35e6
+    assert ambiguous == {}
+
+
+def test_an_expression_reads_a_swept_input(tmp_path):
+    """k_l = df / Eacc², the case the widening is for: the gradient is a swept
+    TEM3P leaf, so it cannot be written into the expression as a constant."""
+    inputs = _scoped_inputs()
+    values, ambiguous = inputs.named_values()
+    spec = DerivedSpec.from_config(
+        {'k_l': 'df / (TargetGradient / 1e6)**2',
+         'k_q': 'df / (`ace3p:tem3p/ElasticProblem.Boundary.TargetGradient` '
+                '/ 1e6)**2',
+         'r': 'cav_radius * 2'},
+        ['df'], input_names=values, ambiguous_inputs=ambiguous)
+    got = spec.compute({'df': -7172.1}, values)
+    assert got['k_l'] == got['k_q'] == pytest.approx(-7172.1 / 35**2)
+    assert got['r'] == 190.0
+
+
+def test_an_output_shadows_an_input_of_the_same_name():
+    spec = DerivedSpec.from_config({'twice': 'x * 2'}, ['x'], input_names=['x'])
+    assert spec.compute({'x': 1.0}, {'x': 100.0}) == {'twice': 2.0}
+
+
+def test_an_ambiguous_bare_input_must_be_qualified():
+    from lume_ace3p.ace3p import Section
+
+    def order(value):
+        tree = Section()
+        tree.append('FiniteElement', Section([('Order', value)]))
+        return tree
+
+    inputs = WorkflowInputs(scoped={'coarse': {'ace3p': order(1)},
+                                    'fine': {'ace3p': order(2)}})
+    values, ambiguous = inputs.named_values()
+    assert 'Order' not in values
+    with pytest.raises(DerivedParameterError,
+                       match=r"'Order', an input declared more than once.*"
+                             r"ace3p:coarse/FiniteElement.Order"):
+        DerivedSpec.from_config({'p': 'Order + 1'}, [], input_names=values,
+                                ambiguous_inputs=ambiguous)
+
+
+def test_an_unknown_name_lists_the_inputs_too():
+    with pytest.raises(DerivedParameterError,
+                       match=r"or an input.*Inputs: \['cav_radius'\]"):
+        DerivedSpec.from_config({'e': 'cav_radiu + 1'}, [],
+                                input_names=['cav_radius'])
+
+
+def test_the_python_hatch_is_not_handed_the_inputs(tmp_path):
+    (tmp_path / 'helper_keys.py').write_text(
+        'def keys(outputs):\n    return float(len(outputs))\n')
+    spec = DerivedSpec.from_config({'n': {'python': 'helper_keys:keys'}},
+                                   ['a'], base_dir=str(tmp_path),
+                                   input_names=['x'])
+    assert spec.compute({'a': 1.0}, {'x': 5.0}) == {'n': 1.0}
+
+
+def test_the_workflow_reads_inputs_and_vocs_variables(tmp_path):
+    """Through ``from_config``: a swept ACE3P axis is readable by its bare
+    name at build time and evaluates to the point's value; a VOCS variable that
+    no input_parameters block declares is a known name too."""
+    (tmp_path / 'x.ncdf').write_text('')
+    text = f"""
+workflow:
+  - module: mesh
+    file: {tmp_path / 'x.ncdf'}
+  - module: omega3p
+    input: x.omega3p
+workflow_parameters:
+  workdir: {tmp_path / 'wd'}
+  dry_run: true
+input_parameters:
+  ace3p:
+    FrequencyScan:
+      Start: [1.0e+9, 2.0e+9]
+output_parameters:
+  f: {{module: omega3p, quantity: Frequency, at: {{mode: 0}}}}
+"""
+    (tmp_path / 'c.yaml').write_text(
+        text + "derived_parameters:\n  s2: 'Start * 2'\n")
+    wf = Workflow.from_config(load_yaml(str(tmp_path / 'c.yaml')))
+    outputs, _ = wf.evaluate([2.0e9])
+    assert outputs['s2'] == 4.0e9
+
+    (tmp_path / 'c.yaml').write_text(
+        text + "derived_parameters:\n  g2: 'g * 2'\n")
+    with pytest.raises(DerivedParameterError, match=r"reads \['g'\]"):
+        Workflow.from_config(load_yaml(str(tmp_path / 'c.yaml')))
+    data = load_yaml(str(tmp_path / 'c.yaml'))
+    data['vocs_parameters'] = {'variables': {'g': [0.0, 1.0]},
+                               'objectives': {'f': 'MINIMIZE'}}
+    outputs, _ = Workflow.from_config(data).evaluate({'g': 3.0})
+    assert outputs['g2'] == 6.0
+
+
+def test_the_hash_still_covers_the_expression_text():
+    """The hash covers the expression text, as before: the widening changes
+    which names resolve, not what is hashed."""
+    spec = DerivedSpec.from_config({'k': 'df / g'}, ['df'], input_names=['g'])
+    assert spec.canonical() == [['k', 'expression', 'df / g']]

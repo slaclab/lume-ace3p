@@ -1,0 +1,35 @@
+ModelInfo: {
+  File: 2D-TTF3-FPC-Vacuum.ncdf
+
+  BoundaryCondition : {
+    Impedance:1 
+    Magnetic: 2 3 
+    Waveguide:4 5
+  }
+
+  SurfaceMaterial : {
+    ReferenceNumber: 1
+    Sigma: 5.7e7
+  }
+
+  Material : {
+      Attribute: 1
+      Epsilon: 9.0
+      EpsilonImag: -9.0e-4
+  }
+}
+
+FiniteElement: {
+  Order:           2   
+  Curved Surfaces: on
+}
+
+WaveguideFrequency: 1.3e+9
+
+PostProcess : {
+  Toggle: on
+  PortNumber: 4
+  ModeFile: mode
+}
+
+

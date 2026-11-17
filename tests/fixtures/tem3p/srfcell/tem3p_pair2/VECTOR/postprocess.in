@@ -1,0 +1,85 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        JobName : tem3p_pair2 
+        ModelInfo : { 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellShell.ncdf 
+            BoundaryCondition : { 
+                HFormulation : 1 
+                Electric : 1 , 2 , 3 , 4 , 5 
+            }
+        }
+        VolumeMaterial : { 
+            ElasticLambda : 13.5386473e+10 
+            ElasticMu : 4.2736232e+10 
+            ElasticAlpha : 6.50000e-6 
+            Id : 1 
+        }
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_pair2/VECTOR 
+        }
+        Boundary : { 
+            ConditionType : Mixed 
+            MixedValue : 0. , 0. , 0. 
+            Id : 1 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+        }
+        Boundary : { 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+            Id : 2 
+        }
+        Boundary : { 
+            ConditionType : Neumann 
+            NeumanValue : 0. 
+            Id : 3 
+        }
+        Boundary : { 
+            ConditionType : Neumann 
+            NeumanValue : 0. 
+            Id : 4 
+        }
+        Boundary : { 
+            WhichMode : 0 
+            Omega3PId : 6 
+            Id : 5 
+            ConditionType : LFDetuning 
+            Directory : omega3p_results_deformed 
+            Method : Gradient 
+            StartPoint : 0.0 , 0.0 , -0.0577 
+            TargetGradient : 35e6 
+            EndPoint : 0.0 , 0.0 , 0.0577 
+        }
+        MeshDump : { 
+            WriteDeformedEMMesh : on 
+            EMMeshInputDir : omega3p_results 
+        }
+        BasisOrder : 2 
+        FiniteElement : { 
+            CurvedSurfaces : on 
+            ScalarPotential : 0 
+            NumberOfPhysicalVariables : 3 
+            ScalarBasisSet : Conventional 
+            SeparateLinearDOF : off 
+            Order : 2 
+        }
+        MeshFile : SRFCellShell.ncdf 
+        LinearSolver : { 
+            Tolerance : 1.00e-10 
+            Solver : CG 
+            AbsoluteTolerante : 1.00e-16 
+            Preconditioner : DIAGONAL 
+            MaxIterations : 150000 
+        }
+        ProblemType : ElasticityProblem 
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        CurvedSurfaces : on 
+/********************************/
+
+
+
+

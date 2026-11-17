@@ -1,0 +1,220 @@
+ThermostaticProblem: {
+
+  MeshFile: 2D-TTF3-FPC-Body.ncdf 
+  BasisOrder: 1
+  CurvedSurfaces: on
+
+  // --------------------
+  // solution controls
+  // --------------------
+
+  NonlinearSolver:
+  {
+    Solver:           Newton
+    PicardIteration: 100
+    MaxIterations: 500
+    Abs tolerance:  2.33e-10
+    Rel tolerance:  1.0e-8
+  }
+
+  PicardSolver:
+  {
+    Solver:            CG
+    Preconditioner:    DIAGONAL
+    AbsoluteTolerance: 1.0e-18
+    Tolerance:         1.0e-10
+    MaxIterations:     100000
+  }
+
+   LinearSolver:
+  {
+    Solver:            GMRES
+    Preconditioner:    ILU
+    AbsoluteTolerance: 1.0e-18
+    Tolerance:         1.0e-10
+    MaxIterations:     100000
+  }
+
+  // ==========================
+  // shell boundary property
+  // ==========================
+
+  Shell:
+  {
+    Bd:   6     // where thermal shell bd is
+    Material: 221  // material id for shelll, copper
+    BasisOrder: 1 // basis order can be different
+    Thickness: 1e-5 // thickness of the shell
+  }
+ 
+  Shell:
+  {
+    Bd:   7     // where thermal shell bd is
+    Material: 221  // material id for shelll, copper
+    BasisOrder: 1 // basis order can be different
+    Thickness: 1e-4 // thickness of the shell
+  } 
+
+  // ==========================
+  // shell material property
+  // ==========================
+
+  ThermalConductivity:
+  {
+    Id: 221 // shell, copper
+    Function: functions/CURRR100
+  }
+ 
+  // ==========================
+  // block material property
+  // ==========================
+
+  ThermalConductivity:
+  {
+    Id: 1    // Nb
+    Function: functions/HighRRRNb
+  }
+
+  ThermalConductivity:
+  { 
+    Id: 2  // NBti
+    Function: functions/NbTi
+  }
+
+  ThermalConductivity:
+  {
+    Id: 3   //ss
+    Function: functions/ss304
+  }
+ 
+  ThermalConductivity:
+  {
+    Id: 4 // cu 
+    Function: functions/CURRR100
+  }
+ 
+  ThermalConductivity:
+  {
+    Id: 5  // window
+    Function: functions/al300
+  }
+
+  HeatSource: {
+    Id: 5   //window volume
+    ConditionType: RFHeating  // RFinterface
+    WhichMode: 0
+    DielectricConstantE: 9
+    LossTangentE: 0.0001
+    Directory: s3p_results
+    Method: Powerinput
+    TargetPowerinput: 437.5
+  }
+
+  // ==========================
+  // boundary definition
+  // ==========================
+
+  Boundary:
+  {
+    Id: 1   // rest
+    ConditionType: Neumann
+    NeumannValue: 0.0
+  }
+
+  // Fixed T
+  Boundary:
+  {
+    Id: 2   // 2k
+    ConditionType: Dirichlet
+    DirichletValue: 2
+  }
+  
+  Boundary:
+  {
+    Id: 3   // 4k
+    ConditionType: Dirichlet
+    DirichletValue: 4 
+  }
+
+   Boundary:
+  {
+    Id: 4   // 70k
+    ConditionType: Dirichlet
+    DirichletValue: 70
+  }
+
+  Boundary:
+  {
+    Id: 5   // 300k
+    ConditionType: Dirichlet
+    DirichletValue: 300
+  }
+
+  // RF heating
+  Boundary:
+  {
+    Id: 6   // shell w/ coating
+ 
+    ConditionType: RFHeating 
+    WhichMode: 0
+    Directory: s3p_results
+    Method: Powerinput
+    TargetPowerinput: 437.5
+    SurfaceResistance: functions/SRinnerCU
+  }
+
+  Boundary:
+  {
+    Id: 7  // shells w/ coating
+
+    ConditionType: RFHeating 
+    WhichMode: 0
+    Directory: s3p_results
+    Method: Powerinput
+    TargetPowerinput: 437.5
+    SurfaceResistance: functions/SRinnerCU
+  }
+ 
+  Boundary:
+  {
+     Id: 8  // cu_antenna_rf
+
+     ConditionType: RFHeating
+     WhichMode: 0
+     Directory: s3p_results
+     Method: Powerinput
+     TargetPowerinput: 437.5
+     SurfaceResistance: functions/SRinnerCU
+  }
+
+  Boundary:
+  {
+     Id: 9  // nbti_rf
+
+     ConditionType: RFHeating
+     WhichMode: 0
+     Directory: s3p_results
+     Method: Powerinput
+     TargetPowerinput: 437.5
+     SurfaceResistance: functions/SRinnerNbTi
+  }
+
+  // symmtry planes 
+  
+  Boundary:
+  {
+    Id: 10   // sym1
+    ConditionType: Neumann
+    NeumannValue: 0.0
+  }
+
+  Boundary:
+  {
+    Id: 11   // sym2
+    ConditionType: Neumann
+    NeumannValue: 0.0
+  }
+ 
+}
+
+//END

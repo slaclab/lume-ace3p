@@ -1,0 +1,154 @@
+// =================================
+ThermoElasticProblem: {
+  RunId: 3
+}
+// =================================
+
+// =================================
+ThermostaticProblem: { 
+  MeshFile: RfGunBody.ncdf 
+  BasisOrder: 2
+  CurvedSurfaces: on
+
+  LinearSolver: {
+    Solver:            CG
+    Preconditioner:    DIAGONAL
+    AbsoluteTolerance: 1.0e-18
+    Tolerance:         1.0e-10
+    MaxIterations:     5000
+  }
+
+  // ----------
+  ThermalConductivity: {
+    Id: 1  // copper
+    Value: 391 
+  }
+ 
+  // ----------
+  Boundary: {
+    Id: 1 // beampipe end
+    ConditionType: Neumann
+    NeumannValue : 0.0
+  }
+ 
+  Boundary: {
+    Id: 2 // symmetry in x
+    ConditionType: Neumann
+    NeumannValue : 0.0
+  }
+  
+  Boundary: {
+    Id: 3 // symmetry in y
+    ConditionType: Neumann
+    NeumannValue : 0.0
+  }
+ 
+ Boundary: {
+    Id: 4 // out wall
+    ConditionType: Neumann
+    NeumannValue : 0.0
+  }
+ 
+  // cooling channel 
+  Boundary: {
+    Id: 5  // channel, 22 Celcius
+    ConditionType: Robin
+    RobinConstantFactor: 20000.0
+    RobinConstantValue: 440000.0 
+  }
+ 
+  Boundary: {
+    Id: 6  // Multi-physics interfaces
+    ConditionType: RFHeating  
+    WhichMode: 0
+    Sigma: 5.8e7
+    Directory: omega3p_results
+
+    Method: Gradient
+    TargetGradient: 60e6
+    DutyFactor: 0.00036
+    StartPoint: 0.0001, 0.0001 -0.017018
+    EndPoint:   0.0001, 0.0001  0.017018
+  }
+}
+// =================================
+
+// =================================
+ElasticProblem: {
+  MeshFile: RfGunBody.ncdf 
+  BasisOrder: 2
+  CurvedSurfaces: on
+  ReferenceT: 25
+
+  MeshDump: {
+    WriteDeformedMesh: on 
+    WriteDeformedEMMesh: on
+    EMMeshInputDir:omega3p_results
+    WriteStressStrain: on
+  }
+
+  LinearSolver: {
+    Solver:            CG
+    Preconditioner:    DIAGONAL
+    AbsoluteTolerante: 1.00e-16
+    Tolerance:         1.00e-10
+    MaxIterations:     50000
+  }
+
+  // ----------
+  VolumeMaterial: {
+    Id: 1   //copper  
+     ElasticMu: 4.3363e+10
+     ElasticLambda:   8.1244e+10  
+     ElasticAlpha: 1.70000e-5  
+  }
+  
+  // ----------
+  Boundary: {
+    Id: 1 // beampipe end -- fix z direction
+    ConditionType: Mixed
+    MixedType: NEUMANN NEUMANN DIRICHLET
+    MixedValue: 0., 0., 0.
+  }
+
+  Boundary: {
+    Id: 2 // symmetry -- fix x direction
+    ConditionType: Mixed
+    MixedType: DIRICHLET NEUMANN NEUMANN  
+    MixedValue: 0., 0., 0.
+  }
+
+  Boundary: {
+    Id: 3 // symmetry -- fix y direction
+    ConditionType: Mixed
+    MixedType: NEUMANN DIRICHLET NEUMANN 
+    MixedValue: 0., 0., 0.
+  }
+
+  Boundary: {
+    Id: 4 // outwall
+    ConditionType: Neumann
+    NeumannValue: 0.
+  }
+ 
+  // ----------
+  Boundary: {
+    Id: 5  // cooling channel 
+    ConditionType: Neumann
+    NeumannValue: 0.
+  }
+ 
+  Boundary: {
+    Id: 6  // Multi-physics surface
+    ConditionType: LFDetuning  // RFinterface
+    WhichMode: 0
+    Directory: omega3p_results
+    Omega3PId: 6   //corresponding to the "Exterior RF Surfaces" in omega3p_results
+
+    Method: Gradient
+    TargetGradient: 60e6
+    StartPoint: 0.0001, 0.0001, -0.017018
+    EndPoint:   0.0001, 0.0001,  0.017018 
+  }
+}
+// =================================

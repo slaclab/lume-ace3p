@@ -1,0 +1,23 @@
+ModelInfo: {
+
+  File: SRFCellVacuum.ncdf
+
+  BoundaryCondition: {
+    Magnetic: 1       //sym. plane for TM0 mode
+    Magnetic: 2 3   //disk center for pi mode
+    Electric: 6      //Nb wall
+  }
+}
+
+FiniteElement: {
+  Order: 2
+  Curved Surfaces: on
+}
+
+EigenSolver: {
+  NumEigenvalues:    1 
+  FrequencyShift:    1.2e9
+}
+
+
+

@@ -1,0 +1,2 @@
+Warning: Key '<tem3p>.RfGunBody.tem3p.<DEEPCOPY>.ThermostaticProblem[0].Boundary[5].SymmetryFactor' undefined, using default value 0
+Warning: Key '<tem3p>.RfGunBody.tem3p.<DEEPCOPY>.ElasticProblem[0].Boundary[5].SymmetryFactor' undefined, using default value 0

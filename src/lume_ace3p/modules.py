@@ -32,6 +32,7 @@ bool.
 import glob
 import hashlib
 import os
+import posixpath
 import shutil
 import warnings
 
@@ -42,9 +43,10 @@ from lume_ace3p.cubit import Cubit, _Journal
 # deliberately NOT imported, since acdtool exports one of the same name and value
 # — T3PModule tests for a monitor's missing index axis instead.
 from lume_ace3p.ace3p import (
-    ALWAYS, MONITORS, Omega3P, S3P, T3P, Track3P, declared_field_levels,
+    ALWAYS, MONITORS, Omega3P, S3P, Section, T3P, TEM3P_DONE, TEM3P_LOG,
+    TEM3P_RESULT_FILE, Tem3P, Track3P, declared_field_levels,
     declared_monitors, impacts_summary, input_job_name, level_files,
-    parse_ace3p, results_path, same_level,
+    merge_overrides, parse_ace3p, results_path, same_level,
 )
 from lume_ace3p.acdtool import (
     Acdtool, COMMANDS, CURVE, GRID, MODE_TABLE, RFPOST, SECTIONS, SURFACE,
@@ -72,10 +74,11 @@ TRACK3P_PARTICLES = 'track3p_particles'  # raw Track3P dump (track3p run, or sup
 PARTICLE_SOURCE = 'particle_source'    # Geant4-format particle file (Particles output)
 DOSE_GRID = 'dose_grid'                # Geant4 dose scoring output
 EDEP_GRID = 'edep_grid'                # Geant4 energy-deposit scoring output
+TEM3P_SOLUTION = 'tem3p_solution'      # TEM3P job directory (thermal/elastic results)
 
 ARTIFACT_KINDS = frozenset({
     JOURNAL, MESH, EM_SOLUTION, TD_SOLUTION, RF_POST, TRACK3P_PARTICLES,
-    PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID,
+    PARTICLE_SOURCE, DOSE_GRID, EDEP_GRID, TEM3P_SOLUTION,
 })
 
 # The acdtool command table names the artifact each command consumes, and it
@@ -448,6 +451,53 @@ def _stage_file(ctx, src, fresh=False):
     return dest
 
 
+def _staged_dir_name(src):
+    """The name a ``files:`` directory is staged under: its basename, trailing
+    separators ignored. Raises for ``.``, ``..`` or a filesystem root, whose
+    'basename' would stage onto the workdir itself."""
+    name = os.path.basename(os.path.normpath(str(src)))
+    if name in ('', '.', '..', os.sep):
+        raise ValueError(
+            f"'files:' lists the directory '{src}', which has no name of its "
+            "own to be staged under in the workdir. Name the directory itself "
+            "(for example 'files: [functions]').")
+    return name
+
+
+def _stage_dir(ctx, src, fresh=False):
+    """Stage directory ``src`` into the workdir as ``workdir/<basename>`` and
+    return that path: the directory form of :func:`_stage_file`, for a solver's
+    ``files:``. An input that names ``functions/CURRR100`` (every CW23 TEM3P
+    case) then resolves as written.
+
+    ``ctx.stage_mode`` applies: ``copy`` copies the tree, ``symlink`` links the
+    directory, ``hardlink`` links each file (copying the tree when linking
+    fails). ``fresh`` replaces an existing copy unless it already follows the
+    source, as for a file. The same read-only invariant holds."""
+    ctx.ensure_workdir()
+    dest = os.path.join(ctx.workdir, _staged_dir_name(src))
+    if os.path.abspath(src) == os.path.abspath(dest):
+        return dest
+    if fresh and os.path.lexists(dest) and not _same_file(src, dest):
+        _remove_output(ctx, os.path.basename(dest))
+    if os.path.lexists(dest):
+        return dest
+    mode = ctx.stage_mode
+    if mode == 'symlink':
+        os.symlink(os.path.abspath(src), dest)
+    elif mode == 'hardlink':
+        try:
+            shutil.copytree(src, dest, copy_function=os.link)
+        except (OSError, shutil.Error) as exc:
+            print(f"Warning: hardlink of {src} failed ({exc}); copying "
+                  "instead.")
+            shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(src, dest)
+    else:
+        shutil.copytree(src, dest)
+    return dest
+
+
 # --------------------------------------------------------------------------- #
 # Module base
 # --------------------------------------------------------------------------- #
@@ -465,7 +515,18 @@ class Module:
 
     type = None
     requires = frozenset()
+    # Kinds this module reads when the workflow has a producer and does without
+    # otherwise (plans/tem3p_module_plan.md §3.2): bound like ``requires``, but
+    # zero producers leaves the kind unbound rather than failing the build.
+    optional_requires = frozenset()
     provides = frozenset()
+    # The mesh file this module writes, relative to its own job directory, when
+    # it provides a ``mesh`` there rather than at the workdir's top level
+    # (plans/tem3p_module_plan.md §3.3). A solver bound to such a producer has
+    # its ``ModelInfo.File`` pointed at ``./<job>/<mesh_output>``
+    # (:meth:`_SolverModule._upstream_mesh`). ``None`` for every producer that
+    # writes its mesh at the top level, which is all of them but ``tem3p``.
+    mesh_output = None
     # The WorkflowInputs buckets this module reads, which its module hash covers
     # (with its own scoped block laid over them). A bucket not listed here can
     # change without invalidating this module's output.
@@ -566,6 +627,14 @@ class Module:
         paths are in the module's config, which the hash covers anyway."""
         return []
 
+    def hashed_files(self, inputs):
+        """The files whose contents :meth:`module_hash` covers at the input
+        point ``inputs``: :meth:`input_files`, unless a module's input names
+        further small files that change what it computes. Only ``tem3p``
+        widens it, with the material tables its input names, which can depend
+        on the point (a swept ``Function:``)."""
+        return self.input_files()
+
     def launch_size(self):
         """``(tasks, cores)`` of the largest external-tool step this module
         launches, or ``None`` when it launches none. What
@@ -596,8 +665,8 @@ class Module:
                  **{key: value for key, value in self.config.items()
                     if key not in self._launch_keys}}
         buckets = {bucket: getattr(view, bucket) for bucket in self.input_buckets}
-        files = {str(path): file_digest(path) for path in self.input_files()
-                 if path}
+        files = {str(path): file_digest(path)
+                 for path in self.hashed_files(inputs) if path}
         upstream = {kind: hashes.get(name)
                     for kind, name in sorted(self.sources.items())}
         return _hash_module(entry, buckets, files, upstream)
@@ -615,6 +684,14 @@ class Module:
         if not ctx.capture_output:
             return None
         return log_path(ctx.workdir, self.name)
+
+    def check_build(self, modules, inputs):
+        """Build-time problems with this module in the resolved, bound chain
+        ``modules`` under the workflow's ``inputs``: a list of messages, empty
+        when there are none. :class:`~lume_ace3p.workflow_graph.Workflow`
+        raises one error listing them all, so a user fixes every problem in one
+        pass. The default finds none."""
+        return []
 
     def verify(self, ctx):
         """Whether this module's output is still on disk in the evaluation
@@ -998,6 +1075,10 @@ class _SolverModule(Module):
     provide a solution artifact, differing only in the wrapper they construct,
     the dry-run label, and which artifact kind they produce.
 
+    A solver whose ``mesh`` producer writes the mesh into its own job
+    directory (a ``tem3p``'s deformed vacuum mesh, :attr:`Module.mesh_output`)
+    has its ``ModelInfo.File`` pointed at it (:meth:`_inject_mesh`).
+
     Omega3P/S3P provide an ``em_solution`` (frequency domain); T3P provides a
     ``td_solution`` (time domain). The split is deliberate: ``acdtool`` requires
     ``em_solution``, so a T3P workflow that lists ``acdtool`` fails validation
@@ -1015,6 +1096,10 @@ class _SolverModule(Module):
     # solvers; :class:`Track3PModule` sets ``EM_SOLUTION``, since Track3P reads
     # its mesh out of the upstream solver's results directory.
     _input_artifact = MESH
+    # The input leaf that names the mesh this solver reads, set from a bound
+    # producer that declares :attr:`Module.mesh_output`. ``None`` for a solver
+    # that names its mesh some other way (TEM3P's ``MeshFile``) or reads none.
+    _mesh_leaf = ('ModelInfo', 'File')
     # The one output file whose presence means this solver's results are still on
     # disk (see :meth:`verify`) — the same file the solver's own
     # ``output_parser`` reads first, so "verify passes" and "the results are
@@ -1049,18 +1134,24 @@ class _SolverModule(Module):
         return [self.input_file]
 
     def required_files(self):
-        return super().required_files() + self.files
+        # A ``files:`` directory exists, so it is not listed as missing; a
+        # mistyped one is neither file nor directory and is.
+        return super().required_files() + [p for p in self.files
+                                           if not os.path.isdir(p)]
 
     def run(self, ctx, skip_execution=False):
         if self.upstream(ctx, self._input_artifact)[1] is None:
             raise ValueError(f"module '{self.type}' requires a "
                              f"{self._input_artifact} artifact.")
         for path in self.files:
+            if os.path.isdir(path):
+                _stage_dir(ctx, path, fresh=_fresh(ctx, skip_execution))
+                continue
             if not os.path.isfile(path):
                 raise FileNotFoundError(
                     f"module '{self.type}' lists '{path}' under 'files:' but "
-                    "there is no such file (paths resolve from the directory "
-                    "run-lume-ace3p was started in).")
+                    "there is no such file or directory (paths resolve from "
+                    "the directory run-lume-ace3p was started in).")
             _stage_file(ctx, path, fresh=_fresh(ctx, skip_execution))
         # The shared ``ace3p:`` tree with this module's own scope over it.
         inputs = ctx.inputs.for_module(self.name)
@@ -1076,6 +1167,10 @@ class _SolverModule(Module):
             # builds its command line from this.
             ctx.set_job_name(self, self._artifact,
                              self.results_dir or self._wrapper.default_job_name)
+            mesh = self._upstream_mesh(ctx)
+            if mesh is not None:
+                _append_marker(ctx, f'{self._label} '
+                                    f'{".".join(self._mesh_leaf)}: {mesh}\n')
             self._prepare_dry_run(ctx)
             return
         ctx.ensure_workdir()
@@ -1092,6 +1187,7 @@ class _SolverModule(Module):
                                log_file=self.log_file(ctx),
                                input_name=self._input_name(ctx))
         solver.set_value(inputs.ace3p)
+        self._inject_mesh(ctx, solver)
         self._prepare_solver(ctx, solver)
         if skip_execution:
             # Resumed: this solve already finished in this workdir, so read its
@@ -1132,6 +1228,49 @@ class _SolverModule(Module):
             return None
         stem, ext = os.path.splitext(base)
         return f'{stem}_{self.name}{ext}'
+
+    def _upstream_mesh(self, ctx):
+        """``./<job>/<file>``, the mesh this solver reads relative to the
+        workdir, when its bound ``mesh`` producer writes the mesh into its own
+        job directory (:attr:`Module.mesh_output`); ``None`` otherwise, which
+        leaves the input's own ``ModelInfo.File`` alone.
+
+        The deformed-mesh hand-off of plans/tem3p_module_plan.md §3.3: an
+        ``omega3p`` after a ``tem3p`` reads
+        ``./tem3p_results/DeformedVacuumMesh.ncdf``, so both Omega3P runs of an
+        RF-detuning chain can share one input file."""
+        if self._mesh_leaf is None or MESH not in self.requires:
+            return None
+        producer = self.producer(ctx, MESH)
+        output = getattr(producer, 'mesh_output', None)
+        if not output:
+            return None
+        job = ctx.job_names.lookup(MESH, producer.name, None)
+        if not job:
+            return None
+        return './' + posixpath.join(job, output)
+
+    def _inject_mesh(self, ctx, solver):
+        """Point the solver's mesh leaf at :meth:`_upstream_mesh`. A value that
+        already names that file is kept as written; any other is replaced, with
+        a note, since the producer bound in the workflow decides which mesh
+        this run reads."""
+        mesh = self._upstream_mesh(ctx)
+        if mesh is None:
+            return
+        section = solver._input_tree()
+        for name in self._mesh_leaf[:-1]:
+            section = section.find(name) if section is not None else None
+        current = (section.get_leaf(self._mesh_leaf[-1])
+                   if section is not None else None)
+        if current is not None and _same_dir(current, mesh):
+            return
+        if current is not None:
+            print(f"Note: module '{self.name}' reads the mesh "
+                  f"'{self.producer(ctx, MESH).name}' writes, so its "
+                  f"{'.'.join(self._mesh_leaf)}: {current} is replaced by "
+                  f"{mesh}.")
+        solver.set_input_leaf(self._mesh_leaf, mesh)
 
     def _prepare_solver(self, ctx, solver):
         """Hook: edit the solver's input tree after the ``ace3p:`` overrides
@@ -1842,6 +1981,7 @@ class Track3PModule(_SolverModule):
     _label = 'Track3P'
     _artifact = TRACK3P_PARTICLES
     _input_artifact = EM_SOLUTION
+    _mesh_leaf = None
     # The run log, which every run writes and which carries the 'Done!' that
     # says it finished. verify() checks both.
     _results_file = 'track3p.log'
@@ -2187,6 +2327,845 @@ class Track3PModule(_SolverModule):
                 return any(line.strip() == 'Done!' for line in file)
         except OSError:
             return None
+
+
+# --------------------------------------------------------------------------- #
+# TEM3P
+# --------------------------------------------------------------------------- #
+
+TEM3P_PROBLEM_BLOCKS = ('ThermostaticProblem', 'ElasticProblem')
+
+# ConditionTypes that read an RF solution: their boundary or heat source carries
+# a 'Directory' naming the EM run. The binary accepts both capitalisations.
+TEM3P_RF_CONDITIONS = frozenset({'RFHeating', 'RFheating', 'RFHeatingMap',
+                                 'LFDetuning', 'LFdetuning'})
+_TEM3P_LFD = frozenset({'LFDetuning', 'LFdetuning'})
+
+# The vacuum mesh TEM3P writes into its job directory when MeshDump has
+# 'WriteDeformedEMMesh: on'. Per-mode variants of an eigen run are out of scope.
+TEM3P_DEFORMED_MESH = 'DeformedVacuumMesh.ncdf'
+
+# Leaves whose value names a table file TEM3P reads from its working directory:
+# k(T) and Rs(T) tables in the CW23 cases ('Function: functions/CURRR100'), and
+# the other file-valued keys in the binary's strings. A numeric value is not a
+# file and is left alone.
+_TEM3P_TABLE_KEYS = ('Function', 'SurfaceResistance', 'SigmaFunction',
+                     'DielectricConstantFunctionE',
+                     'DielectricConstantFunctionH', 'ExtVHeatingFile')
+
+# Keys TEM3P never reads, by the spelling CW23 inputs use, with the fix. None of
+# them draws a warning from the binary (plans/tem3p_module_plan.md §2, P5).
+_TEM3P_IGNORED_KEYS = {
+    'NeumanValue': "spell it 'NeumannValue'",
+    'AbsoluteTolerante': ("TEM3P's linear solvers stop on 'Tolerance' (a "
+                          "relative tolerance) only; remove it"),
+    'AbsoluteTolerance': ("TEM3P's linear solvers stop on 'Tolerance' (a "
+                          "relative tolerance) only; remove it"),
+    'Abs tolerance': "spell it 'AbsTolerance'",
+    'Rel tolerance': "spell it 'RelTolerance'",
+}
+# MeshDump switches the binary turns on only for the exact string 'on'.
+_TEM3P_SWITCHES = ('WriteDeformedMesh', 'WriteStressStrain',
+                   'WriteDeformedEMMesh')
+_TEM3P_MIXED = frozenset({'DIRICHLET', 'NEUMANN'})
+# Keys only the RF-coupled boundary classes read (LFDetuning.C, EMHeating.C).
+# On any other ConditionType TEM3P ignores them without a warning, which is
+# where a positional 'ace3p:' override lands when the block it was meant for is
+# not the first of its name (plans/tem3p_module_plan.md, follow-up 2).
+_TEM3P_RF_ONLY_KEYS = ('Method', 'TargetGradient', 'WhichMode', 'StartPoint',
+                       'EndPoint')
+# Problem-block sections that switch TEM3P to an analysis lume-ace3p does not
+# read. 'Transient' in ThermostaticProblem also skips ElasticProblem
+# altogether (ThermoElasticProblem.C), again without a warning.
+_TEM3P_OUT_OF_SCOPE = ('Transient', 'HarmonicAnalysis')
+
+
+def _tem3p_problems(tree):
+    """``[(block name, section)]`` for the problem blocks of a TEM3P input."""
+    return [(name, child) for name, child in tree.entries
+            if name in TEM3P_PROBLEM_BLOCKS and isinstance(child, Section)]
+
+
+def _tem3p_coupled(tree):
+    """``[(block, container, section)]`` for every ``Boundary`` and
+    ``HeatSource`` whose ``ConditionType`` reads an RF solution."""
+    return [(block, container, section)
+            for block, problem in _tem3p_problems(tree)
+            for container in ('Boundary', 'HeatSource')
+            for section in problem.children(container)
+            if isinstance(section, Section)
+            and section.get_leaf('ConditionType') in TEM3P_RF_CONDITIONS]
+
+
+def _tem3p_elastic(tree):
+    return next((s for b, s in _tem3p_problems(tree) if b == 'ElasticProblem'),
+                None)
+
+
+def _tem3p_mesh_dump(tree):
+    elastic = _tem3p_elastic(tree)
+    return elastic.find('MeshDump') if elastic is not None else None
+
+
+def _tem3p_writes_em_mesh(tree):
+    """Whether the run writes ``DeformedVacuumMesh.ncdf``: ``MeshDump`` in
+    ``ElasticProblem`` sets ``WriteDeformedEMMesh`` to exactly ``on``."""
+    dump = _tem3p_mesh_dump(tree)
+    return dump is not None and dump.get_leaf('WriteDeformedEMMesh') == 'on'
+
+
+def _tem3p_has_eigen(tree):
+    elastic = _tem3p_elastic(tree)
+    return elastic is not None and elastic.find('EigenSolver') is not None
+
+
+def _tem3p_has_omega3p_id(tree):
+    """Whether an ``LFDetuning`` or ``Neumann`` boundary of ``ElasticProblem``
+    sets ``Omega3PId``: the only two ConditionTypes the mesh deformation reads
+    it from, compared exactly (``ElasticProblemMeshDeform.C``)."""
+    elastic = _tem3p_elastic(tree)
+    if elastic is None:
+        return False
+    return any(b.get_leaf('ConditionType') in ('LFDetuning', 'Neumann')
+               and b.get_leaf('Omega3PId') is not None
+               for b in elastic.children('Boundary') if isinstance(b, Section))
+
+
+def _tem3p_lfdetuning_omega3p_ids(tree):
+    """Where an ``ElasticProblem`` boundary spelled ``LFdetuning`` sets
+    ``Omega3PId``. TEM3P solves it as an LFDetuning boundary
+    (``Tem3P_BdManager.C``), but the mesh deformation reads ``Omega3PId`` only
+    from the exact spelling ``LFDetuning`` (``ElasticProblemMeshDeform.C``)."""
+    elastic = _tem3p_elastic(tree)
+    if elastic is None:
+        return []
+    return [_tem3p_where('ElasticProblem', 'Boundary', b)
+            for b in elastic.children('Boundary') if isinstance(b, Section)
+            and b.get_leaf('ConditionType') == 'LFdetuning'
+            and b.get_leaf('Omega3PId') is not None]
+
+
+def _tem3p_where(block, container, section):
+    ident = section.get_leaf('Id')
+    return f"{block} {container}" + (f" Id {ident}" if ident is not None else '')
+
+
+def _tem3p_lint(tree):
+    """Messages for every input entry TEM3P would ignore or reject without
+    saying why. Each names the entry and its fix."""
+    problems = []
+
+    def walk(section, where):
+        for name, child in section.entries:
+            if isinstance(child, Section):
+                label = name
+                ident = child.get_leaf('Id')
+                if ident is not None:
+                    label += f' Id {ident}'
+                walk(child, f'{where} {label}'.strip())
+            elif name in _TEM3P_IGNORED_KEYS:
+                problems.append(
+                    f"{where}: '{name}' is not a key TEM3P reads, and TEM3P "
+                    f"ignores it without a warning; "
+                    f"{_TEM3P_IGNORED_KEYS[name]}.")
+
+    walk(tree, '')
+
+    dump = _tem3p_mesh_dump(tree)
+    if dump is not None:
+        for key in _TEM3P_SWITCHES:
+            value = dump.get_leaf(key)
+            if value is not None and value != 'on' and \
+                    value.strip().lower() in ('on', 'yes', 'true', '1'):
+                problems.append(
+                    f"ElasticProblem MeshDump: '{key}: {value}' is off, because "
+                    "TEM3P switches it on only for the exact value 'on' "
+                    f"(lower case); write '{key}: on'.")
+
+    for block, problem in _tem3p_problems(tree):
+        for analysis in _TEM3P_OUT_OF_SCOPE:
+            if problem.find(analysis) is None:
+                continue
+            if analysis == 'Transient' and block == 'ThermostaticProblem':
+                what = ("makes TEM3P solve a thermal transient instead of the "
+                        "steady state, and then skip ElasticProblem "
+                        "altogether, without a warning")
+            else:
+                what = (f"makes TEM3P run a {analysis} analysis instead of "
+                        "the static solve")
+            problems.append(
+                f"{block}: a '{analysis}' block {what}. lume-ace3p does not "
+                "read those results (out of scope, docs/tem3p_reference.md); "
+                "remove the block, or run this input outside the workflow.")
+        for container in ('Boundary', 'HeatSource'):
+            for section in problem.children(container):
+                if not isinstance(section, Section):
+                    continue
+                where = _tem3p_where(block, container, section)
+                condition = section.get_leaf('ConditionType')
+                if condition is not None and \
+                        condition not in TEM3P_RF_CONDITIONS:
+                    stray = [k for k in _TEM3P_RF_ONLY_KEYS
+                             if section.get_leaf(k) is not None]
+                    if stray:
+                        problems.append(
+                            f"{where} ({condition}): "
+                            f"{', '.join(repr(k) for k in stray)} "
+                            f"{'is' if len(stray) == 1 else 'are'} read only "
+                            "by RF-coupled entries (LFDetuning, RFHeating), "
+                            "so TEM3P ignores "
+                            f"{'it' if len(stray) == 1 else 'them'} here "
+                            "without a warning. If an input_parameters "
+                            "'ace3p:' override put it there: overrides "
+                            f"reach same-named blocks by position, so a "
+                            f"'{container}:' entry sets the first "
+                            f"{container} of {block}. Move the block it is "
+                            "meant for to the first position in the input "
+                            "file; otherwise remove the key.")
+                if condition == 'Mixed':
+                    raw = section.get_leaf('MixedType') or ''
+                    entries = raw.replace(',', ' ').split()
+                    if len(entries) != 3 or not set(entries) <= _TEM3P_MIXED:
+                        problems.append(
+                            f"{where}: 'MixedType: {raw}' must be exactly three "
+                            "entries, one per axis, each DIRICHLET or NEUMANN "
+                            "in upper case (for example 'MixedType: NEUMANN "
+                            "DIRICHLET NEUMANN'); TEM3P exits on anything "
+                            "else.")
+                method = section.get_leaf('Method')
+                if condition in _TEM3P_LFD and method is None:
+                    problems.append(
+                        f"{where}: an LFDetuning boundary needs 'Method' "
+                        "('Method: Gradient' with 'TargetGradient', "
+                        "'StartPoint' and 'EndPoint').")
+                if method in ('Gradient', 'gradient'):
+                    missing = [k for k in ('StartPoint', 'EndPoint')
+                               if section.get_leaf(k) is None]
+                    if missing:
+                        problems.append(
+                            f"{where}: 'Method: {method}' integrates the "
+                            "gradient along a line, so it needs "
+                            f"{' and '.join(repr(k) for k in missing)} "
+                            "(three coordinates each).")
+    return problems
+
+
+def _tem3p_table_files(tree):
+    """``[(where, key, value)]`` for every leaf of ``tree`` that names a table
+    file (:data:`_TEM3P_TABLE_KEYS`) by a non-numeric value."""
+    found = []
+
+    def walk(section, where):
+        for name, child in section.entries:
+            if isinstance(child, Section):
+                ident = child.get_leaf('Id')
+                label = name if ident is None else f'{name} Id {ident}'
+                walk(child, f'{where} {label}'.strip())
+            elif name in _TEM3P_TABLE_KEYS and isinstance(child, str):
+                value = child.strip()
+                try:
+                    float(value)
+                except ValueError:
+                    if value:
+                        found.append((where, name, value))
+
+    walk(tree, '')
+    return found
+
+
+def _tem3p_staged(files):
+    """``{name in the working directory: files: entry}`` for a module's
+    ``files:``, each staged under its own basename. A nameless entry is
+    skipped; staging refuses it."""
+    staged = {}
+    for path in files:
+        try:
+            staged[_staged_dir_name(path)] = str(path)
+        except ValueError:
+            continue
+    return staged
+
+
+def _tem3p_table_sources(tree, files):
+    """The source files, outside the workdir, of the tables ``tree`` names:
+    an absolute path as written, a bare name as its ``files:`` entry, and
+    ``dir/name`` as ``name`` inside the ``files:`` directory ``dir``. Sorted,
+    without duplicates; a table no ``files:`` entry provides is left out
+    (:func:`_tem3p_unstaged_tables` reports it)."""
+    staged = _tem3p_staged(files)
+    found = set()
+    for _, _, value in _tem3p_table_files(tree):
+        if os.path.isabs(value):
+            path = value
+        else:
+            parts = os.path.normpath(value).split(os.sep)
+            entry = staged.get(parts[0])
+            if entry is None:
+                continue
+            path = entry if len(parts) == 1 else os.path.join(entry,
+                                                              *parts[1:])
+        if os.path.isfile(path):
+            found.add(path)
+    return sorted(found)
+
+
+def _tem3p_unstaged_tables(tree, files):
+    """Messages for each table file ``tree`` names that the module's ``files:``
+    do not put where TEM3P looks: the working directory, with ``files:`` staged
+    by basename (:func:`_stage_file`, :func:`_stage_dir`). A ``files:`` entry
+    that does not exist is skipped; :meth:`Workflow.check_files` reports it."""
+    staged = _tem3p_staged(files)
+    problems, unstaged_dirs = [], {}
+    for where, key, value in _tem3p_table_files(tree):
+        if os.path.isabs(value):
+            continue
+        parts = os.path.normpath(value).split(os.sep)
+        entry = staged.get(parts[0])
+        if entry is not None and not os.path.exists(entry):
+            continue
+        what = f"{where}: '{key}: {value}'"
+        if len(parts) == 1:
+            if entry is None or os.path.isdir(entry):
+                problems.append(
+                    f"{what} names a table TEM3P reads from its working "
+                    f"directory, and no 'files:' entry puts '{value}' there. "
+                    f"Add the file to the module's 'files:'.")
+        elif entry is None or not os.path.isdir(entry):
+            unstaged_dirs.setdefault(parts[0], []).append(what)
+        elif not os.path.isfile(os.path.join(entry, *parts[1:])):
+            problems.append(
+                f"{what}: the staged directory '{entry}' has no "
+                f"'{os.path.join(*parts[1:])}'.")
+    # One message per directory: a CW23 input names ten tables in one.
+    for directory, whats in unstaged_dirs.items():
+        problems.append(
+            f"{len(whats)} table entr{'y' if len(whats) == 1 else 'ies'} "
+            f"name files in the directory '{directory}' ({whats[0]}"
+            f"{', …' if len(whats) > 1 else ''}), and no 'files:' entry "
+            f"stages a directory '{directory}' into the working directory. "
+            "'files:' places each entry under its own name, so a file entry "
+            f"lands as its basename. Add 'files: [{directory}]' and the paths "
+            "resolve as written.")
+    return problems
+
+
+def _same_dir(a, b):
+    return os.path.normpath(str(a)) == os.path.normpath(str(b))
+
+
+class Tem3PModule(_SolverModule):
+    """The ACE3P thermal and structural solver: requires the body ``mesh``,
+    optionally an ``em_solution``; provides ``tem3p_solution`` and, when the
+    input writes the deformed vacuum mesh, a ``mesh``.
+
+    The primary chain is RF detuning (plans/tem3p_module_plan.md §1)::
+
+        cubit(vacuum) ─▶ omega3p ─────────────┐ em_solution
+        cubit(body) ───────────────────────▶ tem3p ─▶ omega3p_deformed
+                                         mesh       mesh
+
+    **What the module injects** (:meth:`_prepare_solver`), when an EM run is
+    bound:
+
+    * ``Directory`` of every RF-coupled ``Boundary`` and ``HeatSource``: the
+      bound EM run's results directory. A different value in the input is
+      replaced, with a note: the shared workdir usually holds *other* EM
+      results, so keeping a value because it names an existing directory would
+      read the wrong fields;
+    * ``MeshDump.EMMeshInputDir``, when the input writes the deformed mesh: the
+      **base** EM run, which is the bound one unless that run's mesh itself came
+      from a ``tem3p``, in which case it is that ``tem3p``'s base, and so on.
+      An appended ``tem3p → omega3p`` pair therefore deforms the original vacuum
+      mesh, not the already-deformed one (P4).
+
+    ``MeshFile`` is left alone: the body mesh is staged by basename, and
+    :meth:`check_build` confirms the name matches what the mesh producer
+    exports.
+
+    **The deformed mesh it hands on.** When the input writes
+    ``DeformedVacuumMesh.ncdf`` (and runs no ``EigenSolver``), this module
+    provides it as a ``mesh``; a solver bound to it has its ``ModelInfo.File``
+    set to ``./<job>/DeformedVacuumMesh.ncdf``
+    (:meth:`_SolverModule._upstream_mesh`), so both Omega3P runs of the chain
+    can read one input file.
+
+    **Build-time checks** (:meth:`check_build`): the input couples to RF but no
+    EM run is bound; a downstream module reads the deformed mesh but the input
+    will not write it, or sets no ``Omega3PId`` so the mesh would come out
+    undeformed (P3); ``MeshFile`` names a mesh the producer does not export;
+    a table file (``Function: functions/CURRR100``) that ``files:`` does not
+    stage where TEM3P reads it (:func:`_tem3p_unstaged_tables`); and every
+    entry TEM3P ignores without saying so (:func:`_tem3p_lint`).
+
+    Quantities come from ``ResultFile`` and ``tem3p.log``
+    (:func:`lume_ace3p.ace3p.parse_tem3p_results`); see :meth:`extract`.
+    """
+
+    type = 'tem3p'
+    requires = frozenset({MESH})
+    optional_requires = frozenset({EM_SOLUTION})
+    provides = frozenset({TEM3P_SOLUTION, MESH})
+    _wrapper = Tem3P
+    _label = 'TEM3P'
+    _artifact = TEM3P_SOLUTION
+    _results_file = TEM3P_RESULT_FILE
+    # TEM3P names its body mesh in each problem block's MeshFile, which
+    # check_build checks rather than rewrites (§3.4 item 1).
+    _mesh_leaf = None
+    # The file a downstream solver's ModelInfo.File is pointed at, relative to
+    # this module's job directory (_SolverModule._upstream_mesh).
+    mesh_output = TEM3P_DEFORMED_MESH
+
+    THERMAL = frozenset({'max_temperature', 'min_temperature'})
+    DISPLACEMENT = frozenset({'u_x_min', 'u_x_max', 'u_y_min', 'u_y_max',
+                              'u_z_min', 'u_z_max', 'u_mag_max'})
+    PER_PROBLEM = frozenset({'scaling_factor', 'n_dofs', 'newton_iterations'})
+    QUANTITIES = (THERMAL | DISPLACEMENT | PER_PROBLEM
+                  | {'sideset_power', 'mechanical_frequency', 'run_time'})
+    # The names a bare output spec routes to 'tem3p' by. 'run_time' and
+    # 'n_dofs' are generic enough that another solver may want them, so they
+    # need 'module: tem3p'.
+    BARE = QUANTITIES - {'run_time', 'n_dofs'}
+    _AXES = ('sideset', 'mode', 'problem')
+    _PROBLEM_KEYS = ('thermal', 'elastic')
+
+    def __init__(self, config=None, name=None):
+        super().__init__(config, name)
+        self._writes_mesh = None
+        self._skip = False
+
+    # ---- the input as TEM3P will read it ----------------------------------
+
+    def _merged_tree(self, inputs):
+        """The input file with this module's ``ace3p:`` overrides merged, or
+        ``None`` when the file cannot be read (run time reports that)."""
+        try:
+            with open(self.input_file) as file:
+                tree = parse_ace3p(file.read())
+        except (OSError, TypeError, ValueError):
+            return None
+        overrides = inputs.for_module(self.name).ace3p if inputs else None
+        if overrides is not None and overrides.entries:
+            merge_overrides(tree, overrides)
+        return tree
+
+    def hashed_files(self, inputs):
+        """The input file and, unlike any other solver's ``files:``, the
+        contents of every table file the merged input names (k(T), Rs(T): a
+        few kB each). They are material properties, so editing one must
+        re-run TEM3P on a resume rather than reuse the old result."""
+        files = self.input_files()
+        tree = self._merged_tree(inputs)
+        if tree is None:
+            return files
+        return files + _tem3p_table_sources(tree, self.files)
+
+    def _consumers(self, modules, kind=MESH):
+        return [m for m in modules if m is not self
+                and m.sources.get(kind) == self.name]
+
+    def check_build(self, modules, inputs):
+        """Build-time problems with this module's place in the chain and with
+        its input, as a list of messages (empty when there are none). Warnings
+        are issued directly. Skipped when the input cannot be read."""
+        tree = self._merged_tree(inputs)
+        if tree is None:
+            return []
+        name = f"module '{self.name}' ({self.input_file})"
+        errors = [f'{name}: {problem}' for problem in _tem3p_lint(tree)
+                  + _tem3p_unstaged_tables(tree, self.files)]
+
+        coupled = _tem3p_coupled(tree)
+        writes_mesh = _tem3p_writes_em_mesh(tree)
+        em = self.sources.get(EM_SOLUTION)
+        if em is None and (coupled or writes_mesh):
+            what = ', '.join(
+                [f"{_tem3p_where(*entry)} ({entry[2].get_leaf('ConditionType')})"
+                 for entry in coupled]
+                + (['ElasticProblem MeshDump WriteDeformedEMMesh: on']
+                   if writes_mesh else []))
+            errors.append(
+                f"{name} reads an RF solution ({what}), but no EM solution is "
+                "bound to it. Add the omega3p or s3p module that solves the "
+                "vacuum fields; with several, name it with "
+                "'from: {em_solution: <name>, mesh: <body mesh module>}'.")
+        elif em is not None and not (coupled or writes_mesh):
+            warnings.warn(
+                f"{name} is bound to the EM solution of '{em}', but its input "
+                "has no RF-coupled boundary or heat source (ConditionType "
+                f"{sorted(TEM3P_RF_CONDITIONS)}) and does not write the "
+                "deformed EM mesh, so TEM3P never reads it.", stacklevel=2)
+
+        consumers = [m.name for m in self._consumers(modules)]
+        if consumers and _tem3p_has_eigen(tree):
+            errors.append(
+                f"{name}: {consumers} read a mesh from this module, but its "
+                "input runs an EigenSolver, whose deformed meshes are per mode "
+                "(DeformedVacuumMesh_Mode*), which lume-ace3p does not hand "
+                "on. Remove the EigenSolver, or bind their mesh elsewhere.")
+        elif consumers and not writes_mesh:
+            errors.append(
+                f"{name}: {consumers} read the deformed vacuum mesh from this "
+                "module, but its input does not write one. Add\n"
+                "    ElasticProblem: { MeshDump: { WriteDeformedEMMesh: on } }\n"
+                "(lume-ace3p sets EMMeshInputDir itself).")
+        if writes_mesh and not _tem3p_has_omega3p_id(tree):
+            misspelled = _tem3p_lfdetuning_omega3p_ids(tree)
+            if misspelled:
+                message = (
+                    f"{name} writes the deformed vacuum mesh, and "
+                    f"{misspelled[0]} sets 'Omega3PId', but its ConditionType "
+                    "is spelled 'LFdetuning'. TEM3P solves that as an "
+                    "LFDetuning boundary, but its mesh deformation reads "
+                    "'Omega3PId' only from the exact spelling 'LFDetuning' "
+                    "(or 'Neumann'), so no vacuum node moves and the mesh "
+                    "comes out undeformed without an error. Write "
+                    "'ConditionType: LFDetuning'.")
+            else:
+                message = (
+                    f"{name} writes the deformed vacuum mesh, but no "
+                    "LFDetuning or Neumann boundary of ElasticProblem sets "
+                    "'Omega3PId', so TEM3P moves no vacuum node and the mesh "
+                    "comes out undeformed without an error. Set 'Omega3PId' "
+                    "on the LFDetuning boundary to the sideset ID of the "
+                    "cavity wall in the vacuum mesh.")
+            if consumers:
+                errors.append(message)
+            else:
+                warnings.warn(message, stacklevel=2)
+
+        errors.extend(self._check_mesh_file(tree, modules, name))
+        return errors
+
+    def _check_mesh_file(self, tree, modules, name):
+        """``MeshFile`` in each problem block must be the mesh the bound
+        ``mesh`` producer makes, since that file is staged by basename."""
+        producer = next((m for m in modules
+                         if m.name == self.sources.get(MESH)), None)
+        if producer is None:
+            return []
+        if isinstance(producer, Tem3PModule):
+            return [f"{name} reads its body mesh from '{producer.name}', a "
+                    "tem3p module, whose mesh is the deformed *vacuum* mesh. "
+                    "Bind 'from: {mesh: <body mesh module>}'."]
+        if isinstance(producer, CubitModule):
+            exported = producer._mesh_name()
+            if not exported:
+                return []
+            accepted = {exported}
+            if producer.meshconvert:
+                accepted.add(os.path.splitext(exported)[0] + '.ncdf')
+        elif isinstance(producer, MeshSourceModule):
+            if not producer.config.get('file'):
+                return []
+            accepted = {os.path.basename(str(producer.config['file']))}
+        else:
+            return []
+        errors = []
+        for block, problem in _tem3p_problems(tree):
+            mesh = problem.get_leaf('MeshFile')
+            if mesh is None:
+                errors.append(f"{name}: {block} has no 'MeshFile'; set it to "
+                              f"{' or '.join(sorted(accepted))}, the mesh "
+                              f"'{producer.name}' makes.")
+            elif os.path.basename(mesh) not in accepted:
+                errors.append(
+                    f"{name}: {block} 'MeshFile: {mesh}' is not the mesh its "
+                    f"producer '{producer.name}' makes "
+                    f"({' or '.join(sorted(accepted))}). Point MeshFile at it, "
+                    "or bind 'from: {mesh: <module>}' to the module that makes "
+                    f"{mesh}.")
+        return errors
+
+    # ---- injection ----------------------------------------------------------
+
+    def _em_job(self, ctx):
+        """The bound EM run's results directory, or ``None`` when this module
+        reads no EM run. In a Workflow an unbound optional kind means the chain
+        has no producer of it; a hand-built context reads its single entry."""
+        if self.sources and EM_SOLUTION not in self.sources:
+            return None
+        try:
+            return self.bound(ctx.job_names, EM_SOLUTION)
+        except AmbiguousArtifactError:
+            return None
+
+    def _base_em_job(self, ctx):
+        """The results directory of the EM run whose *mesh* this run deforms:
+        the bound EM run, unless its mesh came from a tem3p, in which case that
+        tem3p's base, recursively. ``None`` when no EM run is bound."""
+        job = self._em_job(ctx)
+        if job is None:
+            return None
+        producer = self.producer(ctx, EM_SOLUTION)
+        seen = {self.name}
+        while producer is not None:
+            mesh_source = producer.producer(ctx, MESH)
+            if not isinstance(mesh_source, Tem3PModule) or \
+                    mesh_source.name in seen:
+                return ctx.job_names.lookup(EM_SOLUTION, producer.name, job)
+            seen.add(mesh_source.name)
+            job = mesh_source.bound(ctx.job_names, EM_SOLUTION, job)
+            producer = mesh_source.producer(ctx, EM_SOLUTION)
+        return job
+
+    def _injections(self, ctx, tree):
+        """``[(description, setter)]`` for the leaves to inject into ``tree``,
+        and the notes about user values they replace."""
+        em_job = self._em_job(ctx)
+        edits, notes = [], []
+        if em_job:
+            for block, container, section in _tem3p_coupled(tree):
+                current = section.get_leaf('Directory')
+                if current is not None and not _same_dir(current, em_job):
+                    notes.append(f"{_tem3p_where(block, container, section)} "
+                                 f"Directory: {current} -> {em_job}")
+                edits.append((f'{_tem3p_where(block, container, section)} '
+                              f'Directory: {em_job}',
+                              lambda s=section: s.set_leaf('Directory',
+                                                           em_job)))
+        if _tem3p_writes_em_mesh(tree):
+            base = self._base_em_job(ctx)
+            dump = _tem3p_mesh_dump(tree)
+            if base:
+                current = dump.get_leaf('EMMeshInputDir')
+                if current is not None and not _same_dir(current, base):
+                    notes.append(f"ElasticProblem MeshDump EMMeshInputDir: "
+                                 f"{current} -> {base}")
+                edits.append((f'ElasticProblem MeshDump EMMeshInputDir: {base}',
+                              lambda d=dump: d.set_leaf('EMMeshInputDir',
+                                                        base)))
+        return edits, notes
+
+    def _prepare_solver(self, ctx, solver):
+        tree = solver._input_tree()
+        edits, notes = self._injections(ctx, tree)
+        if notes:
+            print(f"Note: module '{self.name}' points TEM3P at the bound EM "
+                  "run, replacing " + '; '.join(notes) + '.')
+        if edits:
+            solver.update_input(lambda _tree: [edit() for _, edit in edits])
+        self._writes_mesh = (_tem3p_writes_em_mesh(tree)
+                             and not _tem3p_has_eigen(tree))
+        if not self._skip:
+            self._check_em_runs(ctx, tree)
+
+    def _check_em_runs(self, ctx, tree):
+        """Before launching TEM3P: every EM run it reads must still name an
+        existing vacuum mesh in its ``VECTOR/postprocess.in``. That path is
+        absolute, so it goes stale when an evaluation directory moves, and
+        TEM3P then aborts with no message (P9)."""
+        dirs = {section.get_leaf('Directory')
+                for _, _, section in _tem3p_coupled(tree)}
+        dump = _tem3p_mesh_dump(tree)
+        if _tem3p_writes_em_mesh(tree) and dump is not None:
+            dirs.add(dump.get_leaf('EMMeshInputDir'))
+        for directory in sorted(d for d in dirs if d):
+            path = os.path.join(ctx.workdir or '', directory, 'VECTOR',
+                                'postprocess.in')
+            if not os.path.isfile(path):
+                raise FileNotFoundError(
+                    f"module '{self.name}': TEM3P reads the EM run in "
+                    f"'{directory}' through {path}, which does not exist. Run "
+                    "the EM step first (or check its results directory).")
+            try:
+                with open(path) as file:
+                    info = parse_ace3p(file.read()).find('ModelInfo')
+            except (OSError, ValueError):
+                continue
+            mesh = info.get_leaf('File') if info is not None else None
+            if not mesh:
+                continue
+            resolved = mesh if os.path.isabs(mesh) else \
+                os.path.join(ctx.workdir or '', mesh)
+            if not os.path.isfile(resolved):
+                raise FileNotFoundError(
+                    f"module '{self.name}': the EM run in '{directory}' names "
+                    f"its vacuum mesh as {mesh} (in {path}), and that file no "
+                    "longer exists — usually because the evaluation directory "
+                    "moved after the EM step ran. TEM3P would abort with no "
+                    "message; re-run the EM step.")
+
+    def _prepare_dry_run(self, ctx):
+        tree = self._merged_tree(ctx.inputs)
+        if tree is None:
+            return
+        edits, _ = self._injections(ctx, tree)
+        for description, _ in edits:
+            _append_marker(ctx, f'TEM3P {description}\n')
+        self._writes_mesh = (_tem3p_writes_em_mesh(tree)
+                             and not _tem3p_has_eigen(tree))
+        if self._writes_mesh:
+            job = self.results_dir or self._wrapper.default_job_name
+            ctx.provide(self, MESH, os.path.join(ctx.workdir, job,
+                                                 self.mesh_output))
+            ctx.set_job_name(self, MESH, job)
+
+    def run(self, ctx, skip_execution=False):
+        self._skip = skip_execution
+        super().run(ctx, skip_execution=skip_execution)
+        if ctx.dry_run or not self._writes_mesh:
+            return
+        job = self._solver.job_name()
+        path = os.path.join(ctx.workdir, self._solver.results_dir(),
+                            self.mesh_output)
+        if not os.path.isfile(path):
+            raise RuntimeError(
+                f"tem3p finished but wrote no {self.mesh_output} in "
+                f"{os.path.dirname(path)}, although its input sets "
+                f"WriteDeformedEMMesh: on — check "
+                f"{self.log_file(ctx) or 'its output above'}.")
+        ctx.provide(self, MESH, path)
+        ctx.set_job_name(self, MESH, job)
+
+    # ---- outputs ------------------------------------------------------------
+
+    def field_index(self, ctx):
+        """``('Mode', modes)`` for a mechanical eigenmode run, else ``None``.
+        As for Omega3P, the mode count is a result, so a dry run has no axis."""
+        data = self._solver.output_data if self._solver is not None else None
+        if not data or data.get('eigen') is None:
+            return None
+        return 'Mode', np.asarray(data['eigen']['mode'])
+
+    @staticmethod
+    def _parse_spec(spec):
+        if isinstance(spec, dict):
+            return spec.get('quantity'), dict(spec.get('at') or {})
+        if isinstance(spec, (list, tuple)) and spec:
+            return spec[0], {}
+        return spec, {}
+
+    def extract(self, ctx, spec):
+        """Return one quantity from the TEM3P run.
+
+        * ``max_temperature``, ``min_temperature``: from the thermal block;
+        * ``sideset_power``: the power through one sideset, with ``at:
+          {sideset: n}`` required;
+        * ``u_x_min`` … ``u_z_max``, ``u_mag_max``: global displacement extrema
+          of a static solve; on an eigen run, arrays aligned to ``Mode``;
+        * ``mechanical_frequency``: the eigenmode frequencies, aligned to
+          ``Mode``. ``at: {mode: n}`` narrows this and the displacements;
+        * ``scaling_factor``, ``n_dofs``, ``newton_iterations``: per problem.
+          With one problem that is the answer; with two (thermo-elastic), ``at:
+          {problem: thermal|elastic}`` picks one. ``scaling_factor`` is the
+          first factor the problem logs (one is logged per coupled boundary);
+        * ``run_time``: seconds, from the log.
+
+        NaN under dry-run.
+        """
+        quantity, at = self._parse_spec(spec)
+        stray = sorted(set(at) - set(self._AXES))
+        if stray:
+            raise ValueError(f"a tem3p 'at:' narrows on {list(self._AXES)}, "
+                             f"not {stray}.")
+        if quantity not in self.QUANTITIES:
+            raise ValueError(f"Unknown tem3p quantity '{quantity}'. Known: "
+                             f"{sorted(self.QUANTITIES)}.")
+        if self._solver is None:
+            return float('nan')
+        data = self._solver.output_data
+        if quantity in self.THERMAL or quantity == 'sideset_power':
+            return self._thermal(data, quantity, at)
+        if quantity in self.DISPLACEMENT or quantity == 'mechanical_frequency':
+            return self._elastic(data, quantity, at)
+        log = data['log']
+        if quantity == 'run_time':
+            value = log['run_time']
+            return float('nan') if value is None else value
+        return self._per_problem(log, quantity, at)
+
+    def _missing(self, what, quantity):
+        return ValueError(
+            f"this TEM3P run wrote no {what} to ResultFile, so '{quantity}' is "
+            f"unavailable (module '{self.name}', {self.input_file}).")
+
+    def _thermal(self, data, quantity, at):
+        thermal = data['thermal']
+        if thermal is None:
+            raise self._missing('thermal block (no ThermostaticProblem ran)',
+                                quantity)
+        if quantity != 'sideset_power':
+            return thermal[quantity]
+        powers = thermal['sideset_power']
+        if 'sideset' not in at:
+            raise ValueError("'sideset_power' is per sideset, so it needs "
+                             "'at: {sideset: <id>}'. This run reports sidesets "
+                             f"{sorted(powers)}.")
+        sideset = int(at['sideset'])
+        if sideset not in powers:
+            raise ValueError(f"this TEM3P run reports no power for sideset "
+                             f"{sideset}; it reports {sorted(powers)}.")
+        return powers[sideset]
+
+    def _elastic(self, data, quantity, at):
+        eigen = data['eigen']
+        if eigen is not None:
+            column = 'frequency' if quantity == 'mechanical_frequency' \
+                else quantity
+            values = eigen[column]
+            if 'mode' not in at:
+                return values
+            modes = list(eigen['mode'])
+            mode = int(at['mode'])
+            if mode not in modes:
+                raise ValueError(f"this TEM3P run found no mode {mode}; it "
+                                 f"found modes {modes}.")
+            return values[modes.index(mode)]
+        if quantity == 'mechanical_frequency':
+            raise self._missing('eigenmode table (no EigenSolver ran)',
+                                quantity)
+        if data['elastic'] is None:
+            raise self._missing('displacement row (no ElasticProblem ran)',
+                                quantity)
+        return data['elastic'][quantity]
+
+    def _per_problem(self, log, quantity, at):
+        source = {'scaling_factor': 'scaling_factors', 'n_dofs': 'n_dofs',
+                  'newton_iterations': 'newton_iterations'}[quantity]
+        table = log[source]
+        if 'problem' in at:
+            problem = str(at['problem'])
+            if problem not in self._PROBLEM_KEYS:
+                raise ValueError(f"at: {{problem: {problem}}} is not one of "
+                                 f"{list(self._PROBLEM_KEYS)}.")
+        elif len(table) == 1:
+            problem = next(iter(table))
+        elif not table:
+            return float('nan')
+        else:
+            raise ValueError(
+                f"'{quantity}' is reported by both problems of this run "
+                f"({sorted(table)}); pick one with 'at: {{problem: <name>}}'.")
+        value = table.get(problem)
+        if value is None:
+            return float('nan')
+        return value[0] if quantity == 'scaling_factor' else value
+
+    # ---- resume -------------------------------------------------------------
+
+    def verify(self, ctx):
+        """Whether the run finished: ``ResultFile`` is in the job directory,
+        ``tem3p.log`` has its ``Ending run at`` line, and, when the input
+        writes the deformed vacuum mesh, that mesh is there too."""
+        if ctx.dry_run:
+            return None
+        results = os.path.join(ctx.workdir or '', self._results_dir(ctx))
+        if not os.path.isfile(os.path.join(results, self._results_file)):
+            return False
+        try:
+            with open(os.path.join(results, TEM3P_LOG)) as file:
+                if not any(line.startswith(TEM3P_DONE) for line in file):
+                    return False
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return None
+        tree = self._merged_tree(ctx.inputs)
+        if tree is not None and _tem3p_writes_em_mesh(tree) \
+                and not _tem3p_has_eigen(tree):
+            return os.path.isfile(os.path.join(results, self.mesh_output))
+        return True
 
 
 # --------------------------------------------------------------------------- #
@@ -3648,6 +4627,7 @@ MODULE_REGISTRY = {
     S3PModule.type: S3PModule,
     T3PModule.type: T3PModule,
     Track3PModule.type: Track3PModule,
+    Tem3PModule.type: Tem3PModule,
     AcdtoolModule.type: AcdtoolModule,
     Track3PSourceModule.type: Track3PSourceModule,
     FieldEmissionModule.type: FieldEmissionModule,

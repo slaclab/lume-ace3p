@@ -1,0 +1,24 @@
+ModelInfo: {
+
+  File: ./tem3p_results/DeformedVacuumMesh.ncdf
+
+  BoundaryCondition: {
+     Electric: 1       
+     Magnetic: 2 3 4 
+     Electric:  5    
+     Exterior:  6      //default copper
+  }
+}
+
+FiniteElement: {
+  Order: 2
+  Curved Surfaces: on
+}
+
+EigenSolver: {
+    NumEigenvalues:     1
+    FrequencyShift: 	2.8e9
+}
+
+
+

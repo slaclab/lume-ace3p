@@ -104,6 +104,7 @@ baseline did **not** move.
 | `t3p_power_balance` | t3p sweep, dry-run | the swept coating-thickness axis (an **ACE3P** parameter, not a cubit one) and the `t` index column — the one example whose field index is `t` rather than `s`/`Frequency`, since it declares no `WakeField` monitor; an `s` label here would be a regression in the dry-run axis decision. The derived `P_balance` column pins that a derived array rides the `t` axis | `P_in`, `P_out`, `P_wall`, `P_balance` |
 | `omega3p_p_refinement` | cubit + two named omega3p, dry-run | swept `cav_radius`, and in the marker the scoped `FiniteElement.Order` each instance received (1, then 2); structurally that two instances on one input file validate and that `module:` routes by name | `f_*`, `Q_*`, `f_shift_ppm` |
 | `omega3p_sweep_multi_journal` | cubit (three journals + a staged `.sat`) + omega3p + acdtool sweep, dry-run | the same swept grid as `omega3p_sweep`; structurally that a `journal:` list with `files:` validates, undeclared-variable check included | R/Q, Mode_freq, E_max, loc_* (NaN without acdtool) |
+| `tem3p_lfd` | two cubit + omega3p + tem3p + omega3p (deformed), dry-run | the swept `TargetGradient` axis (a scoped ACE3P leaf of `tem3p`) and, in the marker, the leaves the chain injects: TEM3P's `Directory` and `EMMeshInputDir`, and the deformed Omega3P's `ModelInfo.File` pointing at `./tem3p_results/DeformedVacuumMesh.ncdf`; structurally that the LFD chain validates, TEM3P lint included | `f0`, `f_deformed`, `u_mag_max`, `df`, `k_l` |
 
 ### Intentionally not frozen (see `not_frozen.json`)
 

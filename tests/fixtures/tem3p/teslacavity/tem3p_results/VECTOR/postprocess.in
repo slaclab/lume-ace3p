@@ -1,0 +1,81 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        VolumeMaterial : { 
+            Id : 1 
+            ElasticMu : 5.77227e+10 
+            ElasticLambda : 20.9512e+10 
+            ElasticAlpha : 6.50000e-6 
+            Density : 8570 
+        }
+        EigenSolver : { 
+            NumEigenvalues : 5 
+            SolverMode : automatic 
+            FrequencyShift : 1498962290.0 
+            Arnoldi : { 
+                Tolerance : 1e-12 
+                MaxIterations : 500 
+                LinearSolver : { 
+                    Solver : MUMPS 
+                }
+                EigenvalueLocation : AboveShift 
+            }
+        }
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        CurvedSurfaces : on 
+        BasisOrder : 2 
+        MeshDump : { 
+            MeshDeformScale : 0.2 
+            WriteDeformedMesh : on 
+        }
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/TeslaCavity/tem3p_results/VECTOR 
+        }
+        JobName : tem3p_results 
+        ProblemType : ElasticityProblem 
+        FiniteElement : { 
+            NumberOfPhysicalVariables : 3 
+            SeparateLinearDOF : off 
+            Order : 2 
+            ScalarBasisSet : Conventional 
+            ScalarPotential : 0 
+            CurvedSurfaces : on 
+        }
+        ModelInfo : { 
+            BoundaryCondition : { 
+                Electric : 1 , 2 , 3 , 4 
+                HFormulation : 1 
+            }
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/TeslaCavity/TeslaCavity.ncdf 
+        }
+        Boundary : { 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+            Id : 1 
+        }
+        Boundary : { 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+            Id : 2 
+        }
+        Boundary : { 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+            ConditionType : Mixed 
+            Id : 3 
+            MixedValue : 0. , 0. , 0. 
+        }
+        Boundary : { 
+            Id : 4 
+            ConditionType : Neumann 
+            NeumannValue : 0. 
+        }
+        MeshFile : TeslaCavity.ncdf 
+/********************************/
+
+
+
+

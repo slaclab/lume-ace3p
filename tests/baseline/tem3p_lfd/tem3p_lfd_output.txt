@@ -1,0 +1,4 @@
+ace3p:tem3p/ElasticProblem.Boundary.TargetGradient	f0	f_deformed	u_mag_max	df	k_l
+15000000.0	nan	nan	nan	nan	nan
+25000000.0	nan	nan	nan	nan	nan
+35000000.0	nan	nan	nan	nan	nan

@@ -169,6 +169,29 @@ class WorkflowInputs:
                 for label, _qualified, _bare, value, _setter in self._leaves()
                 if '/' in label and label.startswith(prefixes)}
 
+    def named_values(self):
+        """``(values, ambiguous)`` naming every input the way a result row or
+        a VOCS variable does, for ``derived_parameters`` expressions
+        (plans/tem3p_module_plan.md §3.5).
+
+        ``values`` maps each leaf's axis label, its qualified label, and its
+        bare name when that is unique across buckets and scopes, to its value: a
+        numeric string (an ACE3P leaf read from YAML) as a float, anything else
+        as it is. ``ambiguous`` maps a bare name declared more than once to its
+        qualified labels, as :meth:`apply_overrides` refuses it."""
+        values, bare_hits = {}, {}
+        for label, qualified, bare, value, _setter in self._leaves():
+            value = _numeric(value)
+            values[label] = values[qualified] = value
+            bare_hits.setdefault(bare, []).append((qualified, value))
+        ambiguous = {}
+        for bare, hits in bare_hits.items():
+            if len(hits) == 1:
+                values.setdefault(bare, hits[0][1])
+            elif bare not in values:
+                ambiguous[bare] = sorted(label for label, _ in hits)
+        return values, ambiguous
+
     # ---- variable routing (optimize) -------------------------------------
 
     def _route_registry(self):
@@ -409,6 +432,16 @@ def _warn_scoped_particles(block, module_names):
 
 
 # ---- internal helpers ----------------------------------------------------
+
+
+def _numeric(value):
+    """``value`` as a float when it is a string that reads as one."""
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
 
 
 def _is_array(value):

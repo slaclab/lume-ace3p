@@ -50,7 +50,7 @@ archive.
 | `postprocess pic3pstats <f>.ncdf <symmetry factor>` | positional | PIC3P particles | 1 | invocable; no PIC3P module exists to hang it on |
 | `postprocess pic3pconvert <f>` | positional | PIC3P particles | 2 | invocable; no PIC3P module exists to hang it on |
 | `postprocess track3p <f>.acdtool <jobname>` | input file (`:` dialect) + jobname | Track3P results | 2 | **not invocable**; needs the KVC dialect this wrapper does not parse |
-| `postprocess project <eigenmodes> [displacements]` | positional | TEM3P results | — | invocable; TEM3P is out of scope and the L2 projections go to stdout |
+| `postprocess project <eigenmodes> [displacements]` | positional | TEM3P results | — | invocable; nothing consumes `tem3p_solution` yet, and the L2 projections go to stdout |
 
 **"Wired"** means `AcdtoolModule` accepts it as a `workflow:` step.
 **"Invocable"** means `lume_ace3p.acdtool.Acdtool.run` can dispatch it directly
@@ -112,11 +112,11 @@ an on-contour longitudinal one.
 **Why the mesh commands are not wired.** A workflow may now hold two `mesh`
 producers, with consumers choosing between them via `from:`. Wiring acdtool as
 one of them is still a follow-on, and `meshconvert` already lives in
-`lume_ace3p.cubit`. `mesh deform`
-also duplicates TEM3P's own `MeshDump: {MeshDeformScale, EMMeshInputDir}`, which
-writes the deformed vacuum mesh straight into the EM mesh input directory and is
-the better route if the TEM3P chain is ever attempted. The acdtool reference
-calls `mesh deform` a visualization convenience for small deformations.
+`lume_ace3p.cubit`. `mesh deform` is not needed for the TEM3P chain:
+the `tem3p` module hands on the deformed vacuum mesh TEM3P writes itself
+(`MeshDump: { WriteDeformedEMMesh: on }`, see [](tem3p_reference.md)). The
+acdtool reference calls `mesh deform` a visualization convenience for small
+deformations.
 
 ### Out of scope, and why
 
@@ -128,11 +128,11 @@ be a small lift and the natural next one. Gun3P is structurally different
 (`DCGunProblem`, `ElectrostaticProblem`, `MagnetostaticProblem`, `Tracker`,
 `Gun3pOutputConverter`) and a larger lift.
 
-**TEM3P.** The tutorial's multiphysics chain
-(`cubit ×2 → omega3p(vacuum) → tem3p(body) → acdtool mesh deform →
-omega3p(deformed) → Δf`) needs two meshes, two `omega3p` modules and acdtool
-*producing* a mesh. All three need per-instance rather than per-kind artifact
-identity, a separate foundational effort.
+**`postprocess project`.** The TEM3P chain itself is supported
+(`cubit ×2 → omega3p → tem3p → omega3p_deformed`, see [](tem3p_reference.md))
+and needs no acdtool step. `postprocess project <eigenmodes> [displacements]`
+reads TEM3P results but is not wired: its L2 projections go to stdout only,
+and nothing reads `tem3p_solution` yet.
 
 ## The `postprocess rf` input: 24 blocks in six output shapes
 

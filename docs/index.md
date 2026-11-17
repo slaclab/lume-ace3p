@@ -20,9 +20,9 @@ A user submits a batch script to HPC nodes which calls `run_lume_ace3p.py` with 
 YAML input file. That file declares a **`workflow:`**, an ordered list of pipeline
 **modules**, and a **`mode:`** describing how to drive it. The modules are
 validated into a runnable DAG by their artifact dependencies and run in order:
-Cubit meshing, the requested ACE3P solver, Track3P particle tracking, acdtool
-postprocessing, and/or a Geant4 dose run driven by field-emission weighting of
-the tracked particles. The scalars named in `output_parameters` are written to a
+Cubit meshing, the requested ACE3P solver, Track3P particle tracking, TEM3P
+thermal and structural solves, acdtool postprocessing, and/or a Geant4 dose
+run driven by field-emission weighting of the tracked particles. The scalars named in `output_parameters` are written to a
 tab-delimited results table or handed to Xopt for optimization.
 
 The three layers are the **modules** (one adapter per step), the declarative
@@ -56,6 +56,10 @@ sub-block of `input_parameters`.
 - Running Track3P? [](track3p_reference.md) covers both of its uses — multipacting
   onset and field emission into Geant4 — the two impact-dump layouts and the
   one-line selector between them, and why a β range belongs to its dump.
+- Running TEM3P? [](tem3p_reference.md) covers the RF-detuning chain
+  (omega3p → tem3p → omega3p on the deformed mesh), what the module sets in
+  the input, the misspellings TEM3P ignores silently, and appending passes for
+  convergence.
 - Running optimization? See [](optimization.md).
 - Visualizing output? See [](plotting.md).
 - Hit a snag? Check [](troubleshooting.md).
@@ -76,6 +80,7 @@ yaml_reference
 acdtool_reference
 t3p_reference
 track3p_reference
+tem3p_reference
 plotting
 testing
 troubleshooting

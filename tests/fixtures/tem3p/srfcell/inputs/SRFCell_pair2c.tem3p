@@ -1,0 +1,73 @@
+// =================================
+ElasticProblem: {
+  MeshFile:       SRFCellShell.ncdf 
+  BasisOrder:     2
+  CurvedSurfaces: on
+
+  MeshDump: {
+   WriteDeformedEMMesh: on
+   EMMeshInputDir:      omega3p_results_deformed
+  }
+
+  LinearSolver: {
+    Solver:            CG
+    Preconditioner:    DIAGONAL
+    AbsoluteTolerante: 1.00e-16
+    Tolerance:         1.00e-10
+    MaxIterations:     150000
+  }
+
+  //Nb cell shell
+  VolumeMaterial: {
+    Id: 1   
+     ElasticLambda  :  13.5386473e+10
+     ElasticMu      :   4.2736232e+10  
+     ElasticAlpha   :   6.50000e-6  
+  }
+
+  // ----------
+  // cavity symmetry plane 
+  Boundary: {
+    Id: 1
+    ConditionType: Mixed
+    MixedType: NEUMANN DIRICHLET NEUMANN 
+    MixedValue: 0., 0., 0.
+  }
+
+  // cavity disk : fix one side at z
+  Boundary: {
+    Id: 2 
+    ConditionType: Dirichlet
+    DirichletValue: 0.
+}
+
+ // cavity disk : allow expansion/contraction along the disk center line
+  Boundary: {
+    Id: 3 
+    ConditionType: Neumann
+    NeumanValue: 0.
+  }
+
+ // cavity outer surface : free boundary
+  Boundary: {
+    Id: 4
+    ConditionType: Neumann
+    NeumanValue: 0.
+  }
+
+  // ----------
+  // cavity inner surface : Multiphysics boundary : LF detuning
+  Boundary: {
+    Id: 5  
+    ConditionType: LFDetuning  
+    Directory: omega3p_results_deformed
+    Omega3PId: 6   // wall surface in SRFVacuum.ncdf
+    WhichMode: 0
+
+    Method: Gradient
+    TargetGradient: 35e6    
+    StartPoint: 0.0, 0.0, -0.0577
+    EndPoint:   0.0, 0.0, 0.0577
+  }
+}
+// =================================

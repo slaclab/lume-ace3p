@@ -1,0 +1,116 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Version : { 
+            Application : Tem3P
+
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Environment : { 
+            start : Thu Nov 12 11:38:36 2026 
+            commsize : 16 
+            user : dbizzoze 
+        }
+        Input : { 
+            ExecDirName : tem3p_pair2c 
+            MPI : { 
+                size : 0 
+                rank : 0 
+            }
+            ElasticProblem : { 
+                BasisOrder : 2 
+                MeshFile : SRFCellShell.ncdf 
+                VolumeMaterial : { 
+                    Id : 1 
+                    ElasticMu : 4.2736232e+10 
+                    ElasticLambda : 13.5386473e+10 
+                    ElasticAlpha : 6.50000e-6 
+                }
+                CurvedSurfaces : on 
+                Boundary : { 
+                    Id : 1 
+                    MixedValue : 0. , 0. , 0. 
+                    MixedType : NEUMANN , DIRICHLET , NEUMANN 
+                    ConditionType : Mixed 
+                }
+                Boundary : { 
+                    Id : 2 
+                    DirichletValue : 0. 
+                    ConditionType : Dirichlet 
+                }
+                Boundary : { 
+                    Id : 3 
+                    NeumanValue : 0. 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    Id : 4 
+                    NeumanValue : 0. 
+                    ConditionType : Neumann 
+                }
+                Boundary : { 
+                    WhichMode : 0 
+                    StartPoint : 0.0 , 0.0 , -0.0577 
+                    Omega3PId : 6 
+                    Method : Gradient 
+                    Directory : omega3p_results_deformed 
+                    TargetGradient : 35e6 
+                    ConditionType : LFDetuning 
+                    EndPoint : 0.0 , 0.0 , 0.0577 
+                    Id : 5 
+                }
+                MeshDump : { 
+                    WriteDeformedEMMesh : on 
+                    EMMeshInputDir : omega3p_results_deformed 
+                }
+                LinearSolver : { 
+                    Solver : CG 
+                    Tolerance : 1.00e-10 
+                    MaxIterations : 150000 
+                    Preconditioner : DIAGONAL 
+                    AbsoluteTolerante : 1.00e-16 
+                }
+            }
+            JobName : tem3p_pair2c 
+        }
+/********************************/
+
+
+

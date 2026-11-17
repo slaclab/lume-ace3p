@@ -1,0 +1,189 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        AMRLevel : { 
+            TimePostProcess : { 
+                stddev : 0.00056890513706203 
+                average : 0.498661836 
+                max : 0.50061065 
+                min : 0.498104558 
+            }
+            TimeMatrixAssembly : { 
+                stddev : 0.039459935165592 
+                average : 0.9435887496875 
+                max : 1.052895858 
+                min : 0.900138109 
+            }
+            TimeEigenSolver : { 
+                stddev : 0.00076298019293677 
+                average : 14.53533521625 
+                max : 14.537073549 
+                min : 14.534971184 
+            }
+            TimeModeWriting : { 
+                stddev : 0.0 
+                average : 0.0 
+                max : 0.0 
+                min : 0.0 
+            }
+            TimeSiloConversion : { 
+                stddev : 0.00056417878520437 
+                average : 16.464430836 
+                max : 16.466354197 
+                min : 16.463888186 
+            }
+            TimeMeshSet : { 
+                stddev : 3.4993617802629e-05 
+                average : 0.248212209125 
+                max : 0.248343086 
+                min : 0.248198054 
+            }
+            TimeCheckPoint : { 
+                stddev : 0.00091003508441044 
+                average : 0.0592870359375 
+                max : 0.061151558000001 
+                min : 0.057479047000001 
+            }
+            Mesh : { 
+                MeshCoords : 19541 
+                ElementDistribution : { 
+                    stddev : 277.47252116201 
+                    average : 6597.75 
+                    min : 5959 
+                    max : 6835 
+                    total : 105564 
+                }
+                File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_pair2c/DeformedVacuumMesh.ncdf 
+                ReplicatedElementDistribution : { 
+                    stddev : 584.38730022706 
+                    average : 2864.375 
+                    min : 2255 
+                    max : 4592 
+                    total : 45830 
+                }
+            }
+            Matrix : { 
+                NonZeroDistribution : { 
+                    stddev : 64556.147340126 
+                    average : 1741566.75 
+                    min : 1594384 
+                    max : 1825760 
+                    total : 27865068 
+                }
+                RowDistribution : { 
+                    stddev : 1596.8021323884 
+                    average : 41173.125 
+                    min : 37572 
+                    max : 43150 
+                    total : 658770 
+                }
+                NonlocalelementsDistribution : { 
+                    stddev : 1969.9746191258 
+                    average : 9980.0 
+                    min : 7760 
+                    max : 15840 
+                    total : 159680 
+                }
+            }
+        }
+        Mode : { 
+            PowerLoss : 0.0 
+            TotalEnergy : 4.4270939088102e-12 
+            QualityFactor : inf 
+            Frequency : 1300943316.2615 
+            File : omega3p_pair2c/omega3p.l0.m0000.1.3009433e+09.mod 
+        }
+        Input : { 
+            ModelInfo : { 
+                File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_pair2c/DeformedVacuumMesh.ncdf 
+                BoundaryCondition : { 
+                    Magnetic : 1 , 2 , 3 
+                    Electric : 6 
+                }
+            }
+            JobName : omega3p_pair2c 
+            EigenSolver : { 
+                FrequencyShift : 1.2e9 
+                NumEigenvalues : 1 
+                Arnoldi : { 
+                    Tolerance : 1e-12 
+                    EigenvalueLocation : AboveShift 
+                    LinearSolver : { 
+                        Solver : MUMPS 
+                    }
+                    MaxIterations : 500 
+                }
+                SolverMode : automatic 
+            }
+            FiniteElement : { 
+                Order : 2 
+                CurvedSurfaces : on 
+            }
+            MeshPartition : { 
+                Method : parmetis 
+            }
+            CheckPoint : { 
+                Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/omega3p_pair2c/VECTOR 
+            }
+            MPI : { 
+                size : 16 
+                rank : 0 
+            }
+        }
+        Environment : { 
+            commsize : 16 
+            user : dbizzoze 
+            start : Thu Nov 12 11:39:16 2026 
+        }
+        Version : { 
+            Application : Omega3P
+
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+************************************************************* 
+        }
+        Timestamp : { 
+            begin : Thu Nov 12 11:39:16 2026 
+        }
+        Timestamp : { 
+            end : Thu Nov 12 11:39:32 2026 
+        }
+/********************************/
+
+
+

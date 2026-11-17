@@ -1,0 +1,84 @@
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        CurvedSurfaces : on 
+        VolumeMaterial : { 
+            ElasticMu : 4.2736232e+10 
+            Id : 1 
+            ElasticLambda : 13.5386473e+10 
+            ElasticAlpha : 6.50000e-6 
+        }
+        CheckPoint : { 
+            Directory : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/tem3p_noid/VECTOR 
+        }
+        FiniteElement : { 
+            ScalarPotential : 0 
+            SeparateLinearDOF : off 
+            ScalarBasisSet : Conventional 
+            NumberOfPhysicalVariables : 3 
+            CurvedSurfaces : on 
+            Order : 2 
+        }
+        MeshFile : SRFCellShell.ncdf 
+        LinearSolver : { 
+            MaxIterations : 150000 
+            Preconditioner : DIAGONAL 
+            Solver : CG 
+            AbsoluteTolerante : 1.00e-16 
+            Tolerance : 1.00e-10 
+        }
+        JobName : tem3p_noid 
+        MeshPartitioning : { 
+            Method : PARMETIS 
+        }
+        MeshDump : { 
+            EMMeshInputDir : omega3p_results 
+            WriteDeformedEMMesh : on 
+        }
+        ProblemType : ElasticityProblem 
+        Boundary : { 
+            MixedType : NEUMANN , DIRICHLET , NEUMANN 
+            Id : 1 
+            ConditionType : Mixed 
+            MixedValue : 0. , 0. , 0. 
+        }
+        Boundary : { 
+            Id : 2 
+            ConditionType : Dirichlet 
+            DirichletValue : 0. 
+        }
+        Boundary : { 
+            Id : 3 
+            ConditionType : Neumann 
+            NeumanValue : 0. 
+        }
+        Boundary : { 
+            Id : 4 
+            ConditionType : Neumann 
+            NeumanValue : 0. 
+        }
+        Boundary : { 
+            WhichMode : 0 
+            Id : 5 
+            ConditionType : LFDetuning 
+            EndPoint : 0.0 , 0.0 , 0.0577 
+            Method : Gradient 
+            TargetGradient : 35e6 
+            Directory : omega3p_results 
+            StartPoint : 0.0 , 0.0 , -0.0577 
+        }
+        BasisOrder : 2 
+        ModelInfo : { 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellShell.ncdf 
+            BoundaryCondition : { 
+                HFormulation : 1 
+                Electric : 1 , 2 , 3 , 4 , 5 
+            }
+        }
+/********************************/
+
+
+
+

@@ -1,0 +1,274 @@
+*************************************************************
+			 Tem3P
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+*************************************************************
+
+Starting master process on sdfmilan030
+Number of MPI processes: 16
+Number of compute nodes: 1
+Number of processes per node: 16
+Data precision: 64 bits
+Compiler: 11.5.0 20240719 (Red Hat 11.5.0-5)
+Beginning run at Thu Nov 12 11:36:11 2026
+In Environment::setDirectoriesAndFiles(): opening old file tem3p_results/tem3pStat.log
+
+---------------------------------
+
+Entering ThermoElasticProblem::solve()...
+
+---------------------------------
+
+In ThermoElasticProblem::solve(): begining tem3p iter 0 with 'runThermostaticProblem' = 0 with 'runThermoTransientProblem' = 0 with 'runElasticProblem' = 1
+1 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: instantiating ScalarDiscreteDomain...
+2 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting up ScalarDiscreteDomain...
+Read Mesh: SRFCellShell.ncdf
+Check Mesh: SRFCellShell.ncdf
+Time for read model: 0.018826704
+Time for setBasisOrder: 0.0009350060000000021
+    Time for making right-orientation and calculating Adjacency: 0.016987832
+Partitioning Method: PARMETIS
+    Time for partitioning mesh: 0.01446014900000001
+    Time for replicating remote meshes: 0.003168735000000006
+        Time for numberingHierarchical: 0.025221793
+
+***********************************************************
+*	Total Number of Elements read: 	34122
+*	Total Number of Elements used: 	34122
+*	Total Number of DOFs: 	205443
+***********************************************************
+
+        Time for numbering remote nodes: 0.000372655999999999
+        Time for numbering remote edges: 0.001315161999999995
+        Time for numbering remote faces: 0.001467056000000008
+        Time for numbering remote volumes: 0.0001035620000000015
+    Time for numbering DOF entities: 0.02922128200000001
+Time for set model: 0.06507388
+Time for read midpoints: 0.006552891999999991
+Time for creating higher-order elements: 0.002077534999999991
+ loading RF solution for TEM3P...
+Omega3P directory name: omega3p_results
+Boundary conditions:
+0 = INTERIOR
+1 = MAGNETIC
+2 = MAGNETIC
+3 = MAGNETIC
+6 = ELECTRIC
+
+Read Mesh: /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf
+Time for reading the model: 0.177718738
+
+Using curved quadratic tetrahedrons
+Setting global vector finite element basis order to p=2
+[STARTUP] FE framework: setModel: right-orientation                0.06243828400000001 s
+[STARTUP] FE framework: setModel: calculateAdjacency (RCB + faces) 0.346839457 s
+Partitioning Method: parmetis
+[STARTUP] FE framework: setModel: partition                        0.127096227 s
+[STARTUP] FE framework: setModel: DOF weights + replicateSharedCoords 0.007644191000000022 s
+[STARTUP] FE framework: setModel: DOF numbering (DM_Numbering)       1.591745335 s
+
+***********************************************************
+*	Total Number of Elements read: 	105564
+*	Total Number of Elements used: 	105564
+*	Total Number of DOFs: 	658770
+***********************************************************
+
+[STARTUP] FE framework: setModel: remote DOF numbering              0.0004623079999999113 s
+[STARTUP] FE framework: setModel (basis order, adjacency)          2.185368648 s
+[STARTUP] FE framework: readMidPoints (curved edges)             0.002522443000000152 s
+[STARTUP] FE framework: create higher-order elements             0.1195223070000004 s
+[STARTUP] FE framework: periodic elements                        5.999999999062311e-07 s
+Time for setting up finite element framework: 2.308405106
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Mesh : { 
+            ReplicatedElementDistribution : { 
+                average : 0.0 
+                total : 0 
+                max : 0 
+                stddev : 0.0 
+                min : 0 
+            }
+            ElementDistribution : { 
+                average : 105564.0 
+                total : 105564 
+                max : 105564 
+                stddev : 0.0 
+                min : 105564 
+            }
+            MeshCoords : 19541 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf 
+        }
+/********************************/
+
+
+
+
+[STARTUP] NewPP: mesh read + partition + adjacency (DiscreteDomain::Setup) 2.57 s
+[STARTUP] NewPP: field checkpoint read + redistribute (readEigens) 0.15 s
+Localizer: Bins not given, using 40 (about one element per bin along the longest axis; 105564 elements)
+Localizer: 40 x 21 x 23 bins, 5.3 MB, built in 0.1 s
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting map of boundaries...
+ box 0 : 0.0 box 0.0 : 0.0 box 0.0 : 0.0 box -0.1 : 0.1
+Parameter used in computing gradient: /********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Trajectory : { 
+            TrajectoryMethod : 1 
+            NumberOfPointsPerSegment : 2000 
+            EndPoint : 0.0 , 0.0 , 0.0577 
+            StartPoint : 0.0 , 0.0 , -0.0577 
+        }
+        GradientDirection : 0.0 , 0.0 , 1.0 
+        SymmetryFactor : 1.0 
+/********************************/
+
+
+
+
+Number of sampled points: 2001
+Vr, Vi, and Voltage on the line1: 0.0070441654429830 2.8657833833374298 2.8657920406895743
+Scaling Info : Gradient Scaling Factor : Target Gradient : EM gradient : Effective Length : Duty Factor
+Scaling Info : 1409383.4942147880792618 : 35000000.0000000000000000 : 24.8335532122146816 : 0.1154000000000000 : 1.0000000000000000
+The LF scaling factor is 1986361833765.0856933593750000
+
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: map of boundaries set succesfully
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting linear solver...
+Leaving StaticProblem::readKvcParameters1() of ElasticProblem
+EM Mesh input directory: omega3p_results
+Entering StaticProblem::instantiateMatrix() of ElasticProblem
+Entering StaticProblem::setSolver() of ElasticProblem
+Memory usage:
+used mem per MPI process: min: 273.1211 MB, max: 278.5898 MB, avg: 275.3569 MB, stddev: 1.4971 MB, total: 4405.7109 MB
+used mem per node in GB : min: 457.4161 GB, max: 457.4161 GB, avg: 457.4161 GB, stddev: 0.0000 GB, total: 457.4161 GB
+used mem per node in %  : min: 90.8996  %, max: 90.8996  %, avg: 90.8996  %, stddev: 0.0000  %
+
+Leaving StaticProblem::setSolver() of ElasticProblem
+ Deformed Vacuum Mesh Calculation ... 
+Boundary conditions:
+0 = INTERIOR
+1 = MAGNETIC
+2 = MAGNETIC
+3 = MAGNETIC
+6 = ELECTRIC
+
+Read Mesh: /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf
+Time for reading the model: 0.0474
+
+Using curved quadratic tetrahedrons
+Setting global vector finite element basis order to p=2
+[STARTUP] FE framework: setModel: right-orientation                0.0021 s
+[STARTUP] FE framework: setModel: calculateAdjacency (RCB + faces) 0.0361 s
+Partitioning Method: parmetis
+[STARTUP] FE framework: setModel: partition                        0.0335 s
+[STARTUP] FE framework: setModel: DOF weights + replicateSharedCoords 0.0134 s
+[STARTUP] FE framework: setModel: DOF numbering (DM_Numbering)       0.1041 s
+
+***********************************************************
+*	Total Number of Elements read: 	105564
+*	Total Number of Elements used: 	105564
+*	Total Number of DOFs: 	658770
+***********************************************************
+
+[STARTUP] FE framework: setModel: remote DOF numbering              0.0209 s
+[STARTUP] FE framework: setModel (basis order, adjacency)          0.2145 s
+[STARTUP] FE framework: readMidPoints (curved edges)             0.0051 s
+[STARTUP] FE framework: create higher-order elements             0.0050 s
+[STARTUP] FE framework: periodic elements                        0.0000 s
+Time for setting up finite element framework: 0.2254
+/********************************/
+/* input parameters, KVC syntax */
+/********************************/
+
+
+        Mesh : { 
+            ReplicatedElementDistribution : { 
+                average : 2918.375 
+                total : 46694 
+                max : 3966 
+                stddev : 671.75450624962 
+                min : 2018 
+            }
+            ElementDistribution : { 
+                average : 6597.75 
+                total : 105564 
+                max : 6780 
+                stddev : 155.11995358431 
+                min : 6216 
+            }
+            MeshCoords : 19541 
+            File : /sdf/scratch/users/d/dbizzoze/tem3p_probe/cases/SRFCell/SRFCellVacuum.ncdf 
+        }
+/********************************/
+
+
+
+
+[STARTUP] NewPP: mesh read + partition + adjacency (DiscreteDomain::Setup) 0.28 s
+[STARTUP] NewPP: field checkpoint read + redistribute (readEigens) 0.02 s
+Localizer: Bins not given, using 16 (about one element per bin along the longest axis; 6706 elements)
+Localizer: 16 x 13 x 11 bins, 0.3 MB, built in 0.0 s
+Vacuum Mesh Exterior ID : 6 
+Size of Multiphysics surface coord list : 3470
+Size of Multiphysics surface mid coord list : 9403
+ ===================================== 
+ Min u_x = -0.0
+ Max u_x = 0.0
+ Min u_y = -0.0
+ Max u_y = 0.0
+ Min u_z = -0.0
+ Max u_z = 0.0
+ Max u_mag = 0.0
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement.mod
+
+
+---------------------------------
+
+Leaving ThermoElasticProblem::solve()
+
+---------------------------------
+
+Leaving StaticProblem::destructor() of ElasticProblem
+Ending run at Thu Nov 12 11:36:45 2026
+Total run time = 34 seconds

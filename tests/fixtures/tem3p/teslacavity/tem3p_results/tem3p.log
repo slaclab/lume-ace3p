@@ -1,0 +1,236 @@
+*************************************************************
+			 Tem3P
+
+ACE3P Release:             v2026.11-15-g344672a6f-dirty
+ACE3P Codes Source Date:   Mon Nov 2 18:17:52 2026 -0800
+ACE3P Codes Source Branch: claude
+ACE3P Codes Source Tag:    344672a6ff13d5cf715f056927e74fe1c6c4f970
+Support Lib Source N/A (dependencies bundled in-tree)
+Support Lib Source Branch: N/A
+Support Lib Source Tag:    N/A
+Compilation Date:          Mon Nov  2 06:50:35 PM PST 2026
+
+*************************************************************
+
+         Copyright 2026, Stanford University 
+
+Authors make no representations or warranties, expressed or 
+implied. By way of example, but not limitation, authors make 
+no representatinos or warranties of merchantibility or 
+fitness for any particular purpose or that the use of the 
+software componentns of documentation will not infringe any
+patents, copyrights, trademarks or other rights.
+
+The Authors shall not be held liable for any liability 
+nor for any direct, indirect or consequential damages with 
+respect to any claim by users or any third party on account 
+of or arising from the use of this software.
+
+*************************************************************
+
+Advanced Computations Department
+SLAC National Accelerator Laboratory
+https://slacportal.slac.stanford.edu/sites/ard_public/acd/Pages/Default.aspx
+Contact: ace3p@slac.stanford.edu
+
+Thank you for citing ACE3P when publishing related results.
+
+*************************************************************
+
+Starting master process on sdfmilan030
+Number of MPI processes: 16
+Number of compute nodes: 1
+Number of processes per node: 16
+Data precision: 64 bits
+Compiler: 11.5.0 20240719 (Red Hat 11.5.0-5)
+Beginning run at Thu Nov 12 11:40:45 2026
+
+---------------------------------
+
+Entering ThermoElasticProblem::solve()...
+
+---------------------------------
+
+In ThermoElasticProblem::solve(): begining tem3p iter 0 with 'runThermostaticProblem' = 0 with 'runThermoTransientProblem' = 0 with 'runElasticProblem' = 1
+1 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: instantiating ScalarDiscreteDomain...
+2 In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting up ScalarDiscreteDomain...
+Read Mesh: TeslaCavity.ncdf
+Check Mesh: TeslaCavity.ncdf
+Time for read model: 0.12155697
+Time for setBasisOrder: 0.01424800300000001
+    Time for making right-orientation and calculating Adjacency: 0.106163109
+Partitioning Method: PARMETIS
+    Time for partitioning mesh: 0.08552555300000003
+    Time for replicating remote meshes: 0.01072968400000007
+        Time for numberingHierarchical: 0.2519087640000001
+
+***********************************************************
+*	Total Number of Elements read: 	286556
+*	Total Number of Elements used: 	286556
+*	Total Number of DOFs: 	1543974
+***********************************************************
+
+        Time for numbering remote nodes: 0.002217055999999995
+        Time for numbering remote edges: 0.003561158000000009
+        Time for numbering remote faces: 0.004753827000000044
+        Time for numbering remote volumes: 0.0002738840000000575
+    Time for numbering DOF entities: 0.2632969800000001
+Time for set model: 0.472864884
+Time for read midpoints: 0.02925303600000007
+Time for creating higher-order elements: 0.01475474999999993
+ loading RF solution for TEM3P...
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting map of boundaries...
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: map of boundaries set succesfully
+In StaticProblem::readKvcParameters1() of ElasticProblem, rank 0: setting linear solver...
+Leaving StaticProblem::readKvcParameters1() of ElasticProblem
+Entering StaticProblem::instantiateMatrix() of ElasticProblem
+Solving Eigen Value Problem
+
+**********************************************************
+ ARPACK Loop: 
+Shift = 986.9604401089358
+**********************************************************
+factorizing the matrix using MUMPS ...
+Using ParMETIS for ordering...
+Use 16 processors to do parallel reordering (ParMetis)
+Partition of Processors: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 
+Processor 0: 0, 95259
+Processor 1: 95259, 193929
+Processor 2: 193929, 289668
+Processor 3: 289668, 385920
+Processor 4: 385920, 484971
+Processor 5: 484971, 577539
+Processor 6: 577539, 676272
+Processor 7: 676272, 773469
+Processor 8: 773469, 866862
+Processor 9: 866862, 963555
+Processor 10: 963555, 1067331
+Processor 11: 1067331, 1160007
+Processor 12: 1160007, 1258224
+Processor 13: 1258224, 1358952
+Processor 14: 1358952, 1454532
+Processor 15: 1454532, 1543974
+total: 1543974 16
+Generate ordering using parmetis...
+Finished generating ordering using parmetis 
+Memory usage:
+used mem per MPI process: min:   1068 MB, max:   1485 MB, avg:   1281 MB, stddev:  101.4 MB, total: 2.05e+04 MB
+used mem per node in GB : min:  470.3 GB, max:  470.3 GB, avg:  470.3 GB, stddev:      0 GB, total:  470.3 GB
+used mem per node in %  : min:  93.47  %, max:  93.47  %, avg:  93.47  %, stddev: 2.935e-14  %
+
+	 ncv=10	 nev=5
+Linear Solver Preparation Time: 10.1
+Solver Time: 8.561
+Number of converged eigenpairs = 5
+
+Eigenvalue: 155810.3367309613
+	Frequency: 18833843947.5477
+	Residual: 0.0001022419633017985
+Eigenvalue: 1102696.548731118
+	Frequency: 50103589696.00565
+	Residual: 0.0006609164984046593
+Eigenvalue: 2320829.496386561
+	Frequency: 72687955283.46014
+	Residual: 0.0001812826492835717
+Eigenvalue: 3736456.033227938
+	Frequency: 92229695057.39503
+	Residual: 0.0003262413676789525
+Eigenvalue: 8667565.406793542
+	Frequency: 140471881145.9675
+	Residual: 0.04381474782049612
+
+**********************************************************
+Total number of OP*x operations: 39
+Total number of B*x operations if BMAT='G': 113
+Total number of steps of re-orthogonalization: 27
+**********************************************************
+COMMIT MODE: 0 FREQ = 18833843947.5477	 k= 394.7281808168265	norm(v[0]) = 225.2816330903501
+COMMIT MODE: 1 FREQ = 50103589696.00565	 k= 1050.09359046283	norm(v[1]) = 210.3635884926171
+COMMIT MODE: 2 FREQ = 72687955283.46014	 k= 1523.426892366864	norm(v[2]) = 224.4605934623668
+COMMIT MODE: 3 FREQ = 92229695057.39503	 k= 1932.99147262163	norm(v[3]) = 217.6357352335382
+COMMIT MODE: 4 FREQ = 140471881145.9675	 k= 2944.072928239642	norm(v[4]) = 216.3204288858665
+Mode 1, Frequency: 62.82294115466939 Hz
+ ===================================== 
+ Min u_x = -0.4449208573153953
+ Max u_x = 0.0001685815692191399
+ Min u_y = -0.002549900674646803
+ Max u_y = 0.002651147549767716
+ Min u_z = -0.1253252204854759
+ Max u_z = 0.1252327156143596
+ Max u_mag = 0.4451655151426505
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement_Mode001_Freq62.82Hz.mod
+
+Mode 2, Frequency: 167.1275856312757924 Hz
+ ===================================== 
+ Min u_x = -0.4139368865413642
+ Max u_x = 0.4092584982783102
+ Min u_y = -0.005354914625475904
+ Max u_y = 0.00510317207478181
+ Min u_z = -0.2843893945866695
+ Max u_z = 0.2826049627963205
+ Max u_mag = 0.4147662026039562
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement_Mode002_Freq167.13Hz.mod
+
+Mode 3, Frequency: 242.4609203593111886 Hz
+ ===================================== 
+ Min u_x = -0.01659369742873918
+ Max u_x = 0.01716133599785682
+ Min u_y = -0.01693868281892779
+ Max u_y = 0.01611470607987767
+ Min u_z = -1.285523720100503e-05
+ Max u_z = 0.4137515223578221
+ Max u_mag = 0.4137521918534025
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement_Mode003_Freq242.46Hz.mod
+
+Mode 4, Frequency: 307.6451478222144829 Hz
+ ===================================== 
+ Min u_x = -0.4021061683371535
+ Max u_x = 0.3529316956072342
+ Min u_y = -0.00815388083970665
+ Max u_y = 0.008145304997589671
+ Min u_z = -0.3387841624936187
+ Max u_z = 0.3409704566004217
+ Max u_mag = 0.4067985998080659
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement_Mode004_Freq307.65Hz.mod
+
+Mode 5, Frequency: 468.5637593523699138 Hz
+ ===================================== 
+ Min u_x = -0.4072353648505359
+ Max u_x = 0.417835030589243
+ Min u_y = -0.01263580072956954
+ Max u_y = 0.01200094543026077
+ Min u_z = -0.4560286476775471
+ Max u_z = 0.4458875128684843
+ Max u_mag = 0.46086550088092
+ Max u_mag block id = 1
+ ===================================== 
+
+Displacement output file : tem3p_results/Displacement_Mode005_Freq468.56Hz.mod
+
+Mode 1, Frequency: 62.82294115466939 Hz
+Mode 2, Frequency: 167.1275856312757924 Hz
+Mode 3, Frequency: 242.4609203593111886 Hz
+Mode 4, Frequency: 307.6451478222144829 Hz
+Mode 5, Frequency: 468.5637593523699138 Hz
+
+---------------------------------
+
+Leaving ThermoElasticProblem::solve()
+
+---------------------------------
+
+Leaving StaticProblem::destructor() of ElasticProblem
+Ending run at Thu Nov 12 11:41:49 2026
+Total run time = 64 seconds

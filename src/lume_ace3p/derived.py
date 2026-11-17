@@ -8,7 +8,14 @@ and a sweep table can carry arithmetic over its columns::
       'f_target' : 1.3e9                              # a constant
       'f_error'  : 'abs(mode_freq - f_target)'        # an expression over outputs
       'RoQ_norm' : '`R/Q` / 100'                      # backticks quote a name
+      'k_l'      : 'df / (TargetGradient / 1e6)**2'   # inputs are names too
       'balance'  : {python: 'power_balance:balance'}  # module:callable
+
+An expression reads the outputs, the earlier derived entries, and the
+evaluation's **inputs**: every input leaf under its sweep-axis label, its
+qualified label (``cubit:…``, ``ace3p:<module>/Sec.Leaf``) and its bare name
+when that is unique — whatever a result row or a VOCS variable calls it. An
+output or derived name shadows an input of the same spelling.
 
 Entries are evaluated in declaration order inside
 :meth:`~lume_ace3p.workflow_graph.Workflow.evaluate`, after extraction, so a
@@ -24,10 +31,11 @@ Three properties it holds to:
 * **Every name is checked at build time.** A misspelling or a forward reference
   fails before the first mesh is built, not at the end of the first point.
 * **The ``python:`` hatch is a pure function of the outputs.** Its signature is
-  ``(outputs: dict) -> value`` and it is handed nothing else, so the source text
-  of the callable is a sufficient identity to hash. That text is read from the
-  module's file with :mod:`ast`, without importing it; the import happens on the
-  first :meth:`DerivedSpec.compute`, which is why ``--status`` never runs it.
+  ``(outputs: dict) -> value`` and it is handed nothing else, not even the
+  inputs, so the source text of the callable is a sufficient identity to hash.
+  That text is read from the module's file with :mod:`ast`, without importing
+  it; the import happens on the first :meth:`DerivedSpec.compute`, which is why
+  ``--status`` never runs it.
 """
 
 import ast
@@ -398,20 +406,27 @@ class DerivedSpec:
         return [name for name, _kind, _value in self.entries]
 
     @classmethod
-    def from_config(cls, block, output_names=(), base_dir=None):
+    def from_config(cls, block, output_names=(), base_dir=None,
+                    input_names=(), ambiguous_inputs=None):
         """Resolve a ``derived_parameters`` mapping against the declared
-        ``output_names``. ``base_dir`` is where a ``python:`` module is looked
-        for besides ``sys.path`` (the config file's directory; the working
-        directory by default).
+        ``output_names`` and ``input_names`` (what
+        :meth:`~lume_ace3p.inputs.WorkflowInputs.named_values` names, plus any
+        VOCS variables). ``ambiguous_inputs`` maps a bare input name declared
+        more than once to its qualified labels, for the error message.
+        ``base_dir`` is where a ``python:`` module is looked for besides
+        ``sys.path`` (the config file's directory; the working directory by
+        default).
 
         Raises :class:`DerivedParameterError` for a malformed entry, a name that
         collides with an ``output_parameters`` name, and a name an expression
-        reads that is neither an output nor an *earlier* derived entry."""
+        reads that is neither an output, an input, nor an *earlier* derived
+        entry."""
         if not isinstance(block, dict):
             raise DerivedParameterError(
                 "derived_parameters must be a mapping of name: constant | "
                 f"'expression' | {{python: 'module:callable'}}; got {block!r}.")
         outputs = [str(name) for name in output_names]
+        inputs = {str(name) for name in input_names}
         known = list(outputs)
         entries = []
         for name, value in block.items():
@@ -420,22 +435,28 @@ class DerivedSpec:
                 raise DerivedParameterError(
                     f"derived_parameters '{name}' is also an output_parameters "
                     "name; give one of them a different name.")
-            entries.append((name, *_resolve_entry(name, value, known, base_dir)))
+            entries.append((name, *_resolve_entry(
+                name, value, known, base_dir, inputs,
+                ambiguous_inputs or {})))
             known.append(name)
         return cls(entries)
 
-    def compute(self, outputs):
+    def compute(self, outputs, inputs=None):
         """``{derived name: value}`` over the extracted ``outputs``, in
         declaration order, each entry seeing the outputs and every earlier
-        derived value."""
+        derived value. An expression also sees ``inputs`` (``{name: value}``,
+        :meth:`~lume_ace3p.inputs.WorkflowInputs.named_values`), shadowed by an
+        output or derived name of the same spelling; a ``python:`` callable is
+        handed the outputs and derived values only."""
         namespace = dict(outputs)
+        scope = {**(inputs or {}), **namespace}
         derived = {}
         for name, kind, value in self.entries:
             if kind == 'constant':
                 result = value
             elif kind == 'expression':
                 try:
-                    result = value.evaluate(namespace)
+                    result = value.evaluate(scope)
                 except DerivedParameterError:
                     raise
                 except Exception as exc:
@@ -447,7 +468,7 @@ class DerivedSpec:
                 if isinstance(result, (int, float, np.number, np.ndarray,
                                        list, tuple)):
                     result = _as_output(result)
-            namespace[name] = derived[name] = result
+            namespace[name] = scope[name] = derived[name] = result
         return derived
 
     def canonical(self):
@@ -467,8 +488,10 @@ class DerivedSpec:
         return rendered
 
 
-def _resolve_entry(name, value, known, base_dir):
-    """``(kind, value)`` for one entry, with every name it reads checked."""
+def _resolve_entry(name, value, known, base_dir, inputs=frozenset(),
+                   ambiguous=None):
+    """``(kind, value)`` for one entry, with every name it reads checked
+    against ``known`` (outputs and earlier derived entries) and ``inputs``."""
     if isinstance(value, bool):
         raise DerivedParameterError(
             f"derived_parameters '{name}' is {value!r}; a constant must be a "
@@ -481,16 +504,25 @@ def _resolve_entry(name, value, known, base_dir):
         except DerivedParameterError as exc:
             raise DerivedParameterError(
                 f"derived_parameters '{name}': {exc}") from None
-        unknown = sorted(expr.names - set(known))
+        unknown = sorted(expr.names - set(known) - set(inputs))
+        ambiguous = {n: ambiguous[n] for n in unknown if n in (ambiguous or {})}
+        if ambiguous:
+            raise DerivedParameterError(
+                f"derived_parameters '{name}' ({value!r}) reads "
+                + '; '.join(f"'{n}', an input declared more than once (qualify "
+                            f"it, in backticks, as one of {labels})"
+                            for n, labels in ambiguous.items()) + '.')
         if unknown:
             hint = ''
-            if any(not other.isidentifier() for other in known):
+            if any(not other.isidentifier() for other in [*known, *inputs]):
                 hint = (' A name that is not a Python identifier must be quoted '
                         'in backticks, e.g. `R/Q`.')
+            known_inputs = (f" Inputs: {sorted(inputs)}." if inputs else '')
             raise DerivedParameterError(
                 f"derived_parameters '{name}' ({value!r}) reads {unknown}, "
-                "which is not an output_parameters name or an earlier "
-                f"derived_parameters entry. Known here: {known}.{hint}")
+                "which is not an output_parameters name, an earlier "
+                "derived_parameters entry or an input. Known here: "
+                f"{known}.{known_inputs}{hint}")
         return 'expression', expr
     if isinstance(value, dict) and set(value) == {'python'}:
         try:
