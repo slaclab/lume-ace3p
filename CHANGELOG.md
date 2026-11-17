@@ -37,7 +37,14 @@ facts are in [`plans/tem3p_module_plan.md`](plans/tem3p_module_plan.md).
   `on`, a bad `MixedType`, an `LFDetuning` without `Method`, a table file
   `files:` does not stage, an RF-coupled input with no EM run bound, a read
   mesh with no `Omega3PId` (TEM3P would write it undeformed), and a
-  `MeshFile` that is not the bound mesh. Before launching, the module also
+  `MeshFile` that is not the bound mesh. Also refused: a detuning key
+  (`TargetGradient`, `Method`, `WhichMode`, `StartPoint`, `EndPoint`) on a
+  boundary that is not RF-coupled, which is where a positional `ace3p:`
+  override lands when the LFDetuning boundary is not the first; a `Transient`
+  or `HarmonicAnalysis` block (out of scope; `Transient` in
+  `ThermostaticProblem` also makes TEM3P skip `ElasticProblem`); and an
+  `Omega3PId` on a boundary spelled `LFdetuning`, which the mesh deformation
+  does not read. Before launching, the module also
   checks that the EM run's absolute mesh path still exists, since TEM3P
   aborts without a message when it does not.
 - `derived_parameters` expressions read swept inputs by name (axis label,
@@ -47,6 +54,9 @@ facts are in [`plans/tem3p_module_plan.md`](plans/tem3p_module_plan.md).
 - A solver's `files:` entry may be a directory, staged whole under its own
   name: `files: [functions]` gives `<workdir>/functions/`, so an input naming
   `functions/CURRR100` runs as written.
+- A `tem3p` module's hash covers the contents of the table files its input
+  names (`Function: functions/NbTi`), so editing a k(T) or Rs(T) table re-runs
+  TEM3P on a resume. Other solvers' `files:` are still not hashed.
 - Example `tem3p_lfd`: Lorentz-force detuning of the CW23 SRFCell over three
   gradients, giving `df` and a constant `k_l` = −5.831 Hz/(MV/m)².
 

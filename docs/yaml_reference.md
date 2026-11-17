@@ -891,9 +891,13 @@ workflow :
 - **Build-time checks.** TEM3P ignores misspelled keys without a warning.
   `NeumanValue`, `Abs tolerance` and the other CW23 spellings, a wrong
   `MixedType`, an `LFDetuning` without `Method`, a table file `files:` does
-  not stage, and a missing `Omega3PId` (the mesh would come out undeformed)
-  are all build errors, listed together. The full list is in
-  [](tem3p_reference.md#build-time-checks).
+  not stage, a missing `Omega3PId` (the mesh would come out undeformed), a
+  detuning key such as `TargetGradient` on a boundary that is not RF-coupled
+  (where a positional `ace3p:` override lands when the LFDetuning boundary is
+  not the first), and a `Transient` or `HarmonicAnalysis` block are all build
+  errors, listed together. The full list is in
+  [](tem3p_reference.md#build-time-checks). The table files the input names
+  are in the module's hash, so editing one re-runs TEM3P on a resume.
 - **Appended pairs.** A further `tem3p → omega3p` pair reading
   `em_solution` from `omega3p_deformed` deforms the original vacuum mesh, not
   the deformed one. See [](tem3p_reference.md#appended-pairs-for-convergence).

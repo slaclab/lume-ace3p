@@ -648,3 +648,33 @@ No new examples unless asked.
    limitation stays documented and nothing more is built now. Other
    optimization strategies for chained loops like this are future work, to
    be investigated in their own plan.
+
+**Review of 2026-11-17.** Four gaps, fixed on dev the same day:
+
+2. **A positional override can land on the wrong boundary.** `ace3p:`
+   overrides reach same-named blocks by position. The CW23 SRFCell input has
+   its LFDetuning boundary fifth, so the example's
+   `ElasticProblem: { Boundary: { TargetGradient: … } }` sweep, run against
+   it, set `TargetGradient` on the Mixed boundary (Id 1). TEM3P ignores it
+   there, every point runs 35 MV/m, and the build passed (reproduced by dry
+   run). **Fix:** a lint error for `Method`, `TargetGradient`, `WhichMode`,
+   `StartPoint` or `EndPoint` on a `Boundary`/`HeatSource` that is not
+   RF-coupled. Only `LFDetuning.C` and `EMHeating.C` read them. **Still
+   open:** overrides that select a block by `Id`, a general input feature
+   rather than a TEM3P one.
+3. **`Transient` and `HarmonicAnalysis` were not refused.** A `Transient`
+   block in `ThermostaticProblem` runs the thermal transient and then skips
+   `ElasticProblem` altogether (`ThermoElasticProblem.C:153`, `:228`), without
+   a warning. **Fix:** both are build errors (out of scope).
+4. **`LFdetuning` with `Omega3PId`.** TEM3P solves `LFdetuning` as
+   LFDetuning (`Tem3P_BdManager.C:90`), but the mesh deformation reads
+   `Omega3PId` only from the exact `LFDetuning` or `Neumann`
+   (`ElasticProblemMeshDeform.C:98`). The build already failed, but its
+   message said to set the `Omega3PId` the user had set. **Fix:** the message
+   names the spelling.
+5. **Table files were not in the module hash.** Solver `files:` are data and
+   are not hashed, so editing a k(T) table did not re-run TEM3P on a resume.
+   **Fix:** `Module.hashed_files(inputs)` (default `input_files()`, so no other
+   hash moves). `Tem3PModule` adds the tables its merged input names at that
+   point (`_tem3p_table_sources`). An input without tables hashes as before,
+   and changing the hash costs nothing while TEM3P is unreleased.

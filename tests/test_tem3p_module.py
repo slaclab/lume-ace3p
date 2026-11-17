@@ -296,6 +296,69 @@ def test_lint_sees_the_scoped_overrides(tmp_path, monkeypatch):
         _dry(tmp_path, _lfd(), inputs=inputs)
 
 
+_GRADIENT = parse_ace3p('ElasticProblem: { Boundary: { TargetGradient: 15e6 } }')
+
+
+def test_a_positional_override_on_the_wrong_boundary_is_an_error(
+        tmp_path, monkeypatch):
+    """The CW23 SRFCell input has its LFDetuning boundary fifth, so a
+    'Boundary:' override lands on the first, the Mixed one, where TEM3P ignores
+    it: a gradient sweep would run 35 MV/m at every point."""
+    monkeypatch.chdir(_stage(tmp_path))
+    inputs = WorkflowInputs(scoped={'tem3p': {'ace3p': _GRADIENT}})
+    with pytest.raises(WorkflowValidationError) as excinfo:
+        _dry(tmp_path, _lfd(), inputs=inputs)
+    message = _problems(excinfo)
+    assert "ElasticProblem Boundary Id 1 (Mixed): 'TargetGradient' is read " \
+           "only by RF-coupled entries" in message
+    assert "a 'Boundary:' entry sets the first Boundary of ElasticProblem" \
+        in message
+
+
+def test_the_override_on_the_lfdetuning_boundary_passes(tmp_path, monkeypatch):
+    """examples/tem3p_lfd's input puts the LFDetuning boundary first."""
+    with open(os.path.join(HERE, '..', 'examples', 'tem3p_lfd',
+                           'SRFCell.tem3p')) as file:
+        monkeypatch.chdir(_stage(tmp_path, text=file.read()))
+    inputs = WorkflowInputs(scoped={'tem3p': {'ace3p': _GRADIENT}})
+    _dry(tmp_path, _lfd(), inputs=inputs)
+
+
+@pytest.mark.parametrize('key, value', [
+    ('Method', 'Gradient'), ('WhichMode', '0'),
+    ('StartPoint', '0.0, 0.0, -0.0577'),
+])
+def test_rf_only_keys_on_a_constant_boundary(tmp_path, monkeypatch, key,
+                                             value):
+    message = _one_problem(
+        tmp_path, monkeypatch,
+        lambda t: t.replace('ConditionType: Dirichlet',
+                            f'ConditionType: Dirichlet\n    {key}: {value}'))
+    assert f"Boundary Id 2 (Dirichlet): '{key}' is read only by RF-coupled" \
+        in message
+
+
+def test_transient_in_the_thermal_problem_is_an_error(tmp_path, monkeypatch):
+    """TEM3P then skips ElasticProblem: no deformation, and no warning."""
+    message = _one_problem(
+        tmp_path, monkeypatch,
+        lambda t: 'ThermostaticProblem: {\n  MeshFile: SRFCellShell.ncdf\n'
+                  '  Transient: { TimeStep: 1.0 }\n}\n' + t)
+    assert "ThermostaticProblem: a 'Transient' block makes TEM3P solve a " \
+           "thermal transient" in message
+    assert 'skip ElasticProblem altogether' in message
+
+
+def test_harmonic_analysis_is_an_error(tmp_path, monkeypatch):
+    message = _one_problem(
+        tmp_path, monkeypatch,
+        lambda t: t.replace('LinearSolver: {',
+                            'HarmonicAnalysis: { Frequency: 100. }\n'
+                            '  LinearSolver: {'))
+    assert "ElasticProblem: a 'HarmonicAnalysis' block makes TEM3P run a " \
+           "HarmonicAnalysis analysis" in message
+
+
 def test_rf_coupled_input_without_an_em_run_is_an_error(tmp_path, monkeypatch):
     monkeypatch.chdir(_stage(tmp_path))
     entries = [{'module': 'cubit', 'journal': 'body.jou',
@@ -313,6 +376,9 @@ def test_em_run_bound_but_never_read_warns(tmp_path, monkeypatch):
     text = _fixed(_fixture('srfcell', 'SRFCell.tem3p'))
     text = text.replace('ConditionType: LFDetuning', 'ConditionType: Neumann')
     text = text.replace('WriteDeformedEMMesh: on', 'WriteDeformedEMMesh: off')
+    # A Neumann boundary ignores the detuning keys, which the build refuses.
+    text = re.sub(r'\n\s*(Method|TargetGradient|WhichMode|StartPoint|'
+                  r'EndPoint):[^\n]*', '', text)
     monkeypatch.chdir(_stage(tmp_path, text=text))
     with pytest.warns(UserWarning, match="never reads it"):
         _dry(tmp_path, _lfd(deformed=False))
@@ -334,6 +400,21 @@ def test_missing_omega3p_id_with_a_consumer_is_an_error(tmp_path, monkeypatch):
         lambda t: re.sub(r'Omega3PId:.*\n', '', t))
     assert "no LFDetuning or Neumann boundary of ElasticProblem sets " \
            "'Omega3PId'" in message
+    assert 'comes out undeformed' in message
+
+
+def test_omega3p_id_on_an_lfdetuning_spelling_names_the_spelling(
+        tmp_path, monkeypatch):
+    """TEM3P solves 'LFdetuning' as LFDetuning, but the mesh deformation reads
+    Omega3PId only from the exact 'LFDetuning'. Telling the user to set an
+    Omega3PId they already set would send them the wrong way."""
+    message = _one_problem(
+        tmp_path, monkeypatch,
+        lambda t: t.replace('ConditionType: LFDetuning',
+                            'ConditionType: LFdetuning'))
+    assert "Boundary Id 5 sets 'Omega3PId', but its ConditionType is " \
+           "spelled 'LFdetuning'" in message
+    assert "Write 'ConditionType: LFDetuning'" in message
     assert 'comes out undeformed' in message
 
 

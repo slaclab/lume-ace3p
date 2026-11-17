@@ -216,15 +216,32 @@ before the first mesh is built and listed together in one message:
 | `MixedType` not exactly three upper-case `DIRICHLET`/`NEUMANN` entries | TEM3P exits on anything else |
 | `LFDetuning` without `Method` | `Method: Gradient` with `TargetGradient`, `StartPoint`, `EndPoint` |
 | `Method: Gradient` without `StartPoint` or `EndPoint` | add them (three coordinates each) |
+| `TargetGradient`, `Method`, `WhichMode`, `StartPoint` or `EndPoint` on a boundary or heat source that is not RF-coupled | move the block an `ace3p:` override is meant for to the first position (below), or remove the key |
+| A `Transient` or `HarmonicAnalysis` block in a problem block | out of scope: remove it. `Transient` in `ThermostaticProblem` also makes TEM3P skip `ElasticProblem` |
 | A table (`Function`, `SurfaceResistance`, `SigmaFunction`, `DielectricConstantFunction{E,H}`, `ExtVHeatingFile`) that `files:` does not stage | `functions/NbTi` needs `files: [functions]`; a bare `NbTi` needs a `files:` entry of that name |
 | An RF-coupled boundary or `WriteDeformedEMMesh: on`, with no EM run bound | add the `omega3p` or `s3p` that solves the vacuum fields |
 | A module reads this `tem3p`'s mesh, but its input does not write one | add `MeshDump: { WriteDeformedEMMesh: on }` |
 | A module reads this `tem3p`'s mesh, but it runs an `EigenSolver` | remove the `EigenSolver` or bind the mesh elsewhere |
 | A read mesh but no `Omega3PId` | set it on the `LFDetuning` boundary, to the vacuum mesh's wall sideset |
+| A read mesh whose `Omega3PId` is on a boundary spelled `LFdetuning` | write `LFDetuning`: TEM3P solves both spellings, but its mesh deformation reads `Omega3PId` from the exact one only |
 | `MeshFile` is not the bound producer's mesh (its export, or the `.ncdf` under `meshconvert`) | point `MeshFile` at it, or bind the right `mesh` module |
 | The body mesh is bound to a `tem3p` | bind `from: {mesh: <body mesh module>}` |
 
 An EM run that is bound but read by nothing in the input gets a warning.
+
+**Overrides reach `Boundary` blocks by position.** An `ace3p:` entry
+`ElasticProblem: { Boundary: { TargetGradient: … } }` sets the *first*
+`Boundary` of `ElasticProblem`, whatever its `Id`. The CW23 SRFCell input has
+its LFDetuning boundary fifth, so that sweep would land on the Mixed boundary,
+where TEM3P ignores it, and every point would run the input's own gradient.
+The build refuses this (the detuning-key row above). Put the block you sweep
+first in the input file, as `examples/tem3p_lfd/SRFCell.tem3p` does.
+
+**Table files are in the module hash.** Other solvers' `files:` are data and
+are not hashed, but the tables a TEM3P input names are material properties.
+Editing `functions/NbTi` therefore re-runs TEM3P on a resume instead of
+reusing the old result. Files in a `files:` directory that the input does not
+name are not hashed.
 
 The CW23 inputs use the ignored spellings verbatim, so copy them with care.
 `examples/tem3p_lfd/SRFCell.tem3p` is CW23's with them corrected.
@@ -286,7 +303,8 @@ Under sweep workers, the `--mem-per-cpu` each worker gets must cover this
 ## Out of scope
 
 - A feedback-loop construct ("repeat until converged"). Append pairs instead.
-- Thermal transients (`Transient:`) and `HarmonicAnalysis`.
+- Thermal transients (`Transient:`) and `HarmonicAnalysis`, refused at
+  build time.
 - The per-mode deformed meshes of an eigen run.
 - `field()` access to the `.mod` files.
 - `acdtool postprocess project` and `tem3pOutputConverter`.

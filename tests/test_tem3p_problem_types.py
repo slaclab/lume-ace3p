@@ -285,6 +285,54 @@ def test_a_fresh_run_restages_an_edited_table(tmp_path, monkeypatch):
     assert (root / 'wd' / 'functions' / 'NbTi').read_text() == 'edited\n'
 
 
+# ---- table files in the module hash ---------------------------------------
+
+
+def _hashes(root, entries):
+    return _build(root, entries).point_module_hashes()
+
+
+def test_editing_a_table_changes_only_the_tem3p_hash(tmp_path, monkeypatch):
+    """A k(T) table is a material property: a resume must re-run TEM3P after
+    an edit, not reuse the old result."""
+    entries = _coupler(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    before = _hashes(tmp_path, entries)
+    (tmp_path / 'functions' / 'NbTi').write_text('1.0 2.0\n3.0 4.0\n5.0 6.0\n')
+    after = _hashes(tmp_path, entries)
+    assert after['tem3p'] != before['tem3p']
+    assert after['s3p'] == before['s3p']
+
+
+def test_a_table_the_input_does_not_name_is_not_hashed(tmp_path, monkeypatch):
+    entries = _coupler(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    before = _hashes(tmp_path, entries)
+    (tmp_path / 'functions' / 'unused').write_text('1.0 2.0\n')
+    assert _hashes(tmp_path, entries)['tem3p'] == before['tem3p']
+
+
+def test_hashed_files_are_the_named_tables(tmp_path, monkeypatch):
+    entries = _coupler(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    module = next(m for m in _build(tmp_path, entries).modules
+                  if m.type == 'tem3p')
+    hashed = module.hashed_files(WorkflowInputs())
+    assert hashed[0] == module.input_file
+    assert os.path.join('functions', 'NbTi') in hashed
+    assert all(os.path.isfile(path) for path in hashed)
+    assert len(hashed) == len(set(hashed))
+
+
+def test_an_input_without_tables_hashes_its_input_file_only(tmp_path,
+                                                             monkeypatch):
+    """So the tables add nothing to an LFD chain's hash."""
+    monkeypatch.chdir(_stage(tmp_path))
+    module = next(m for m in _build(tmp_path, _lfd()).modules
+                  if m.type == 'tem3p')
+    assert module.hashed_files(WorkflowInputs()) == module.input_files()
+
+
 # ---- the build check on table files ---------------------------------------
 
 

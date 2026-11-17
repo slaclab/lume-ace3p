@@ -627,6 +627,14 @@ class Module:
         paths are in the module's config, which the hash covers anyway."""
         return []
 
+    def hashed_files(self, inputs):
+        """The files whose contents :meth:`module_hash` covers at the input
+        point ``inputs``: :meth:`input_files`, unless a module's input names
+        further small files that change what it computes. Only ``tem3p``
+        widens it, with the material tables its input names, which can depend
+        on the point (a swept ``Function:``)."""
+        return self.input_files()
+
     def launch_size(self):
         """``(tasks, cores)`` of the largest external-tool step this module
         launches, or ``None`` when it launches none. What
@@ -657,8 +665,8 @@ class Module:
                  **{key: value for key, value in self.config.items()
                     if key not in self._launch_keys}}
         buckets = {bucket: getattr(view, bucket) for bucket in self.input_buckets}
-        files = {str(path): file_digest(path) for path in self.input_files()
-                 if path}
+        files = {str(path): file_digest(path)
+                 for path in self.hashed_files(inputs) if path}
         upstream = {kind: hashes.get(name)
                     for kind, name in sorted(self.sources.items())}
         return _hash_module(entry, buckets, files, upstream)
@@ -2360,6 +2368,16 @@ _TEM3P_IGNORED_KEYS = {
 _TEM3P_SWITCHES = ('WriteDeformedMesh', 'WriteStressStrain',
                    'WriteDeformedEMMesh')
 _TEM3P_MIXED = frozenset({'DIRICHLET', 'NEUMANN'})
+# Keys only the RF-coupled boundary classes read (LFDetuning.C, EMHeating.C).
+# On any other ConditionType TEM3P ignores them without a warning, which is
+# where a positional 'ace3p:' override lands when the block it was meant for is
+# not the first of its name (plans/tem3p_module_plan.md, follow-up 2).
+_TEM3P_RF_ONLY_KEYS = ('Method', 'TargetGradient', 'WhichMode', 'StartPoint',
+                       'EndPoint')
+# Problem-block sections that switch TEM3P to an analysis lume-ace3p does not
+# read. 'Transient' in ThermostaticProblem also skips ElasticProblem
+# altogether (ThermoElasticProblem.C), again without a warning.
+_TEM3P_OUT_OF_SCOPE = ('Transient', 'HarmonicAnalysis')
 
 
 def _tem3p_problems(tree):
@@ -2413,6 +2431,20 @@ def _tem3p_has_omega3p_id(tree):
                for b in elastic.children('Boundary') if isinstance(b, Section))
 
 
+def _tem3p_lfdetuning_omega3p_ids(tree):
+    """Where an ``ElasticProblem`` boundary spelled ``LFdetuning`` sets
+    ``Omega3PId``. TEM3P solves it as an LFDetuning boundary
+    (``Tem3P_BdManager.C``), but the mesh deformation reads ``Omega3PId`` only
+    from the exact spelling ``LFDetuning`` (``ElasticProblemMeshDeform.C``)."""
+    elastic = _tem3p_elastic(tree)
+    if elastic is None:
+        return []
+    return [_tem3p_where('ElasticProblem', 'Boundary', b)
+            for b in elastic.children('Boundary') if isinstance(b, Section)
+            and b.get_leaf('ConditionType') == 'LFdetuning'
+            and b.get_leaf('Omega3PId') is not None]
+
+
 def _tem3p_where(block, container, section):
     ident = section.get_leaf('Id')
     return f"{block} {container}" + (f" Id {ident}" if ident is not None else '')
@@ -2451,12 +2483,45 @@ def _tem3p_lint(tree):
                     f"(lower case); write '{key}: on'.")
 
     for block, problem in _tem3p_problems(tree):
+        for analysis in _TEM3P_OUT_OF_SCOPE:
+            if problem.find(analysis) is None:
+                continue
+            if analysis == 'Transient' and block == 'ThermostaticProblem':
+                what = ("makes TEM3P solve a thermal transient instead of the "
+                        "steady state, and then skip ElasticProblem "
+                        "altogether, without a warning")
+            else:
+                what = (f"makes TEM3P run a {analysis} analysis instead of "
+                        "the static solve")
+            problems.append(
+                f"{block}: a '{analysis}' block {what}. lume-ace3p does not "
+                "read those results (out of scope, docs/tem3p_reference.md); "
+                "remove the block, or run this input outside the workflow.")
         for container in ('Boundary', 'HeatSource'):
             for section in problem.children(container):
                 if not isinstance(section, Section):
                     continue
                 where = _tem3p_where(block, container, section)
                 condition = section.get_leaf('ConditionType')
+                if condition is not None and \
+                        condition not in TEM3P_RF_CONDITIONS:
+                    stray = [k for k in _TEM3P_RF_ONLY_KEYS
+                             if section.get_leaf(k) is not None]
+                    if stray:
+                        problems.append(
+                            f"{where} ({condition}): "
+                            f"{', '.join(repr(k) for k in stray)} "
+                            f"{'is' if len(stray) == 1 else 'are'} read only "
+                            "by RF-coupled entries (LFDetuning, RFHeating), "
+                            "so TEM3P ignores "
+                            f"{'it' if len(stray) == 1 else 'them'} here "
+                            "without a warning. If an input_parameters "
+                            "'ace3p:' override put it there: overrides "
+                            f"reach same-named blocks by position, so a "
+                            f"'{container}:' entry sets the first "
+                            f"{container} of {block}. Move the block it is "
+                            "meant for to the first position in the input "
+                            "file; otherwise remove the key.")
                 if condition == 'Mixed':
                     raw = section.get_leaf('MixedType') or ''
                     entries = raw.replace(',', ' ').split()
@@ -2508,17 +2573,48 @@ def _tem3p_table_files(tree):
     return found
 
 
-def _tem3p_unstaged_tables(tree, files):
-    """Messages for each table file ``tree`` names that the module's ``files:``
-    do not put where TEM3P looks: the working directory, with ``files:`` staged
-    by basename (:func:`_stage_file`, :func:`_stage_dir`). A ``files:`` entry
-    that does not exist is skipped; :meth:`Workflow.check_files` reports it."""
+def _tem3p_staged(files):
+    """``{name in the working directory: files: entry}`` for a module's
+    ``files:``, each staged under its own basename. A nameless entry is
+    skipped; staging refuses it."""
     staged = {}
     for path in files:
         try:
             staged[_staged_dir_name(path)] = str(path)
         except ValueError:
             continue
+    return staged
+
+
+def _tem3p_table_sources(tree, files):
+    """The source files, outside the workdir, of the tables ``tree`` names:
+    an absolute path as written, a bare name as its ``files:`` entry, and
+    ``dir/name`` as ``name`` inside the ``files:`` directory ``dir``. Sorted,
+    without duplicates; a table no ``files:`` entry provides is left out
+    (:func:`_tem3p_unstaged_tables` reports it)."""
+    staged = _tem3p_staged(files)
+    found = set()
+    for _, _, value in _tem3p_table_files(tree):
+        if os.path.isabs(value):
+            path = value
+        else:
+            parts = os.path.normpath(value).split(os.sep)
+            entry = staged.get(parts[0])
+            if entry is None:
+                continue
+            path = entry if len(parts) == 1 else os.path.join(entry,
+                                                              *parts[1:])
+        if os.path.isfile(path):
+            found.add(path)
+    return sorted(found)
+
+
+def _tem3p_unstaged_tables(tree, files):
+    """Messages for each table file ``tree`` names that the module's ``files:``
+    do not put where TEM3P looks: the working directory, with ``files:`` staged
+    by basename (:func:`_stage_file`, :func:`_stage_dir`). A ``files:`` entry
+    that does not exist is skipped; :meth:`Workflow.check_files` reports it."""
+    staged = _tem3p_staged(files)
     problems, unstaged_dirs = [], {}
     for where, key, value in _tem3p_table_files(tree):
         if os.path.isabs(value):
@@ -2653,6 +2749,17 @@ class Tem3PModule(_SolverModule):
             merge_overrides(tree, overrides)
         return tree
 
+    def hashed_files(self, inputs):
+        """The input file and, unlike any other solver's ``files:``, the
+        contents of every table file the merged input names (k(T), Rs(T): a
+        few kB each). They are material properties, so editing one must
+        re-run TEM3P on a resume rather than reuse the old result."""
+        files = self.input_files()
+        tree = self._merged_tree(inputs)
+        if tree is None:
+            return files
+        return files + _tem3p_table_sources(tree, self.files)
+
     def _consumers(self, modules, kind=MESH):
         return [m for m in modules if m is not self
                 and m.sources.get(kind) == self.name]
@@ -2703,12 +2810,25 @@ class Tem3PModule(_SolverModule):
                 "    ElasticProblem: { MeshDump: { WriteDeformedEMMesh: on } }\n"
                 "(lume-ace3p sets EMMeshInputDir itself).")
         if writes_mesh and not _tem3p_has_omega3p_id(tree):
-            message = (
-                f"{name} writes the deformed vacuum mesh, but no LFDetuning or "
-                "Neumann boundary of ElasticProblem sets 'Omega3PId', so TEM3P "
-                "moves no vacuum node and the mesh comes out undeformed "
-                "without an error. Set 'Omega3PId' on the LFDetuning boundary "
-                "to the sideset ID of the cavity wall in the vacuum mesh.")
+            misspelled = _tem3p_lfdetuning_omega3p_ids(tree)
+            if misspelled:
+                message = (
+                    f"{name} writes the deformed vacuum mesh, and "
+                    f"{misspelled[0]} sets 'Omega3PId', but its ConditionType "
+                    "is spelled 'LFdetuning'. TEM3P solves that as an "
+                    "LFDetuning boundary, but its mesh deformation reads "
+                    "'Omega3PId' only from the exact spelling 'LFDetuning' "
+                    "(or 'Neumann'), so no vacuum node moves and the mesh "
+                    "comes out undeformed without an error. Write "
+                    "'ConditionType: LFDetuning'.")
+            else:
+                message = (
+                    f"{name} writes the deformed vacuum mesh, but no "
+                    "LFDetuning or Neumann boundary of ElasticProblem sets "
+                    "'Omega3PId', so TEM3P moves no vacuum node and the mesh "
+                    "comes out undeformed without an error. Set 'Omega3PId' "
+                    "on the LFDetuning boundary to the sideset ID of the "
+                    "cavity wall in the vacuum mesh.")
             if consumers:
                 errors.append(message)
             else:
