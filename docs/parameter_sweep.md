@@ -35,7 +35,7 @@ Once these are defined, run the sweep with the `run-lume-ace3p` entry point.
 ## Omega3P parameter sweep example
 
 This example (based on the rounded-top pillbox from the
-[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23),
+[ACE3P tutorials](https://ace3p.slac.stanford.edu/Examples),
 shipped as
 [`examples/omega3p_sweep`](https://github.com/slaclab/lume-ace3p/blob/main/examples/omega3p_sweep/omega3p_sweep.yaml))
 sweeps cavity radius and cavity wall ellipticity, running the whole
@@ -292,7 +292,7 @@ output files have been deleted, are in [](#resume).
 ## S3P parameter sweep example
 
 This example (based on a 90-degree bend from the
-[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23))
+[ACE3P tutorials](https://ace3p.slac.stanford.edu/Examples))
 sweeps the outer corner cut radius and the inner corner rounding radius. The
 S-parameter results are stored in a text file with all combinations of
 parameters and frequencies.

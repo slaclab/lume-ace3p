@@ -1,7 +1,7 @@
 # lume-ace3p
 
 `lume-ace3p` is a set of Python interfaces, written by David Bizzozero and Lila Fowler,
-for running [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)
+for running [ACE3P](https://ace3p.slac.stanford.edu)
 electromagnetic simulation workflows for parameter sweeps and optimization problems.
 The workflows include [Cubit](https://cubit.sandia.gov/) mesh generation and acdtool
 postprocessing. It is built on [lume](https://github.com/slaclab/lume) by
@@ -46,6 +46,9 @@ sub-block of `input_parameters`.
 ## Where to start
 
 - New here? Read [](installation.md), then walk through a [](parameter_sweep.md).
+- New to ACE3P itself? The [ACE3P website](https://ace3p.slac.stanford.edu) has
+  the solver [documentation](https://ace3p.slac.stanford.edu/Documentation) and
+  [tutorials](https://ace3p.slac.stanford.edu/Examples).
 - Configuring inputs? See [](workflow_inputs.md) and the full [](yaml_reference.md).
 - Not sure which blocks a mode needs? [](configuration_by_mode.md) has the
   required-vs-optional checklist.
@@ -93,4 +96,5 @@ releasing
 :caption: Reference
 
 api/index
+ACE3P website <https://ace3p.slac.stanford.edu>
 ```

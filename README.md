@@ -5,7 +5,7 @@
 [![Documentation Status](https://readthedocs.org/projects/lume-ace3p/badge/?version=latest)](https://lume-ace3p.readthedocs.io/en/latest/?badge=latest)
 
 `lume-ace3p` is a set of Python interfaces, written by David Bizzozero and
-Lila Fowler, for running [ACE3P](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23)
+Lila Fowler, for running [ACE3P](https://ace3p.slac.stanford.edu)
 electromagnetic simulation workflows for parameter sweeps and optimization
 problems. The workflows include [Cubit](https://cubit.sandia.gov/) mesh
 generation and acdtool postprocessing. It is built on
