@@ -2,8 +2,8 @@
 
 Geant4 transports each primary independently and every particle's
 Fowler-Nordheim weight depends on the β of its own emission bin only, so the
-dose is a sum over bins (``plans/geant4_dose_campaign_plan.md`` §1, verified in
-its Phase 0):
+dose is a sum over bins (verified: eight bin-isolated Geant4 runs sum to a full
+run within Monte Carlo error):
 
     D(β) = Σ_b a_b(β_b) · S_b
 

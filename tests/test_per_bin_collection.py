@@ -1,5 +1,4 @@
-"""Tests for per-bin training-data collection and the additive training mode
-(plans/geant4_dose_campaign_plan.md, Phase 3 item 2).
+"""Tests for per-bin training-data collection and the additive training mode.
 
 The workflow double runs the real ``field_emission`` weighting on a small
 synthetic Track3P dump, so the planned primaries, the written particle source

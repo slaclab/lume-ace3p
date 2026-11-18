@@ -1,5 +1,4 @@
-"""Tests for the additive per-bin dose surrogate (plans/geant4_dose_campaign_plan.md,
-Phase 3 item 1).
+"""Tests for the additive per-bin dose surrogate.
 
 The fixture is additive by construction: eight Gaussian shapes along z, one per
 bin, each with an exponential-in-β amplitude, and a Poisson-like noise model

@@ -202,7 +202,8 @@ a `copper.dat` secondary-emission-yield table from its working directory. List
 those under the module's `files:` key.
 
 For more on configuring ACE3P input files, see the
-[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
+[ACE3P documentation](https://ace3p.slac.stanford.edu/Documentation) and
+[tutorials](https://ace3p.slac.stanford.edu/Examples).
 
 ## acdtool postprocess files
 
@@ -224,4 +225,5 @@ output, and the input semantics not guessable from the tutorial files (the
 `>1e6` domain-bound sentinels, `gradient = -1`, `modeID2 = -1`).
 
 For more on configuring acdtool input files, see the
-[ACE3P tutorials](https://confluence.slac.stanford.edu/display/AdvComp/Materials+for+CW23).
+[ACE3P documentation](https://ace3p.slac.stanford.edu/Documentation) and
+[tutorials](https://ace3p.slac.stanford.edu/Examples).

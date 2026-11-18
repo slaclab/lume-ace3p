@@ -130,7 +130,8 @@ input value.
 
 ### S3P Nelder–Mead example
 
-This example (based on the 90-degree bend from the ACE3P tutorials, shipped as
+This example (based on the 90-degree bend from the
+[ACE3P tutorials](https://ace3p.slac.stanford.edu/Examples), shipped as
 [`examples/s3p_optimization`](https://github.com/slaclab/lume-ace3p/blob/main/examples/s3p_optimization/s3p_optimization.yaml))
 optimizes the scattering parameter `S(0,0)` at 12 GHz over the corner chamfer
 length (`cornercut`) and a corner rounding radius (`rcorner1`).

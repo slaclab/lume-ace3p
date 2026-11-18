@@ -1,5 +1,4 @@
-"""Phase-2 tests: the ``collect_training_data`` mode + the training-data store
-(see plans/geant4_surrogate_inversion_plan.md, Phase 2).
+"""Phase-2 tests: the ``collect_training_data`` mode + the training-data store.
 
 Verification (Phase 2 done when):
 
