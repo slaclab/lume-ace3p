@@ -585,8 +585,7 @@ def _stack_rows(rows):
 
 # --------------------------------------------------------------------------- #
 # Per-bin store: one 1-D β sweep per bin, the other bins switched off. This is
-# what an additive surrogate (lume_ace3p.surrogate_additive) trains on; see
-# plans/geant4_dose_campaign_plan.md.
+# what an additive surrogate (lume_ace3p.surrogate_additive) trains on.
 # --------------------------------------------------------------------------- #
 
 PER_BIN_DESIGN = 'per_bin'

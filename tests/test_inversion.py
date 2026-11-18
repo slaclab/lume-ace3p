@@ -1,6 +1,5 @@
 """Phase-4a tests: the ``invert_optimize`` mode — given a target dose profile,
-estimate the β that produced it (see plans/geant4_surrogate_inversion_plan.md,
-Phase 4).
+estimate the β that produced it.
 
 Verification (Phase 4a done when):
 
